@@ -10,7 +10,7 @@ export NCCL_SOCKET_IFNAME=lo   # 或 ens33 / eno1 等你的实际网卡名
 export NCCL_BLOCKING_WAIT=1
 
 python -m vllm.entrypoints.openai.api_server \
-    --model /data1/lianghao/lpc/models/Qwen3-32B/ \
+    --model /data1/lh/lpc/models/Qwen3-32B/ \
     --port 8911 \
     --tensor-parallel-size 4 \
     --gpu-memory-utilization 0.9 \

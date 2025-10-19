@@ -10,7 +10,7 @@ def get_weather(city: str) -> str:
 vllm_model = ChatOpenAI(
     base_url="http://localhost:8911/v1",  # vLLM 默认接口
     api_key="EMPTY",                      # 随便填，不校验
-    model="/data1/lianghao/lpc/models/Qwen3-32B/"      # 与启动时的模型名保持一致
+    model="/data1/lh/lpc/models/Qwen3-32B/"      # 与启动时的模型名保持一致
 )
 
 agent = create_react_agent(
