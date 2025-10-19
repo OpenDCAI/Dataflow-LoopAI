@@ -78,7 +78,7 @@ def _make_colored_formatter():
 
 # ---------- 4) 获取 logger（贴近 loguru 的 add 行为） ----------
 def get_logger(level: str = None) -> logging.Logger:
-    """返回一个名为 'DataFlow' 的 logger：
+    """返回一个名为 'DataFlow-LoopAI' 的 logger：
     - 控制台输出分流：<ERROR 到 stdout；>=ERROR 到 stderr
     - 颜色与格式尽量贴近 loguru 默认
     - 避免重复添加 handler
@@ -86,7 +86,7 @@ def get_logger(level: str = None) -> logging.Logger:
     if level is None:
         level = os.getenv("DF_LOGGING_LEVEL", "INFO")
 
-    logger = logging.getLogger("DataFlow")
+    logger = logging.getLogger("DataFlow-LoopAI")
     logger.setLevel(level)
     logger.propagate = False  # 避免向 root 传播造成重复输出
 
