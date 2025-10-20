@@ -10,7 +10,7 @@ from loopai.logger import get_logger
 logger = get_logger()
 
 
-class BaseGraph(ABC):
+class BaseAgent(ABC):
 
     def __init__(self,
                  tools: Optional[List] = None,
@@ -18,10 +18,12 @@ class BaseGraph(ABC):
                  base_url: Optional[str] = None,
                  temperature: float = 0.0,
                  max_new_tokens: int = 4096,
-                 prompt_template_dir: str = None
+                 prompt_template_dir: str = None,
+                 checkpointer = None,
+                 store = None
                  ):
         '''
-        Init BaseGraph
+        Init BaseAgent
 
         Args:
             tools: the list of tool function
@@ -30,6 +32,8 @@ class BaseGraph(ABC):
             temperature: the temperature of LLM
             max_tokens: max new tokens
             prompt_template_dir: the directory of prompt config file: endswith `_prompt.json`.
+            checkpointer: the checkpointer function
+            store: the store function
         '''
         self.tools = tools
         self.model_name = model_name
@@ -37,6 +41,8 @@ class BaseGraph(ABC):
         self.temperature = temperature
         self.max_tokens = max_new_tokens
         self.prompt_template_dir = prompt_template_dir
+        self.checkpointer = checkpointer
+        self.store = store
 
         self.prompt_loader = PromptLoader(prompt_template_dir)
         if self.model_name is not None:
