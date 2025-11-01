@@ -16,6 +16,7 @@ class BaseAgent(ABC):
                  tools: Optional[List] = None,
                  model_name: Optional[str] = None,
                  base_url: Optional[str] = None,
+                 api_key: Optional[str] = 'empty',
                  temperature: float = 0.0,
                  max_new_tokens: int = 4096,
                  prompt_template_dir: str = None,
@@ -29,6 +30,7 @@ class BaseAgent(ABC):
             tools: the list of tool function
             model_name: the name of the LLM
             base_url: the base_url of LLM server
+            api_key: the api_key of LLM server
             temperature: the temperature of LLM
             max_tokens: max new tokens
             prompt_template_dir: the directory of prompt config file: endswith `_prompt.json`.
@@ -38,6 +40,7 @@ class BaseAgent(ABC):
         self.tools = tools
         self.model_name = model_name
         self.base_url = base_url
+        self.api_key = api_key
         self.temperature = temperature
         self.max_tokens = max_new_tokens
         self.prompt_template_dir = prompt_template_dir
@@ -72,7 +75,7 @@ class BaseAgent(ABC):
             raise AssertionError(f'Undefined base_url in {self.role_name}-Graph')
         self.llm = ChatOpenAI(
             base_url=self.base_url,
-            api_key="EMPTY",
+            api_key=self.api_key,
             model=self.model_name
         )
 

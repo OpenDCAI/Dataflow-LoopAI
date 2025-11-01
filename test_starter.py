@@ -3,9 +3,13 @@ from loopai.agents import StarterAgent
 from loopai.memory import checkpointer, store
 from loopai.agents.Starter.tools.check_motivation import check_motivation
 
+with open('api_key.txt', 'r') as f:
+    api_key = f.read().strip()
+
 sg = StarterAgent(tools=[check_motivation],
-                  model_name="/data1/lh/lpc/models/Qwen3-32B/",
-                  base_url="http://localhost:8911/v1",
+                  model_name="deepseek-chat",
+                  base_url="https://api.deepseek.com",
+                  api_key=api_key,
                   checkpointer=checkpointer,
                   store=store)
 
