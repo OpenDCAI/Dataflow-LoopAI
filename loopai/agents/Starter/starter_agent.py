@@ -79,6 +79,8 @@ class StarterAgent(BaseAgent):
                 state["next_to"] = "obtain_node"
             elif val == 'evaluate':
                 state["next_to"] = "evaluate_node"
+            elif val == 'finish':
+                state["next_to"] = "end_node"
             else:
                 state["next_to"] = "query_node"
             last_message.content = '根据用户指令执行: ' + val
@@ -133,10 +135,41 @@ class StarterAgent(BaseAgent):
 
         self.graph = builder.compile(
             checkpointer=self.checkpointer, store=self.store, **kwargs)
+    
+    def start(self, **invoke_args):
+        """
+        start the graph
+        """
+        self.graph.invoke({}, **invoke_args)
+    
+    def get_state(self, config: dict):
+        """
+        get the state of the graph
+        """
+        return self.graph.get_state(config)
 
-    def __call__(self, **invoke_args):
+    def __call__(self, input, **invoke_args):
         """
         run invoke method
         """
-        self.graph.invoke({}, **invoke_args)
-        return self.graph
+        for res in self.graph.stream(
+            Command(resume=input),
+            subgraphs=True,
+            stream_mode=["updates", "messages"],
+            **invoke_args
+        ):
+            namespace_item, stream_mode, chunk_item = res
+            self.agent_event.stream_mode = stream_mode
+            if stream_mode == 'messages':
+                msg_chunk = chunk_item[0]
+                self.agent_event.set_stream_message(msg_chunk)
+            elif stream_mode == 'updates':
+                if len(namespace_item) > 0:
+                    continue
+                for key in chunk_item:
+                    if key == '__interrupt__':
+                        continue
+                    self.agent_event.node = key
+                    self.agent_event.update(self.get_state(invoke_args['config']).values)
+                    self.agent_event.clear_stream_message()
+            yield res

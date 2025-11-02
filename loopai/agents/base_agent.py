@@ -5,6 +5,7 @@ from langgraph.prebuilt import create_react_agent
 from langchain_openai import ChatOpenAI
 
 from loopai.common.prompts import PromptLoader
+from loopai.states.event import AgentEvent
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -46,6 +47,7 @@ class BaseAgent(ABC):
         self.prompt_template_dir = prompt_template_dir
         self.checkpointer = checkpointer
         self.store = store
+        self.agent_event = AgentEvent()
 
         self.prompt_loader = PromptLoader(prompt_template_dir)
         if self.model_name is not None:
