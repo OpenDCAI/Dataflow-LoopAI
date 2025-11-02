@@ -3,6 +3,8 @@ from loopai.agents import StarterAgent
 from loopai.memory import checkpointer, store
 from loopai.agents.Starter.tools.check_motivation import check_motivation
 
+from langgraph.types import Command
+
 with open('api_key.txt', 'r') as f:
     api_key = f.read().strip()
 
@@ -17,14 +19,16 @@ sg.init_graph()
 
 # %%
 config = {"configurable": {"thread_id": "1"}}
-sg("我想评估一下昨天上传的模型", config=config)
+graph = sg(config=config)
+thread_states = graph.get_state(config)
 
 # %%
-config = {"configurable": {"thread_id": "2"}}
-sg("我想训练一下刚上传的模型", config=config)
-
-# %%
-config = {"configurable": {"thread_id": "1"}}
-sg("我想看看一下昨天上传的模型", config=config)
+while thread_states.interrupts:
+    query = input("请输入: ")
+    print(graph.invoke(
+        Command(resume=query),
+        config=config
+    ))
+    thread_states = graph.get_state(config)
 
 # %%

@@ -6,4 +6,5 @@ class UserState(MessagesState):
     eval_results: str
     mined_data: str
     update_model_path: str
-    
+    current: str # to defined the current task, e.g. train, evaluate, obtain, naive
+    next_to: str

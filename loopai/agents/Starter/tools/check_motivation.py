@@ -4,4 +4,4 @@ def check_motivation(motivation: str) -> str:
     
     **Args**: The `motivation` should only be 'train', 'evaluate', 'obtain' or 'naive'.
     """
-    return f"The user wants to {motivation}."
+    return motivation
