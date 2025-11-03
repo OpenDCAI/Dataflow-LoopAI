@@ -98,6 +98,7 @@ class BaseAgent(ABC):
     @abstractmethod
     def __call__(self):
         """
-        run invoke method
+        - run invoke method
+        - or run `init_graph` and return the `graph`
         """
         pass

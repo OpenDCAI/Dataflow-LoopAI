@@ -28,7 +28,7 @@ thread_states = sg.get_state(config)
 
 # %%
 while thread_states.interrupts:
-    query = input("请输入: ")
+    query = input(f"Please input ({thread_states.interrupts[0].value}): ")
     with Live(console=console, refresh_per_second=4) as live:
         for chunk in sg(
             query,
@@ -40,7 +40,7 @@ while thread_states.interrupts:
     #         config=config
     #     ):
     #     print(chunk)
-    # thread_states = sg.get_state(config)
+    thread_states = sg.get_state(config)
 
 console.print("[bold yellow]Done![/bold yellow]")
 

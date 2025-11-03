@@ -10,6 +10,7 @@ class AgentEvent:
     '''
     stream_mode: Optional[str] = None
     node: Optional[str] = None
+    node_path: Optional[list] = None
     state: Optional[Any] = None
     stream_message: Optional[AIMessage] = None
 
@@ -29,6 +30,23 @@ class AgentEvent:
         Clear the stream message content.
         """
         self.stream_message = None
+    
+    def set_path(self, node: str):
+        """
+        Set the node path.
+        
+        Args:
+            node (str): The node to be set.
+        """
+        if not self.node_path:
+            self.node_path = []
+        self.node_path.append(node)
+    
+    def clear_path(self):
+        """
+        Clear the node path.
+        """
+        self.node_path = None
 
     def update(self, chunk):
         """
@@ -50,9 +68,11 @@ class AgentEvent:
         other_state_info = []
         msgs = []
         for f in fields(self):
-            if f.name not in ['state', 'stream_message']:
+            if f.name not in ['state', 'stream_message', 'node_path']:
                 value = getattr(self, f.name)
                 lines.append(f"{f.name}: {value}")
+            elif f.name == 'node_path':
+                lines.append(f"{f.name}: {'->'.join(self.node_path)}")
             elif f.name == 'state':
                 for key in self.state:
                     if key != 'messages':
