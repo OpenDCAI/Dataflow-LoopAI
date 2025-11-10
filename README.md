@@ -87,6 +87,13 @@ Dataflow-LoopAI/
 * 继续执行中断节点(TODO)
 ---
 
+## 📦 安装
+
+```bash
+pip install -U langgraph colorlog rich langchain
+```
+
+
 ## ✅ 快速测试指南
 
 ### 1️⃣ 启动 vLLM 服务
