@@ -1,2 +1,4 @@
 __pycache__/
 api_key.txt
+data/
+output/
