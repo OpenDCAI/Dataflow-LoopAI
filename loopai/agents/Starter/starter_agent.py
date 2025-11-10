@@ -1,0 +1,157 @@
+import json
+from typing import Any, Dict, List, Optional, Type
+
+from langgraph.graph import StateGraph
+from langgraph.types import interrupt, Command
+
+from loopai.states.base import LoopAIState
+from loopai.agents import BaseAgent
+from loopai.agents.Configer import ConfigerAgent
+
+from loopai.logger import get_logger
+
+logger = get_logger()
+
+
+class StarterAgent(BaseAgent):
+    @property
+    def role_name(self) -> str:
+        """Role name"""
+        return "Starter"
+
+    @property
+    def system_prompt_type(self) -> str:
+        """System prompt type"""
+        return "system"
+
+    @property
+    def system_prompt_name(self) -> str:
+        """System prompt name"""
+        return "default_prompt"
+
+    @staticmethod
+    def evaluate_node(state: LoopAIState) -> LoopAIState:
+        """Evaluate the model"""
+        state["current"] = "evaluate"
+        logger.info("Exec: Evaluate the model, next_to: query_node")
+        return state
+
+    @staticmethod
+    def train_node(state: LoopAIState) -> LoopAIState:
+        """Train the model"""
+        state["current"] = "train"
+        logger.info("Exec: Train the model, next_to: query_node")
+        return state
+
+    @staticmethod
+    def obtain_node(state: LoopAIState) -> LoopAIState:
+        """Obtain the data"""
+        state["current"] = "obtain"
+        logger.info("Exec: Obtain the data, next_to: query_node")
+        return state
+
+    @staticmethod
+    def query_node(state: LoopAIState) -> LoopAIState:
+        """Chat with the user"""
+        value = interrupt('input the human query')
+        state['current'] = 'query'
+        logger.info(f"Exec: Query node")
+        return {
+            'messages': [{'role': 'user', 'content': value}]
+        }
+
+    @staticmethod
+    def feedback_node(state: LoopAIState) -> LoopAIState:
+        """Get the last ToolMessage and decide the next node, if the tool is not called, go to query_node"""
+        messages = state["messages"]
+        if len(messages) < 3:
+            state["next_to"] = "query_node"
+            return state
+        last_message = messages[-1]
+        maybe_tool_message = messages[-2]
+        if hasattr(maybe_tool_message, 'tool_call_id'):
+            tool_res = json.loads(maybe_tool_message.content)
+            state["next_to"] = tool_res["next_to"]
+            last_message.content = '[cmd]根据用户指令执行: ' + tool_res["motivation"]
+        else:
+            state["next_to"] = "query_node"
+        logger.info(f'Messages: {state["messages"]}')
+        logger.info(f"Exec: Feedback node, next_to: {state['next_to']}")
+        return state
+
+    @staticmethod
+    def end_node(state: LoopAIState) -> LoopAIState:
+        """End the conversation"""
+        state["current"] = "end"
+        return state
+
+    @staticmethod
+    def conditional_edge(state: LoopAIState):
+        return state["next_to"]
+
+    def init_graph(self, **kwargs):
+        config_node = ConfigerAgent(checkpointer=self.checkpointer, store=self.store)(**kwargs)
+        builder = StateGraph(LoopAIState)
+        builder.add_node("query_node", self.query_node)
+        builder.add_node("llm_node", self.llm_node)
+        builder.add_node("feedback_node", self.feedback_node)
+        builder.add_node("train_node", self.train_node)
+        builder.add_node("obtain_node", self.obtain_node)
+        builder.add_node("evaluate_node", self.evaluate_node)
+        builder.add_node("config_node", config_node)
+        builder.add_node("end_node", self.end_node)
+
+        builder.set_entry_point("query_node")
+        builder.set_finish_point("end_node")
+
+        builder.add_edge('query_node', 'llm_node')
+        builder.add_edge('llm_node', 'feedback_node')
+        builder.add_edge('evaluate_node', 'query_node')
+        builder.add_edge('train_node', 'query_node')
+        builder.add_edge('obtain_node', 'query_node')
+        builder.add_edge('config_node', 'query_node')
+        builder.add_conditional_edges(
+            "feedback_node",
+            self.conditional_edge)
+
+        self.graph = builder.compile(
+            checkpointer=self.checkpointer, store=self.store, **kwargs)
+    
+    def start(self, **invoke_args):
+        """
+        start the graph
+        """
+        self.graph.invoke({}, **invoke_args)
+    
+    def get_state(self, config: dict):
+        """
+        get the state of the graph
+        """
+        return self.graph.get_state(config)
+
+    def __call__(self, input, **invoke_args):
+        """
+        run invoke method
+        """
+        for res in self.graph.stream(
+            Command(resume=input),
+            subgraphs=True,
+            stream_mode=["updates", "messages"],
+            **invoke_args
+        ):
+            namespace_item, stream_mode, chunk_item = res
+            self.agent_event.stream_mode = stream_mode
+            if stream_mode == 'messages':
+                msg_chunk = chunk_item[0]
+                self.agent_event.set_stream_message(msg_chunk)
+            elif stream_mode == 'updates':
+                if len(namespace_item) > 0:
+                    continue
+                for key in chunk_item:
+                    if key == '__interrupt__':
+                        continue
+                    self.agent_event.node = key
+                    self.agent_event.set_path(key)
+                    self.agent_event.update(self.get_state(invoke_args['config']).values)
+                    self.agent_event.clear_stream_message()
+            yield res
