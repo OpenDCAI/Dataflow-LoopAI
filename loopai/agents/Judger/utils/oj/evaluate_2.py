@@ -8,8 +8,9 @@ import subprocess
 import time
 from typing import List, Dict, Tuple, Iterable
 import gzip
-import customer
+from .customer_func import Customize_Funcs
 import data
+
 # 测试单样例代码
 def run_single_test(test_script: str, timeout: int = 5) -> Tuple[bool, str]:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as temp_file:
@@ -94,13 +95,13 @@ def calculate_pass_at_k(
 
 # 生成拼接测试代码
 def generate_test_script(problem: Dict, completion: str, log_file, config) -> str:
-    customer_func_1 = getattr(customer, config['TEST_CODE_FUNCTION_NAME'])
+    customer_func_1 = getattr(Customize_Funcs, config['TEST_CODE_FUNCTION_NAME'])
     test_script = customer_func_1(problem, completion)
 
-    customer_func_2 = getattr(customer, config['ENTRY_POINT_FUNCTION_NAME'])
+    customer_func_2 = getattr(Customize_Funcs, config['ENTRY_POINT_FUNCTION_NAME'])
     entry_point = customer_func_2(problem)
 
-    customer_func_3 = getattr(customer, config['TEST_FUNCTION_NAME'])
+    customer_func_3 = getattr(Customize_Funcs, config['TEST_FUNCTION_NAME'])
     test_code = customer_func_3(problem)
 
     if "def check(candidate)" in test_code and entry_point:

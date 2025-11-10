@@ -6,11 +6,11 @@ import os
 import platform
 import signal
 import tempfile
-import customer
-from typing import Dict, Optional
+from .customer_func import Customize_Funcs
+from typing import Dict, Optional, List
 
 
-def unsafe_execute(problem: Dict, completion: str, timeout: float, result, config):
+def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[str], test_code_function_name: str, entry_point_function_name: str, test_function_name: str):
     with create_tempdir():
 
         # These system calls are needed when cleaning up tempdir.
@@ -24,13 +24,13 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result, confi
         # Disable functionalities that can make destructive changes to the test.
         reliability_guard()
 
-        customer_func_1 = getattr(customer, config['TEST_CODE_FUNCTION_NAME'])
+        customer_func_1 = getattr(Customize_Funcs, test_code_function_name)
         test_script = customer_func_1(problem, completion)#测试代码
 
-        customer_func_2 = getattr(customer, config['ENTRY_POINT_FUNCTION_NAME'])
+        customer_func_2 = getattr(Customize_Funcs, entry_point_function_name)
         entry_point = customer_func_2(problem)#进入口
 
-        customer_func_3 = getattr(customer, config['TEST_FUNCTION_NAME'])
+        customer_func_3 = getattr(Customize_Funcs, test_function_name)
         test_code = customer_func_3(problem)#测试用例
 
         # Construct the check program and run it.
@@ -70,7 +70,7 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result, confi
 
 
 def check_correctness(
-    problem: Dict, completion: str, timeout: float, config, completion_id: Optional[int] = None
+    problem: Dict, completion: str, timeout: float, test_code_function_name: str, entry_point_function_name: str, test_function_name: str, completion_id: Optional[int] = None
 ) -> Dict:
     """
     Evaluates the functional correctness of a completion by running the test
@@ -83,7 +83,7 @@ def check_correctness(
     manager = multiprocessing.Manager()
     result = manager.list()
 
-    p = multiprocessing.Process(target=unsafe_execute, args=(problem, completion, timeout, result, config))
+    p = multiprocessing.Process(target=unsafe_execute, args=(problem, completion, timeout, result, test_code_function_name, entry_point_function_name, test_function_name))
     p.start()
     p.join(timeout=timeout + 1)
     if p.is_alive():

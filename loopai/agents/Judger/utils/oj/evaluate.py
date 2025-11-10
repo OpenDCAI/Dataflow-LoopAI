@@ -6,8 +6,9 @@ import os
 from datetime import datetime, date, time
 import numpy as np
 import tqdm
-import data
-import execution
+from .data import write_jsonl, stream_jsonl, read_problems
+from .execution import check_correctness
+
 def estimate_pass_at_k(
     num_samples: Union[int, List[int], np.ndarray],
     num_correct: Union[List[int], np.ndarray],
@@ -33,18 +34,18 @@ def estimate_pass_at_k(
 
     return np.array([estimator(int(n), int(c), k) for n, c in zip(num_samples_it, num_correct)])
 
-def evaluate_functional_correctness(config):
+def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, problem_path, result_path, test_code_function_name, entry_point_function_name, test_function_name):
     """
     Evaluates the functional correctness of generated samples, and writes
     results to f"{sample_file}_results.jsonl.gz"
     """
-    sample_file = config['SAMPLE_FILE']
-    problem_file = config['PROBLEM_FILE']
-    k = list(map(int, config['K'].split(",")))
-    n_workers = config['N_WORKERS']
-    timeout = config['TIMEOUT']
+    sample_file = test_case_path
+    problem_file = problem_path
+    k = list(map(int, K.split(",")))
+    n_workers = n_workers
+    timeout = timeout
 
-    problems = data.read_problems(problem_file)
+    problems = read_problems(problem_file)
 
     # Check the generated samples against test suites.
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
@@ -55,11 +56,11 @@ def evaluate_functional_correctness(config):
         results = defaultdict(list)
 
         print("Reading samples...")
-        for sample in tqdm.tqdm(data.stream_jsonl(sample_file)):
+        for sample in tqdm.tqdm(stream_jsonl(sample_file)):
             task_id = sample["task_id"]
             completion = sample["completion"]
-            args = (problems[task_id], completion, timeout, config, completion_id[task_id])
-            future = executor.submit(execution.check_correctness, *args)
+            args = (problems[task_id], completion, timeout, test_code_function_name, entry_point_function_name, test_function_name, completion_id[task_id])
+            future = executor.submit(check_correctness, *args)
             futures.append(future)
             completion_id[task_id] += 1
             n_samples += 1
@@ -87,16 +88,16 @@ def evaluate_functional_correctness(config):
 
     # Finally, save the results in one file:
     def combine_results():
-        for sample in data.stream_jsonl(sample_file):
+        for sample in stream_jsonl(sample_file):
             task_id = sample["task_id"]
             result = results[task_id].pop(0)
             sample["result"] = result[1]["result"]
             sample["passed"] = result[1]["passed"]
             yield sample
 
-    out_file = config["RESULT_FILE"]
+    out_file = result_path
     print(f"Writing results to {out_file}...")
-    data.write_jsonl(out_file, tqdm.tqdm(combine_results(), total=n_samples))
+    write_jsonl(out_file, tqdm.tqdm(combine_results(), total=n_samples))
 
     file_path = os.path.join(os.path.dirname(out_file),"log.txt")
     pass_at_k_text = "\n".join([
@@ -105,17 +106,18 @@ def evaluate_functional_correctness(config):
     ])
     with open(file_path, mode='a', encoding='utf-8') as f:
         f.write("\n\n--- " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + " ---")
-        f.write("\nSample:" + config['SAMPLE_FILE'])
-        f.write("\nProblem:" + config['PROBLEM_FILE'])
-        f.write("\nResult:" + config['RESULT_FILE'])
+        f.write("\nSample:" + test_case_path)
+        f.write("\nProblem:" + problem_path)
+        f.write("\nResult:" + result_path)
         f.write("\n" + pass_at_k_text)
 
     return pass_at_k
 
-def evaluate_sample(config):
+def evaluate_sample(K, n_workers, timeout, test_case_path, problem_path, result_path, test_code_function_name, entry_point_function_name, test_function_name):
     """
     Evaluates the functional correctness of generated samples, and writes
     results to f"{sample_file}_results.jsonl.gz"
     """
-    results = evaluate_functional_correctness(config)
+    results = evaluate_functional_correctness(K, n_workers, timeout, test_case_path, problem_path, result_path, test_code_function_name, entry_point_function_name, test_function_name)
     print(results)
+    return results

@@ -1,124 +1,50 @@
-# modelTest.py
-# 作用：一键运行 V2/run.py，然后对每条样本注入（启发式 + 可选模型JSON融合）的 LLMaJ 判因，
-#      并可选生成简短中文评价。兼容 promptless 版 llmaj.py。
-
-import os, sys, re, json, time, subprocess
+import os
+import re
+import json
+import time
 from pathlib import Path
-from typing import Dict, Any, List, Optional
 from collections import defaultdict, Counter
-from tqdm import tqdm  
+from typing import Dict, Any, List, Optional
+from tqdm import tqdm
 
-# ===== 基本路径 =====
-ROOT = Path(__file__).resolve().parent
-V2_DIR = ROOT / "V2"
-RUN_PY = V2_DIR / "run.py"
-DEFAULT_SAMPLES = V2_DIR / "sample" / "test_samples_all.jsonl"  
-DEFAULT_HUMANEVAL = V2_DIR / "data" / "mbpp.jsonl"              
-DEFAULT_OUTDIR = V2_DIR / "result"
+from langchain_openai import ChatOpenAI
 
+from loopai.states.base import LoopAIState
+from loopai.agents.Analyzer.utils.llmaj import LLMJudge
+from loopai.logger import get_logger
 
-model_path = "/jizhicfs/hymiezhao/models/Qwen2.5-32B-Instruct"
+logger = get_logger()
 
+def init_model(model_path: str, base_url: str, api_key: str, temperature: float = 0, top_p: float = 0.95):
+    """
+    初始化模型
+    Args:
+        - model_path: 模型路径
+        - base_url: 模型基础 URL
+        - api_key: 模型 API 密钥
+        - temperature: 温度参数，默认 0
+        - top_p: Top-p 参数，默认 0.95
+    Returns:
+        初始化后的模型实例
+    """
+    model = ChatOpenAI(
+        model=model_path,
+        api_key=api_key,
+        base_url=base_url,
+        temperature=temperature,
+        top_p=top_p
+    )
+    return model
 
-from llmaj import LLMJudge
-
-
-from transformers import StoppingCriteria, StoppingCriteriaList
-class _StopAtCurlyJSON(StoppingCriteria):
-    def __init__(self, tok): self.tok = tok
-    def __call__(self, input_ids, scores, **kw):
-        try:
-            text = self.tok.decode(input_ids[0].tolist(), skip_special_tokens=True)
-            return text.rstrip().endswith("}")
-        except Exception:
-            return False
-
-def _load_llm():
-    try:
-        from transformers import AutoTokenizer, AutoModelForCausalLM
-        import torch
-
-        assert torch.cuda.is_available(), "未检测到 CUDA，请检查驱动/环境或 CUDA_VISIBLE_DEVICES"
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-
-        tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, padding_side="left")
-        if tok.pad_token_id is None:
-            tok.pad_token = tok.eos_token
-
-        def _try_load(attn_impl: str):
-            return AutoModelForCausalLM.from_pretrained(
-                model_path,
-                device_map={"": 0},
-                dtype=__import__("torch").float16,             
-                trust_remote_code=True,
-                attn_implementation=attn_impl,    
-            )
-
-        try:
-            model = _try_load("flash_attention_2")
-            print("使用 Flash-Attention 2", flush=True)
-        except Exception as fe:
-            print(f"⚠️ Flash-Attention 2 不可用，回退到 SDPA：{fe}", flush=True)
-            model = _try_load("sdpa")
-            print("使用 SDPA", flush=True)
-
-        model.eval()
-        return tok, model
-
-    except Exception as e:
-        raise RuntimeError(f"本地 LLM 加载失败：{e}")
-
-def _call_llm(tok, model, prompt: str, max_new_tokens: int = 128, temperature: float = 0.0) -> str:
-    import torch
-    device = next(model.parameters()).device
-    stops = StoppingCriteriaList([_StopAtCurlyJSON(tok)])
-    with torch.no_grad():
-        inputs = tok(prompt, return_tensors="pt").to(device)
-        out = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,   
-            temperature=temperature,
-            do_sample=(temperature > 0),
-            eos_token_id=tok.eos_token_id,
-            pad_token_id=tok.pad_token_id,
-            stopping_criteria=stops,          
-        )
-    text = tok.decode(out[0], skip_special_tokens=True)
-    if text.startswith(prompt):
-        text = text[len(prompt):]
-    return text.strip()
-
-def _call_llm_batch(tok, model, prompts: List[str], max_new_tokens: int = 128, temperature: float = 0.0) -> List[str]:
-    import torch
-    device = next(model.parameters()).device
-    stops = StoppingCriteriaList([_StopAtCurlyJSON(tok)])
-    with torch.no_grad():
-        batch_inputs = tok(
-            prompts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True
-        ).to(device)
-        out = model.generate(
-            **batch_inputs,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            do_sample=(temperature > 0),
-            eos_token_id=tok.eos_token_id,
-            pad_token_id=tok.pad_token_id,
-            stopping_criteria=stops,
-        )
-    texts = tok.batch_decode(out, skip_special_tokens=True)
-    cleaned = []
-    for p, t in zip(prompts, texts):
-        cleaned.append(t[len(p):].strip() if t.startswith(p) else t.strip())
-    return cleaned
-
-# ======= 判因 schema 的通用 prompt（code/sql 均可用）=======
 def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
     """
+    判因 schema 的通用 prompt（code/sql 均可用）
     你可以随时替换这段为你自己的 prompt；要求模型返回严格 JSON。
+    Args:
+        - task: 任务类型（code/sql）
+        - evidence: 判因 schema 字典
+    Returns:
+        完整 prompt
     """
     sys_inst = (
         "你是故障诊断助手。请根据给定证据输出严格 JSON（不含多余文字）。"
@@ -161,8 +87,14 @@ def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
 """.strip()
     return sys_inst + "\n\n" + user
 
-# ===== 失败断言解析 =====
 def parse_assert_from_stdout(stdout: str) -> Dict[str, Optional[str]]:
+    """
+    失败断言解析
+    Args:
+        - stdout: 模型输出的标准输出
+    Returns:
+        解析后的断言信息字典，包含 input_expr, expected, actual 三键
+    """
     actual = expected = input_expr = None
     s = stdout or ""
     m = re.search(r"^E\s+assert\s+(.+?)\s*==\s*(.+?)\s*$", s, flags=re.M)
@@ -179,14 +111,24 @@ def parse_assert_from_stdout(stdout: str) -> Dict[str, Optional[str]]:
         input_expr = "candidate(" + " ".join(m.group(1).split()) + ")"
     return {"input_expr": input_expr, "expected": expected, "actual": actual}
 
-# ===== 一句话中文短评 =====
 def summarize_brief(task_id: str,
                     prompt_head: str,
                     completion_head: str,
                     test_head: str,
                     oj: Dict[str, str],
-                    llm_tok=None,
-                    llm_model=None) -> str:
+                    llm: ChatOpenAI) -> str:
+    """
+    总结一句话中文短评
+    Args:
+        - task_id: 任务 ID
+        - prompt_head: 题目片段
+        - completion_head: 被测生成代码片段
+        - test_head: 测试代码片段
+        - oj: OJ 输出字典，包含 stdout, stderr, input_expr, expected, actual 等键
+        - llm: 初始化后的模型实例
+    Returns:
+        一句话中文短评
+    """
     prompt_head = (prompt_head or "")[:600]
     completion_head = (completion_head or "")[:800]
     test_head = (test_head or "")[:600]
@@ -213,33 +155,20 @@ def summarize_brief(task_id: str,
         f"【已解析关键信息(JSON)】\n{json.dumps(meta, ensure_ascii=False)}\n\n"
         "请按要求输出。"
     )
-    out = _call_llm(llm_tok, llm_model, sys_prompt + "\n\n" + user_block, max_new_tokens=128, temperature=0.0)
+    input_content = sys_prompt + "\n\n" + user_block
+    out = llm.batch([input_content])[0].content
     return out.strip() or "（模型未返回内容）"
 
-# ===== 工具 =====
-def _latest_file(dirpath: Path, pattern: str) -> Optional[Path]:
-    files = list(dirpath.glob(pattern))
-    if not files: return None
-    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0]
-
-def _load_jsonl(path: Path) -> List[Dict[str, Any]]:
-    out = []
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line: continue
-            try: out.append(json.loads(line))
-            except Exception: continue
-    return out
-
-def _dump_jsonl(path: Path, rows: List[Dict[str, Any]]):
-    with path.open("w", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-
-# ===== 新增：根据 rows 生成 summary 的函数 =====
 def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: str):
+    """
+    根据 rows 生成 summary 的函数
+    Args:
+        - rows: 评测结果行列表
+        - outdir: 输出目录
+        - run_ts: 运行时间戳
+    Returns:
+        生成的 summary JSON 路径和 TXT 路径
+    """
 
     stage_counter = Counter()
     tag_counter = Counter()
@@ -355,81 +284,76 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
     with open(summary_txt, "w", encoding="utf-8") as tf:
         tf.write("\n".join(lines))
 
-    print(f" 已生成 summary：{summary_json} ，文本简报：{summary_txt}", flush=True)
+    logger.info(f" 已生成 summary：{summary_json} ，文本简报：{summary_txt}")
     return summary_json, summary_txt
 
-# ===== 主流程 =====
-def main():
-    import argparse
-    ap = argparse.ArgumentParser(
-        description="One-shot runner: 调用 V2/run.py + 注入（启发式/可选模型融合）的 LLMaJ 判因 + 可选中文短评。"
-    )
-    ap.add_argument("--samples", default=str(DEFAULT_SAMPLES))
-    ap.add_argument("--humaneval", default=str(DEFAULT_HUMANEVAL))
-    ap.add_argument("--outdir", default=str(DEFAULT_OUTDIR))
+def eval_model_node(state: LoopAIState):
+    """
+    模型评测分析节点函数
+    该函数处理模型评测结果，分析失败案例原因，并生成增强版评测记录和总结报告
+    
+    Args:
+        state: LoopAIState对象，包含以下关键参数：
+            - analyze_task_type: 任务类型
+            - eval_result_path: 评测结果文件路径
+            - analyze_batch_size: 批处理大小，默认为20
+            - analyze_model_path: 分析模型路径
+            - analyze_base_url: 模型基础URL
+            - analyze_api_key: 模型API密钥
+            - analyze_temperature: 模型温度参数
+            - analyze_top_p: 模型top_p参数
+            - output_dir: 输出目录路径
+            - output_brief: 是否输出中文短评，默认False
+    
+    Returns:
+        更新后的LoopAIState对象，包含以下新增字段：
+            - analyze_output_result_path: 增强版评测记录文件路径
+            - analyze_output_summary_path: 评测摘要JSON文件路径
+    
+    处理流程：
+        1. 初始化LLMJudge和分析模型
+        2. 读取评测结果并过滤失败案例
+        3. 批量处理失败案例，收集证据并构建提示词
+        4. 使用模型分析失败原因
+        5. 可选地生成中文短评
+        6. 输出增强版评测记录
+        7. 生成评测摘要报告
+    """
+    
+    task_type = state['analyze_task_type']
+    judge = LLMJudge(task=task_type)
 
-    ap.add_argument("--no-brief", action="store_true",
-                    help="仅判因，不生成中文短评")
-    ap.add_argument("--max-new", type=int, default=128)  # ← 默认更短
-    ap.add_argument("--temperature", type=float, default=0.0)
-    ap.add_argument("--task", choices=["code","sql"], default="code",
-                    help="LLMaJ 判因任务类型，code 或 sql（text2sql 用）")
+    # 读取评测结果文件
+    with open(state['eval_result_path'], 'r', encoding='utf-8') as f:
+        result_content = f.readlines()
+    result_content = [json.loads(result_content)
+                      for result_content in result_content]
 
-    ap.add_argument("extra", nargs="*")
-    args = ap.parse_args()
-
-    if not RUN_PY.is_file():
-        raise FileNotFoundError(f"未找到 V2/run.py：{RUN_PY}")
-    if not Path(args.samples).is_file():
-        raise FileNotFoundError(f"未找到样本：{args.samples}")
-    if not Path(args.humaneval).is_file():
-        raise FileNotFoundError(f"未找到 HumanEval：{args.humaneval}")
-    outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
-
-    print("⚠️ 跳过 V2/run.py（不重新评测），直接使用已有结果文件")
-    print("✅ 评测阶段已跳过，继续进行判因/汇总")
-
-    preferred = outdir / "mbpp_result.jsonl"
-    oj_path = preferred if preferred.is_file() else (_latest_file(outdir, "oj_records_*.jsonl") or _latest_file(outdir, "*.jsonl"))
-    if oj_path is None:
-        raise FileNotFoundError(f"在 {outdir} 下未找到结果文件（优先 mbpp_result.jsonl，其次 oj_records_*.jsonl 或 *.jsonl）。")
-    print(f"📄 使用 OJ 记录文件：{oj_path.name}")
-
-    tok, model = _load_llm()
-
-    judge = LLMJudge(task=args.task)
-
-    rows = _load_jsonl(oj_path)
-    total = len(rows)
-
-    fails_by_task = defaultdict(list)
-    for i, r in enumerate(rows):
+    # 过滤失败案例
+    failed_results = []
+    for i, r in enumerate(result_content):
         if not r.get("passed"):
-            fails_by_task[r.get("task_id")].append(i)
+            failed_results.append(r)
 
-    fail_indices = [idxs[0] for idxs in fails_by_task.values()]
+    # 初始化分析模型
+    batch_size = state.get("analyze_batch_size", 20)
+    llm = init_model(
+        model_path=state['analyze_model_path'],
+        base_url=state['analyze_base_url'],
+        api_key=state['analyze_api_key'],
+        temperature=state['analyze_temperature'],
+        top_p=state['analyze_top_p']
+    )
 
-    def _len_score(i):
-        rec = rows[i]
-        return len((rec.get("problem_prompt") or "")) + len((rec.get("completion") or "")) + len((rec.get("test_code") or ""))
-    fail_indices.sort(key=_len_score)
-
-    print(f"⏳ 待处理样本（总）：{total}；按任务首个失败样本计：{len(fail_indices)} 条（仅对这些样本做判因）", flush=True)
-
-    BATCH = 16 
-    judge_cnt = 0
-    brief_cnt = 0
-    fail_cnt = 0
-
-    pbar = tqdm(total=len(fail_indices), desc="判因处理中（任务级早停）", unit="条")
-
-    for start in range(0, len(fail_indices), BATCH):
-        idx_chunk = fail_indices[start:start+BATCH]
+    # 批量处理失败案例
+    for i in tqdm(range(0, len(failed_results), batch_size)):
+        batch = failed_results[i:i+batch_size]
 
         evidences = []
         prompts = []
-        for idx in idx_chunk:
-            rec = rows[idx]
+
+        # 收集每个失败案例的证据并构建提示词
+        for rec in batch:
             evidence = {
                 "task_id": rec.get("task_id"),
                 "sample_index": rec.get("sample_index"),
@@ -443,27 +367,23 @@ def main():
                 "query": rec.get("query","") or rec.get("completion",""),
             }
             evidences.append(evidence)
-            prompts.append(build_judge_prompt_generic(args.task, evidence))
+            prompts.append(build_judge_prompt_generic(task_type, evidence))
+        
+        # 批量获取模型分析结果
+        batch_responses = llm.batch(prompts)
 
-        try:
-            batch_json = _call_llm_batch(tok, model, prompts, max_new_tokens=args.max_new, temperature=args.temperature)
-            judge_cnt += len(idx_chunk)
-        except Exception as e:
-            print(f"[WARN] 批量 LLM 生成失败：{e}", flush=True)
-            batch_json = ['{"stage":"other","reason":"LLM 批量生成异常","evidence":{}}' for _ in idx_chunk]
-            fail_cnt += len(idx_chunk)
+        # 处理每个失败案例的分析结果
+        for i, rec in enumerate(batch):
+            model_json = batch_responses[i].content
 
-        for k, idx in enumerate(idx_chunk):
-            rec = rows[idx]
-            model_json = batch_json[k]
-
+            # 分析失败原因
             if not rec.get("judge"):
                 try:
-                    rec["judge"] = judge.analyze(evidences[k], model_result=model_json)
+                    rec["judge"] = judge.analyze(evidences[i], model_result=model_json)
                 except Exception as e:
                     rec["judge"] = {"stage": "other", "reason": f"LLMaJ 运行异常：{e}", "evidence": {}}
 
-            if not args.no_brief and not rec.get("brief_analysis"):
+            if not state.get('output_brief', False):
                 apx = rec.get("assert_parsed") or parse_assert_from_stdout(rec.get("stdout") or "")
                 try:
                     rec["brief_analysis"] = summarize_brief(
@@ -478,37 +398,35 @@ def main():
                             "expected": apx.get("expected"),
                             "actual": apx.get("actual"),
                         },
-                        llm_tok=tok,
-                        llm_model=model
+                        llm=llm
                     )
                     brief_cnt += 1
                 except Exception as e:
                     rec["brief_analysis"] = f"（短评生成失败：{e}）"
-
-            pbar.update(1)
-
-    pbar.close()
-    print(f" 判因完成：共 {total} 条，按任务首失败计 {len(fail_indices)} 条已处理；判因 {judge_cnt} 条，短评 {brief_cnt} 条，失败 {fail_cnt} 条。", flush=True)
-
+    
+    logger.info(f" 判因完成：共 {len(failed_results)} 条")
     ts = time.strftime("%Y%m%d_%H%M%S")
-    out_jsonl = Path(args.outdir) / f"oj_records_enriched_{ts}.jsonl"
-    _dump_jsonl(out_jsonl, rows)
-    print(f" 已写入增强版 OJ：{out_jsonl}")
-    print(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + ("" if args.no_brief else " + 中文短评"))
+    out_jsonl_path = Path(state['output_dir']) / f"oj_records_enriched_{ts}.jsonl"
+    with open(out_jsonl_path, "w", encoding="utf-8") as f:
+        for r in failed_results:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    state['analyze_output_result_path'] = str(out_jsonl_path.resolve())
+    logger.info(f" 已写入增强版 OJ：{out_jsonl_path}")
+    logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + ("" if state.get('output_brief', False) else " + 中文短评"))
 
     # ===== 基于刚写出的 enriched oj_records 生成 summary_*.json / summary_*.txt =====
     try:
         
-        summary_json_path, summary_txt_path = _build_and_write_summary(rows, Path(args.outdir), ts)
+        summary_json_path, summary_txt_path = _build_and_write_summary(failed_results, Path(state['output_dir']), ts)
 
         with open(summary_json_path, "r", encoding="utf-8") as f:
             sdata = json.load(f)
-        sdata["results_file"] = str(out_jsonl.resolve())
+        sdata["results_file"] = str(out_jsonl_path.resolve())
         with open(summary_json_path, "w", encoding="utf-8") as f:
             json.dump(sdata, f, ensure_ascii=False, indent=2)
-        print(f" 已在 {args.outdir} 生成 summary，路径：{summary_json_path} / {summary_txt_path}", flush=True)
+        state['analyze_output_summary_path'] = summary_json_path
+        logger.info(f" 已在 {state['output_dir']} 生成 summary，路径：{summary_json_path} / {summary_txt_path}")
     except Exception as e:
-        print(f"[WARN] 生成 summary 时发生错误：{e}", flush=True)
-
-if __name__ == "__main__":
-    main()
+        logger.warning(f"[WARN] 生成 summary 时发生错误：{e}")
+    
+    return state

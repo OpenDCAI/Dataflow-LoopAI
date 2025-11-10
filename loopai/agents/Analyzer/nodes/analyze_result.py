@@ -1,72 +1,47 @@
-# -*- coding: utf-8 -*-
-# model_eval_llm.py — 基于 summary +（可选）oj_records，调用本地大模型生成“模型表现评估”与“数据侧建议”
-
-import json, os, argparse, re
+import os
+import json
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-# ======== 1) 本地大模型配置 ========
-MODEL_PATH = os.environ.get("LLM_PATH", "/jizhicfs/hymiezhao/models/Qwen2.5-32B-Instruct")
+from langchain_openai import ChatOpenAI
 
-from transformers import AutoTokenizer, AutoModelForCausalLM
-import torch
+from loopai.states.base import LoopAIState
+from loopai.logger import get_logger
 
-def load_llm(model_path: str = MODEL_PATH):
+logger = get_logger()
 
-    assert torch.cuda.is_available(), "未检测到 CUDA，请检查驱动/环境或设置 CUDA_VISIBLE_DEVICES"
-
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-
-    tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        device_map={"": 0},         
-        torch_dtype=torch.float16,  
-        trust_remote_code=True
-    )
-    model.eval()
-    return tok, model
-
-@torch.no_grad()
-def call_llm(tok, model, prompt: str, max_new_tokens: int = 640, temperature: float = 0.0) -> str:
-    """纯文本 prompt -> 纯文本输出。默认不采样（稳定可复现）。"""
-    device = next(model.parameters()).device  
-    inputs = tok(prompt, return_tensors="pt").to(device)
-    out = model.generate(
-        **inputs,
-        max_new_tokens=max_new_tokens,
+def init_model(model_path: str, base_url: str, api_key: str, temperature: float = 0, top_p: float = 0.95):
+    """
+    初始化模型
+    Args:
+        - model_path: 模型路径
+        - base_url: 模型基础 URL
+        - api_key: 模型 API 密钥
+        - temperature: 温度参数，默认 0
+        - top_p: Top-p 参数，默认 0.95
+    Returns:
+        初始化后的模型实例
+    """
+    model = ChatOpenAI(
+        model=model_path,
+        api_key=api_key,
+        base_url=base_url,
         temperature=temperature,
-        do_sample=(temperature > 0),
-        use_cache=True,
-        eos_token_id=tok.eos_token_id,
-        pad_token_id=tok.eos_token_id
+        top_p=top_p
     )
-    text = tok.decode(out[0], skip_special_tokens=True)
-    if text.startswith(prompt):
-        text = text[len(prompt):]
-    return text.strip()
-
-# ======== 2) 读取 summary 与oj_records ========
-def load_json(path: str) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def load_jsonl(path: str, max_lines: Optional[int] = None) -> List[Dict[str, Any]]:
-    out = []
-    with open(path, "r", encoding="utf-8") as f:
-        for i, line in enumerate(f):
-            if max_lines and i >= max_lines:
-                break
-            try:
-                out.append(json.loads(line))
-            except Exception:
-                continue
-    return out
+    return model
 
 def pick_failure_examples(oj_records: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
-    """抽取少量失败样例（含断言解析/题干/completion），用于给 LLM 当证据。"""
+    """
+    抽取少量失败样例（含断言解析/题干/completion），用于给 LLM 当证据。
+    Args:
+        oj_records: 评测记录列表
+        top_k: 抽取失败样例的数量
+    
+    Returns:
+        失败样例列表，每个样例包含 task_id, entry_point, assert_parsed, problem_head, completion_head, stdout_tail, stage 字段
+    """
     fails = [r for r in oj_records if not r.get("passed")]
 
     def stage_rank(rec):
@@ -86,9 +61,17 @@ def pick_failure_examples(oj_records: List[Dict[str, Any]], top_k: int = 5) -> L
         })
     return picked
 
-# ======== 3) 构造 Prompt ========
 def build_prompt_for_llm(summary: Dict[str, Any],
                          failure_snippets: List[Dict[str, Any]]) -> str:
+    """
+    构建 LLM 输入的 prompt，包含评测总体统计与失败样例。
+    Args:
+        summary: 评测总体统计信息
+        failure_snippets: 失败样例列表
+    
+    Returns:
+        构建后的 prompt 字符串
+    """
     total = summary.get("total_samples", 0)
     passed = summary.get("passed_samples", 0)
     pass_rate = summary.get("pass_rate_samples", 0)
@@ -141,8 +124,15 @@ def build_prompt_for_llm(summary: Dict[str, Any],
 """
     return sys + "\n\n" + usr.strip()
 
-# ======== 4) 规则摘要（与 LLM 结果合并输出） ========
 def rule_based_brief(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    基于规则的摘要，包含评测总体统计与主要失败类型。
+    Args:
+        summary: 评测总体统计信息
+    
+    Returns:
+        包含评测总体统计与主要失败类型的字典
+    """
     total = summary.get("total_samples", 0)
     passed = summary.get("passed_samples", 0)
     pr = summary.get("pass_rate_samples", 0)
@@ -158,48 +148,49 @@ def rule_based_brief(summary: Dict[str, Any]) -> Dict[str, Any]:
         "dominant_failure": top,
     }
 
-# ======== 5) 主流程 ========
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("summary_path", help="summary_*.json 路径")
-    ap.add_argument("--oj_path", help="oj_records_*.jsonl 路径，可选", default=None)
-    ap.add_argument("--topk", type=int, default=5, help="抽取失败样例条数")
-    ap.add_argument("--out_json", default="model_eval_llm.json")
-    ap.add_argument("--out_txt",  default="model_eval_llm.txt")
-    ap.add_argument("--temp", type=float, default=0.0, help="LLM 温度（0 为确定性）")
-    args = ap.parse_args()
+def analyze_result_node(state: LoopAIState):
+    """
+    分析评测结果，生成 summary 并写入文件
+    """
+    summary_path = state['analyze_output_summary_path']
+    with open(summary_path, "r", encoding="utf-8") as f:
+        summary = json.load(f)
+    
+    result_path = state['analyze_output_result_path']
+    with open(result_path, "r", encoding="utf-8") as f:
+        results = [json.loads(line) for line in f.readlines()]
+    
+    failures = pick_failure_examples(results, state['analyze_sampling_top_k'])
 
-    if not Path(args.summary_path).is_file():
-        raise FileNotFoundError(f"找不到 summary: {args.summary_path}")
-    summary = load_json(args.summary_path)
+    llm = init_model(
+        model_path=state['analyze_model_path'],
+        base_url=state['analyze_base_url'],
+        api_key=state['analyze_api_key'],
+        temperature=state['analyze_temperature'],
+        top_p=state['analyze_top_p']
+    )
 
-    failures = []
-    if args.oj_path and Path(args.oj_path).is_file():
-        recs = load_jsonl(args.oj_path, max_lines=20000)  
-        failures = pick_failure_examples(recs, top_k=args.topk)
-
-    tok, model = load_llm(MODEL_PATH)
     prompt = build_prompt_for_llm(summary, failures)
-    llm_text = call_llm(tok, model, prompt, max_new_tokens=800, temperature=args.temp)
+    response = llm.batch([prompt])[0].content
 
     rb = rule_based_brief(summary)
 
     out = {
         "meta": {
-            "summary_file": str(Path(args.summary_path).resolve()),
-            "oj_file": str(Path(args.oj_path).resolve()) if args.oj_path else None,
-            "model_path": MODEL_PATH,
+            "summary_file": str(Path(state['analyze_output_summary_path']).resolve()),
+            "oj_file": str(Path(state['analyze_output_result_path']).resolve()) if state['analyze_output_result_path'] else None
         },
         "rule_brief": rb,
-        "llm_review": llm_text
+        "llm_review": response
     }
 
-    Path(args.out_json).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-    Path(args.out_txt).write_text(llm_text, encoding="utf-8")
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    state['analyze_output_report_json_path'] = os.path.join(state['output_dir'], f"report_{ts}.json")
+    state['analyze_output_report_text_path'] = os.path.join(state['output_dir'], f"report_{ts}.txt")
+    Path(state['analyze_output_report_json_path']).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    Path(state['analyze_output_report_text_path']).write_text(response, encoding="utf-8")
 
-    print(f"已写入：{args.out_json}\n已写入：{args.out_txt}")
-    print("\n—— LLM 摘要（预览）——\n")
-    print(llm_text)
-
-if __name__ == "__main__":
-    main()
+    logger.info(f"已写入：{state['analyze_output_report_json_path']}\n已写入：{state['analyze_output_report_text_path']}")
+    logger.info("\n—— LLM 摘要（预览）——\n")
+    logger.info(response)
+    return state
