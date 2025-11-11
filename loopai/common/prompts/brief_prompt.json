@@ -1,0 +1,3 @@
+{
+  "v1": "请根据下述信息给出 1~3 句中文短评，格式：\n【结论】：…；【原因要点】：…；【建议】：…。\n\n【题目片段】\n{prompt_head}\n\n【被测生成代码片段】\n{completion_head}\n\n【测试代码片段】\n{test_head}\n\n【OJ输出-stdout(尾)】\n{stdout_tail}\n\n【OJ输出-stderr(头)】\n{stderr_head}\n\n【已解析关键信息(JSON)】\n{meta_json}\n"
+}
