@@ -26,6 +26,15 @@ def init_model(state: LoopAIState) -> VLLMChat:
     )
 
 def pick_failure_examples(oj_records: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
+    """
+    抽取少量失败样例（含断言解析/题干/completion），用于给 LLM 当证据。
+    Args:
+        oj_records: 评测记录列表
+        top_k: 抽取失败样例的数量
+    
+    Returns:
+        失败样例列表，每个样例包含 task_id, entry_point, assert_parsed, problem_head, completion_head, stdout_tail, stage 字段
+    """
     fails = [r for r in oj_records if not r.get("passed")]
 
     def stage_rank(rec):
@@ -47,6 +56,15 @@ def pick_failure_examples(oj_records: List[Dict[str, Any]], top_k: int = 5) -> L
     return picked
 
 def build_prompt_for_llm(summary: Dict[str, Any], failure_snippets: List[Dict[str, Any]]) -> str:
+     """
+    构建 LLM 输入的 prompt，包含评测总体统计与失败样例。
+    Args:
+        summary: 评测总体统计信息
+        failure_snippets: 失败样例列表
+    
+    Returns:
+        构建后的 prompt 字符串
+    """
     loader = PromptLoader()
     total = summary.get("total_samples", 0)
     passed = summary.get("passed_samples", 0)
@@ -84,6 +102,14 @@ def build_prompt_for_llm(summary: Dict[str, Any], failure_snippets: List[Dict[st
     )
 
 def rule_based_brief(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    基于规则的摘要，包含评测总体统计与主要失败类型。
+    Args:
+        summary: 评测总体统计信息
+    
+    Returns:
+        包含评测总体统计与主要失败类型的字典
+    """
     total = summary.get("total_samples", 0)
     passed = summary.get("passed_samples", 0)
     pr = summary.get("pass_rate_samples", 0.0)
@@ -100,6 +126,9 @@ def rule_based_brief(summary: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 def analyze_result_node(state: LoopAIState):
+    """
+    分析评测结果，生成 summary 并写入文件
+    """
     summary_path = state['analyze_output_summary_path']
     with open(summary_path, "r", encoding="utf-8") as f:
         summary = json.load(f)

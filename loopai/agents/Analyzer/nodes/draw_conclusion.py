@@ -16,7 +16,15 @@ logger = get_logger()
 
 def init_model(state: LoopAIState) -> VLLMChat:
     """
-    使用标准 vLLM(OpenAI 兼容) 客户端
+    初始化模型
+    Args:
+        - model_path: 模型路径
+        - base_url: 模型基础 URL
+        - api_key: 模型 API 密钥
+        - temperature: 温度参数，默认 0
+        - top_p: Top-p 参数，默认 0.95
+    Returns:
+        初始化后的模型实例
     """
     return VLLMChat(
         model=state['analyze_model_path'],
@@ -30,6 +38,13 @@ def init_model(state: LoopAIState) -> VLLMChat:
     )
 
 def try_read_oj_records(path_from_summary: str):
+    """
+    尝试读取 OJ 记录文件
+    Args:
+        path_from_summary: 从 summary 文件中读取的 OJ 记录文件路径
+    Returns:
+        评测记录列表，每个评测记录包含 task_id, entry_point, assert_parsed, problem_prompt, completion, stdout, passed, judge 字段
+    """
     if not path_from_summary:
         return [], "summary.results_file 为空"
     oj_path = path_from_summary
@@ -57,6 +72,13 @@ def try_read_oj_records(path_from_summary: str):
         return [], f"读取 OJ 记录失败：{e}"
 
 def enhance_stats_with_oj(records):
+     """
+    从 OJ 评测记录中提取统计信息
+    Args:
+        records: OJ 评测记录列表
+    Returns:
+        包含标签统计、IO 断言解析统计、常见失败 IO 片段统计的字典
+    """
     tags_counter = Counter()
     io_ok = 0
     io_total = 0
@@ -101,6 +123,14 @@ def enhance_stats_with_oj(records):
     return extras
 
 def make_final_json(summary: dict, oj_records: list):
+    """
+    构建最终的 JSON 报告输出
+    Args:
+        summary: 评测摘要
+        oj_records: OJ 评测记录列表
+    Returns:
+        运行时间戳，最终 JSON 输出
+    """
     run_ts = summary.get("run_ts") or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     total = int(summary.get("total_samples", 0) or 0)
     passed = int(summary.get("passed_samples", 0) or 0)
@@ -146,13 +176,11 @@ def make_final_json(summary: dict, oj_records: list):
 
 def build_suggestion_prompt(final_json: dict) -> str:
     """
-    使用 common/prompts/suggestion_prompt.json
-    需要包含：
-    {
-      "suggest": {
-        "suggest_user": "……这里是一段包含 {total} {passed} {top_err} {by_stage} 的模板……"
-      }
-    }
+    构建改进建议的提示文本
+    Args:
+        final_json: 最终 JSON 输出
+    Returns:
+        改进建议的提示文本
     """
     loader = PromptLoader()
     t = final_json["totals"]["total_samples"]
@@ -164,7 +192,23 @@ def build_suggestion_prompt(final_json: dict) -> str:
     return tpl.format(total=t, passed=p, top_err=top_err, by_stage=by_stage)
 
 def make_human_text(final_json: dict) -> str:
+     """
+    生成人类可读的结论文本
+    Args:
+        final_json: 最终 JSON 输出
+    Returns:
+        人类可读的结论文本
+    """
     def pct(x, y, digits=2):
+        """
+        计算百分比
+        Args:
+            x: 分子
+            y: 分母
+            digits: 保留小数位数，默认 2
+        Returns:
+            百分比字符串，如 "33.33%"
+        """
         if not y:
             return "0.00%"
         return f"{(x / y) * 100:.{digits}f}%"
@@ -194,6 +238,9 @@ def make_human_text(final_json: dict) -> str:
     return "\n".join(lines)
 
 def draw_conclusion_node(state: LoopAIState):
+    """
+    绘制结论，生成 summary 并写入文件
+    """
     outdir = state['output_dir']
     summary_path = state['analyze_output_summary_path']
     with open(summary_path, "r", encoding="utf-8") as f:

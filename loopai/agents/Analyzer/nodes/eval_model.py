@@ -16,6 +16,17 @@ from loopai.logger import get_logger
 logger = get_logger()
 
 def init_model(state: LoopAIState) -> VLLMChat:
+    """
+    初始化模型
+    Args:
+        - model_path: 模型路径
+        - base_url: 模型基础 URL
+        - api_key: 模型 API 密钥
+        - temperature: 温度参数，默认 0
+        - top_p: Top-p 参数，默认 0.95
+    Returns:
+        初始化后的模型实例
+    """
     return VLLMChat(
         model=state['analyze_model_path'],
         base_url=state['analyze_base_url'],
@@ -27,6 +38,15 @@ def init_model(state: LoopAIState) -> VLLMChat:
     )
 
 def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
+    """
+    判因 schema 的通用 prompt（code/sql 均可用）
+    你可以随时替换这段为你自己的 prompt；要求模型返回严格 JSON。
+    Args:
+        - task: 任务类型（code/sql）
+        - evidence: 判因 schema 字典
+    Returns:
+        完整 prompt
+    """
     loader = PromptLoader()
     def trunc(s, n): s = s or ""; return s if len(s) <= n else s[:n] + "\n...[truncated]"
     ev = {
@@ -43,6 +63,13 @@ def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
 
 
 def parse_assert_from_stdout(stdout: str) -> Dict[str, Any]:
+    """
+    失败断言解析
+    Args:
+        - stdout: 模型输出的标准输出
+    Returns:
+        解析后的断言信息字典，包含 input_expr, expected, actual 三键
+    """
     actual = expected = input_expr = None
     s = stdout or ""
     m = re.search(r"^E\s+assert\s+(.+?)\s*==\s*(.+?)\s*$", s, flags=re.M)
@@ -61,6 +88,18 @@ def parse_assert_from_stdout(stdout: str) -> Dict[str, Any]:
 
 def summarize_brief(task_id: str, prompt_head: str, completion_head: str, test_head: str,
                     oj: Dict[str, str], llm: VLLMChat) -> str:
+    """
+    总结一句话中文短评
+    Args:
+        - task_id: 任务 ID
+        - prompt_head: 题目片段
+        - completion_head: 被测生成代码片段
+        - test_head: 测试代码片段
+        - oj: OJ 输出字典，包含 stdout, stderr, input_expr, expected, actual 等键
+        - llm: 初始化后的模型实例
+    Returns:
+        一句话中文短评
+    """
     loader = PromptLoader()
     user_block = loader("brief", "brief_user").format(
         prompt_head=(prompt_head or "")[:600],
@@ -82,6 +121,15 @@ def summarize_brief(task_id: str, prompt_head: str, completion_head: str, test_h
 
 
 def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: str):
+    """
+    根据 rows 生成 summary 的函数
+    Args:
+        - rows: 评测结果行列表
+        - outdir: 输出目录
+        - run_ts: 运行时间戳
+    Returns:
+        生成的 summary JSON 路径和 TXT 路径
+    """
     stage_counter = Counter()
     tag_counter = Counter()
     passed_samples = 0
@@ -199,6 +247,37 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
     return str(summary_json), str(summary_txt)
 
 def eval_model_node(state: LoopAIState):
+    """
+    模型评测分析节点函数
+    该函数处理模型评测结果，分析失败案例原因，并生成增强版评测记录和总结报告
+    
+    Args:
+        state: LoopAIState对象，包含以下关键参数：
+            - analyze_task_type: 任务类型
+            - eval_result_path: 评测结果文件路径
+            - analyze_batch_size: 批处理大小，默认为20
+            - analyze_model_path: 分析模型路径
+            - analyze_base_url: 模型基础URL
+            - analyze_api_key: 模型API密钥
+            - analyze_temperature: 模型温度参数
+            - analyze_top_p: 模型top_p参数
+            - output_dir: 输出目录路径
+            - output_brief: 是否输出中文短评，默认False
+    
+    Returns:
+        更新后的LoopAIState对象，包含以下新增字段：
+            - analyze_output_result_path: 增强版评测记录文件路径
+            - analyze_output_summary_path: 评测摘要JSON文件路径
+    
+    处理流程：
+        1. 初始化LLMJudge和分析模型
+        2. 读取评测结果并过滤失败案例
+        3. 批量处理失败案例，收集证据并构建提示词
+        4. 使用模型分析失败原因
+        5. 可选地生成中文短评
+        6. 输出增强版评测记录
+        7. 生成评测摘要报告
+    """
     task_type = state['analyze_task_type']
     judge = LLMJudge(task=task_type)
 
