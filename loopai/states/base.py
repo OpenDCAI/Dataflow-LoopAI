@@ -43,7 +43,17 @@ class LoopAIState(MessagesState):
     judge_txt: str
     final_report_json: str
     final_report_txt: str
-    #
+    
+    # trainer state attributes
+    train_dataset_path: str  # to defined the path of training dataset (json/jsonl format)
+    train_task_description: str  # to defined the task description for training
+    train_config_template_path: str  # to defined the path of llamafactory config template
+    train_config_output_path: str  # to defined the path of generated training config
+    train_output_dir: str  # to defined the output directory for training
+    train_model_name: str  # to defined the base model name for training
+    train_use_swanlab: bool = True  # whether to use swanlab for monitoring
+    train_swanlab_project: str  # to defined the swanlab project name
+    
     update_model_path: str  # to defined the save path of the post-trained model
 
     current: str  # to defined the current task, e.g. train, evaluate, obtain, naive
