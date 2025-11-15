@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Type
 from langgraph.graph import StateGraph
 from langgraph.types import interrupt, Command
 
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.agents import BaseAgent
 from loopai.agents.Configer import ConfigerAgent
 
@@ -30,37 +30,38 @@ class StarterAgent(BaseAgent):
         return "default_prompt"
 
     @staticmethod
+    @BaseAgent.set_current
     def evaluate_node(state: LoopAIState) -> LoopAIState:
         """Evaluate the model"""
-        state["current"] = "evaluate"
         logger.info("Exec: Evaluate the model, next_to: query_node")
         return state
 
     @staticmethod
+    @BaseAgent.set_current
     def train_node(state: LoopAIState) -> LoopAIState:
         """Train the model"""
-        state["current"] = "train"
         logger.info("Exec: Train the model, next_to: query_node")
         return state
 
     @staticmethod
+    @BaseAgent.set_current
     def obtain_node(state: LoopAIState) -> LoopAIState:
         """Obtain the data"""
-        state["current"] = "obtain"
         logger.info("Exec: Obtain the data, next_to: query_node")
         return state
 
     @staticmethod
+    @BaseAgent.set_current
     def query_node(state: LoopAIState) -> LoopAIState:
         """Chat with the user"""
         value = interrupt('input the human query')
-        state['current'] = 'query'
         logger.info(f"Exec: Query node")
         return {
             'messages': [{'role': 'user', 'content': value}]
         }
 
     @staticmethod
+    @BaseAgent.set_current
     def feedback_node(state: LoopAIState) -> LoopAIState:
         """Get the last ToolMessage and decide the next node, if the tool is not called, go to query_node"""
         messages = state["messages"]
@@ -80,9 +81,9 @@ class StarterAgent(BaseAgent):
         return state
 
     @staticmethod
+    @BaseAgent.set_current
     def end_node(state: LoopAIState) -> LoopAIState:
         """End the conversation"""
-        state["current"] = "end"
         return state
 
     @staticmethod
@@ -90,7 +91,11 @@ class StarterAgent(BaseAgent):
         return state["next_to"]
 
     def init_graph(self, **kwargs):
-        config_node = ConfigerAgent(checkpointer=self.checkpointer, store=self.store)(**kwargs)
+        config_node = ConfigerAgent(model_name=self.model_name,
+                                    base_url=self.base_url,
+                                    api_key=self.api_key,
+                                    checkpointer=self.checkpointer,
+                                    store=self.store)(**kwargs)
         builder = StateGraph(LoopAIState)
         builder.add_node("query_node", self.query_node)
         builder.add_node("llm_node", self.llm_node)
@@ -116,13 +121,13 @@ class StarterAgent(BaseAgent):
 
         self.graph = builder.compile(
             checkpointer=self.checkpointer, store=self.store, **kwargs)
-    
-    def start(self, **invoke_args):
+
+    def start(self, default_state={}, **invoke_args):
         """
         start the graph
         """
-        self.graph.invoke({}, **invoke_args)
-    
+        self.graph.invoke(default_state, **invoke_args)
+
     def get_state(self, config: dict):
         """
         get the state of the graph
@@ -136,7 +141,7 @@ class StarterAgent(BaseAgent):
         for res in self.graph.stream(
             Command(resume=input),
             subgraphs=True,
-            stream_mode=["updates", "messages"],
+            stream_mode=["updates", "messages", "custom"],
             **invoke_args
         ):
             namespace_item, stream_mode, chunk_item = res
@@ -144,6 +149,12 @@ class StarterAgent(BaseAgent):
             if stream_mode == 'messages':
                 msg_chunk = chunk_item[0]
                 self.agent_event.set_stream_message(msg_chunk)
+            elif stream_mode == 'custom':
+                if len(namespace_item) > 0:
+                    key = namespace_item[0]
+                else:
+                    key = '__starter__'
+                self.agent_event.set_custom_info(key, chunk_item)
             elif stream_mode == 'updates':
                 if len(namespace_item) > 0:
                     continue
@@ -152,6 +163,7 @@ class StarterAgent(BaseAgent):
                         continue
                     self.agent_event.node = key
                     self.agent_event.set_path(key)
-                    self.agent_event.update(self.get_state(invoke_args['config']).values)
+                    self.agent_event.update(
+                        self.get_state(invoke_args['config']).values)
                     self.agent_event.clear_stream_message()
             yield res
