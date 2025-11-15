@@ -2,3 +2,4 @@ __pycache__/
 api_key.txt
 data/
 output/
+loopai.egg-info/

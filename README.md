@@ -90,7 +90,7 @@ Dataflow-LoopAI/
 ## 📦 安装
 
 ```bash
-pip install -U langgraph colorlog rich langchain
+pip install -e .
 ```
 
 
