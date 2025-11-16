@@ -1,0 +1,28 @@
+starter:
+  model_name: "deepseek-chat"
+  base_url: "https://api.deepseek.com"
+  api_key_path: "./api_key.txt"
+
+default_states:
+  eval_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
+  eval_base_url: "http://127.0.0.1:8911/v1"
+  eval_api_key: "EMPTY"
+  eval_temperature: 0
+  eval_top_p: 0.95
+  eval_test_case_path: "./outputs/test.json"
+  eval_problem_path: "./data/human-eval-v2-20210705.jsonl"
+  eval_result_path: "./outputs/result.json"
+  eval_batch_size: 10
+
+  analyze_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
+  analyze_base_url: "http://127.0.0.1:8911/v1"
+  analyze_api_key: "EMPTY"
+  analyze_temperature: 0
+  analyze_top_p: 0.95
+
+  output_dir: "./outputs"
+  output_brief: true
+  analyze_task_type: "code"
+  analyze_sampling_top_k: 5
+  output_suggestion: true
+  analyze_batch_size: 20

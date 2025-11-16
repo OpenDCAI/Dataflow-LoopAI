@@ -1,4 +1,5 @@
 # %%
+from omegaconf import OmegaConf
 from loopai.agents import StarterAgent
 from loopai.memory import checkpointer, store
 from loopai.agents.Starter.tools.check_motivation import check_motivation
@@ -9,7 +10,9 @@ from rich.text import Text
 
 console = Console()
 
-with open('api_key.txt', 'r') as f:
+cfg = OmegaConf.load("./examples/config/starter.yaml")
+
+with open(cfg.starter.api_key_path, 'r') as f:
     api_key = f.read().strip()
 
 sg = StarterAgent(tools=[check_motivation],
@@ -23,7 +26,11 @@ sg.init_graph()
 
 # %%
 config = {"configurable": {"thread_id": "1"}}
-sg.start(config=config)
+merged_states = OmegaConf.merge(cfg.default_states, {
+    'eval_batch_size': 10,
+    'analyze_batch_size': 20,
+})
+sg.start(default_state=OmegaConf.to_container(merged_states, resolve=True), config=config)
 thread_states = sg.get_state(config)
 
 # %%

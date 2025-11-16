@@ -183,7 +183,9 @@ class StarterAgent(BaseAgent):
             self.agent_event.stream_mode = stream_mode
             if stream_mode == 'messages':
                 msg_chunk = chunk_item[0]
-                self.agent_event.set_stream_message(msg_chunk)
+                meta_data = chunk_item[1]
+                if 'tags' in meta_data and self.llm_tag in meta_data['tags']:
+                    self.agent_event.set_stream_message(msg_chunk)
             elif stream_mode == 'custom':
                 if len(namespace_item) > 0:
                     key = namespace_item[0]

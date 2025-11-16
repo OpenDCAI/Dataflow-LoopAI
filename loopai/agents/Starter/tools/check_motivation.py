@@ -6,10 +6,9 @@ def check_motivation(motivation: str) -> str:
     * analyze the model (analyze),
     * obtain data (obtain),
     * config params of model and data (config)
-    * simply have a conversation (naive)
     * finish the conversation (finish).
     
-    **Args**: The `motivation` should only be 'train', 'judge', 'analyze', 'obtain', 'config', 'naive' or 'finish'.
+    **Args**: The `motivation` should only be 'train', 'judge', 'analyze', 'obtain', 'config', or 'finish'.
     """
     next_to = 'query_node'
     if motivation == 'train':
