@@ -2,11 +2,14 @@ import json
 from typing import Any, Dict, List, Optional, Type
 
 from langgraph.graph import StateGraph
+from langgraph.runtime import Runtime
 from langgraph.types import interrupt, Command
 
-from loopai.schema.states import LoopAIState
+from loopai.schema.states import LoopAIState, RuntimeContext
 from loopai.agents import BaseAgent
 from loopai.agents.Configer import ConfigerAgent
+from loopai.agents.Judger import JudgerAgent
+from loopai.agents.Analyzer import AnalyzerAgent
 
 from loopai.logger import get_logger
 
@@ -38,9 +41,10 @@ class StarterAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
-    def train_node(state: LoopAIState) -> LoopAIState:
+    def train_node(state: LoopAIState, runtime: Runtime[RuntimeContext]) -> LoopAIState:
         """Train the model"""
-        logger.info("Exec: Train the model, next_to: query_node")
+        logger.info(
+            f"Exec: Train the model, next_to: query_node, exception_node: {runtime.context['exception_navigate']}, parent: {Command.PARENT}")
         return state
 
     @staticmethod
@@ -54,10 +58,14 @@ class StarterAgent(BaseAgent):
     @BaseAgent.set_current
     def query_node(state: LoopAIState) -> LoopAIState:
         """Chat with the user"""
-        value = interrupt('input the human query')
+        if "automated_query" in state and state["automated_query"]:
+            value = state["automated_query"]
+        else:
+            value = interrupt('input the human query')
         logger.info(f"Exec: Query node")
         return {
-            'messages': [{'role': 'user', 'content': value}]
+            'messages': [{'role': 'user', 'content': value}],
+            'automated_query': ''
         }
 
     @staticmethod
@@ -73,11 +81,23 @@ class StarterAgent(BaseAgent):
         if hasattr(maybe_tool_message, 'tool_call_id'):
             tool_res = json.loads(maybe_tool_message.content)
             state["next_to"] = tool_res["next_to"]
-            last_message.content = '[cmd]根据用户指令执行: ' + tool_res["motivation"]
+            last_message.content = '<cmd>根据用户指令执行: ' + tool_res["motivation"] + '</cmd>'
         else:
             state["next_to"] = "query_node"
         logger.info(f'Messages: {state["messages"]}')
         logger.info(f"Exec: Feedback node, next_to: {state['next_to']}")
+        return state
+    
+    @staticmethod
+    @BaseAgent.set_current
+    def route_node(state: LoopAIState) -> LoopAIState:
+        """Route the model"""
+        if "exception" in state and state["exception"] == 'ConfigerError':
+            logger.info(f'Exception: {state["exception"]}')
+            state['exception'] = ""
+            state["next_to"] = "config_node"
+        else:
+            state["next_to"] = "query_node"
         return state
 
     @staticmethod
@@ -96,14 +116,21 @@ class StarterAgent(BaseAgent):
                                     api_key=self.api_key,
                                     checkpointer=self.checkpointer,
                                     store=self.store)(**kwargs)
-        builder = StateGraph(LoopAIState)
+        judge_node = JudgerAgent(checkpointer=self.checkpointer,
+                                    store=self.store)(**kwargs)
+        analyze_node = AnalyzerAgent(checkpointer=self.checkpointer,
+                                    store=self.store)(**kwargs)
+        builder = StateGraph(LoopAIState, context_schema=RuntimeContext)
         builder.add_node("query_node", self.query_node)
         builder.add_node("llm_node", self.llm_node)
         builder.add_node("feedback_node", self.feedback_node)
+        builder.add_node("route_node", self.route_node)
         builder.add_node("train_node", self.train_node)
         builder.add_node("obtain_node", self.obtain_node)
         builder.add_node("evaluate_node", self.evaluate_node)
         builder.add_node("config_node", config_node)
+        builder.add_node("judge_node", judge_node)
+        builder.add_node("analyze_node", analyze_node)
         builder.add_node("end_node", self.end_node)
 
         builder.set_entry_point("query_node")
@@ -115,8 +142,13 @@ class StarterAgent(BaseAgent):
         builder.add_edge('train_node', 'query_node')
         builder.add_edge('obtain_node', 'query_node')
         builder.add_edge('config_node', 'query_node')
+        builder.add_edge('judge_node', 'route_node')
+        builder.add_edge('analyze_node', 'route_node')
         builder.add_conditional_edges(
             "feedback_node",
+            self.conditional_edge)
+        builder.add_conditional_edges(
+            "route_node",
             self.conditional_edge)
 
         self.graph = builder.compile(
@@ -142,6 +174,9 @@ class StarterAgent(BaseAgent):
             Command(resume=input),
             subgraphs=True,
             stream_mode=["updates", "messages", "custom"],
+            context={
+                "exception_navigate": "route_node"
+            },
             **invoke_args
         ):
             namespace_item, stream_mode, chunk_item = res

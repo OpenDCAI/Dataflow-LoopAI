@@ -6,7 +6,6 @@ from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState
-from loopai.schema.events import StreamEvent
 from loopai.agents import BaseAgent
 
 from loopai.logger import get_logger
@@ -49,19 +48,13 @@ class ConfigerAgent(BaseAgent):
     @BaseAgent.set_current
     def graph_statement_node(state: LoopAIState):
         """
-        配置器图的声明节点，作为状态图的入口点。
         
-        此函数负责初始化配置过程，确保状态中包含必要的错误信息字段，
-        并使用流写入器输出当前状态和配置器错误信息。
-        
-        Args:
-            state: LoopAIState 类型的状态对象，包含当前工作流程的状态信息
-            
-        Returns:
-            LoopAIState: 更新后的状态对象，确保包含 'configer_error' 字段
         """
         if 'configer_error' not in state:
             state['configer_error'] = 'None'
+        writer = get_stream_writer()
+        writer({'current': state['current'],
+               'configer_error': state['configer_error']})
         return state
 
     @staticmethod
@@ -70,7 +63,7 @@ class ConfigerAgent(BaseAgent):
         """
         update the config node
         """
-        not_allow_config_keys = ["task_id", "current", "next_to", "configer_error", "configer_statement", "eval_result_path", "analyze_output_result_path", "analyze_output_summary_path", "analyze_output_report_json_path", "analyze_output_report_text_path", "analyze_output_suggestion_path"]
+        not_allow_config_keys = ["task_id", "current", "next_to", "automated_query", "exception", "configer_error", "configer_statement", "eval_result_path", "analyze_output_result_path", "analyze_output_summary_path", "analyze_output_report_json_path", "analyze_output_report_text_path", "analyze_output_suggestion_path"]
         allow_config_keys = [
             key for key in LoopAIState.__annotations__ if key not in not_allow_config_keys]
         value = interrupt(
@@ -85,10 +78,6 @@ class ConfigerAgent(BaseAgent):
         for key in value:
             if key in allow_config_keys:
                 state[key] = value[key]
-        
-        writer = get_stream_writer()
-        writer(StreamEvent(current=state['current'],
-               message=state['configer_error']).json())
 
         return state
 

@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, TypedDict
+from functools import wraps
 
 from langgraph.prebuilt import create_react_agent
 from langchain_openai import ChatOpenAI
@@ -76,9 +77,11 @@ class BaseAgent(ABC):
 
     @staticmethod
     def set_current(func):
-        def wrapper(state: Dict, *args, **kwargs):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            state = args[0]
             state['current'] = func.__qualname__
-            return func(state, *args, **kwargs)
+            return func(*args, **kwargs)
         return wrapper
     
     def create_llm_node(self):
