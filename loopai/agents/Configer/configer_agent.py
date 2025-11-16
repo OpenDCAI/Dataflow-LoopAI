@@ -7,6 +7,7 @@ from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState
 from loopai.agents import BaseAgent
+from loopai.schema.events import StreamEvent
 
 from loopai.logger import get_logger
 
@@ -53,8 +54,7 @@ class ConfigerAgent(BaseAgent):
         if 'configer_error' not in state:
             state['configer_error'] = 'None'
         writer = get_stream_writer()
-        writer({'current': state['current'],
-               'configer_error': state['configer_error']})
+        writer(StreamEvent(current=state['current'], data={'configer_error': state['configer_error']}).json())
         return state
 
     @staticmethod

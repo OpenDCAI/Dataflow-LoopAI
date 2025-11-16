@@ -301,3 +301,32 @@ assistant_prompt.json
 * ✅ `custom` —— 用户自定义事件
 
 这些事件使系统具备 **可观测性（observability）**，便于调试、可视化与日志分析。
+
+## 自定义Stream事件
+
+在子图中, 有些不必要存放在`LoopAIState`但仍需监测的参数信息可以通过触发自定义get_stream_writer来实现, 在LoopAI中我们通过`StreamEvent`来规范自定义事件的格式。这些字段将被记录在`AgentEvent`中, 并可以在可视化工具中展示。
+
+### 字段说明
+
+`StreamEvent`包含以下字段:
+
+* `current`: 当前节点名称
+* `progress`: 进度值（可选）
+* `progress_num`: 进度数值（可选）
+* `total`: 总进度（可选）
+* `message`: 消息内容（可选）
+* `data`: 自定义数据（可选）
+
+### 示例
+
+假设我们在`AnalyzerAgent`中监测`configer_error`字段, 当该字段发生变化时, 我们希望将其记录下来。
+
+在`AnalyzerAgent`中, 我们可以在`eval_model`节点中添加如下代码:
+
+```python
+from langgraph.config import get_stream_writer
+from loopai.schema.events import StreamEvent
+
+writer = get_stream_writer()
+writer(StreamEvent(current=state['current'], data={'configer_error': state['configer_error']}).json())
+```
