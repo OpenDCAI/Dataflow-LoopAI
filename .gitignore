@@ -4,3 +4,4 @@ data/
 output/
 outputs/
 loopai.egg-info/
+.vscode/
