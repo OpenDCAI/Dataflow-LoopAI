@@ -6,7 +6,7 @@ import os
 import platform
 import signal
 import tempfile
-from .customer_func import Customize_Funcs
+from .customer import Customize_Funcs
 from typing import Dict, Optional, List
 
 

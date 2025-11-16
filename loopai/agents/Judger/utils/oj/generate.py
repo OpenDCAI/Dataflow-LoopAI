@@ -1,70 +1,140 @@
+import os
+import re
 from tqdm import tqdm
-from langchain_openai import ChatOpenAI
+from transformers import AutoTokenizer, AutoModelForCausalLM
 import json
-from .data import read_problems, write_jsonl
-from .customer_func import Customize_Funcs
-
-
+import tempfile
+import subprocess
+import time
+from typing import List, Dict, Tuple, Iterable
+import gzip
+import data
+import loopai.agents.Judger.utils.oj.customer as customer
 def filter_code(completion: str) -> str:
     completion = completion.lstrip("\n")
     return completion.split("\n\n")[0]
 
-
-def init_model(model_path: str, base_url: str, api_key: str, temperature: float = 0, top_p: float = 0.95):
-    model = ChatOpenAI(
-        model=model_path,
-        api_key=api_key,
-        base_url=base_url,
-        temperature=temperature,
-        top_p=top_p
+def init_model_and_tokenizer(model_path: str):
+    print(f"正在加载模型：{model_path}")
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        torch_dtype="auto",
+        device_map="auto"
     )
-    return model
+    print(f"模型加载完成，设备：{model.device}")
+    return tokenizer, model
 
+def generate_one_completion(prompt: str, tokenizer, model, config) -> str:
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        truncation=True,
+        max_length=config['MAX_INPUT_LENGTH']
+    ).to(model.device)
+    
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=config['MAX_NEW_TOKENS'],
+        temperature=config['TEMPERATURE'],
+        top_p=config['TOP_P'],
+        do_sample=True,
+        pad_token_id=tokenizer.eos_token_id
+    )
+    
+    generated_code = tokenizer.decode(
+        outputs[0][len(inputs["input_ids"][0]):],
+        skip_special_tokens=True
+    )
+    return filter_code(generated_code)
 
-def generate_sample(model_path, base_url, api_key, temperature, top_p, test_case_path, problem_path, batch_size=20, num_samples_per_task=10, prompt_function_name='prompt_example'):
+def generate_sample(config):
     print(f"进入生成样本")
+    print(config)
 
-    model = init_model(
-        model_path=model_path,
-        base_url=base_url,
-        api_key=api_key,
-        temperature=temperature,
-        top_p=top_p
-    )
-    batch_size = batch_size
-    problems = read_problems(problem_path)
+    tokenizer, model = init_model_and_tokenizer(config['MODEL_PATH'])
+    current_work_dir = os.path.dirname(__file__)
+
+    problems = data.read_problems(config['PROBLEM_FILE'])
     all_task_ids = list(problems.keys())
     total_tasks = len(all_task_ids)
-    total_samples = total_tasks * num_samples_per_task
-
+    total_samples = total_tasks * config['NUM_SAMPLES_PER_TASK']
+    
     print(f"\n===== 开始生成样本 =====")
     print(f"任务总数：{total_tasks}")
-    print(f"每个任务样本数：{num_samples_per_task}")
+    print(f"每个任务样本数：{config['NUM_SAMPLES_PER_TASK']}")
     print(f"总样本数：{total_samples}")
-
+    
     samples = []
 
     # 进度条中实时显示当前任务ID
     with tqdm(total=total_samples, desc="生成进度") as pbar:
-        for batch_idx in range(0, total_tasks, batch_size):
-            batch_task_ids = all_task_ids[batch_idx:batch_idx + batch_size]
-            customer_prompt_func = getattr(
-                Customize_Funcs, prompt_function_name)
-            prompts = []
-            for task_id in batch_task_ids:
-                prompt = customer_prompt_func(problems[task_id])
-                prompts.append(prompt)
-            responses = model.batch(prompts)
-            for task_id, response in zip(batch_task_ids, responses):
-                completion = filter_code(response.content)
+        for task_idx, task_id in enumerate(all_task_ids):
+            # 每个任务开始时打印一次
+            print(f"\n----- 开始处理第{task_idx + 1}/{total_tasks}个任务：{task_id} -----")
+            customer_prompt_func = getattr(customer, config['PROMPT_FUNCTION_NAME'])
+            prompt = customer_prompt_func(problems[task_id])
+            for sample_idx in range(config['NUM_SAMPLES_PER_TASK']):
+                # 生成样本时，在进度条描述中显示当前任务和样本序号
+                pbar.set_description(f"生成进度（任务{task_id}，样本{sample_idx+1}/{config['NUM_SAMPLES_PER_TASK']}）")
+                completion = generate_one_completion(prompt, tokenizer, model, config)
                 samples.append({
                     "task_id": task_id,
                     "completion": completion
                 })
-                pbar.update(batch_size)
+                pbar.update(1)
+    
+    current_work_dir = os.path.dirname(__file__)
 
-    write_jsonl(test_case_path, samples)
-
+    data.write_jsonl(config['SAMPLE_FILE'], samples)
+    
     print(f"\n===== 生成完成 =====")
     print(f"实际生成样本数：{len(samples)}")
-    print(f"保存路径：{test_case_path}")
+    print(f"保存路径：{config['SAMPLE_FILE']}")
+
+def generate_sample_sql(config):
+    print(f"进入生成样本")
+    print(config)
+
+    tokenizer, model = init_model_and_tokenizer(config['MODEL_PATH'])
+    current_work_dir = os.path.dirname(__file__)
+
+    problems = data.read_problems(config['PROBLEM_FILE'])
+    all_task_ids = list(problems.keys())
+    total_tasks = len(all_task_ids)
+    total_samples = total_tasks * config['NUM_SAMPLES_PER_TASK']
+    
+    print(f"\n===== 开始生成样本 =====")
+    print(f"任务总数：{total_tasks}")
+    print(f"每个任务样本数：{config['NUM_SAMPLES_PER_TASK']}")
+    print(f"总样本数：{total_samples}")
+    
+    samples = []
+
+    # 进度条中实时显示当前任务ID
+    with tqdm(total=total_samples, desc="生成进度") as pbar:
+        for task_idx, task_id in enumerate(all_task_ids):
+            # 每个任务开始时打印一次
+            print(f"\n----- 开始处理第{task_idx + 1}/{total_tasks}个任务：{task_id} -----")
+            customer_prompt_func = getattr(customer, config['PROMPT_FUNCTION_NAME'])
+            prompt = customer_prompt_func(problems[task_id])
+            for sample_idx in range(config['NUM_SAMPLES_PER_TASK']):
+                # 生成样本时，在进度条描述中显示当前任务和样本序号
+                pbar.set_description(f"生成进度（任务{task_id}，样本{sample_idx+1}/{config['NUM_SAMPLES_PER_TASK']}）")
+                completion = generate_one_completion(prompt, tokenizer, model, config)
+                samples.append({
+                    "task_id": task_id,
+                    "completion": completion,
+                    "db_file": "/jizhicfs/hymiezhao/lpc/repos/lr/OmniSQL/data/bird/dev_20240627/dev_databases/"+ problems[task_id]["db_id"] + f"/{problems[task_id]["db_id"]}.sqlite",
+                    "question": problems[task_id]["question"],
+                    "ground_truth": problems[task_id]["ground_truth"],
+                })
+                pbar.update(1)
+    
+    current_work_dir = os.path.dirname(__file__)
+
+    data.write_jsonl(config['SAMPLE_FILE'], samples)
+    
+    print(f"\n===== 生成完成 =====")
+    print(f"实际生成样本数：{len(samples)}")
+    print(f"保存路径：{config['SAMPLE_FILE']}")
