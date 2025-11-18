@@ -1,6 +1,3 @@
-"""
-Post-process node for converting downloaded datasets to PT/SFT format
-"""
 import asyncio
 import os
 import json
@@ -19,15 +16,7 @@ logger = get_logger()
 
 
 def postprocess_node(state: LoopAIState) -> LoopAIState:
-    """
-    Post-process node that converts downloaded datasets to PT/SFT format
-    
-    Args:
-        state: LoopAIState with download results
-        
-    Returns:
-        Updated LoopAIState with post-processing results
-    """
+    """Post-process node that converts downloaded datasets to PT/SFT format"""
     logger.info("=== Post-process Node: Starting ===")
     
     # Check if there are any successful downloads
@@ -37,11 +26,22 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
         if task.get("type") == "download" and task.get("status") == "completed_successfully"
     ]
     
-    if not successful_downloads:
-        logger.info("No successful downloads found, skipping post-process node")
+    output_dir = state.get("output_dir", "./output")
+    download_dir = os.path.join(output_dir, "downloads")
+    has_download_files = os.path.exists(download_dir) and any(
+        os.path.isfile(os.path.join(download_dir, f)) or os.path.isdir(os.path.join(download_dir, f))
+        for f in os.listdir(download_dir)
+        if not f.startswith('.') and f not in ['processed_output', '.tmp', '.cache']
+    )
+    
+    if not successful_downloads and not has_download_files:
+        logger.info("No successful downloads found and no files in download directory, skipping post-process node")
         return state
     
-    logger.info(f"Found {len(successful_downloads)} successful downloads to post-process")
+    if successful_downloads:
+        logger.info(f"Found {len(successful_downloads)} successful downloads to post-process")
+    elif has_download_files:
+        logger.info("No download tasks found, but download directory exists with files. Processing files in download directory.")
     
     # Get user query for context
     user_query = ""
@@ -171,22 +171,7 @@ async def _postprocess_workflow(
     temperature: float,
     prompt_loader: Optional[PromptLoader] = None,
 ) -> Dict[str, Any]:
-    """
-    Async workflow for post-processing downloaded datasets
-    
-    Args:
-        download_dir: Directory containing downloaded files
-        user_query: User's original query
-        category: Data category (PT or SFT)
-        model_name: Model name for LLM
-        base_url: Base URL for LLM
-        api_key: API key for LLM
-        temperature: Temperature for LLM
-        prompt_loader: Prompt loader instance
-        
-    Returns:
-        Dictionary with processing results
-    """
+    """Async workflow for post-processing downloaded datasets"""
     try:
         _ensure_hf_cache_env(download_dir)
         
@@ -240,7 +225,7 @@ async def _postprocess_workflow(
         failed_chunks = 0
         
         async def process_chunk(idx: int, chunk_str: str) -> Tuple[int, List[str], Optional[Exception]]:
-            """Process a single chunk and return results"""
+            """Process a single chunk"""
             try:
                 logger.info(
                     f"Processing file discovery chunk {idx}/{total_chunks}, approximately {len(chunk_str)} characters."
@@ -438,7 +423,9 @@ async def _postprocess_workflow(
             # Execute all mapping tasks concurrently (max 50 at a time)
             mapping_results = await asyncio.gather(*mapping_tasks_list, return_exceptions=True)
             
-            # Process datasets with mapping results
+            # Process datasets with mapping results concurrently
+            # Filter out failed mappings first
+            valid_mapping_results = []
             for mapping_result in mapping_results:
                 if isinstance(mapping_result, Exception):
                     logger.error(f"Mapping task processing failed: {mapping_result}")
@@ -449,17 +436,31 @@ async def _postprocess_workflow(
                     logger.warning(f"Skipping {task['file_name']} ({task['split_name']}) due to mapping failure")
                     continue
                 
-                # Process the split with the mapping result
-                await convertor._process_dataset_with_mapping(
-                    task["data_content"],
-                    task["file_path"],
-                    task["file_name"],
-                    task["split_name"],
-                    annotation_result,
-                    category,
-                    output_jsonl_prefix,
-                    processed_sources_list
-                )
+                valid_mapping_results.append((task, annotation_result))
+            
+            # Process all valid splits concurrently
+            if valid_mapping_results:
+                logger.info(f"Processing {len(valid_mapping_results)} splits with mapping results concurrently...")
+                
+                async def process_split_with_mapping(task_and_result: Tuple[Dict[str, Any], Dict[str, Any]]):
+                    """Process a single split with its mapping result"""
+                    task, annotation_result = task_and_result
+                    try:
+                        await convertor._process_dataset_with_mapping(
+                            task["data_content"],
+                            task["file_path"],
+                            task["file_name"],
+                            task["split_name"],
+                            annotation_result,
+                            category,
+                            output_jsonl_prefix,
+                            processed_sources_list
+                        )
+                    except Exception as e:
+                        logger.error(f"Error processing {task['file_name']} ({task['split_name']}): {e}")
+                
+                # Execute all data processing tasks concurrently
+                await asyncio.gather(*[process_split_with_mapping(result) for result in valid_mapping_results], return_exceptions=True)
         
         # File processing loop complete
         total_records_processed = sum(count for _, count in processed_sources_list)

@@ -1,6 +1,3 @@
-"""
-Summary Agent for generating download subtasks from research results
-"""
 import json
 from typing import Dict, List, Any, Optional
 
@@ -25,17 +22,7 @@ class SummaryAgent:
         prompt_loader: Optional[PromptLoader] = None,
         max_download_subtasks: Optional[int] = None,
     ):
-        """
-        Initialize Summary Agent
-        
-        Args:
-            model_name: LLM model name
-            base_url: LLM base URL
-            api_key: LLM API key
-            temperature: Temperature for LLM
-            prompt_loader: Prompt loader instance
-            max_download_subtasks: Maximum number of download subtasks
-        """
+        """Initialize Summary Agent"""
         self.llm = ChatOpenAI(
             model=model_name,
             base_url=base_url,
@@ -52,18 +39,7 @@ class SummaryAgent:
         existing_subtasks: Optional[List[Dict[str, Any]]] = None,
         message: str = "",
     ) -> Dict[str, Any]:
-        """
-        Generate download subtasks from research context
-        
-        Args:
-            objective: Research objective
-            context: Research context from RAG
-            existing_subtasks: Existing subtasks to avoid duplicates
-            message: User message
-            
-        Returns:
-            Dictionary with 'new_sub_tasks' and 'summary' keys
-        """
+        """Generate download subtasks from research context"""
         logger.info("\n--- Summary Agent: Generating download subtasks ---")
 
         existing_subtasks_str = (

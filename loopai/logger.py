@@ -82,7 +82,6 @@ def get_logger(level: str = None) -> logging.Logger:
     - 控制台输出分流：<ERROR 到 stdout；>=ERROR 到 stderr
     - 颜色与格式尽量贴近 loguru 默认
     - 避免重复添加 handler
-    - 如果 logger 已存在，会更新 logger 和所有 handler 的级别
     """
     if level is None:
         level = os.getenv("DF_LOGGING_LEVEL", "INFO")
@@ -92,10 +91,7 @@ def get_logger(level: str = None) -> logging.Logger:
     logger.propagate = False  # 避免向 root 传播造成重复输出
 
     if logger.handlers:
-        # 已初始化过，更新 logger 和所有 handler 的级别
-        logger.setLevel(level)
-        for handler in logger.handlers:
-            handler.setLevel(level)
+        # 已初始化过，直接返回（可根据需要改成更新 handler 的级别/格式）
         return logger
 
     colored_fmt = _make_colored_formatter()

@@ -1,6 +1,3 @@
-"""
-Web tools for searching and reading web pages
-"""
 import os
 import re
 from typing import Dict, List, Any
@@ -22,17 +19,7 @@ class WebTools:
     
     @staticmethod
     async def search_web(query: str, search_engine: str = "tavily", tavily_api_key: str = None) -> str:
-        """
-        Search the web using specified search engine
-        
-        Args:
-            query: Search query
-            search_engine: Search engine to use (tavily, duckduckgo, jina)
-            tavily_api_key: Optional Tavily API key (if not provided, will use TAVILY_API_KEY env var)
-            
-        Returns:
-            Formatted search results as string
-        """
+        """Search the web using specified search engine"""
         if isinstance(query, (list, tuple)):
             query = ", ".join([str(x) for x in query if x])
         elif not isinstance(query, str):
@@ -157,15 +144,7 @@ class WebTools:
 
     @staticmethod
     async def read_with_jina_reader(url: str) -> Dict[str, Any]:
-        """
-        Read webpage content using Jina Reader
-        
-        Args:
-            url: URL to read
-            
-        Returns:
-            Dictionary with 'urls', 'text', and 'structured_content' keys
-        """
+        """Read webpage content using Jina Reader"""
         logger.info(f"[Jina Reader] Extracting webpage: {url}")
         try:
             jina_url = f"https://r.jina.ai/{url}"
@@ -297,15 +276,7 @@ class WebTools:
 
     @staticmethod
     def extract_urls_from_search_results(search_results: str) -> List[str]:
-        """
-        Extract URLs from search results text
-        
-        Args:
-            search_results: Formatted search results text
-            
-        Returns:
-            List of URLs
-        """
+        """Extract URLs from search results text"""
         urls = []
         lines = search_results.split("\n")
         for line in lines:

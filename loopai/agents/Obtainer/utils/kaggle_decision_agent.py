@@ -1,6 +1,3 @@
-"""
-Kaggle decision agent
-"""
 import json
 from typing import Dict, List, Any, Optional
 

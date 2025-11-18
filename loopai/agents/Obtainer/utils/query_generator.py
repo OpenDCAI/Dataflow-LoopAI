@@ -1,6 +1,3 @@
-"""
-Query Generator for generating search queries from user requirements
-"""
 import json
 from typing import List, Optional
 
@@ -24,16 +21,7 @@ class QueryGenerator:
         temperature: float = 0.7,
         prompt_loader: Optional[PromptLoader] = None,
     ):
-        """
-        Initialize Query Generator
-        
-        Args:
-            model_name: LLM model name
-            base_url: LLM base URL
-            api_key: LLM API key
-            temperature: Temperature for LLM
-            prompt_loader: Prompt loader instance
-        """
+        """Initialize Query Generator"""
         self.llm = ChatOpenAI(
             model=model_name,
             base_url=base_url,
@@ -45,16 +33,7 @@ class QueryGenerator:
     async def generate_queries(
         self, objective: str, message: str = ""
     ) -> List[str]:
-        """
-        Generate search queries from user requirements
-        
-        Args:
-            objective: Research objective
-            message: User message
-            
-        Returns:
-            List of search queries
-        """
+        """Generate search queries from user requirements"""
         logger.info("\n--- Query Generator ---")
         
         # Use prompt loader if available, otherwise use default prompt

@@ -1,6 +1,3 @@
-"""
-Web search node for obtaining data from web
-"""
 import json
 import asyncio
 import os
@@ -24,19 +21,7 @@ logger = get_logger()
 
 
 def websearch_node(state: LoopAIState) -> LoopAIState:
-    """
-    Web search node that:
-    1. Summarizes user requirements and generates research tasks
-    2. Searches API and returns URLs
-    3. Uses Jina to access URLs and store in RAG
-    4. Calls SummaryAgent to generate download subtasks and filter them
-    
-    Args:
-        state: LoopAIState with user query and configuration
-        
-    Returns:
-        Updated LoopAIState with research results and subtasks
-    """
+    """Web search node that searches web, stores content in RAG, and generates download subtasks"""
     logger.info("=== WebSearch Node: Starting ===")
     
     # Get user query from state
@@ -189,20 +174,7 @@ async def _websearch_workflow(
     tavily_api_key: str = None,
     debug_mode: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Async workflow for web search
-    
-    Args:
-        user_query: User query
-        query_generator: Query generator instance
-        summary_agent: Summary agent instance
-        rag_manager: RAG manager instance
-        search_engine: Search engine to use
-        max_urls: Maximum number of URLs to visit
-        
-    Returns:
-        Dictionary with research results
-    """
+    """Async workflow for web search"""
     try:
         # Step 1: Generate research queries
         logger.info("Step 1: Generating research queries...")

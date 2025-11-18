@@ -1,6 +1,3 @@
-"""
-Download node for executing download subtasks
-"""
 import json
 import asyncio
 import os
@@ -35,15 +32,7 @@ logger = get_logger()
 
 
 def download_node(state: LoopAIState) -> LoopAIState:
-    """
-    Download node that executes download subtasks using three methods in priority order
-    
-    Args:
-        state: LoopAIState with download subtasks
-        
-    Returns:
-        Updated LoopAIState with download results
-    """
+    """Download node that executes download subtasks using three methods in priority order"""
     logger.info("=== Download Node: Starting ===")
     
     # Get download subtasks
@@ -258,21 +247,7 @@ async def _download_workflow(
     kaggle_key: Optional[str] = None,
     debug_mode: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Async workflow for executing download tasks
-    
-    Args:
-        download_tasks: List of download subtasks
-        user_query: User's original query
-        decision_agent: Download method decision agent
-        download_dir: Directory to save downloads
-        model_name: Model name for LLM calls
-        base_url: Base URL for LLM
-        api_key: API key for LLM
-        
-    Returns:
-        Dictionary with completed and failed tasks
-    """
+    """Async workflow for executing download tasks"""
     completed_tasks = []
     failed_tasks = []
     
@@ -630,11 +605,7 @@ async def _try_web_download(
     api_key: Optional[str] = None,
     temperature: float = 0.7,
 ) -> Dict[str, Any]:
-    """
-    Try downloading from web using Playwright and LLM-based link extraction.
-    Similar to old implementation: feeds webpage to model, model returns download links,
-    then checks and downloads them.
-    """
+    """Try downloading from web using Playwright and LLM-based link extraction"""
     logger.info("[Web] Attempting download...")
     
     if async_playwright is None:

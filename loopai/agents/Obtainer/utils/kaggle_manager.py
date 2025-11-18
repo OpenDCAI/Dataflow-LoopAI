@@ -1,6 +1,3 @@
-"""
-Kaggle dataset manager
-"""
 import os
 import shutil
 import re
@@ -25,15 +22,7 @@ class KaggleManager:
         kaggle_username: Optional[str] = None,
         kaggle_key: Optional[str] = None,
     ):
-        """
-        Initialize Kaggle Manager
-        
-        Args:
-            disable_cache: Whether to disable cache
-            temp_base_dir: Base directory for temporary files
-            kaggle_username: Kaggle username (optional, can also use KAGGLE_USERNAME env var)
-            kaggle_key: Kaggle API key (optional, can also use KAGGLE_KEY env var)
-        """
+        """Initialize Kaggle Manager"""
         # Set Kaggle credentials from parameters or environment variables
         if kaggle_username:
             os.environ["KAGGLE_USERNAME"] = kaggle_username

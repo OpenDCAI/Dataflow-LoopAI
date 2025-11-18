@@ -45,29 +45,84 @@ sg.start(default_state=OmegaConf.to_container(merged_states, resolve=True), conf
 thread_states = sg.get_state(config)
 
 # %%
-# Set to True to show detailed state info (may overwrite logs)
-# Set to False to see logs clearly
-SHOW_DETAILED_STATE = False
-
 while thread_states.interrupts:
     query = input(f"Please input ({thread_states.interrupts[0].value}): ")
     
-    if SHOW_DETAILED_STATE:
-        # Show full state info (may overwrite logs)
-        with Live(console=console, refresh_per_second=4) as live:
-            for chunk in sg(query, config=config):
-                live.update(Text(sg.agent_event.text(), style="cyan"))
-    else:
-        # Show logs clearly, only print state summary at the end
-        for chunk in sg(query, config=config):
-            pass
-        # Print a brief state summary after execution
-        event = sg.agent_event
-        if event.node or event.node_path:
-            console.print(f"\n[bold cyan]Execution completed[/bold cyan]")
-            console.print(f"Node: {event.node or 'N/A'}")
-            if event.node_path:
-                console.print(f"Path: {' -> '.join(event.node_path)}")
+    with Live(console=console, refresh_per_second=4) as live:
+        for chunk in sg(
+            query,
+            config=config
+        ):
+            # Build display text with state and custom events
+            display_lines = []
+            
+            # Add state information
+            state_text = sg.agent_event.text()
+            display_lines.append(state_text)
+            
+            # Add all custom events (from all agents)
+            all_custom_info = sg.agent_event.get_custom_info()
+            
+            if all_custom_info:
+                display_lines.append("\n" + "="*10 + "Custom Events" + "="*10)
+                
+                # Helper function to format a single custom event
+                def format_custom_event(event, event_key=None):
+                    """Format a single custom event for display"""
+                    if not isinstance(event, dict):
+                        return None
+                    
+                    event_lines = []
+                    if event_key:
+                        event_lines.append(f"[{event_key}]")
+                    if event.get('current'):
+                        event_lines.append(f"Current: {event['current']}")
+                    if event.get('message'):
+                        event_lines.append(f"Message: {event['message']}")
+                    if event.get('progress') is not None:
+                        progress = event.get('progress', 0)
+                        progress_num = event.get('progress_num', 0)
+                        total = event.get('total', 0)
+                        if total > 0:
+                            event_lines.append(f"Progress: {progress_num}/{total} ({progress*100:.1f}%)")
+                    if event.get('data'):
+                        data = event['data']
+                        if isinstance(data, dict):
+                            data_lines = []
+                            for k, v in data.items():
+                                if isinstance(v, (str, int, float, bool)):
+                                    # Truncate long strings
+                                    if isinstance(v, str) and len(v) > 100:
+                                        v = v[:100] + "..."
+                                    data_lines.append(f"  {k}: {v}")
+                                elif isinstance(v, list) and len(v) > 0:
+                                    data_lines.append(f"  {k}: {len(v)} items")
+                                elif v is not None:
+                                    data_lines.append(f"  {k}: {type(v).__name__}")
+                            if data_lines:
+                                event_lines.append("Data:")
+                                event_lines.extend(data_lines)
+                    
+                    return "\n".join(event_lines) if event_lines else None
+                
+                # Collect all events with their keys
+                all_events = []
+                for key, events in all_custom_info.items():
+                    for event in events:
+                        formatted = format_custom_event(event, key)
+                        if formatted:
+                            all_events.append(formatted)
+                
+                # Show only the most recent events (last 10 to avoid clutter)
+                if all_events:
+                    recent_events = all_events[-10:]
+                    for formatted_event in recent_events:
+                        display_lines.append(formatted_event)
+                        display_lines.append("-" * 40)
+            
+            # Update live display
+            display_text = "\n".join(display_lines)
+            live.update(Text(display_text, style="cyan"))
     
     thread_states = sg.get_state(config)
 

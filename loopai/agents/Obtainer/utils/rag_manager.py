@@ -1,6 +1,3 @@
-"""
-RAG Manager for storing and retrieving web content
-"""
 import os
 import re
 import shutil
@@ -56,17 +53,7 @@ class RAGManager:
         reset: bool = False,
         collection_name: str = "rag_collection",
     ):
-        """
-        Initialize RAG Manager
-        
-        Args:
-            api_base_url: API base URL for embeddings
-            api_key: API key for embeddings
-            embed_model: Embedding model name
-            persist_directory: Directory to persist vector store
-            reset: Whether to reset the vector store
-            collection_name: Collection name for vector store
-        """
+        """Initialize RAG Manager"""
         resolved_api_base = api_base_url or os.getenv("RAG_API_URL")
         resolved_api_key = api_key or os.getenv("RAG_API_KEY")
         resolved_embed_model = embed_model or os.getenv("RAG_EMB_MODEL") or "text-embedding-3-large"
@@ -119,14 +106,7 @@ class RAGManager:
     async def add_webpage_content(
         self, url: str, text_content: str, metadata: Optional[Dict[str, Any]] = None
     ):
-        """
-        Add webpage content to RAG
-        
-        Args:
-            url: Source URL
-            text_content: Text content of the webpage
-            metadata: Additional metadata
-        """
+        """Add webpage content to RAG"""
         if not text_content or len(text_content.strip()) < 50:
             logger.info(f"[RAG] Skipping webpage with too short content: {url}")
             return
@@ -185,16 +165,7 @@ class RAGManager:
             logger.error(f"[RAG] Error adding webpage content ({url}): {e}")
 
     async def get_context_for_single_query(self, query: str, max_chars: int = 18000) -> str:
-        """
-        Get context for a single query
-        
-        Args:
-            query: Search query
-            max_chars: Maximum characters to return
-            
-        Returns:
-            Context string
-        """
+        """Get context for a single query"""
         if self.vectorstore is None:
             logger.warning("[RAG] Vector store is empty, cannot retrieve")
             return ""

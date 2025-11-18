@@ -46,7 +46,7 @@ MODEL_CONFIG = {
     'obtainer_kaggle_key': kaggle_key,
     'obtainer_tavily_api_key': tavily_api_key if tavily_api_key else '',  # Tavily API key from file or env
     'obtainer_category': os.getenv('OBTAINER_CATEGORY', 'PT').upper(),  # PT or SFT
-    'obtainer_debug': os.getenv('OBTAINER_DEBUG', 'False').lower() == 'true',  # Enable debug mode
+    'obtainer_debug': os.getenv('OBTAINER_DEBUG', 'True').lower() == 'true',  # Enable debug mode
 }
 
 # Output directory

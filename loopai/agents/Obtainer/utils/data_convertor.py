@@ -1,7 +1,3 @@
-"""
-Data Convertor for post-processing downloaded datasets
-Adapted from old/dataconvertor.py to match current project structure
-"""
 import asyncio
 import os
 import json
@@ -101,19 +97,7 @@ class DataConvertor:
         num_sample_records: int = 3,
         prompt_loader: Optional[PromptLoader] = None,
     ):
-        """
-        Initialize Data Convertor
-        
-        Args:
-            model_name: Model name for LLM
-            base_url: Base URL for LLM
-            api_key: API key for LLM
-            temperature: Temperature for LLM
-            max_tokens: Max tokens for LLM
-            max_sample_length: Max length for each field sample
-            num_sample_records: Number of sample records
-            prompt_loader: Prompt loader instance
-        """
+        """Initialize Data Convertor"""
         self.model_name = model_name
         self.base_url = base_url
         self.api_key = api_key
@@ -154,14 +138,21 @@ class DataConvertor:
         else:
             return value
     
-    def _sample_records(self, dataset: Any, num_samples: int = None) -> List[Dict[str, Any]]:
-        """Sample records from dataset with truncation."""
+    async def _sample_records(self, dataset: Any, num_samples: int = None) -> List[Dict[str, Any]]:
+        """Sample records from dataset with truncation (async to avoid blocking event loop)."""
         if num_samples is None:
             num_samples = self.num_sample_records
             
         import random
         
-        dataset_size = len(dataset)
+        # Use asyncio.to_thread for potentially blocking operations
+        def _get_dataset_size():
+            return len(dataset)
+        
+        def _get_record(idx):
+            return dataset[idx]
+        
+        dataset_size = await asyncio.to_thread(_get_dataset_size)
         if dataset_size == 0:
             return []
         
@@ -172,11 +163,14 @@ class DataConvertor:
         else:
             sample_indices = random.sample(range(dataset_size), actual_samples)
         
-        sampled_records = []
-        for idx in sample_indices:
-            record = dataset[idx]
+        # Sample records concurrently to avoid blocking
+        async def _sample_single_record(idx: int):
+            record = await asyncio.to_thread(_get_record, idx)
             truncated_record = {k: self._truncate_value(v) for k, v in record.items()}
-            sampled_records.append(truncated_record)
+            return truncated_record
+        
+        # Sample all records concurrently
+        sampled_records = await asyncio.gather(*[_sample_single_record(idx) for idx in sample_indices])
         
         logger.info(f"Sampled {len(sampled_records)} records from dataset (total: {dataset_size})")
         return sampled_records
@@ -190,6 +184,13 @@ class DataConvertor:
             if not field_spec:
                 return False
             return all(self._field_exists_in_columns(spec, column_names) for spec in field_spec)
+        # Ensure field_spec is a string before calling split
+        if not isinstance(field_spec, str):
+            # If it's a dict or other non-string type, try to convert to string or return False
+            if isinstance(field_spec, dict):
+                # If it's a dict, check if any of its keys match column names
+                return any(key in column_names for key in field_spec.keys() if isinstance(key, str))
+            return False
         token = field_spec.split(".")[0]
         token = token.split("[")[0]
         return token in column_names
@@ -291,6 +292,18 @@ class DataConvertor:
     def _extract_field_values(self, row: Dict[str, Any], field_spec: Optional[str]) -> List[str]:
         if not field_spec:
             return []
+        # Ensure field_spec is a string before calling strip/split
+        if not isinstance(field_spec, str):
+            # If field_spec is a dict, try to extract values from it
+            if isinstance(field_spec, dict):
+                normalized = []
+                for key, value in field_spec.items():
+                    entry = self._format_mapping_entry(key, value)
+                    if entry:
+                        normalized.append(entry)
+                return normalized
+            # For other non-string types, convert to string
+            field_spec = str(field_spec)
         field_spec = field_spec.strip()
         if not field_spec:
             return []
@@ -355,7 +368,7 @@ class DataConvertor:
                 task_prompt = self.prompt_loader("task", f"data_conversion_{category.lower()}_prompt")
                 
                 if dataset is not None:
-                    sampled_records = self._sample_records(dataset)
+                    sampled_records = await self._sample_records(dataset)
                     sample_rows_str = json.dumps(sampled_records, indent=2, ensure_ascii=False)
                     task_params = {
                         'column_names': str(column_names),
@@ -410,10 +423,16 @@ class DataConvertor:
             return """You are a data mapping expert for Pre-training (PT) tasks. 
 Your task is to analyze the dataset structure and identify which field(s) contain text content that should be extracted for pre-training.
 
-Return a JSON object with:
-- "text": The field name or field specification (e.g., "content", "text", "body", or nested like "data.text") that contains the text to extract
+IMPORTANT: For pre-training, the output must be continuous, coherent text that can be directly used for language model training. This means:
+1. If the data contains structured fields (like "role" and "content" for conversations), you should identify ALL relevant fields that need to be combined into a single continuous text.
+2. The output should be a complete, readable text passage, not fragmented pieces.
+3. For conversation data, identify fields that can be merged into a natural dialogue format.
+4. For document data, identify the main content field(s) that contain the full text.
 
-The field specification should match one of the column names in the dataset."""
+Return a JSON object with:
+- "text": A list of field names or field specifications that should be combined into continuous text. For example: ["role", "content"] for conversation data, or ["content"] for single-field text data.
+
+If multiple fields need to be combined, return them as a list. The system will automatically merge them into continuous text with appropriate formatting."""
         else:  # SFT
             return """You are a data mapping expert for Supervised Fine-Tuning (SFT) tasks.
 Your task is to analyze the dataset structure and identify which fields contain question-answer pairs.
@@ -434,8 +453,24 @@ The field specifications should match column names in the dataset."""
     ) -> str:
         """Get default task prompt"""
         if dataset is not None:
-            sampled_records = self._sample_records(dataset)
-            sample_rows_str = json.dumps(sampled_records, indent=2, ensure_ascii=False)
+            # Note: This is called from sync context, but we'll handle it in the async method
+            # For now, we'll keep it sync in the default prompt method
+            import random
+            dataset_size = len(dataset)
+            if dataset_size == 0:
+                sample_rows_str = "[]"
+            else:
+                num_samples = min(self.num_sample_records, dataset_size)
+                if dataset_size <= num_samples:
+                    sample_indices = list(range(dataset_size))
+                else:
+                    sample_indices = random.sample(range(dataset_size), num_samples)
+                sampled_records = []
+                for idx in sample_indices:
+                    record = dataset[idx]
+                    truncated_record = {k: self._truncate_value(v) for k, v in record.items()}
+                    sampled_records.append(truncated_record)
+                sample_rows_str = json.dumps(sampled_records, indent=2, ensure_ascii=False)
         else:
             truncated_record = {k: self._truncate_value(v) for k, v in sample_record.items()}
             sample_rows_str = json.dumps([truncated_record], indent=2, ensure_ascii=False)
@@ -448,7 +483,12 @@ Sample records:
 
 User target: {user_target}
 
-Please identify which field contains the text content for pre-training. Return a JSON object with "text" field."""
+IMPORTANT: For pre-training, you need to identify field(s) that contain continuous, coherent text suitable for language model training.
+
+If the data is structured (e.g., conversations with "role" and "content" fields, or documents with multiple text fields), identify ALL fields that should be combined into a single continuous text passage.
+
+Return a JSON object with:
+- "text": A list of field names that should be merged into continuous text. For example: ["role", "content"] for conversation data, or ["content"] for single-field text. The system will automatically format and merge these fields into readable, continuous text suitable for pre-training."""
         else:  # SFT
             return f"""Column names: {column_names}
 
@@ -1062,28 +1102,106 @@ Please identify which files are data files that should be processed. Return a JS
             try:
                 if category.upper() == 'PT':
                     text_field = annotation_result.get('text') if annotation_result else None
-                    text_field = self._sanitize_field_spec(text_field, column_names)
-                    if not text_field:
+                    
+                    # Handle both single field and list of fields
+                    if isinstance(text_field, list):
+                        # Multiple fields need to be combined
+                        text_fields = [self._sanitize_field_spec(field, column_names) for field in text_field]
+                        text_fields = [f for f in text_fields if f is not None]
+                    else:
+                        # Single field
+                        text_field = self._sanitize_field_spec(text_field, column_names)
+                        text_fields = [text_field] if text_field else []
+                    
+                    if not text_fields:
                         logger.warning(
-                            f"Did not find valid text field in {file_name} ({split_name}) (from LLM: {annotation_result}), skipping."
+                            f"Did not find valid text field(s) in {file_name} ({split_name}) (from LLM: {annotation_result}), skipping."
                         )
                         continue
 
+                    # Collect all rows first to handle conversation merging
+                    rows_to_process = []
                     for row in data_content:
-                        text_values = self._extract_text_values(row, text_field)
-                        if not text_values:
-                            continue
-                        for text in text_values:
-                            if text:
-                                json.dump({'text': text}, f_out, ensure_ascii=False)
-                                f_out.write('\n')
-                                split_record_count += 1
-                                current_chunk_count += 1
-                                if current_chunk_count >= chunk_size:
-                                    f_out.close()
-                                    current_chunk_index += 1
-                                    current_chunk_count = 0
-                                    f_out = _open_chunk_file(current_chunk_index)
+                        # Extract values from all specified fields
+                        all_values = []
+                        for field in text_fields:
+                            values = self._extract_text_values(row, field)
+                            all_values.extend(values)
+                        
+                        if all_values:
+                            rows_to_process.append(all_values)
+                    
+                    # Merge rows into continuous text
+                    # For conversation data, merge role and content fields naturally
+                    merged_texts = []
+                    current_conversation = []
+                    
+                    for row_values in rows_to_process:
+                        # Check if this looks like a conversation turn (has role-like and content-like parts)
+                        has_role = any("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower() for v in row_values)
+                        has_content = any(len(str(v)) > 20 and not ("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower()) for v in row_values)
+                        
+                        if has_role and has_content:
+                            # This is a conversation turn, merge role and content
+                            role_part = None
+                            content_part = None
+                            for v in row_values:
+                                v_str = str(v).strip()
+                                if "role" in v_str.lower() or "user" in v_str.lower() or "assistant" in v_str.lower():
+                                    # Extract role name
+                                    if "user" in v_str.lower():
+                                        role_part = "用户"
+                                    elif "assistant" in v_str.lower():
+                                        role_part = "助手"
+                                    else:
+                                        # Try to extract role from "role. xxx" format
+                                        parts = v_str.split(".", 1)
+                                        if len(parts) > 1:
+                                            role_part = parts[1].strip()
+                                        else:
+                                            role_part = v_str.replace("role", "").replace(".", "").strip()
+                                else:
+                                    # This is content
+                                    if "content" in v_str.lower():
+                                        # Extract content from "content. xxx" format
+                                        parts = v_str.split(".", 1)
+                                        if len(parts) > 1:
+                                            content_part = parts[1].strip()
+                                        else:
+                                            content_part = v_str.replace("content", "").replace(".", "").strip()
+                                    else:
+                                        content_part = v_str
+                            
+                            if role_part and content_part:
+                                current_conversation.append(f"{role_part}：{content_part}")
+                            elif content_part:
+                                current_conversation.append(content_part)
+                        else:
+                            # Regular text data, merge all values
+                            merged = " ".join(str(v).strip() for v in row_values if str(v).strip())
+                            if merged:
+                                if current_conversation:
+                                    # Finish current conversation
+                                    merged_texts.append("\n\n".join(current_conversation))
+                                    current_conversation = []
+                                merged_texts.append(merged)
+                    
+                    # Finish any remaining conversation
+                    if current_conversation:
+                        merged_texts.append("\n\n".join(current_conversation))
+                    
+                    # Write merged texts
+                    for text in merged_texts:
+                        if text and text.strip():
+                            json.dump({'text': text.strip()}, f_out, ensure_ascii=False)
+                            f_out.write('\n')
+                            split_record_count += 1
+                            current_chunk_count += 1
+                            if current_chunk_count >= chunk_size:
+                                f_out.close()
+                                current_chunk_index += 1
+                                current_chunk_count = 0
+                                f_out = _open_chunk_file(current_chunk_index)
                             
                 elif category.upper() == 'SFT':
                     q_field = annotation_result.get('question') if annotation_result else None
@@ -1169,28 +1287,106 @@ Please identify which files are data files that should be processed. Return a JS
         try:
             if category.upper() == 'PT':
                 text_field = annotation_result.get('text') if annotation_result else None
-                text_field = self._sanitize_field_spec(text_field, column_names)
-                if not text_field:
+                
+                # Handle both single field and list of fields
+                if isinstance(text_field, list):
+                    # Multiple fields need to be combined
+                    text_fields = [self._sanitize_field_spec(field, column_names) for field in text_field]
+                    text_fields = [f for f in text_fields if f is not None]
+                else:
+                    # Single field
+                    text_field = self._sanitize_field_spec(text_field, column_names)
+                    text_fields = [text_field] if text_field else []
+                
+                if not text_fields:
                     logger.warning(
-                        f"Did not find valid text field in {file_name} ({split_name}) (from LLM: {annotation_result}), skipping."
+                        f"Did not find valid text field(s) in {file_name} ({split_name}) (from LLM: {annotation_result}), skipping."
                     )
                     return 0
 
+                # Collect all rows first to handle conversation merging
+                rows_to_process = []
                 for row in data_content:
-                    text_values = self._extract_text_values(row, text_field)
-                    if not text_values:
-                        continue
-                    for text in text_values:
-                        if text:
-                            json.dump({'text': text}, f_out, ensure_ascii=False)
-                            f_out.write('\n')
-                            split_record_count += 1
-                            current_chunk_count += 1
-                            if current_chunk_count >= chunk_size:
-                                f_out.close()
-                                current_chunk_index += 1
-                                current_chunk_count = 0
-                                f_out = _open_chunk_file(current_chunk_index)
+                    # Extract values from all specified fields
+                    all_values = []
+                    for field in text_fields:
+                        values = self._extract_text_values(row, field)
+                        all_values.extend(values)
+                    
+                    if all_values:
+                        rows_to_process.append(all_values)
+                
+                # Merge rows into continuous text
+                # For conversation data, merge role and content fields naturally
+                merged_texts = []
+                current_conversation = []
+                
+                for row_values in rows_to_process:
+                    # Check if this looks like a conversation turn (has role-like and content-like parts)
+                    has_role = any("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower() for v in row_values)
+                    has_content = any(len(str(v)) > 20 and not ("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower()) for v in row_values)
+                    
+                    if has_role and has_content:
+                        # This is a conversation turn, merge role and content
+                        role_part = None
+                        content_part = None
+                        for v in row_values:
+                            v_str = str(v).strip()
+                            if "role" in v_str.lower() or "user" in v_str.lower() or "assistant" in v_str.lower():
+                                # Extract role name
+                                if "user" in v_str.lower():
+                                    role_part = "用户"
+                                elif "assistant" in v_str.lower():
+                                    role_part = "助手"
+                                else:
+                                    # Try to extract role from "role. xxx" format
+                                    parts = v_str.split(".", 1)
+                                    if len(parts) > 1:
+                                        role_part = parts[1].strip()
+                                    else:
+                                        role_part = v_str.replace("role", "").replace(".", "").strip()
+                            else:
+                                # This is content
+                                if "content" in v_str.lower():
+                                    # Extract content from "content. xxx" format
+                                    parts = v_str.split(".", 1)
+                                    if len(parts) > 1:
+                                        content_part = parts[1].strip()
+                                    else:
+                                        content_part = v_str.replace("content", "").replace(".", "").strip()
+                                else:
+                                    content_part = v_str
+                        
+                        if role_part and content_part:
+                            current_conversation.append(f"{role_part}：{content_part}")
+                        elif content_part:
+                            current_conversation.append(content_part)
+                    else:
+                        # Regular text data, merge all values
+                        merged = " ".join(str(v).strip() for v in row_values if str(v).strip())
+                        if merged:
+                            if current_conversation:
+                                # Finish current conversation
+                                merged_texts.append("\n\n".join(current_conversation))
+                                current_conversation = []
+                            merged_texts.append(merged)
+                
+                # Finish any remaining conversation
+                if current_conversation:
+                    merged_texts.append("\n\n".join(current_conversation))
+                
+                # Write merged texts
+                for text in merged_texts:
+                    if text and text.strip():
+                        json.dump({'text': text.strip()}, f_out, ensure_ascii=False)
+                        f_out.write('\n')
+                        split_record_count += 1
+                        current_chunk_count += 1
+                        if current_chunk_count >= chunk_size:
+                            f_out.close()
+                            current_chunk_index += 1
+                            current_chunk_count = 0
+                            f_out = _open_chunk_file(current_chunk_index)
                         
             elif category.upper() == 'SFT':
                 q_field = annotation_result.get('question') if annotation_result else None

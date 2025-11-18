@@ -1,6 +1,3 @@
-"""
-Download method decision agent - decides the order of three download methods
-"""
 import json
 from typing import Dict, Any, List
 
@@ -24,16 +21,7 @@ class DownloadMethodDecisionAgent:
         temperature: float = 0.7,
         prompt_loader: PromptLoader = None,
     ):
-        """
-        Initialize Download Method Decision Agent
-        
-        Args:
-            model_name: LLM model name
-            base_url: LLM base URL
-            api_key: LLM API key
-            temperature: Temperature for LLM
-            prompt_loader: Prompt loader instance
-        """
+        """Initialize Download Method Decision Agent"""
         self.llm = ChatOpenAI(
             model=model_name,
             base_url=base_url,
@@ -48,18 +36,7 @@ class DownloadMethodDecisionAgent:
         current_task_objective: str,
         search_keywords: str,
     ) -> Dict[str, Any]:
-        """
-        Decide the priority order of three download methods
-        
-        Args:
-            user_original_request: User's original request
-            current_task_objective: Current task objective
-            search_keywords: Search keywords
-            
-        Returns:
-            Dictionary with method_order (list of method names in priority order),
-            keywords_for_hf, and reasoning
-        """
+        """Decide the priority order of three download methods"""
         logger.info("\n--- Download Method Decision Agent ---")
         
         # Use prompt loader if available

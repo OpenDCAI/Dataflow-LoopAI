@@ -39,8 +39,7 @@ class PromptLoader:
                 with open(match_path, encoding='utf-8') as f:
                     prompt_dict = json.load(f)
                 
-                # Check if this is a nested structure (has 'system', 'task', etc. keys)
-                # or a flat structure (like system_prompt.json)
+              
                 has_nested_structure = any(k in prompt_dict for k in ['system', 'task'])
                 
                 if has_nested_structure:

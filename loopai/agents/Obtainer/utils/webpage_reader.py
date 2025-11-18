@@ -1,6 +1,3 @@
-"""
-WebPageReader: Uses LLM to analyze web pages and extract download links
-"""
 import json
 import asyncio
 from typing import Dict, Any, List, Optional
@@ -55,24 +52,7 @@ class WebPageReader(BaseAgent):
         discovered_urls: List[str],
         objective: str,
     ) -> Dict[str, Any]:
-        """
-        Analyze a web page using LLM to extract download links.
-        
-        Args:
-            url: The URL of the page being analyzed
-            text_content: The text content of the page (from Jina Reader)
-            discovered_urls: List of URLs discovered on the page
-            objective: The current subtask objective
-            
-        Returns:
-            Dictionary with:
-            - "action": "download", "navigate", or "dead_end"
-            - "urls": List of download URLs (if action is "download")
-            - "url": Single navigation URL (if action is "navigate")
-            - "description": Description of the action
-            - "is_relevant": Boolean indicating if content is relevant
-            - "discovered_urls": List of URLs that were considered
-        """
+        """Analyze a web page using LLM to extract download links"""
         logger.info(f"[WebPageReader] Analyzing page: {url}")
         
         # Prepare prompts

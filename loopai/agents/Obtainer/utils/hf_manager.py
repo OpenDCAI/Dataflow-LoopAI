@@ -1,6 +1,3 @@
-"""
-HuggingFace dataset manager
-"""
 import os
 import shutil
 import asyncio
@@ -31,15 +28,7 @@ class HuggingFaceManager:
         disable_cache: bool = False,
         temp_base_dir: Optional[str] = None,
     ):
-        """
-        Initialize HuggingFace Manager
-        
-        Args:
-            max_retries: Maximum retry attempts
-            retry_delay: Retry delay in seconds
-            disable_cache: Whether to disable cache
-            temp_base_dir: Base directory for temporary files
-        """
+        """Initialize HuggingFace Manager"""
         self.hf_endpoint = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
         self.max_retries = max_retries
         self.retry_delay = retry_delay
