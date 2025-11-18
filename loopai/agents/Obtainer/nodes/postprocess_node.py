@@ -134,7 +134,7 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             )
             
             # Send custom stream event if debug mode is enabled
-            debug_mode = state.get("obtainer_debug", False)
+            debug_mode = state.get("obtainer_debug", True)
             if debug_mode:
                 try:
                     writer = get_stream_writer()
