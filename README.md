@@ -31,6 +31,7 @@ Dataflow-LoopAI/
 │   │   ├── BaseAgent/         # 基础 Agent 定义
 │   │   ├── Starter/           # 主入口 Agent
 │   │   ├── Analyzer/          # 模型评估/挖掘 Agent
+│   │   ├── Obtainer/          # 数据获取 Agent
 │   │   └── ...                # 其他自定义 Agent
 │   │
 │   ├── common/                # 全局工具
@@ -85,6 +86,15 @@ Dataflow-LoopAI/
 * 与用户对话修改配置信息
 * 缺失信息反馈和修改再校验(TODO)
 * 继续执行中断节点(TODO)
+
+### ✅ `ObtainerAgent`
+
+作为系统的数据获取单元，负责：
+
+* 将用户的需求进行分析并调研
+* 收集相关数据集信息
+* 收集相关网页数据信息(TODO)
+* 整理各种格式的数据至可以直接用于训练的格式
 ---
 
 ## 📦 安装
