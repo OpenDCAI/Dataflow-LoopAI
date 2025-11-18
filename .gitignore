@@ -4,4 +4,5 @@ data/
 output/
 outputs/
 loopai.egg-info/
-# examples/scripts/tavily_api_key.txt
+tavily_api_key.txt
+rag_api_key.txt

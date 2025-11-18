@@ -119,8 +119,22 @@ class ObtainerAgent(BaseAgent):
             if "obtainer_max_download_subtasks" not in state:
                 state["obtainer_max_download_subtasks"] = None
             
+            # RAG configuration (independent from obtainer, set defaults if not in state)
             if "obtainer_reset_rag" not in state:
                 state["obtainer_reset_rag"] = False
+            
+            if "obtainer_rag_embed_model" not in state:
+                state["obtainer_rag_embed_model"] = ""
+            
+            if "obtainer_rag_collection_name" not in state:
+                state["obtainer_rag_collection_name"] = "rag_collection"
+            
+            # RAG API config (if not set, will use obtainer's API config in websearch_node)
+            if "obtainer_rag_api_base_url" not in state:
+                state["obtainer_rag_api_base_url"] = ""
+            
+            if "obtainer_rag_api_key" not in state:
+                state["obtainer_rag_api_key"] = ""
             
             if "obtainer_kaggle_username" not in state:
                 state["obtainer_kaggle_username"] = ""

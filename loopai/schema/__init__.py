@@ -1,3 +1,3 @@
-from .events import AgentEvent, StreamEvent, ObtainerEvent
+from .events import AgentEvent, StreamEvent
 
-__all__ = ['AgentEvent', 'StreamEvent', 'ObtainerEvent']
+__all__ = ['AgentEvent', 'StreamEvent']

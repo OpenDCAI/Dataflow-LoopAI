@@ -1,6 +1,5 @@
 # %%
 from omegaconf import OmegaConf
-from pathlib import Path
 import os
 from loopai.agents import StarterAgent
 from loopai.memory import checkpointer, store
@@ -17,17 +16,24 @@ cfg = OmegaConf.load("./examples/config/starter.yaml")
 with open(cfg.starter.api_key_path, 'r') as f:
     api_key = f.read().strip()
 
-# Read Tavily API key from file if exists
+# Read Tavily API key
 tavily_api_key = None
-tavily_api_key_file = Path(__file__).parent / 'tavily_api_key.txt'
-if tavily_api_key_file.exists():
-    with open(tavily_api_key_file, 'r') as f:
+if hasattr(cfg.starter, 'tavily_api_key_path') and os.path.exists(cfg.starter.tavily_api_key_path):
+    with open(cfg.starter.tavily_api_key_path, 'r') as f:
         tavily_api_key = f.read().strip()
         os.environ['TAVILY_API_KEY'] = tavily_api_key
 
+rag_api_key = None
+if hasattr(cfg, 'rag') and hasattr(cfg.rag, 'api_key_path') and os.path.exists(cfg.rag.api_key_path):
+    with open(cfg.rag.api_key_path, 'r') as f:
+        rag_api_key = f.read().strip()
+
+kaggle_username = getattr(cfg.starter, 'kaggle_username', '') or ''
+kaggle_key = getattr(cfg.starter, 'kaggle_key', '') or ''
+
 sg = StarterAgent(tools=[check_motivation],
-                  model_name="deepseek-v3.1-250821",
-                  base_url="http://123.129.219.111:3000/v1",
+                  model_name="deepseek-chat",
+                  base_url="https://api.deepseek.com",
                   api_key=api_key,
                   checkpointer=checkpointer,
                   store=store)
@@ -36,10 +42,57 @@ sg.init_graph()
 
 # %%
 config = {"configurable": {"thread_id": "1"}}
+
+# Prepare obtainer configuration from config file
+obtainer_config = {}
+if cfg.default_states.get('obtainer_model_path'):
+    obtainer_config['obtainer_model_path'] = cfg.default_states.obtainer_model_path
+if cfg.default_states.get('obtainer_base_url'):
+    obtainer_config['obtainer_base_url'] = cfg.default_states.obtainer_base_url
+if cfg.default_states.get('obtainer_api_key'):
+    obtainer_config['obtainer_api_key'] = cfg.default_states.obtainer_api_key
+else:
+    obtainer_config['obtainer_api_key'] = api_key
+
+# Add other obtainer parameters from config
+if 'obtainer_temperature' in cfg.default_states:
+    obtainer_config['obtainer_temperature'] = cfg.default_states.obtainer_temperature
+if 'obtainer_search_engine' in cfg.default_states:
+    obtainer_config['obtainer_search_engine'] = cfg.default_states.obtainer_search_engine
+if 'obtainer_max_urls' in cfg.default_states:
+    obtainer_config['obtainer_max_urls'] = cfg.default_states.obtainer_max_urls
+if 'obtainer_max_download_subtasks' in cfg.default_states:
+    obtainer_config['obtainer_max_download_subtasks'] = cfg.default_states.obtainer_max_download_subtasks
+if 'obtainer_category' in cfg.default_states:
+    obtainer_config['obtainer_category'] = cfg.default_states.obtainer_category.upper()
+if 'obtainer_debug' in cfg.default_states:
+    obtainer_config['obtainer_debug'] = cfg.default_states.obtainer_debug
+
+obtainer_config['obtainer_tavily_api_key'] = tavily_api_key if tavily_api_key else ''
+obtainer_config['obtainer_kaggle_username'] = kaggle_username
+obtainer_config['obtainer_kaggle_key'] = kaggle_key
+
+rag_config = {}
+if hasattr(cfg, 'rag'):
+    if hasattr(cfg.rag, 'reset'):
+        rag_config['obtainer_reset_rag'] = cfg.rag.reset
+    if hasattr(cfg.rag, 'embed_model'):
+        embed_model = cfg.rag.embed_model
+        if embed_model:  # Only set if not empty
+            rag_config['obtainer_rag_embed_model'] = embed_model
+    if hasattr(cfg.rag, 'collection_name'):
+        rag_config['obtainer_rag_collection_name'] = cfg.rag.collection_name
+    if hasattr(cfg.rag, 'api_base_url'):
+        if cfg.rag.api_base_url:  # Only set if not empty
+            rag_config['obtainer_rag_api_base_url'] = cfg.rag.api_base_url
+    if rag_api_key:
+        rag_config['obtainer_rag_api_key'] = rag_api_key
+
 merged_states = OmegaConf.merge(cfg.default_states, {
     'eval_batch_size': 10,
     'analyze_batch_size': 20,
-    'obtainer_tavily_api_key': tavily_api_key if tavily_api_key else '',  # Tavily API key from file
+    **obtainer_config,
+    **rag_config
 })
 sg.start(default_state=OmegaConf.to_container(merged_states, resolve=True), config=config)
 thread_states = sg.get_state(config)
@@ -53,76 +106,7 @@ while thread_states.interrupts:
             query,
             config=config
         ):
-            # Build display text with state and custom events
-            display_lines = []
-            
-            # Add state information
-            state_text = sg.agent_event.text()
-            display_lines.append(state_text)
-            
-            # Add all custom events (from all agents)
-            all_custom_info = sg.agent_event.get_custom_info()
-            
-            if all_custom_info:
-                display_lines.append("\n" + "="*10 + "Custom Events" + "="*10)
-                
-                # Helper function to format a single custom event
-                def format_custom_event(event, event_key=None):
-                    """Format a single custom event for display"""
-                    if not isinstance(event, dict):
-                        return None
-                    
-                    event_lines = []
-                    if event_key:
-                        event_lines.append(f"[{event_key}]")
-                    if event.get('current'):
-                        event_lines.append(f"Current: {event['current']}")
-                    if event.get('message'):
-                        event_lines.append(f"Message: {event['message']}")
-                    if event.get('progress') is not None:
-                        progress = event.get('progress', 0)
-                        progress_num = event.get('progress_num', 0)
-                        total = event.get('total', 0)
-                        if total > 0:
-                            event_lines.append(f"Progress: {progress_num}/{total} ({progress*100:.1f}%)")
-                    if event.get('data'):
-                        data = event['data']
-                        if isinstance(data, dict):
-                            data_lines = []
-                            for k, v in data.items():
-                                if isinstance(v, (str, int, float, bool)):
-                                    # Truncate long strings
-                                    if isinstance(v, str) and len(v) > 100:
-                                        v = v[:100] + "..."
-                                    data_lines.append(f"  {k}: {v}")
-                                elif isinstance(v, list) and len(v) > 0:
-                                    data_lines.append(f"  {k}: {len(v)} items")
-                                elif v is not None:
-                                    data_lines.append(f"  {k}: {type(v).__name__}")
-                            if data_lines:
-                                event_lines.append("Data:")
-                                event_lines.extend(data_lines)
-                    
-                    return "\n".join(event_lines) if event_lines else None
-                
-                # Collect all events with their keys
-                all_events = []
-                for key, events in all_custom_info.items():
-                    for event in events:
-                        formatted = format_custom_event(event, key)
-                        if formatted:
-                            all_events.append(formatted)
-                
-                # Show only the most recent events (last 10 to avoid clutter)
-                if all_events:
-                    recent_events = all_events[-10:]
-                    for formatted_event in recent_events:
-                        display_lines.append(formatted_event)
-                        display_lines.append("-" * 40)
-            
-            # Update live display
-            display_text = "\n".join(display_lines)
-            live.update(Text(display_text, style="cyan"))
+            live.update(Text(sg.agent_event.text(), style="cyan"))
     
     thread_states = sg.get_state(config)
 

@@ -82,13 +82,20 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
         # Initialize prompt loader
         prompt_loader = PromptLoader(state.get("prompt_template_dir"))
         
-        # Initialize RAG Manager
+        # Initialize RAG Manager with independent RAG configuration
         rag_persist_dir = state.get("output_dir", "./output") + "/rag_db"
+        # Use RAG-specific API config if provided, otherwise fallback to obtainer config
+        rag_api_base_url = state.get("obtainer_rag_api_base_url") or base_url
+        rag_api_key = state.get("obtainer_rag_api_key") or api_key
+        rag_embed_model = state.get("obtainer_rag_embed_model") or None
+        rag_collection_name = state.get("obtainer_rag_collection_name", "rag_collection")
         rag_manager = RAGManager(
-            api_base_url=base_url,
-            api_key=api_key,
+            api_base_url=rag_api_base_url,
+            api_key=rag_api_key,
+            embed_model=rag_embed_model,
             persist_directory=rag_persist_dir,
             reset=state.get("obtainer_reset_rag", False),
+            collection_name=rag_collection_name,
         )
         
         # Initialize Query Generator
