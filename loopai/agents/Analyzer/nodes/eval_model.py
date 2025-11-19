@@ -7,15 +7,17 @@ from pathlib import Path
 from collections import defaultdict, Counter
 from typing import Dict, Any, List
 from tqdm import tqdm
+
 from loopai.common.prompts.prompt_loader import PromptLoader
-from ..utils.vllm_chat import VLLMChat
+from langchain_openai import ChatOpenAI
 from ..utils.llmaj import LLMJudge
 from loopai.states.base import LoopAIState
 from loopai.logger import get_logger
 
 logger = get_logger()
 
-def init_model(state: LoopAIState) -> VLLMChat:
+
+def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     初始化模型
     Args:
@@ -27,15 +29,15 @@ def init_model(state: LoopAIState) -> VLLMChat:
     Returns:
         初始化后的模型实例
     """
-    return VLLMChat(
+    model = ChatOpenAI(
         model=state['analyze_model_path'],
-        base_url=state['analyze_base_url'],
         api_key=state['analyze_api_key'],
+        base_url=state['analyze_base_url'],
         temperature=state.get('analyze_temperature', 0.0),
         top_p=state.get('analyze_top_p', 0.95),
-        system_prompt_type=getattr(state, 'system_prompt_type', 'system'),
-        system_prompt_name=getattr(state, 'system_prompt_name', 'default_prompt')
     )
+    return model
+
 
 def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
     """
@@ -48,15 +50,19 @@ def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
         完整 prompt
     """
     loader = PromptLoader()
-    def trunc(s, n): s = s or ""; return s if len(s) <= n else s[:n] + "\n...[truncated]"
+
+    def trunc(s, n):
+        s = s or ""
+        return s if len(s) <= n else s[:n] + "\n...[truncated]"
+
     ev = {
-        "prompt_head":    trunc(evidence.get("prompt_head",""),    256),
-        "completion_head":trunc(evidence.get("completion_head",""),256),
-        "test_head":      trunc(evidence.get("test_head",""),      256),
-        "stdout_tail":    trunc(evidence.get("stdout_tail",""),    256),
-        "stderr_head":    trunc(evidence.get("stderr_head",""),    256),
-        "err_text":       trunc(evidence.get("err_text",""),       256),
-        "query":          trunc(evidence.get("query",""),          256),
+        "prompt_head": trunc(evidence.get("prompt_head", ""), 256),
+        "completion_head": trunc(evidence.get("completion_head", ""), 256),
+        "test_head": trunc(evidence.get("test_head", ""), 256),
+        "stdout_tail": trunc(evidence.get("stdout_tail", ""), 256),
+        "stderr_head": trunc(evidence.get("stderr_head", ""), 256),
+        "err_text": trunc(evidence.get("err_text", ""), 256),
+        "query": trunc(evidence.get("query", ""), 256),
     }
     tpl = loader("judge", "judge_user")
     return tpl.format(task=task, **ev)
@@ -86,8 +92,9 @@ def parse_assert_from_stdout(stdout: str) -> Dict[str, Any]:
         input_expr = "candidate(" + " ".join(m.group(1).split()) + ")"
     return {"input_expr": input_expr, "expected": expected, "actual": actual}
 
+
 def summarize_brief(task_id: str, prompt_head: str, completion_head: str, test_head: str,
-                    oj: Dict[str, str], llm: VLLMChat) -> str:
+                    oj: Dict[str, str], llm: ChatOpenAI) -> str:
     """
     总结一句话中文短评
     Args:
@@ -116,7 +123,8 @@ def summarize_brief(task_id: str, prompt_head: str, completion_head: str, test_h
             }
         }, ensure_ascii=False)
     )
-    out = llm.batch([user_block])[0]
+    # ChatOpenAI.batch 返回 BaseMessage，取 content
+    out = llm.batch([user_block])[0].content
     return (out or "").strip() or "（模型未返回内容）"
 
 
@@ -224,15 +232,15 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
 
     os.makedirs(outdir, exist_ok=True)
     summary_json = outdir / f"summary_{run_ts}.json"
-    summary_txt  = outdir / f"summary_{run_ts}.txt"
+    summary_txt = outdir / f"summary_{run_ts}.txt"
     with open(summary_json, "w", encoding="utf-8") as sf:
         json.dump(summary, sf, ensure_ascii=False, indent=2)
 
     lines = []
     lines.append(f"评测时间：{run_ts}")
-    lines.append(f"样本正确率：{passed_samples}/{total_samples}（{summary['pass_rate_samples']*100:.2f}%）")
+    lines.append(f"样本正确率：{passed_samples}/{total_samples}（{summary['pass_rate_samples'] * 100:.2f}%）")
     if pass_at_k_task:
-        lines.append("Pass@k(任务口径)： " + ", ".join([f"Pass@{k}={v*100:.2f}%" for k, v in pass_at_k_task.items()]))
+        lines.append("Pass@k(任务口径)： " + ", ".join([f"Pass@{k}={v * 100:.2f}%" for k, v in pass_at_k_task.items()]))
     lines.append("主要错因(stage)分布：")
     for k, v in stage_counter.most_common():
         lines.append(f"  - {k}: {v}")
@@ -245,6 +253,7 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
 
     logger.info(f" 已生成 summary：{summary_json} ，文本简报：{summary_txt}")
     return str(summary_json), str(summary_txt)
+
 
 def eval_model_node(state: LoopAIState):
     """
@@ -295,7 +304,7 @@ def eval_model_node(state: LoopAIState):
 
     # 批量处理
     for i in tqdm(range(0, len(failed_results), batch_size)):
-        batch = failed_results[i:i+batch_size]
+        batch = failed_results[i:i + batch_size]
 
         evidences: List[Dict[str, Any]] = []
         prompts: List[str] = []
@@ -309,8 +318,8 @@ def eval_model_node(state: LoopAIState):
                 "test_head": (rec.get("test_code") or "")[:800],
                 "stdout_tail": (rec.get("stdout") or "")[-600:],
                 "stderr_head": (rec.get("stderr") or "")[:600],
-                "err_text": f"stdout:\n{rec.get('stdout','')}\n\nstderr:\n{rec.get('stderr','')}",
-                "query": rec.get("query","") or rec.get("completion",""),
+                "err_text": f"stdout:\n{rec.get('stdout', '')}\n\nstderr:\n{rec.get('stderr', '')}",
+                "query": rec.get("query", "") or rec.get("completion", ""),
             }
             evidences.append(evidence)
             prompts.append(build_judge_prompt_generic(task_type, evidence))
@@ -320,7 +329,8 @@ def eval_model_node(state: LoopAIState):
 
         # 合并判因 +（可选）中文短评
         for j, rec in enumerate(batch):
-            model_json = batch_responses[j]
+            # ChatOpenAI.batch 返回 BaseMessage，取 content 作为 JSON 字符串
+            model_json = batch_responses[j].content
             if not rec.get("judge"):
                 try:
                     rec["judge"] = judge.analyze(evidences[j], model_result=model_json)

@@ -4,26 +4,28 @@ import json
 import time
 from pathlib import Path
 from typing import List, Dict, Any
+
 from loopai.common.prompts.prompt_loader import PromptLoader
-from ..utils.vllm_chat import VLLMChat
+from langchain_openai import ChatOpenAI
 from loopai.states.base import LoopAIState
 from loopai.logger import get_logger
 
 logger = get_logger()
 
-def init_model(state: LoopAIState) -> VLLMChat:
+
+def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     使用标准 vLLM(OpenAI 兼容) 客户端
     """
-    return VLLMChat(
+    model = ChatOpenAI(
         model=state['analyze_model_path'],
-        base_url=state['analyze_base_url'],
         api_key=state['analyze_api_key'],
+        base_url=state['analyze_base_url'],
         temperature=state.get('analyze_temperature', 0.0),
         top_p=state.get('analyze_top_p', 0.95),
-        system_prompt_type=getattr(state, 'system_prompt_type', 'system'),
-        system_prompt_name=getattr(state, 'system_prompt_name', 'default_prompt')
     )
+    return model
+
 
 def pick_failure_examples(oj_records: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
     """
@@ -55,8 +57,9 @@ def pick_failure_examples(oj_records: List[Dict[str, Any]], top_k: int = 5) -> L
         })
     return picked
 
+
 def build_prompt_for_llm(summary: Dict[str, Any], failure_snippets: List[Dict[str, Any]]) -> str:
-     """
+    """
     构建 LLM 输入的 prompt，包含评测总体统计与失败样例。
     Args:
         summary: 评测总体统计信息
@@ -70,8 +73,8 @@ def build_prompt_for_llm(summary: Dict[str, Any], failure_snippets: List[Dict[st
     passed = summary.get("passed_samples", 0)
     pass_rate = summary.get("pass_rate_samples", 0.0)
     fail_dist = json.dumps(summary.get("failure_stage_distribution", {}), ensure_ascii=False)
-    loc_dist  = json.dumps(summary.get("loc_distribution", {}), ensure_ascii=False)
-    kw_dist   = json.dumps(summary.get("kw_distribution", {}), ensure_ascii=False)
+    loc_dist = json.dumps(summary.get("loc_distribution", {}), ensure_ascii=False)
+    kw_dist = json.dumps(summary.get("kw_distribution", {}), ensure_ascii=False)
 
     major_fail = sorted(summary.get("failure_stage_distribution", {}).items(), key=lambda x: x[1], reverse=True)
     top_fail = major_fail[0][0] if major_fail else "N/A"
@@ -87,19 +90,21 @@ def build_prompt_for_llm(summary: Dict[str, Any], failure_snippets: List[Dict[st
             f"  problem: {problem_head}\n"
             f"  completion: {completion_head}\n"
         )
+
     fail_block = "\n".join(short(x) for x in failure_snippets) or "(无)"
 
     template = loader("analyze_result_user", "v1")
     return template.format(
         total=int(total),
         passed=int(passed),
-        pass_rate_percent=f"{pass_rate*100:.2f}",
+        pass_rate_percent=f"{pass_rate * 100:.2f}",
         fail_dist=fail_dist,
         loc_dist=loc_dist,
         kw_dist=kw_dist,
         top_fail=top_fail,
         fail_block=fail_block
     )
+
 
 def rule_based_brief(summary: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -125,6 +130,7 @@ def rule_based_brief(summary: Dict[str, Any]) -> Dict[str, Any]:
         "dominant_failure": top,
     }
 
+
 def analyze_result_node(state: LoopAIState):
     """
     分析评测结果，生成 summary 并写入文件
@@ -141,7 +147,8 @@ def analyze_result_node(state: LoopAIState):
 
     llm = init_model(state)
     prompt = build_prompt_for_llm(summary, failures)
-    response = llm.batch([prompt])[0]
+    # ChatOpenAI 支持 .batch，返回 BaseMessage，取第一个的 content
+    response = llm.batch([prompt])[0].content
 
     rb = rule_based_brief(summary)
 
@@ -157,7 +164,8 @@ def analyze_result_node(state: LoopAIState):
     ts = time.strftime("%Y%m%d_%H%M%S")
     state['analyze_output_report_json_path'] = os.path.join(state['output_dir'], f"report_{ts}.json")
     state['analyze_output_report_text_path'] = os.path.join(state['output_dir'], f"report_{ts}.txt")
-    Path(state['analyze_output_report_json_path']).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    Path(state['analyze_output_report_json_path']).write_text(json.dumps(out, ensure_ascii=False, indent=2),
+                                                              encoding="utf-8")
     Path(state['analyze_output_report_text_path']).write_text(response, encoding="utf-8")
 
     logger.info(f"已写入：{state['analyze_output_report_json_path']}\n已写入：{state['analyze_output_report_text_path']}")

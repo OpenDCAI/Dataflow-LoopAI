@@ -7,14 +7,15 @@ from pathlib import Path
 from collections import Counter
 from typing import List, Dict, Any
 
-from ..utils.vllm_chat import VLLMChat
+from langchain_openai import ChatOpenAI
 from loopai.states.base import LoopAIState
 from loopai.logger import get_logger
 
-from loopai.common.prompts.prompt_loader import PromptLoader  
+from loopai.common.prompts.prompt_loader import PromptLoader
 logger = get_logger()
 
-def init_model(state: LoopAIState) -> VLLMChat:
+
+def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     初始化模型
     Args:
@@ -26,16 +27,15 @@ def init_model(state: LoopAIState) -> VLLMChat:
     Returns:
         初始化后的模型实例
     """
-    return VLLMChat(
+    model = ChatOpenAI(
         model=state['analyze_model_path'],
-        base_url=state['analyze_base_url'],
         api_key=state['analyze_api_key'],
+        base_url=state['analyze_base_url'],
         temperature=state.get('analyze_temperature', 0.0),
         top_p=state.get('analyze_top_p', 0.95),
-
-        system_prompt_type=state.get('system_prompt_type', 'system'),
-        system_prompt_name=state.get('system_prompt_name', 'default_prompt')
     )
+    return model
+
 
 def try_read_oj_records(path_from_summary: str):
     """
@@ -70,6 +70,7 @@ def try_read_oj_records(path_from_summary: str):
         return records, f"读取到 {len(records)} 条 OJ 记录"
     except Exception as e:
         return [], f"读取 OJ 记录失败：{e}"
+
 
 def enhance_stats_with_oj(records):
      """
@@ -121,6 +122,7 @@ def enhance_stats_with_oj(records):
         }
     }
     return extras
+
 
 def make_final_json(summary: dict, oj_records: list):
     """
@@ -174,6 +176,7 @@ def make_final_json(summary: dict, oj_records: list):
 
     return run_ts, final_json
 
+
 def build_suggestion_prompt(final_json: dict) -> str:
     """
     构建改进建议的提示文本
@@ -188,8 +191,9 @@ def build_suggestion_prompt(final_json: dict) -> str:
     stage_top = final_json["failure_stage_distribution"]["top"]
     top_err = stage_top[0][0] if stage_top else "无明显错误类型"
     by_stage = json.dumps(final_json["failure_stage_distribution"]["by_stage"], ensure_ascii=False)
-    tpl = loader("suggest", "suggest_user") 
+    tpl = loader("suggest", "suggest_user")
     return tpl.format(total=t, passed=p, top_err=top_err, by_stage=by_stage)
+
 
 def make_human_text(final_json: dict) -> str:
      """
@@ -237,6 +241,7 @@ def make_human_text(final_json: dict) -> str:
     lines.append("整体来看，建议优先修复最常见错误并优化边界测试。")
     return "\n".join(lines)
 
+
 def draw_conclusion_node(state: LoopAIState):
     """
     绘制结论，生成 summary 并写入文件
@@ -264,7 +269,8 @@ def draw_conclusion_node(state: LoopAIState):
         logger.info("🤖 正在调用本地模型生成改进建议……")
         llm = init_model(state)
         prompt = build_suggestion_prompt(final_json)
-        suggestion = llm.batch([prompt])[0]
+        # ChatOpenAI.batch 返回 BaseMessage，取第一个的 content
+        suggestion = llm.batch([prompt])[0].content
 
         suggest_path = os.path.join(outdir, f"final_report_{run_ts}.suggestions.txt")
         with open(suggest_path, "w", encoding="utf-8") as f:
