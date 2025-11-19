@@ -9,6 +9,11 @@ from .hf_decision_agent import HuggingFaceDecisionAgent
 from .kaggle_decision_agent import KaggleDecisionAgent
 from .data_convertor import DataConvertor
 from .webpage_reader import WebPageReader
+from .postprocess_tools import (
+    PostprocessToolRegistry,
+    PostprocessTool,
+    get_tool_registry,
+)
 
 __all__ = [
     'RAGManager', 
@@ -22,5 +27,8 @@ __all__ = [
     'KaggleDecisionAgent',
     'DataConvertor',
     'WebPageReader',
+    'PostprocessToolRegistry',
+    'PostprocessTool',
+    'get_tool_registry',
 ]
 
