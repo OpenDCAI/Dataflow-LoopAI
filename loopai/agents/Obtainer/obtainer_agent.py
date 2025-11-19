@@ -10,7 +10,7 @@ from loopai.agents import BaseAgent
 from loopai.schema.events import StreamEvent
 
 from loopai.logger import get_logger
-from loopai.agents.Obtainer.nodes import websearch_node, download_node, postprocess_node
+from loopai.agents.Obtainer.nodes import websearch_node, download_node, postprocess_node, deep_explore_node
 
 logger = get_logger()
 
@@ -371,6 +371,7 @@ class ObtainerAgent(BaseAgent):
         builder = StateGraph(LoopAIState)
         builder.add_node("start_node", self.get_start_node())
         builder.add_node("websearch_node", websearch_node)
+        builder.add_node("deep_explore_node", deep_explore_node)  # 占位节点，未实现，不接入工作流
         builder.add_node("download_node", download_node)
         builder.add_node("postprocess_node", postprocess_node)
         builder.add_node("end_node", self.end_node)
