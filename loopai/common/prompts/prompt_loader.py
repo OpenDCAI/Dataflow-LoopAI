@@ -25,6 +25,7 @@ class PromptLoader:
     def load_prompts(self):
         """
         Scan all prompt files that endswith `_prompt.json` and load them as prompt dicts.
+        Merge prompts by prompt_type (system, task, etc.) across all files.
         """
         list_files = os.listdir(self.prompt_template_dir)
         matched_files = []
@@ -37,11 +38,27 @@ class PromptLoader:
             try:
                 with open(match_path, encoding='utf-8') as f:
                     prompt_dict = json.load(f)
-                if prefix not in self.prompt_dict:
-                    self.prompt_dict[prefix] = prompt_dict
+                
+              
+                has_nested_structure = any(k in prompt_dict for k in ['system', 'task'])
+                
+                if has_nested_structure:
+                    # Nested structure (like obtainer_prompt.json)
+                    # Merge prompts by prompt_type (system, task, etc.)
+                    for prompt_type, prompts in prompt_dict.items():
+                        if prompt_type not in self.prompt_dict:
+                            self.prompt_dict[prompt_type] = {}
+                        # Merge prompts within the same prompt_type
+                        if isinstance(prompts, dict):
+                            self.prompt_dict[prompt_type].update(prompts)
                 else:
-                    for key in prompt_dict:
-                        self.prompt_dict[prefix][key] = prompt_dict[key]
+                    # Flat structure (like system_prompt.json)
+                    # Merge all prompts into 'system' prompt_type
+                    if 'system' not in self.prompt_dict:
+                        self.prompt_dict['system'] = {}
+                    if isinstance(prompt_dict, dict):
+                        self.prompt_dict['system'].update(prompt_dict)
+                        
             except (FileNotFoundError, json.JSONDecodeError) as e:
                 logger.error(f"Failed to load prompt file '{match_path}': {e}")
                 raise RuntimeError(f"Error loading prompt file '{match_path}': {e}")

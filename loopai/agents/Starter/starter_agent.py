@@ -10,6 +10,7 @@ from loopai.agents import BaseAgent
 from loopai.agents.Configer import ConfigerAgent
 from loopai.agents.Judger import JudgerAgent
 from loopai.agents.Analyzer import AnalyzerAgent
+from loopai.agents.Obtainer import ObtainerAgent
 
 from loopai.logger import get_logger
 
@@ -47,12 +48,6 @@ class StarterAgent(BaseAgent):
             f"Exec: Train the model, next_to: query_node, exception_node: {runtime.context['exception_navigate']}, parent: {Command.PARENT}")
         return state
 
-    @staticmethod
-    @BaseAgent.set_current
-    def obtain_node(state: LoopAIState) -> LoopAIState:
-        """Obtain the data"""
-        logger.info("Exec: Obtain the data, next_to: query_node")
-        return state
 
     @staticmethod
     @BaseAgent.set_current
@@ -120,13 +115,23 @@ class StarterAgent(BaseAgent):
                                     store=self.store)(**kwargs)
         analyze_node = AnalyzerAgent(checkpointer=self.checkpointer,
                                     store=self.store)(**kwargs)
+        # ObtainerAgent will use model_name, base_url, api_key from StarterAgent
+        # But it also needs to get these from state if not provided in constructor
+        # So we pass them to ensure consistency
+        obtainer_node = ObtainerAgent(
+            model_name=self.model_name,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            checkpointer=self.checkpointer,
+            store=self.store
+        )(**kwargs)
         builder = StateGraph(LoopAIState, context_schema=RuntimeContext)
         builder.add_node("query_node", self.query_node)
         builder.add_node("llm_node", self.llm_node)
         builder.add_node("feedback_node", self.feedback_node)
         builder.add_node("route_node", self.route_node)
         builder.add_node("train_node", self.train_node)
-        builder.add_node("obtain_node", self.obtain_node)
+        builder.add_node("obtain_node", obtainer_node)  # Use ObtainerAgent subgraph
         builder.add_node("evaluate_node", self.evaluate_node)
         builder.add_node("config_node", config_node)
         builder.add_node("judge_node", judge_node)
