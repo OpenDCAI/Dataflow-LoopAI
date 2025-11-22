@@ -32,6 +32,14 @@ from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
 
 from loopai.logger import get_logger
 from loopai.common.prompts import PromptLoader
+from loopai.agents.Obtainer.utils.unified_format import (
+    UnifiedDataFormat,
+    validate_unified_format,
+    DatasetType,
+    MessageRole,
+    generate_id,
+    extract_meta_from_context,
+)
 
 logger = get_logger()
 
@@ -402,6 +410,14 @@ class DataConvertor:
             answer_msg = await self.llm.ainvoke(messages)
             answer_text = answer_msg.content.strip()
             logger.info(f'LLM data mapping response: {answer_text}')
+        except Exception as e:
+            error_msg = str(e)
+            # Check for authentication errors
+            if "401" in error_msg or "AuthenticationError" in str(type(e).__name__) or "无效的令牌" in error_msg or "invalid" in error_msg.lower() and "token" in error_msg.lower():
+                logger.error(f"API Authentication Error during data mapping: {error_msg}")
+                logger.error("Please check your API key configuration")
+                raise ValueError(f"API Authentication Error: Invalid API key. Please check your API key configuration. Original error: {error_msg}")
+            raise
 
             pattern = r'```json([\s\S]*?)```'
             match = re.search(pattern, answer_text)
@@ -416,6 +432,374 @@ class DataConvertor:
         except Exception as e:
             logger.error(f"Failed to parse LLM response: {e}")
             raise ValueError(f"Failed to parse LLM response as JSON: {e}")
+    
+    def _apply_mapping_spec(
+        self,
+        record: Dict[str, Any],
+        mapping_spec: Dict[str, Any],
+        dataset_type: str,
+        file_path: Optional[str] = None,
+        line_number: Optional[int] = None,
+        user_target: Optional[str] = None
+    ) -> Optional[UnifiedDataFormat]:
+        """
+        根据映射规则将记录转换为统一中间格式
+        
+        Args:
+            record: 原始数据记录
+            mapping_spec: LLM返回的映射规则
+            dataset_type: 数据集类型
+            file_path: 文件路径
+            line_number: 行号
+            user_target: 用户目标
+        
+        Returns:
+            UnifiedDataFormat对象
+        """
+        try:
+            # 生成ID
+            record_id = generate_id(file_path, line_number, json.dumps(record, ensure_ascii=False))
+            
+            # 提取meta信息
+            meta_spec = mapping_spec.get('meta', {})
+            meta = extract_meta_from_context(
+                file_path=file_path,
+                original_data=record,
+                user_query=user_target,
+                source_hint=meta_spec.get('source') if isinstance(meta_spec.get('source'), str) and meta_spec.get('source') != 'auto_from_filename' else None,
+                language_hint=meta_spec.get('language') if isinstance(meta_spec.get('language'), str) and meta_spec.get('language') != 'auto_detect' else None,
+                original_id=record.get(meta_spec.get('original_id')) if meta_spec.get('original_id') else (record.get("id") or record.get("_id"))
+            )
+            
+            if dataset_type == DatasetType.PRETRAIN.value:
+                # PT模式：根据映射规则提取text
+                text_spec = mapping_spec.get('text', {})
+                text_fields = text_spec.get('fields', [])
+                
+                if not text_fields:
+                    logger.debug(f"No text fields in mapping spec")
+                    return None
+                
+                # 提取字段值
+                all_text_values = []
+                for field in text_fields:
+                    values = self._extract_text_values(record, field)
+                    all_text_values.extend(values)
+                
+                if not all_text_values:
+                    logger.debug(f"No text values extracted")
+                    return None
+                
+                # 根据merge_strategy合并
+                merge_strategy = text_spec.get('merge_strategy', 'join_with_newline')
+                if 'format' in merge_strategy and '{role}' in merge_strategy and '{content}' in merge_strategy:
+                    # 对话格式：role: content
+                    text_parts = []
+                    for i in range(0, len(all_text_values), 2):
+                        if i + 1 < len(all_text_values):
+                            role = all_text_values[i]
+                            content = all_text_values[i + 1]
+                            text_parts.append(f"{role}: {content}")
+                        else:
+                            text_parts.append(all_text_values[i])
+                    text = "\n".join(text_parts)
+                else:
+                    # 默认：用换行符连接
+                    text = "\n".join(v.strip() for v in all_text_values if v.strip()).strip()
+                
+                if not text:
+                    logger.debug(f"Empty text after extraction")
+                    return None
+                
+                # 提取system
+                system = None
+                system_field = mapping_spec.get('system')
+                if system_field and system_field in record:
+                    system = str(record[system_field]).strip()
+                
+                return UnifiedDataFormat(
+                    id=record_id,
+                    dataset_type=dataset_type,
+                    text=text,
+                    system=system if system else None,
+                    meta=meta.to_dict()
+                )
+            
+            elif dataset_type == DatasetType.SFT.value:
+                # SFT模式：根据映射规则构建messages
+                messages_spec = mapping_spec.get('messages', {})
+                construction_rule = messages_spec.get('construction_rule', 'simple_qa')
+                
+                messages = []
+                
+                if construction_rule == 'already_messages':
+                    # 数据已经是messages格式
+                    messages_field = messages_spec.get('conversation_field')
+                    if messages_field and messages_field in record:
+                        raw_messages = record[messages_field]
+                        if isinstance(raw_messages, list):
+                            for msg in raw_messages:
+                                if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
+                                    messages.append({
+                                        "role": msg['role'],
+                                        "content": msg['content'],
+                                        "loss_mask": msg.get('loss_mask', msg['role'] == MessageRole.ASSISTANT.value)
+                                    })
+                
+                elif construction_rule == 'simple_qa':
+                    # 简单QA对
+                    question_field = messages_spec.get('question_field')
+                    answer_field = messages_spec.get('answer_field')
+                    
+                    if question_field:
+                        questions = self._extract_text_values(record, question_field)
+                    else:
+                        questions = []
+                    
+                    if answer_field:
+                        answers = self._extract_text_values(record, answer_field)
+                    else:
+                        answers = []
+                    
+                    max_pairs = max(len(questions), len(answers), 1)
+                    for idx in range(max_pairs):
+                        question = questions[idx] if idx < len(questions) else None
+                        answer = answers[idx] if idx < len(answers) else None
+                        
+                        if question:
+                            messages.append({
+                                "role": MessageRole.USER.value,
+                                "content": question,
+                                "loss_mask": False
+                            })
+                        
+                        if answer:
+                            messages.append({
+                                "role": MessageRole.ASSISTANT.value,
+                                "content": answer,
+                                "loss_mask": True
+                            })
+                
+                elif construction_rule == 'multi_turn':
+                    # 多轮对话
+                    conversation_field = messages_spec.get('conversation_field')
+                    if conversation_field and conversation_field in record:
+                        turns = record[conversation_field]
+                        if isinstance(turns, list):
+                            for turn in turns:
+                                if isinstance(turn, dict):
+                                    role = turn.get('role', MessageRole.USER.value)
+                                    content = turn.get('content', '')
+                                    if content:
+                                        messages.append({
+                                            "role": role,
+                                            "content": content,
+                                            "loss_mask": role == MessageRole.ASSISTANT.value
+                                        })
+                
+                if not messages:
+                    logger.debug(f"No valid messages constructed")
+                    return None
+                
+                # 提取system
+                system = None
+                system_field = mapping_spec.get('system')
+                if system_field and system_field in record:
+                    system = str(record[system_field]).strip()
+                
+                return UnifiedDataFormat(
+                    id=record_id,
+                    dataset_type=dataset_type,
+                    messages=messages,
+                    system=system if system else None,
+                    meta=meta.to_dict()
+                )
+            
+            else:
+                logger.error(f"Unsupported dataset_type: {dataset_type}")
+                return None
+        
+        except Exception as e:
+            logger.error(f"Error applying mapping spec: {e}", exc_info=True)
+            return None
+    
+    async def invoke_record_conversion(
+        self,
+        record: Dict[str, Any],
+        category: str,
+        user_target: str = "",
+        file_path: Optional[str] = None,
+        line_number: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        调用LLM直接将单条记录转换为统一中间格式
+        
+        Args:
+            record: 原始数据记录（字典）
+            category: 数据类别（PT或SFT）
+            user_target: 用户目标
+            file_path: 文件路径（用于上下文）
+            line_number: 行号（用于上下文）
+        
+        Returns:
+            统一中间格式的字典，如果转换失败则返回None
+        """
+        logger.debug(f"Converting record {line_number} to unified format using LLM")
+        
+        # 使用prompt loader
+        if self.prompt_loader:
+            try:
+                system_prompt = self.prompt_loader("system", f"data_conversion_{category.lower()}_prompt")
+                task_prompt = self.prompt_loader("task", f"data_conversion_{category.lower()}_prompt")
+                
+                # 格式化记录为JSON字符串
+                record_str = json.dumps(record, indent=2, ensure_ascii=False)
+                
+                task_params = {
+                    'column_names': str(list(record.keys())),
+                    'sample_rows': record_str,  # 单条记录
+                    'user_target': user_target
+                }
+                
+                human_prompt = task_prompt.format(**task_params)
+            except Exception as e:
+                logger.warning(f"Failed to load prompt, using default: {e}")
+                system_prompt = self._get_default_conversion_system_prompt(category)
+                human_prompt = self._get_default_conversion_task_prompt(record, user_target, category)
+        else:
+            system_prompt = self._get_default_conversion_system_prompt(category)
+            human_prompt = self._get_default_conversion_task_prompt(record, user_target, category)
+        
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=human_prompt)
+        ]
+        
+        try:
+            answer_msg = await self.llm.ainvoke(messages)
+            answer_text = answer_msg.content.strip()
+            logger.debug(f'LLM conversion response: {answer_text[:200]}...')
+            
+            # 提取JSON
+            pattern = r'```json([\s\S]*?)```'
+            match = re.search(pattern, answer_text)
+            if match:
+                match_text = match.group(1).strip()
+            else:
+                match_text = answer_text
+            
+            unified_record = json.loads(match_text)
+            
+            # 验证并补充字段
+            # 确保id存在，如果LLM没有生成，我们生成一个
+            if 'id' not in unified_record or not unified_record['id']:
+                unified_record['id'] = generate_id(file_path, line_number, json.dumps(record, ensure_ascii=False))
+            
+            # 确保dataset_type正确
+            if category.upper() == 'PT':
+                unified_record['dataset_type'] = DatasetType.PRETRAIN.value
+            elif category.upper() == 'SFT':
+                unified_record['dataset_type'] = DatasetType.SFT.value
+            
+            # 补充meta信息（如果LLM没有生成完整的meta）
+            if 'meta' not in unified_record:
+                unified_record['meta'] = {}
+            
+            meta = extract_meta_from_context(
+                file_path=file_path,
+                original_data=record,
+                user_query=user_target,
+                source_hint=unified_record['meta'].get('source'),
+                language_hint=unified_record['meta'].get('language'),
+                original_id=record.get("id") or record.get("_id")
+            )
+            
+            # 合并meta信息（LLM生成的优先，但补充缺失的字段）
+            unified_record['meta'].update({
+                'source': unified_record['meta'].get('source') or meta.source,
+                'language': unified_record['meta'].get('language') or meta.language,
+                'timestamp': unified_record['meta'].get('timestamp') or meta.timestamp,
+                'token_count': unified_record['meta'].get('token_count') or meta.token_count,
+                'quality_score': unified_record['meta'].get('quality_score') or meta.quality_score,
+                'original_id': unified_record['meta'].get('original_id') or meta.original_id
+            })
+            
+            # 移除None值
+            unified_record['meta'] = {k: v for k, v in unified_record['meta'].items() if v is not None}
+            
+            logger.debug(f"Successfully converted record to unified format")
+            return unified_record
+        except Exception as e:
+            logger.error(f"Failed to convert record using LLM: {e}", exc_info=True)
+            return None
+    
+    def _get_default_conversion_system_prompt(self, category: str) -> str:
+        """获取默认的转换系统提示词"""
+        if category.upper() == "PT":
+            return """You are a data conversion expert for Pre-training (PT) tasks. Your task is to convert raw data records into the unified intermediate format for LLM training.
+
+You must output data in the following exact format:
+{
+  "id": "unique_id_here",
+  "dataset_type": "pretrain",
+  "text": "continuous text content for pre-training",
+  "system": "optional system prompt",
+  "meta": {
+    "source": "data source identifier",
+    "language": "language code (e.g., zh, en)",
+    "original_id": "original record ID if exists"
+  }
+}
+
+Extract and merge ALL relevant text from the record into a single coherent text field. Preserve all important details, context, and structure."""
+        else:  # SFT
+            return """You are a data conversion expert for Supervised Fine-Tuning (SFT) tasks. Your task is to convert raw data records into the unified intermediate format for LLM training.
+
+You must output data in the following exact format:
+{
+  "id": "unique_id_here",
+  "dataset_type": "sft",
+  "messages": [
+    {"role": "user", "content": "user question/instruction", "loss_mask": false},
+    {"role": "assistant", "content": "assistant response", "loss_mask": true}
+  ],
+  "system": "optional system prompt",
+  "meta": {
+    "source": "data source identifier",
+    "language": "language code (e.g., zh, en)",
+    "original_id": "original record ID if exists"
+  }
+}
+
+Extract question/instruction and answer/response from the record and build messages list. Preserve all important details, context, and formatting."""
+    
+    def _get_default_conversion_task_prompt(
+        self,
+        record: Dict[str, Any],
+        user_target: str,
+        category: str
+    ) -> str:
+        """获取默认的转换任务提示词"""
+        record_str = json.dumps(record, indent=2, ensure_ascii=False)
+        
+        if category.upper() == "PT":
+            return f"""**Sample Record to Convert**:
+```json
+{record_str}
+```
+
+**User Target**: {user_target}
+
+Convert this record into unified intermediate format for pre-training. Extract and merge all relevant text into a single coherent text field. Return the complete unified format JSON."""
+        else:  # SFT
+            return f"""**Sample Record to Convert**:
+```json
+{record_str}
+```
+
+**User Target**: {user_target}
+
+Convert this record into unified intermediate format for supervised fine-tuning. Extract question/instruction and answer/response, and build messages list. Return the complete unified format JSON."""
 
     def _get_default_system_prompt(self, category: str) -> str:
         """Get default system prompt"""
@@ -1062,9 +1446,18 @@ Please identify which files are data files that should be processed. Return a JS
         output_jsonl_prefix: str,
         processed_sources_list: List[Tuple[str, int]]
     ) -> int:
-        """Process single dataset and extract data"""
+        """Process single dataset and extract data to unified format"""
         total_count = 0
         file_name = os.path.basename(file_path)
+        
+        # 确定dataset_type
+        if category.upper() == 'PT':
+            dataset_type = DatasetType.PRETRAIN.value
+        elif category.upper() == 'SFT':
+            dataset_type = DatasetType.SFT.value
+        else:
+            logger.warning(f"Unknown category '{category}', defaulting to pretrain")
+            dataset_type = DatasetType.PRETRAIN.value
         
         for split_name, data_content in data.items():
             logger.info(f"--- Processing Split: '{split_name}' (from {file_name}) ---")
@@ -1076,23 +1469,26 @@ Please identify which files are data files that should be processed. Return a JS
             column_names = data_content.column_names
             sample_record = data_content[0]
             
+            # 步骤1: 采样并调用LLM获取映射规则
             try:
-                annotation_result = await self.invoke_data_mapping(
+                mapping_spec = await self.invoke_data_mapping(
                     column_names=column_names,
                     sample_record=sample_record,
                     dataset=data_content,
                     user_target=user_target,
                     category=category
                 )
-                logger.info(f"LLM mapping result: {annotation_result}")
+                logger.info(f"LLM mapping specification: {mapping_spec}")
             except Exception as e:
-                logger.error(f"LLM data mapping failed, skipping Split '{split_name}': {e}")
+                logger.error(f"LLM mapping failed, skipping Split '{split_name}': {e}")
                 continue
             
+            # 步骤2: 根据映射规则批量处理所有记录
             split_record_count = 0
             chunk_size = 10000
             current_chunk_index = 1
             current_chunk_count = 0
+            failed_count = 0
 
             def _open_chunk_file(index: int):
                 chunk_path = f"{output_jsonl_prefix}_{index:05d}.jsonl"
@@ -1100,147 +1496,53 @@ Please identify which files are data files that should be processed. Return a JS
 
             f_out = _open_chunk_file(current_chunk_index)
             try:
-                if category.upper() == 'PT':
-                    text_field = annotation_result.get('text') if annotation_result else None
-                    
-                    # Handle both single field and list of fields
-                    if isinstance(text_field, list):
-                        # Multiple fields need to be combined
-                        text_fields = [self._sanitize_field_spec(field, column_names) for field in text_field]
-                        text_fields = [f for f in text_fields if f is not None]
+                # 处理每一行数据，根据映射规则转换为统一格式
+                for line_idx, row in enumerate(data_content):
+                    # 将row转换为字典格式（如果还不是）
+                    if not isinstance(row, dict):
+                        row_dict = dict(row) if hasattr(row, '__iter__') and not isinstance(row, str) else {"value": row}
                     else:
-                        # Single field
-                        text_field = self._sanitize_field_spec(text_field, column_names)
-                        text_fields = [text_field] if text_field else []
+                        row_dict = row
                     
-                    if not text_fields:
-                        logger.warning(
-                            f"Did not find valid text field(s) in {file_name} ({split_name}) (from LLM: {annotation_result}), skipping."
+                    try:
+                        # 根据映射规则转换记录
+                        unified_record = self._apply_mapping_spec(
+                            record=row_dict,
+                            mapping_spec=mapping_spec,
+                            dataset_type=dataset_type,
+                            file_path=file_path,
+                            line_number=line_idx,
+                            user_target=user_target
                         )
-                        continue
-
-                    # Collect all rows first to handle conversation merging
-                    rows_to_process = []
-                    for row in data_content:
-                        # Extract values from all specified fields
-                        all_values = []
-                        for field in text_fields:
-                            values = self._extract_text_values(row, field)
-                            all_values.extend(values)
                         
-                        if all_values:
-                            rows_to_process.append(all_values)
-                    
-                    # Merge rows into continuous text
-                    # For conversation data, merge role and content fields naturally
-                    merged_texts = []
-                    current_conversation = []
-                    
-                    for row_values in rows_to_process:
-                        # Check if this looks like a conversation turn (has role-like and content-like parts)
-                        has_role = any("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower() for v in row_values)
-                        has_content = any(len(str(v)) > 20 and not ("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower()) for v in row_values)
-                        
-                        if has_role and has_content:
-                            # This is a conversation turn, merge role and content
-                            role_part = None
-                            content_part = None
-                            for v in row_values:
-                                v_str = str(v).strip()
-                                if "role" in v_str.lower() or "user" in v_str.lower() or "assistant" in v_str.lower():
-                                    # Extract role name
-                                    if "user" in v_str.lower():
-                                        role_part = "用户"
-                                    elif "assistant" in v_str.lower():
-                                        role_part = "助手"
-                                    else:
-                                        # Try to extract role from "role. xxx" format
-                                        parts = v_str.split(".", 1)
-                                        if len(parts) > 1:
-                                            role_part = parts[1].strip()
-                                        else:
-                                            role_part = v_str.replace("role", "").replace(".", "").strip()
-                                else:
-                                    # This is content
-                                    if "content" in v_str.lower():
-                                        # Extract content from "content. xxx" format
-                                        parts = v_str.split(".", 1)
-                                        if len(parts) > 1:
-                                            content_part = parts[1].strip()
-                                        else:
-                                            content_part = v_str.replace("content", "").replace(".", "").strip()
-                                    else:
-                                        content_part = v_str
-                            
-                            if role_part and content_part:
-                                current_conversation.append(f"{role_part}：{content_part}")
-                            elif content_part:
-                                current_conversation.append(content_part)
-                        else:
-                            # Regular text data, merge all values
-                            merged = " ".join(str(v).strip() for v in row_values if str(v).strip())
-                            if merged:
-                                if current_conversation:
-                                    # Finish current conversation
-                                    merged_texts.append("\n\n".join(current_conversation))
-                                    current_conversation = []
-                                merged_texts.append(merged)
-                    
-                    # Finish any remaining conversation
-                    if current_conversation:
-                        merged_texts.append("\n\n".join(current_conversation))
-                    
-                    # Write merged texts
-                    for text in merged_texts:
-                        if text and text.strip():
-                            json.dump({'text': text.strip()}, f_out, ensure_ascii=False)
-                            f_out.write('\n')
-                            split_record_count += 1
-                            current_chunk_count += 1
-                            if current_chunk_count >= chunk_size:
-                                f_out.close()
-                                current_chunk_index += 1
-                                current_chunk_count = 0
-                                f_out = _open_chunk_file(current_chunk_index)
-                            
-                elif category.upper() == 'SFT':
-                    q_field = annotation_result.get('question') if annotation_result else None
-                    a_field = annotation_result.get('answer') if annotation_result else None
-
-                    q_field = self._sanitize_field_spec(q_field, column_names)
-                    a_field = self._sanitize_field_spec(a_field, column_names)
-
-                    if q_field is None and a_field is None:
-                        logger.warning(
-                            f"LLM returned null 'question' and 'answer' fields or they don't exist in column names, skipping {file_name} ({split_name})."
-                            f" LLM mapping result: {annotation_result}"
-                        )
-                        continue
-
-                    for row in data_content:
-                        questions = self._extract_text_values(row, q_field) if q_field else []
-                        answers = self._extract_text_values(row, a_field) if a_field else []
-
-                        if not questions and not answers:
+                        if unified_record is None:
+                            failed_count += 1
+                            logger.debug(f"Conversion failed for row {line_idx}, skipping")
                             continue
-
-                        max_pairs = max(len(questions), len(answers), 1)
-                        for idx in range(max_pairs):
-                            question = questions[idx] if idx < len(questions) else None
-                            answer = answers[idx] if idx < len(answers) else None
-
-                            if question is None and answer is None:
-                                continue
-
-                            json.dump({'question': question, 'answer': answer}, f_out, ensure_ascii=False)
-                            f_out.write('\n')
-                            split_record_count += 1
-                            current_chunk_count += 1
-                            if current_chunk_count >= chunk_size:
-                                f_out.close()
-                                current_chunk_index += 1
-                                current_chunk_count = 0
-                                f_out = _open_chunk_file(current_chunk_index)
+                        
+                        # 验证格式
+                        is_valid, error_msg = validate_unified_format(unified_record.to_dict())
+                        if not is_valid:
+                            failed_count += 1
+                            logger.warning(f"Invalid unified format for row {line_idx}: {error_msg}")
+                            continue
+                        
+                        # 写入JSONL文件
+                        json.dump(unified_record.to_dict(), f_out, ensure_ascii=False)
+                        f_out.write('\n')
+                        split_record_count += 1
+                        current_chunk_count += 1
+                        
+                        if current_chunk_count >= chunk_size:
+                            f_out.close()
+                            current_chunk_index += 1
+                            current_chunk_count = 0
+                            f_out = _open_chunk_file(current_chunk_index)
+                    
+                    except Exception as e:
+                        failed_count += 1
+                        logger.error(f"Error converting row {line_idx}: {e}", exc_info=True)
+                        continue
             finally:
                 try:
                     f_out.close()
@@ -1248,9 +1550,11 @@ Please identify which files are data files that should be processed. Return a JS
                     pass
             
             if split_record_count > 0:
-                logger.info(f"Extracted {split_record_count} records from {file_name} ({split_name}).")
+                logger.info(f"Extracted {split_record_count} records from {file_name} ({split_name}). Failed: {failed_count}")
                 processed_sources_list.append((f"{file_name}_({split_name})", split_record_count))
                 total_count += split_record_count
+            elif failed_count > 0:
+                logger.warning(f"All {failed_count} records failed conversion for {file_name} ({split_name})")
         
         return total_count
     
@@ -1260,24 +1564,32 @@ Please identify which files are data files that should be processed. Return a JS
         file_path: str,
         file_name: str,
         split_name: str,
-        annotation_result: Dict[str, Any],
+        mapping_spec: Dict[str, Any],
         category: str,
         output_jsonl_prefix: str,
         processed_sources_list: List[Tuple[str, int]]
     ) -> int:
-        """Process a single split with pre-computed mapping result"""
+        """Process a single split with pre-computed mapping specification to unified format"""
         logger.info(f"--- Processing Split: '{split_name}' (from {file_name}) ---")
         
         if len(data_content) == 0:
             logger.info(f"Split '{split_name}' is empty, skipping.")
             return 0
         
-        column_names = data_content.column_names
+        # 确定dataset_type
+        if category.upper() == 'PT':
+            dataset_type = DatasetType.PRETRAIN.value
+        elif category.upper() == 'SFT':
+            dataset_type = DatasetType.SFT.value
+        else:
+            logger.warning(f"Unknown category '{category}', defaulting to pretrain")
+            dataset_type = DatasetType.PRETRAIN.value
         
         split_record_count = 0
         chunk_size = 10000
         current_chunk_index = 1
         current_chunk_count = 0
+        failed_count = 0
 
         def _open_chunk_file(index: int):
             chunk_path = f"{output_jsonl_prefix}_{index:05d}.jsonl"
@@ -1285,147 +1597,53 @@ Please identify which files are data files that should be processed. Return a JS
 
         f_out = _open_chunk_file(current_chunk_index)
         try:
-            if category.upper() == 'PT':
-                text_field = annotation_result.get('text') if annotation_result else None
-                
-                # Handle both single field and list of fields
-                if isinstance(text_field, list):
-                    # Multiple fields need to be combined
-                    text_fields = [self._sanitize_field_spec(field, column_names) for field in text_field]
-                    text_fields = [f for f in text_fields if f is not None]
+            # 处理每一行数据，根据映射规则转换为统一格式
+            for line_idx, row in enumerate(data_content):
+                # 将row转换为字典格式（如果还不是）
+                if not isinstance(row, dict):
+                    row_dict = dict(row) if hasattr(row, '__iter__') and not isinstance(row, str) else {"value": row}
                 else:
-                    # Single field
-                    text_field = self._sanitize_field_spec(text_field, column_names)
-                    text_fields = [text_field] if text_field else []
+                    row_dict = row
                 
-                if not text_fields:
-                    logger.warning(
-                        f"Did not find valid text field(s) in {file_name} ({split_name}) (from LLM: {annotation_result}), skipping."
+                try:
+                    # 根据映射规则转换记录
+                    unified_record = self._apply_mapping_spec(
+                        record=row_dict,
+                        mapping_spec=mapping_spec,
+                        dataset_type=dataset_type,
+                        file_path=file_path,
+                        line_number=line_idx,
+                        user_target=None
                     )
-                    return 0
-
-                # Collect all rows first to handle conversation merging
-                rows_to_process = []
-                for row in data_content:
-                    # Extract values from all specified fields
-                    all_values = []
-                    for field in text_fields:
-                        values = self._extract_text_values(row, field)
-                        all_values.extend(values)
                     
-                    if all_values:
-                        rows_to_process.append(all_values)
-                
-                # Merge rows into continuous text
-                # For conversation data, merge role and content fields naturally
-                merged_texts = []
-                current_conversation = []
-                
-                for row_values in rows_to_process:
-                    # Check if this looks like a conversation turn (has role-like and content-like parts)
-                    has_role = any("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower() for v in row_values)
-                    has_content = any(len(str(v)) > 20 and not ("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower()) for v in row_values)
-                    
-                    if has_role and has_content:
-                        # This is a conversation turn, merge role and content
-                        role_part = None
-                        content_part = None
-                        for v in row_values:
-                            v_str = str(v).strip()
-                            if "role" in v_str.lower() or "user" in v_str.lower() or "assistant" in v_str.lower():
-                                # Extract role name
-                                if "user" in v_str.lower():
-                                    role_part = "用户"
-                                elif "assistant" in v_str.lower():
-                                    role_part = "助手"
-                                else:
-                                    # Try to extract role from "role. xxx" format
-                                    parts = v_str.split(".", 1)
-                                    if len(parts) > 1:
-                                        role_part = parts[1].strip()
-                                    else:
-                                        role_part = v_str.replace("role", "").replace(".", "").strip()
-                            else:
-                                # This is content
-                                if "content" in v_str.lower():
-                                    # Extract content from "content. xxx" format
-                                    parts = v_str.split(".", 1)
-                                    if len(parts) > 1:
-                                        content_part = parts[1].strip()
-                                    else:
-                                        content_part = v_str.replace("content", "").replace(".", "").strip()
-                                else:
-                                    content_part = v_str
-                        
-                        if role_part and content_part:
-                            current_conversation.append(f"{role_part}：{content_part}")
-                        elif content_part:
-                            current_conversation.append(content_part)
-                    else:
-                        # Regular text data, merge all values
-                        merged = " ".join(str(v).strip() for v in row_values if str(v).strip())
-                        if merged:
-                            if current_conversation:
-                                # Finish current conversation
-                                merged_texts.append("\n\n".join(current_conversation))
-                                current_conversation = []
-                            merged_texts.append(merged)
-                
-                # Finish any remaining conversation
-                if current_conversation:
-                    merged_texts.append("\n\n".join(current_conversation))
-                
-                # Write merged texts
-                for text in merged_texts:
-                    if text and text.strip():
-                        json.dump({'text': text.strip()}, f_out, ensure_ascii=False)
-                        f_out.write('\n')
-                        split_record_count += 1
-                        current_chunk_count += 1
-                        if current_chunk_count >= chunk_size:
-                            f_out.close()
-                            current_chunk_index += 1
-                            current_chunk_count = 0
-                            f_out = _open_chunk_file(current_chunk_index)
-                        
-            elif category.upper() == 'SFT':
-                q_field = annotation_result.get('question') if annotation_result else None
-                a_field = annotation_result.get('answer') if annotation_result else None
-
-                q_field = self._sanitize_field_spec(q_field, column_names)
-                a_field = self._sanitize_field_spec(a_field, column_names)
-
-                if q_field is None and a_field is None:
-                    logger.warning(
-                        f"LLM returned null 'question' and 'answer' fields or they don't exist in column names, skipping {file_name} ({split_name})."
-                        f" LLM mapping result: {annotation_result}"
-                    )
-                    return 0
-
-                for row in data_content:
-                    questions = self._extract_text_values(row, q_field) if q_field else []
-                    answers = self._extract_text_values(row, a_field) if a_field else []
-
-                    if not questions and not answers:
+                    if unified_record is None:
+                        failed_count += 1
+                        logger.debug(f"Conversion failed for row {line_idx}, skipping")
                         continue
-
-                    max_pairs = max(len(questions), len(answers), 1)
-                    for idx in range(max_pairs):
-                        question = questions[idx] if idx < len(questions) else None
-                        answer = answers[idx] if idx < len(answers) else None
-
-                        if question is None and answer is None:
-                            continue
-
-                        json.dump({'question': question, 'answer': answer}, f_out, ensure_ascii=False)
-                        f_out.write('\n')
-                        split_record_count += 1
-                        current_chunk_count += 1
-                        if current_chunk_count >= chunk_size:
-                            f_out.close()
-                            current_chunk_index += 1
-                            current_chunk_count = 0
-                            f_out = _open_chunk_file(current_chunk_index)
+                    
+                    # 验证格式
+                    is_valid, error_msg = validate_unified_format(unified_record.to_dict())
+                    if not is_valid:
+                        failed_count += 1
+                        logger.warning(f"Invalid unified format for row {line_idx}: {error_msg}")
+                        continue
+                    
+                    # 写入JSONL文件
+                    json.dump(unified_record.to_dict(), f_out, ensure_ascii=False)
+                    f_out.write('\n')
+                    split_record_count += 1
+                    current_chunk_count += 1
+                    
+                    if current_chunk_count >= chunk_size:
+                        f_out.close()
+                        current_chunk_index += 1
+                        current_chunk_count = 0
+                        f_out = _open_chunk_file(current_chunk_index)
+                
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"Error converting row {line_idx}: {e}", exc_info=True)
+                    continue
         finally:
             try:
                 f_out.close()
@@ -1433,7 +1651,7 @@ Please identify which files are data files that should be processed. Return a JS
                 pass
         
         if split_record_count > 0:
-            logger.info(f"Extracted {split_record_count} records from {file_name} ({split_name}).")
+            logger.info(f"Extracted {split_record_count} records from {file_name} ({split_name}). Failed: {failed_count}")
             processed_sources_list.append((f"{file_name}_({split_name})", split_record_count))
         
         return split_record_count

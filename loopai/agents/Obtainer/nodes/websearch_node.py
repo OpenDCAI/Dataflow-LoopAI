@@ -164,8 +164,18 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
                 logger.debug(f"Could not send stream event: {e}")
         
     except Exception as e:
-        logger.error(f"WebSearch node error: {e}", exc_info=True)
-        state["exception"] = f"WebSearch error: {str(e)}"
+        error_msg = str(e)
+        # Check for authentication errors
+        if "401" in error_msg or "AuthenticationError" in str(type(e).__name__) or "无效的令牌" in error_msg or "invalid" in error_msg.lower() and "token" in error_msg.lower():
+            logger.error(f"API Authentication Error: {error_msg}")
+            logger.error("Please check your API key:")
+            logger.error(f"  - API key file: {Path(__file__).parent.parent.parent.parent / 'examples' / 'scripts' / 'api_key.txt'}")
+            logger.error(f"  - Environment variable: API_KEY")
+            logger.error(f"  - Current API key (first 10 chars): {api_key[:10] if api_key and len(api_key) > 10 else 'N/A'}...")
+            state["exception"] = f"API Authentication Error: Invalid API key. Please check your API key configuration."
+        else:
+            logger.error(f"WebSearch node error: {e}", exc_info=True)
+            state["exception"] = f"WebSearch error: {str(e)}"
     
     logger.info("=== WebSearch Node: Completed ===")
     return state

@@ -111,4 +111,3 @@ python "$SCRIPT_DIR/run_obtainer.py"
 
 echo ""
 echo "Test completed!"
-

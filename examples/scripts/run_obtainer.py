@@ -15,18 +15,32 @@ from langchain_core.messages import HumanMessage
 api_key = None
 api_key_file = Path(__file__).parent / 'api_key.txt'
 if api_key_file.exists():
-    with open(api_key_file, 'r') as f:
-        api_key = f.read().strip()
+    with open(api_key_file, 'r', encoding='utf-8') as f:
+        api_key = f.read().strip().strip('\r\n').strip('\n').strip('\r')
+        if not api_key:
+            print(f"Warning: API key file {api_key_file} exists but is empty")
+            api_key = os.getenv('API_KEY', 'empty')
 else:
     api_key = os.getenv('API_KEY', 'empty')
+
+# Validate API key
+if not api_key or api_key == 'empty':
+    print("=" * 80)
+    print("WARNING: API key is missing or invalid!")
+    print("Please set API_KEY environment variable or create api_key.txt file")
+    print(f"Expected location: {api_key_file}")
+    print("=" * 80)
 
 # Read Tavily API key if exists
 tavily_api_key = None
 tavily_api_key_file = Path(__file__).parent / 'tavily_api_key.txt'
 if tavily_api_key_file.exists():
-    with open(tavily_api_key_file, 'r') as f:
-        tavily_api_key = f.read().strip()
-        os.environ['TAVILY_API_KEY'] = tavily_api_key
+    with open(tavily_api_key_file, 'r', encoding='utf-8') as f:
+        tavily_api_key = f.read().strip().strip('\r\n').strip('\n').strip('\r')
+        if tavily_api_key:
+            os.environ['TAVILY_API_KEY'] = tavily_api_key
+        else:
+            print(f"Warning: Tavily API key file {tavily_api_key_file} exists but is empty")
 
 # Read Kaggle credentials if exists
 kaggle_username = os.getenv('KAGGLE_USERNAME', '')

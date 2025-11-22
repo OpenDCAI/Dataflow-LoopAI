@@ -292,11 +292,23 @@ async def _postprocess_workflow(
         # 步骤 2: 处理每个文件 - 读取抽样并调用后处理工具
         output_dir = os.path.join(download_dir, "processed_output")
         os.makedirs(output_dir, exist_ok=True)
-        logger.info(f"Output directory: {os.path.abspath(output_dir)}")
         
-        output_jsonl_prefix = os.path.join(output_dir, f"{category.upper()}")
+        # 创建统一格式输出目录
+        unified_format_dir = os.path.join(output_dir, "unified_format")
+        os.makedirs(unified_format_dir, exist_ok=True)
+        logger.info(f"Unified format output directory: {os.path.abspath(unified_format_dir)}")
+        
+        # 确定dataset_type用于文件命名
+        if category.upper() == 'PT':
+            dataset_type = "pretrain"
+        elif category.upper() == 'SFT':
+            dataset_type = "sft"
+        else:
+            dataset_type = "pretrain"  # 默认
+        
+        output_jsonl_prefix = os.path.join(unified_format_dir, f"unified_{dataset_type}")
         logger.info(f"========================================")
-        logger.info(f"Output file prefix (absolute path), will split every 10000 records:")
+        logger.info(f"Unified format output file prefix (absolute path), will split every 10000 records:")
         logger.info(f"   {os.path.abspath(output_jsonl_prefix)}_00001.jsonl ...")
         logger.info(f"========================================")
         
@@ -358,53 +370,50 @@ async def _postprocess_workflow(
                     continue
                 
                 try:
-                    # 步骤 2.1: 读取文件抽样
+                    # 步骤 2.1: 读取文件抽样（用于LLM分析，但实际处理由DataConvertor完成）
                     logger.info(f"Reading sample from file: {file_path}")
                     sample_data = tool.read_sample(file_path, sample_size=10)
                     
                     if not sample_data:
-                        logger.warning(f"No sample data could be read from: {file_path}")
-                        continue
+                        logger.warning(f"No sample data could be read from: {file_path}, but will try DataConvertor anyway")
+                        # 即使没有样本，也尝试让DataConvertor处理
                     
-                    logger.info(f"Successfully read {len(sample_data)} sample records from: {file_path}")
+                    if sample_data:
+                        logger.info(f"Successfully read {len(sample_data)} sample records from: {file_path}")
                     
                     # 步骤 2.2: 检测文件格式和结构
                     format_info = tool.detect_format(file_path)
                     if format_info:
                         logger.info(f"File format detected: {format_info}")
                     
-                    # 步骤 2.3: 调用后处理工具进行处理
-                    # 生成输出文件路径
-                    file_name = Path(file_path).stem
-                    file_ext = Path(file_path).suffix
-                    output_file_path = os.path.join(
-                        output_dir,
-                        f"{category.upper()}_{file_name}{file_ext}"
-                    )
+                    # 步骤 2.3: 使用DataConvertor处理文件（实际转换逻辑）
+                    logger.info(f"Processing file with DataConvertor: {file_path}")
+                    logger.info(f"Target format: unified intermediate format, Category: {category}")
                     
-                    logger.info(f"Calling postprocess tool for: {file_path}")
-                    logger.info(f"Target format: jsonl, Category: {category}, Output: {output_file_path}")
+                    # 使用DataConvertor处理文件
+                    # 首先加载数据
+                    data = await convertor.load_dataset(file_path)
+                    if data is None:
+                        logger.warning(f"Failed to load dataset from {file_path}, skipping")
+                        continue
                     
-                    # 调用工具进行处理
-                    process_result = tool.process(
+                    # 处理数据集
+                    records_count = await convertor._process_dataset(
+                        data=data,
                         file_path=file_path,
-                        target_format="jsonl",
-                        output_path=output_file_path,
+                        user_target=user_query or "",
                         category=category,
-                        user_query=user_query,
-                        sample_data=sample_data,
+                        output_jsonl_prefix=output_jsonl_prefix,
+                        processed_sources_list=processed_sources_list
                     )
                     
-                    if process_result.get("success", False):
-                        records_count = process_result.get("records_processed", 0)
-                        processed_sources_list.append((file_path, records_count))
+                    if records_count > 0:
                         total_records_processed += records_count
                         logger.info(
                             f"Successfully processed {file_path}: {records_count} records"
                         )
                     else:
-                        error_msg = process_result.get("error", "Unknown error")
-                        logger.error(f"Failed to process {file_path}: {error_msg}")
+                        logger.warning(f"No records processed from {file_path}")
                 
                 except Exception as e:
                     logger.error(f"Error processing file {file_path}: {e}", exc_info=True)
@@ -416,10 +425,14 @@ async def _postprocess_workflow(
         # 输出文件位置信息
         if total_records_processed > 0:
             logger.info(f"========================================")
-            logger.info(f"Data successfully written to output directory:")
-            logger.info(f"Output directory: {os.path.abspath(output_dir)}")
+            logger.info(f"Unified format data successfully written to output directory:")
+            logger.info(f"Unified format directory: {os.path.abspath(unified_format_dir)}")
             logger.info(f"Total records: {total_records_processed}")
+            logger.info(f"Dataset type: {dataset_type}")
             logger.info(f"========================================")
+            
+            # 创建占位输出节点（用于后续扩展）
+            logger.info("Note: Unified format files are ready. Final output conversion node is reserved for future implementation.")
         else:
             logger.warning(f"No valid records extracted, output files may be empty or non-existent.")
         
@@ -431,6 +444,8 @@ async def _postprocess_workflow(
             "total_records_processed": total_records_processed,
             "processed_sources_count": len(processed_sources_list),
             "output_dir": os.path.abspath(output_dir),
+            "unified_format_dir": os.path.abspath(unified_format_dir) if total_records_processed > 0 else None,
+            "dataset_type": dataset_type,
         }
         
     except Exception as e:

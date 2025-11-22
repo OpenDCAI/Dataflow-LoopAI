@@ -14,6 +14,17 @@ from .postprocess_tools import (
     PostprocessTool,
     get_tool_registry,
 )
+from .unified_format import (
+    UnifiedDataFormat,
+    Message,
+    Meta,
+    DatasetType,
+    MessageRole,
+    generate_id,
+    extract_meta_from_context,
+    convert_to_unified_format,
+    validate_unified_format,
+)
 
 __all__ = [
     'RAGManager', 
@@ -30,5 +41,14 @@ __all__ = [
     'PostprocessToolRegistry',
     'PostprocessTool',
     'get_tool_registry',
+    'UnifiedDataFormat',
+    'Message',
+    'Meta',
+    'DatasetType',
+    'MessageRole',
+    'generate_id',
+    'extract_meta_from_context',
+    'convert_to_unified_format',
+    'validate_unified_format',
 ]
 
