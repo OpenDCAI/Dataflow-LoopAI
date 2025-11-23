@@ -1,0 +1,42 @@
+# 忽略Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 忽略虚拟环境
+venv/
+env/
+ENV/
+
+# 忽略IDE文件
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 忽略日志文件
+logs/
+*.log
+
+# 忽略配置文件（除了示例）
+configs/
+!configs/.gitkeep
+
+# 忽略训练输出
+runs/
+!runs/.gitkeep
+
+# 忽略临时文件
+temp/
+tmp/
+.tmp/
+
+# 忽略系统文件
+.DS_Store
+Thumbs.db
+
+# 忽略模型文件（太大）
+*.bin
+*.safetensors
+*.pt
+*.pth
