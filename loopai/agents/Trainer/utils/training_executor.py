@@ -60,7 +60,7 @@ class TrainingExecutor:
                 return result
             
             # 准备环境
-            self._prepare_environment(use_swanlab, swanlab_project)
+            # self._prepare_environment(use_swanlab, swanlab_project)
             
             # 创建输出目录
             os.makedirs(output_dir, exist_ok=True)

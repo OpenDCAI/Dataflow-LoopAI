@@ -1,0 +1,8 @@
+{
+  "model_name": "qwen2.5-7b-instruct",
+  "dataset_path": "D:\\MyProject\\Dataflow-LoopAI\\temp\\test_dataset.jsonl",
+  "output_dir": "D:\\MyProject\\Dataflow-LoopAI\\temp\\training",
+  "num_train_epochs": 1,
+  "learning_rate": 5e-05,
+  "per_device_train_batch_size": 2
+}
