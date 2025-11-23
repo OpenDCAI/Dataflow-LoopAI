@@ -96,12 +96,12 @@ def parse_assert_from_stdout(stdout: str) -> Dict[str, Any]:
 def summarize_brief(task_id: str, prompt_head: str, completion_head: str, test_head: str,
                     oj: Dict[str, str], llm: ChatOpenAI) -> str:
     """
-    总结一句话中文短评
+    总结一句话中文短评（通用版：code / text2sql 共用）
     Args:
         - task_id: 任务 ID
-        - prompt_head: 题目片段
-        - completion_head: 被测生成代码片段
-        - test_head: 测试代码片段
+        - prompt_head: 题目片段 / 自然语言问题
+        - completion_head: 被测生成代码片段 / 预测 SQL 片段
+        - test_head: 测试代码片段 / 标准 SQL 片段
         - oj: OJ 输出字典，包含 stdout, stderr, input_expr, expected, actual 等键
         - llm: 初始化后的模型实例
     Returns:
@@ -128,13 +128,69 @@ def summarize_brief(task_id: str, prompt_head: str, completion_head: str, test_h
     return (out or "").strip() or "（模型未返回内容）"
 
 
-def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: str):
+def build_evidence_for_record(rec: Dict[str, Any], task_type: str) -> Dict[str, Any]:
+    """
+    根据任务类型构建判因 evidence 结构（code / text2sql 共用）。
+    code 分支保持原有逻辑；sql 分支尽量兼容常见 Text2SQL OJ 字段。
+    Args:
+        - rec: 单条评测记录
+        - task_type: 任务类型（"code" 或 "sql"）
+    Returns:
+        判因 evidence 字典
+    """
+    if task_type == "sql":
+        # Text2SQL 常见字段命名尝试做兼容：
+        # - question       : 自然语言问题
+        # - pred_sql/sql   : 模型生成 SQL
+        # - gold_sql       : 标准 SQL
+        # - exec_stdout    : 执行输出
+        # - exec_stderr    : 执行错误
+        question = rec.get("question") or rec.get("problem_prompt") or ""
+        pred_sql = rec.get("pred_sql") or rec.get("completion") or rec.get("sql") or ""
+        gold_sql = rec.get("gold_sql") or rec.get("reference_sql") or rec.get("test_code") or ""
+        stdout = rec.get("stdout") or rec.get("exec_stdout") or ""
+        stderr = rec.get("stderr") or rec.get("exec_stderr") or ""
+
+        evidence = {
+            "task_id": rec.get("task_id"),
+            "sample_index": rec.get("sample_index"),
+            # 对于 sql，没有 entry_point 的概念，用 db_id 或留空
+            "entry_point": rec.get("entry_point", "") or rec.get("db_id", ""),
+            "prompt_head": question[:800],
+            "completion_head": pred_sql[:800],
+            "test_head": gold_sql[:800],
+            "stdout_tail": stdout[-600:],
+            "stderr_head": stderr[:600],
+            "err_text": f"stdout:\n{stdout}\n\nstderr:\n{stderr}",
+            # LLMJudge(sql) 会优先使用 query 字段做 sql_stats
+            "query": pred_sql or rec.get("query", ""),
+        }
+        return evidence
+
+    # 默认 code 分支：保持原有逻辑不变
+    evidence = {
+        "task_id": rec.get("task_id"),
+        "sample_index": rec.get("sample_index"),
+        "entry_point": rec.get("entry_point", ""),
+        "prompt_head": (rec.get("problem_prompt") or "")[:800],
+        "completion_head": (rec.get("completion") or "")[:800],
+        "test_head": (rec.get("test_code") or "")[:800],
+        "stdout_tail": (rec.get("stdout") or "")[-600:],
+        "stderr_head": (rec.get("stderr") or "")[:600],
+        "err_text": f"stdout:\n{rec.get('stdout', '')}\n\nstderr:\n{rec.get('stderr', '')}",
+        "query": rec.get("query", "") or rec.get("completion", ""),
+    }
+    return evidence
+
+
+def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: str, task_type: str = "code"):
     """
     根据 rows 生成 summary 的函数
     Args:
-        - rows: 评测结果行列表
+        - rows: 评测结果行列表（通常为失败样本增强 OJ）
         - outdir: 输出目录
         - run_ts: 运行时间戳
+        - task_type: 任务类型（"code" 或 "sql"），用于控制统计项
     Returns:
         生成的 summary JSON 路径和 TXT 路径
     """
@@ -176,17 +232,20 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
             for t in tags:
                 tag_counter[t] += 1
 
-        m = rec.get("code_metrics") or {}
-        try:
-            loc = int(m.get("loc", 0))
-        except Exception:
-            loc = 0
-        try:
-            kw = int(m.get("kw_total", 0))
-        except Exception:
-            kw = 0
-        loc_bins[bin_loc(loc)] += 1
-        kw_bins[bin_kw(kw)] += 1
+        # code 的 LOC / 控制语句分布保持原逻辑；
+        # 对于 sql，这里不再依赖 code_metrics，避免无意义统计。
+        if task_type != "sql":
+            m = rec.get("code_metrics") or {}
+            try:
+                loc = int(m.get("loc", 0))
+            except Exception:
+                loc = 0
+            try:
+                kw = int(m.get("kw_total", 0))
+            except Exception:
+                kw = 0
+            loc_bins[bin_loc(loc)] += 1
+            kw_bins[bin_kw(kw)] += 1
 
         ap = rec.get("assert_parsed") or {}
         if ap.get("expected") is not None or ap.get("actual") is not None:
@@ -219,6 +278,7 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
         "pass_rate_samples": round(passed_samples / (total_samples or 1), 4),
         "pass_at_k_task": pass_at_k_task,
         "failure_stage_distribution": dict(stage_counter),
+        # 对于 sql，这两个 dict 可能为空；下游会以 "（无数据）" 展示
         "loc_distribution": dict(loc_bins),
         "kw_distribution": dict(kw_bins),
         "io_assert_parse": {
@@ -245,8 +305,18 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
     for k, v in stage_counter.most_common():
         lines.append(f"  - {k}: {v}")
     lines.append("标签 Top： " + ", ".join([f"{k}:{v}" for k, v in tag_counter.most_common(8)]))
-    lines.append("代码行数分布（LOC）： " + ", ".join([f"{k}:{v}" for k, v in loc_bins.items()]))
-    lines.append("控制语句分布（粗复杂度）： " + ", ".join([f"{k}:{v}" for k, v in kw_bins.items()]))
+
+    # 文本报表为了兼容，仍然打印 LOC / 控制语句分布；
+    # 对于 sql，这里的分布可能为空，最终展示为“（无数据）”。
+    if loc_bins:
+        lines.append("代码行数分布（LOC）： " + ", ".join([f"{k}:{v}" for k, v in loc_bins.items()]))
+    else:
+        lines.append("代码行数分布（LOC）： （无数据）")
+    if kw_bins:
+        lines.append("控制语句分布（粗复杂度）： " + ", ".join([f"{k}:{v}" for k, v in kw_bins.items()]))
+    else:
+        lines.append("控制语句分布（粗复杂度）： （无数据）")
+
     lines.append(f"I/O断言解析成功：{io_parsed_ok}/{total_samples}")
     with open(summary_txt, "w", encoding="utf-8") as tf:
         tf.write("\n".join(lines))
@@ -262,7 +332,7 @@ def eval_model_node(state: LoopAIState):
     
     Args:
         state: LoopAIState对象，包含以下关键参数：
-            - analyze_task_type: 任务类型
+            - analyze_task_type: 任务类型（"code" 或 "sql"）
             - eval_result_path: 评测结果文件路径
             - analyze_batch_size: 批处理大小，默认为20
             - analyze_model_path: 分析模型路径
@@ -287,7 +357,7 @@ def eval_model_node(state: LoopAIState):
         6. 输出增强版评测记录
         7. 生成评测摘要报告
     """
-    task_type = state['analyze_task_type']
+    task_type = state['analyze_task_type']  # "code" 或 "sql"
     judge = LLMJudge(task=task_type)
 
     # 读取评测结果（JSONL）
@@ -309,18 +379,7 @@ def eval_model_node(state: LoopAIState):
         evidences: List[Dict[str, Any]] = []
         prompts: List[str] = []
         for rec in batch:
-            evidence = {
-                "task_id": rec.get("task_id"),
-                "sample_index": rec.get("sample_index"),
-                "entry_point": rec.get("entry_point", ""),
-                "prompt_head": (rec.get("problem_prompt") or "")[:800],
-                "completion_head": (rec.get("completion") or "")[:800],
-                "test_head": (rec.get("test_code") or "")[:800],
-                "stdout_tail": (rec.get("stdout") or "")[-600:],
-                "stderr_head": (rec.get("stderr") or "")[:600],
-                "err_text": f"stdout:\n{rec.get('stdout', '')}\n\nstderr:\n{rec.get('stderr', '')}",
-                "query": rec.get("query", "") or rec.get("completion", ""),
-            }
+            evidence = build_evidence_for_record(rec, task_type)
             evidences.append(evidence)
             prompts.append(build_judge_prompt_generic(task_type, evidence))
 
@@ -338,22 +397,46 @@ def eval_model_node(state: LoopAIState):
                     rec["judge"] = {"stage": "other", "reason": f"LLMaJ 运行异常：{e}", "evidence": {}}
 
             if state.get('output_brief', False):
-                apx = rec.get("assert_parsed") or parse_assert_from_stdout(rec.get("stdout") or "")
                 try:
-                    rec["brief_analysis"] = summarize_brief(
-                        task_id=str(rec.get("task_id")),
-                        prompt_head=rec.get("problem_prompt") or "",
-                        completion_head=rec.get("completion") or "",
-                        test_head=rec.get("test_code") or "",
-                        oj={
-                            "stdout": rec.get("stdout") or "",
-                            "stderr": rec.get("stderr") or "",
-                            "input_expr": apx.get("input_expr"),
-                            "expected": apx.get("expected"),
-                            "actual": apx.get("actual"),
-                        },
-                        llm=llm
-                    )
+                    if task_type == "sql":
+                        # Text2SQL 短评：用 question / pred_sql / gold_sql + 执行日志
+                        question = rec.get("question") or rec.get("problem_prompt") or ""
+                        pred_sql = rec.get("pred_sql") or rec.get("completion") or rec.get("sql") or ""
+                        gold_sql = rec.get("gold_sql") or rec.get("reference_sql") or rec.get("test_code") or ""
+                        stdout = rec.get("stdout") or rec.get("exec_stdout") or ""
+                        stderr = rec.get("stderr") or rec.get("exec_stderr") or ""
+
+                        rec["brief_analysis"] = summarize_brief(
+                            task_id=str(rec.get("task_id")),
+                            prompt_head=question,
+                            completion_head=pred_sql,
+                            test_head=gold_sql,
+                            oj={
+                                "stdout": stdout,
+                                "stderr": stderr,
+                                "input_expr": None,
+                                "expected": None,
+                                "actual": None,
+                            },
+                            llm=llm
+                        )
+                    else:
+                        # code 短评：保持原有逻辑
+                        apx = rec.get("assert_parsed") or parse_assert_from_stdout(rec.get("stdout") or "")
+                        rec["brief_analysis"] = summarize_brief(
+                            task_id=str(rec.get("task_id")),
+                            prompt_head=rec.get("problem_prompt") or "",
+                            completion_head=rec.get("completion") or "",
+                            test_head=rec.get("test_code") or "",
+                            oj={
+                                "stdout": rec.get("stdout") or "",
+                                "stderr": rec.get("stderr") or "",
+                                "input_expr": apx.get("input_expr"),
+                                "expected": apx.get("expected"),
+                                "actual": apx.get("actual"),
+                            },
+                            llm=llm
+                        )
                 except Exception as e:
                     rec["brief_analysis"] = f"（短评生成失败：{e}）"
 
@@ -369,7 +452,9 @@ def eval_model_node(state: LoopAIState):
 
     # 生成 summary
     try:
-        summary_json_path, summary_txt_path = _build_and_write_summary(failed_results, Path(state['output_dir']), ts)
+        summary_json_path, summary_txt_path = _build_and_write_summary(
+            failed_results, Path(state['output_dir']), ts, task_type=task_type
+        )
         with open(summary_json_path, "r", encoding="utf-8") as f:
             sdata = json.load(f)
         sdata["results_file"] = str(out_jsonl_path.resolve())
