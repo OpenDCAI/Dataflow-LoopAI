@@ -34,7 +34,7 @@ def estimate_pass_at_k(
 
     return np.array([estimator(int(n), int(c), k) for n, c in zip(num_samples_it, num_correct)])
 
-def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, problem_path, result_path, test_code_function_name, entry_point_function_name, test_function_name):
+def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, problem_path, result_path):
     """
     Evaluates the functional correctness of generated samples, and writes
     results to f"{sample_file}_results.jsonl.gz"
@@ -47,7 +47,9 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
 
     problems = read_problems(problem_file)
 
-    # Check the generated samples against test suites.
+    """
+    Check the generated samples against test suites.
+    """
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
 
         futures = []
@@ -59,7 +61,7 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
         for sample in tqdm.tqdm(stream_jsonl(sample_file)):
             task_id = sample["task_id"]
             completion = sample["completion"]
-            args = (problems[task_id], completion, timeout, test_code_function_name, entry_point_function_name, test_function_name, completion_id[task_id])
+            args = (problems[task_id], completion, timeout, completion_id[task_id])
             future = executor.submit(check_correctness, *args)
             futures.append(future)
             completion_id[task_id] += 1
@@ -72,7 +74,7 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
             result = future.result()
             results[result["task_id"]].append((result["completion_id"], result))
 
-    # Calculate pass@k.
+    """Calculate pass@k."""
     total, correct = [], []
     for result in results.values():
         result.sort()
@@ -86,7 +88,7 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
     pass_at_k = {f"pass@{k}": estimate_pass_at_k(total, correct, k).mean()
                  for k in ks if (total >= k).all()}
 
-    # Finally, save the results in one file:
+    """Finally, save the results in one file"""
     def combine_results():
         for sample in stream_jsonl(sample_file):
             task_id = sample["task_id"]
@@ -101,7 +103,7 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
 
     file_path = os.path.join(os.path.dirname(out_file),"log.txt")
     pass_at_k_text = "\n".join([
-        f"{key}: {value:.4f}"  # 控制小数位数，按需修改
+        f"{key}: {value:.4f}"
         for key, value in pass_at_k.items()
     ])
     with open(file_path, mode='a', encoding='utf-8') as f:
@@ -113,11 +115,11 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
 
     return pass_at_k
 
-def evaluate_sample(K, n_workers, timeout, test_case_path, problem_path, result_path, test_code_function_name, entry_point_function_name, test_function_name):
+def evaluate_sample(K, n_workers, timeout, test_case_path, problem_path, result_path):
     """
     Evaluates the functional correctness of generated samples, and writes
     results to f"{sample_file}_results.jsonl.gz"
     """
-    results = evaluate_functional_correctness(K, n_workers, timeout, test_case_path, problem_path, result_path, test_code_function_name, entry_point_function_name, test_function_name)
+    results = evaluate_functional_correctness(K, n_workers, timeout, test_case_path, problem_path, result_path)
     print(results)
     return results
