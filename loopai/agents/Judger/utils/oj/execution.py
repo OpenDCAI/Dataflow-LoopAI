@@ -6,14 +6,32 @@ import os
 import platform
 import signal
 import tempfile
-from .customer_func import Customize_Funcs
 from typing import Dict, Optional, List
 
+"""s1为生成代码，s2为提示词"""
+def add_import(s1, s2):
+    if s1.startswith(('def', ' def')):
+        """
+        从 s2 中查找 "def" 的位置
+        find() 会返回 "def" 第一次出现时的起始索引
+        如果找不到，会返回 -1
+        提取 s2 中 "def" 之前的内容,只有在找到 "def" 的情况下才进行提取,并将提取出的内容加到 s1 的前面
+        """
+        def_index_in_s2 = s2.find("def")  
+        if def_index_in_s2 != -1:
+            prefix_from_s2 = s2[:def_index_in_s2]
+            new_s1 = prefix_from_s2 + s1.lstrip()
+            return new_s1
+        else:
+            return s1.lstrip()
 
-def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[str], test_code_function_name: str, entry_point_function_name: str, test_function_name: str):
+    else:
+        return s1.lstrip()
+
+def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[str]):
     with create_tempdir():
 
-        # These system calls are needed when cleaning up tempdir.
+        """These system calls are needed when cleaning up tempdir."""
         import os
         import shutil
 
@@ -21,41 +39,41 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[
         rmdir = os.rmdir
         chdir = os.chdir
 
-        # Disable functionalities that can make destructive changes to the test.
+        """Disable functionalities that can make destructive changes to the test."""
         reliability_guard()
+        """被测试代码"""
+        test_script = f"{add_import(completion, problem['prompt'])}\n\n"
 
-        customer_func_1 = getattr(Customize_Funcs, test_code_function_name)
-        test_script = customer_func_1(problem, completion)#测试代码
+        """进入口"""
+        entry_point = problem['entry_point']
+        """拼接测试用例为测试用例代码"""
+        test_code = "def check(candidate):\n"
+        for test_item in problem["test_list"]:
+            test_code = test_code + "    " + test_item.replace(entry_point, "candidate") + "\n"
 
-        customer_func_2 = getattr(Customize_Funcs, entry_point_function_name)
-        entry_point = customer_func_2(problem)#进入口
-
-        customer_func_3 = getattr(Customize_Funcs, test_function_name)
-        test_code = customer_func_3(problem)#测试用例
-
-        # Construct the check program and run it.
+        """Construct the check program and run it."""
         check_program = (
-            test_script
+            test_script.lstrip()
             + "\n"
             + test_code
             + "\n"
             + f"check({entry_point})"
         )
-
         try:
             exec_globals = {}
             with swallow_io():
                 with time_limit(timeout):
-                    # WARNING
-                    # This program exists to execute untrusted model-generated code. Although
-                    # it is highly unlikely that model-generated code will do something overtly
-                    # malicious in response to this test suite, model-generated code may act
-                    # destructively due to a lack of model capability or alignment.
-                    # Users are strongly encouraged to sandbox this evaluation suite so that it
-                    # does not perform destructive actions on their host or network. For more
-                    # information on how OpenAI sandboxes its code, see the accompanying paper.
-                    # Once you have read this disclaimer and taken appropriate precautions,
-                    # uncomment the following line and proceed at your own risk:
+                    """WARNING
+                    This program exists to execute untrusted model-generated code. Although
+                    it is highly unlikely that model-generated code will do something overtly
+                    malicious in response to this test suite, model-generated code may act
+                    destructively due to a lack of model capability or alignment.
+                    Users are strongly encouraged to sandbox this evaluation suite so that it
+                    does not perform destructive actions on their host or network. For more
+                    information on how OpenAI sandboxes its code, see the accompanying paper.
+                    Once you have read this disclaimer and taken appropriate precautions,
+                    uncomment the following line and proceed at your own risk:
+                    """
                     exec(check_program, exec_globals)
             result.append("passed")
         except TimeoutException:
@@ -63,14 +81,14 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[
         except BaseException as e:
             result.append(f"failed: {e}")
 
-        # Needed for cleaning up.
+        """Needed for cleaning up."""
         shutil.rmtree = rmtree
         os.rmdir = rmdir
         os.chdir = chdir
 
 
 def check_correctness(
-    problem: Dict, completion: str, timeout: float, test_code_function_name: str, entry_point_function_name: str, test_function_name: str, completion_id: Optional[int] = None
+    problem: Dict, completion: str, timeout: float, completion_id: Optional[int] = None
 ) -> Dict:
     """
     Evaluates the functional correctness of a completion by running the test
@@ -83,7 +101,7 @@ def check_correctness(
     manager = multiprocessing.Manager()
     result = manager.list()
 
-    p = multiprocessing.Process(target=unsafe_execute, args=(problem, completion, timeout, result, test_code_function_name, entry_point_function_name, test_function_name))
+    p = multiprocessing.Process(target=unsafe_execute, args=(problem, completion, timeout, result))
     p.start()
     p.join(timeout=timeout + 1)
     if p.is_alive():
