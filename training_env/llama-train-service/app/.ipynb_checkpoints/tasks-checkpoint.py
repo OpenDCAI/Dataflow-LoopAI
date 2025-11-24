@@ -19,9 +19,10 @@ class TaskManager:
         self.runs_dir = runs_dir
         self.tasks: Dict[str, Dict] = {}
         self.executor = ThreadPoolExecutor(max_workers=4)
+        self.llamafactory_dir = "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory"
         
         # 确保目录存在
-        for directory in [configs_dir, logs_dir, runs_dir]:
+        for directory in [configs_dir, logs_dir, runs_dir, self.llamafactory_dir]:
             ensure_directory_exists(directory)
     
     def create_task(self, task_id: str, config_path: str, task_name: Optional[str] = None) -> Dict:
@@ -71,6 +72,8 @@ class TaskManager:
             # 构建训练命令
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+            env["NCCL_ALGO"] = "Ring"
+            env["SWANLAB_API_KEY"] = "KIEB0fVZ47rXumUuccVxO"
             cmd = ["llamafactory-cli", "train", config_path]
             
             # 启动训练进程
@@ -80,7 +83,7 @@ class TaskManager:
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     universal_newlines=True,
-                    cwd=self.runs_dir,
+                    cwd=self.llamafactory_dir,
                     env=env
                 )
                 
