@@ -2,4 +2,5 @@ __pycache__/
 api_key.txt
 data/
 output/
-.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+temp/
