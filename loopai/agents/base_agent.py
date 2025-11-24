@@ -1,25 +1,26 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, TypedDict
+from functools import wraps
 
 from langgraph.prebuilt import create_react_agent
 from langchain_openai import ChatOpenAI
 
 from loopai.common.prompts import PromptLoader
-from loopai.states.event import AgentEvent
+from loopai.schema.events import AgentEvent
 from loopai.logger import get_logger
 
 logger = get_logger()
 
-
 class BaseAgent(ABC):
 
     def __init__(self,
-                 tools: Optional[List] = None,
+                 tools: Optional[List] = [],
                  model_name: Optional[str] = None,
                  base_url: Optional[str] = None,
                  api_key: Optional[str] = 'empty',
                  temperature: float = 0.0,
-                 max_new_tokens: int = 4096,
+                 top_p: float = 0.95,
+                 max_completion_tokens: int = 4096,
                  prompt_template_dir: str = None,
                  checkpointer = None,
                  store = None
@@ -33,7 +34,8 @@ class BaseAgent(ABC):
             base_url: the base_url of LLM server
             api_key: the api_key of LLM server
             temperature: the temperature of LLM
-            max_tokens: max new tokens
+            top_p: the top_p of LLM
+            max_completion_tokens: the max new tokens of LLM
             prompt_template_dir: the directory of prompt config file: endswith `_prompt.json`.
             checkpointer: the checkpointer function
             store: the store function
@@ -43,7 +45,9 @@ class BaseAgent(ABC):
         self.base_url = base_url
         self.api_key = api_key
         self.temperature = temperature
-        self.max_tokens = max_new_tokens
+        self.top_p = top_p
+        self.llm_tag = f"{self.role_name}-LLM"
+        self.max_completion_tokens = max_completion_tokens
         self.prompt_template_dir = prompt_template_dir
         self.checkpointer = checkpointer
         self.store = store
@@ -71,6 +75,15 @@ class BaseAgent(ABC):
         """System prompt name"""
         pass
 
+    @staticmethod
+    def set_current(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            state = args[0]
+            state['current'] = func.__qualname__
+            return func(*args, **kwargs)
+        return wrapper
+    
     def create_llm_node(self):
         if self.base_url is None:
             logger.error(f'Undefined base_url in {self.role_name}-Graph')
@@ -78,7 +91,11 @@ class BaseAgent(ABC):
         self.llm = ChatOpenAI(
             base_url=self.base_url,
             api_key=self.api_key,
-            model=self.model_name
+            model=self.model_name,
+            temperature=self.temperature,
+            top_p=self.top_p,
+            max_completion_tokens=self.max_completion_tokens,
+            tags=[self.llm_tag]
         )
 
         logger.info(f'{self.role_name}-Graph use prompt: {self.prompt_loader(self.system_prompt_type, self.system_prompt_name)}')

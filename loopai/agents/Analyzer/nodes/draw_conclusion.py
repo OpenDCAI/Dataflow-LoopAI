@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 
 from langchain_openai import ChatOpenAI
 
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -261,6 +261,7 @@ def draw_conclusion_node(state: LoopAIState):
     绘制结论，生成 summary 并写入文件
     """
     outdir = state['output_dir']
+    os.makedirs(outdir, exist_ok=True)
     summary_path = state['analyze_output_summary_path']
     with open(summary_path, "r", encoding="utf-8") as f:
         summary = json.load(f)

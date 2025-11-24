@@ -6,7 +6,7 @@ from typing import List, Dict, Any, Optional
 
 from langchain_openai import ChatOpenAI
 
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
 logger = get_logger()
