@@ -26,8 +26,8 @@ def main():
     
     # 检查是否安装了LLaMA Factory
     try:
-        result = subprocess.run(["llamafactory-cli", "--help"], 
-                              capture_output=True, text=True, timeout=5)
+        result = subprocess.run(["llamafactory-cli", "help"], 
+                              capture_output=True, text=True, timeout=60)
         if result.returncode == 0:
             print("✅ LLaMA Factory CLI found")
         else:

@@ -1,0 +1,41 @@
+[
+  {
+    "instruction": "请计算 2 + 2 的结果",
+    "input": "",
+    "output": "2 + 2 = 4"
+  },
+  {
+    "instruction": "解释什么是机器学习",
+    "input": "",
+    "output": "机器学习是一种人工智能技术，它使计算机能够从数据中学习并做出预测或决策，而无需显式编程。"
+  },
+  {
+    "instruction": "将以下句子翻译成英文",
+    "input": "你好，世界！",
+    "output": "Hello, world!"
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "你是谁？"
+      },
+      {
+        "from": "gpt",
+        "value": "我是一个AI助手，很高兴为您提供帮助。"
+      }
+    ]
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "今天天气如何？"
+      },
+      {
+        "from": "gpt",
+        "value": "抱歉，我无法获取实时天气信息。建议您查看当地天气预报。"
+      }
+    ]
+  }
+]
