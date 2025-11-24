@@ -49,7 +49,8 @@ class LoopAIState(MessagesState):
     train_task_description: str  # to defined the task description for training
     train_config_template_path: str  # to defined the path of llamafactory config template
     train_config_output_path: str  # to defined the path of generated training config
-    train_output_dir: str  # to defined the output directory for training    train_model_name: str  # to defined the base model name for training
+    train_output_dir: str  # to defined the output directory for training
+    train_model_name: str  # to defined the base model name for training
     train_use_swanlab: bool = True  # whether to use swanlab for monitoring
     train_swanlab_project: str  # to defined the swanlab project name
     
