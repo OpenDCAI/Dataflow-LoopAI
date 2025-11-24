@@ -34,51 +34,6 @@ def check_training_service(service_url: str = "http://localhost:8000") -> bool:
     except Exception:
         return False
 
-# 创建测试数据集（示例）
-def create_sample_dataset():
-    """创建一个示例数据集用于测试"""
-    sample_data = [
-        {
-            "instruction": "请计算 2 + 2 的结果",
-            "input": "",
-            "output": "2 + 2 = 4"
-        },
-        {
-            "instruction": "解释什么是机器学习",
-            "input": "", 
-            "output": "机器学习是一种人工智能技术，它使计算机能够从数据中学习并做出预测或决策，而无需显式编程。"
-        },
-        {
-            "instruction": "将以下句子翻译成英文",
-            "input": "你好，世界！",
-            "output": "Hello, world!"
-        }
-    ]
-    
-    # 创建测试目录
-    test_dir = "./test_data"
-    os.makedirs(test_dir, exist_ok=True)
-    
-    # 保存 JSON 格式数据集
-    json_path = os.path.join(test_dir, "sample_dataset.json")
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(sample_data, f, ensure_ascii=False, indent=2)
-    
-    # 保存 JSONL 格式数据集
-    jsonl_path = os.path.join(test_dir, "sample_dataset.jsonl")
-    with open(jsonl_path, 'w', encoding='utf-8') as f:
-        for item in sample_data:
-            f.write(json.dumps(item, ensure_ascii=False) + '\n')
-    
-    console.print(f"[green]✅ 测试数据集已创建:[/green]")
-    console.print(f"  JSON 格式: {json_path}")
-    console.print(f"  JSONL 格式: {jsonl_path}")
-    
-    return json_path, jsonl_path
-
-# 创建示例数据集
-json_dataset_path, jsonl_dataset_path = create_sample_dataset()
-
 # 创建 TrainerAgent 实例
 trainer = TrainerAgent(checkpointer=checkpointer, store=store)
 
