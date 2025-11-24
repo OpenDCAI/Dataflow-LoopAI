@@ -288,6 +288,7 @@ def draw_conclusion_node(state: LoopAIState):
     绘制结论，生成 summary / final_report，并可选生成背景介绍与改进建议
     """
     outdir = state['output_dir']
+    os.makedirs(outdir, exist_ok=True)
     summary_path = state['analyze_output_summary_path']
 
     with open(summary_path, "r", encoding="utf-8") as f:

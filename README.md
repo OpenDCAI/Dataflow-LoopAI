@@ -31,6 +31,7 @@ Dataflow-LoopAI/
 │   │   ├── BaseAgent/         # 基础 Agent 定义
 │   │   ├── Starter/           # 主入口 Agent
 │   │   ├── Analyzer/          # 模型评估/挖掘 Agent
+│   │   ├── Obtainer/          # 数据获取 Agent
 │   │   └── ...                # 其他自定义 Agent
 │   │
 │   ├── common/                # 全局工具
@@ -85,12 +86,21 @@ Dataflow-LoopAI/
 * 与用户对话修改配置信息
 * 缺失信息反馈和修改再校验(TODO)
 * 继续执行中断节点(TODO)
+
+### ✅ `ObtainerAgent`
+
+作为系统的数据获取单元，负责：
+
+* 将用户的需求进行分析并调研
+* 收集相关数据集信息
+* 收集相关网页数据信息(TODO)
+* 整理各种格式的数据至可以直接用于训练的格式
 ---
 
 ## 📦 安装
 
 ```bash
-pip install -U langgraph colorlog rich langchain
+pip install -e .
 ```
 
 
@@ -301,3 +311,61 @@ assistant_prompt.json
 * ✅ `custom` —— 用户自定义事件
 
 这些事件使系统具备 **可观测性（observability）**，便于调试、可视化与日志分析。
+
+## 自定义Stream事件
+
+在子图中, 有些不必要存放在`LoopAIState`但仍需监测的参数信息可以通过触发自定义get_stream_writer来实现, 在LoopAI中我们通过`StreamEvent`来规范自定义事件的格式。这些字段将被记录在`AgentEvent`中, 并可以在可视化工具中展示。
+
+### 字段说明
+
+`StreamEvent`包含以下字段:
+
+* `current`: 当前节点名称
+* `progress`: 进度值（可选）
+* `progress_num`: 进度数值（可选）
+* `total`: 总进度（可选）
+* `message`: 消息内容（可选）
+* `data`: 自定义数据（可选）
+
+### 示例
+
+假设我们在`AnalyzerAgent`中监测`configer_error`字段, 当该字段发生变化时, 我们希望将其记录下来。
+
+在`AnalyzerAgent`中, 我们可以在`eval_model`节点中添加如下代码:
+
+```python
+from langgraph.config import get_stream_writer
+from loopai.schema.events import StreamEvent
+
+writer = get_stream_writer()
+writer(StreamEvent(current=state['current'], data={'configer_error': state['configer_error']}).json())
+```
+
+## 异常处理
+
+### 参数异常
+
+如果需要抛出异常, 请在节点中添加如下代码:
+
+```python
+if missing_fields:
+    state['exception'] = 'ConfigerError'
+    state['next_to'] = 'config_node'
+    state['automated_query'] = self.prompt_loader("automated_query", "analyzer_missing_fields_prompt")
+    state['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
+    goto_node = runtime.context['exception_navigate']
+    logger.info(f'found missing fields, goto {goto_node}')
+    return Command(
+        update=state,
+        goto=goto_node,
+        graph=Command.PARENT
+    )
+```
+
+其中:
+
+- `exception` 为异常类型, 这里为 `ConfigerError`
+- `next_to` 为异常处理节点, 这里为 `config_node`
+- `automated_query` 为异常处理完后, 为用户自动创建完成查询文本以提示`Starter Agent`完成了相关配置, 这里为调用 `analyzer_missing_fields_prompt`
+- `configer_error` 为加入到`Congier Agent`的异常信息, 用来提示用户补全参数, 这里为 `Missing required fields: ...`
+- `goto_node` 为异常处理跳转节点, 这里为 `exception_navigate`, 默认在外部设置为`route_node`.

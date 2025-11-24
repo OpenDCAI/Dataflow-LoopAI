@@ -36,29 +36,8 @@ class PromptLoader:
     
     def load_prompts(self):
         """
-        扫描并加载所有 `_prompt.json` 文件，将其内容缓存到 self.prompt_dict 中。
-
-        加载规则：
-        - 文件名去掉 `_prompt.json` 后作为 prompt_type（如 system_prompt.json → system）
-        - JSON 文件内部的每个 key 对应 prompt_name
-        - 同名 prompt_type 会合并（后加载的覆盖前一个）
-
-        文件结构示例：
-            system_prompt.json:
-            {
-                "default_prompt": "...",
-                "strict_prompt": "..."
-            }
-
-        加载后 self.prompt_dict 结构示例：
-            {
-                "system": {
-                    "default_prompt": "...",
-                    "strict_prompt": "..."
-                }
-            }
-
-        若 JSON 文件损坏或路径错误，将直接报错并终止。
+        Scan all prompt files that endswith `_prompt.json` and load them as prompt dicts.
+        Merge prompts by prompt_type (system, task, etc.) across all files.
         """
         list_files = os.listdir(self.prompt_template_dir)
         matched_files = []
@@ -72,15 +51,27 @@ class PromptLoader:
             try:
                 with open(match_path, encoding='utf-8') as f:
                     prompt_dict = json.load(f)
-
-                # 若 prefix 不存在，则直接创建
-                if prefix not in self.prompt_dict:
-                    self.prompt_dict[prefix] = prompt_dict
+                
+              
+                has_nested_structure = any(k in prompt_dict for k in ['system', 'task'])
+                
+                if has_nested_structure:
+                    # Nested structure (like obtainer_prompt.json)
+                    # Merge prompts by prompt_type (system, task, etc.)
+                    for prompt_type, prompts in prompt_dict.items():
+                        if prompt_type not in self.prompt_dict:
+                            self.prompt_dict[prompt_type] = {}
+                        # Merge prompts within the same prompt_type
+                        if isinstance(prompts, dict):
+                            self.prompt_dict[prompt_type].update(prompts)
                 else:
-                    # 若 prefix 已存在，执行合并（后覆盖前）
-                    for key in prompt_dict:
-                        self.prompt_dict[prefix][key] = prompt_dict[key]
-
+                    # Flat structure (like system_prompt.json)
+                    # Merge all prompts into 'system' prompt_type
+                    if prefix not in self.prompt_dict:
+                        self.prompt_dict[prefix] = {}
+                    if isinstance(prompt_dict, dict):
+                        self.prompt_dict[prefix].update(prompt_dict)
+                        
             except (FileNotFoundError, json.JSONDecodeError) as e:
                 logger.error(f"Failed to load prompt file '{match_path}': {e}")
                 raise RuntimeError(f"Error loading prompt file '{match_path}': {e}")

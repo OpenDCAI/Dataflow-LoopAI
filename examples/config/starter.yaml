@@ -1,0 +1,50 @@
+starter:
+  model_name: "deepseek-chat"
+  base_url: "https://api.deepseek.com"
+  api_key_path: "./api_key.txt"
+  tavily_api_key_path: "./tavily_api_key.txt"
+  kaggle_username: "binrxu"  # Kaggle username (leave empty if not needed)
+  kaggle_key: "8c120e3a3c8d45f71ace8b4981f829ac"  # Kaggle API key (leave empty if not needed)
+
+# RAG configuration (independent from obtainer)
+rag:
+  reset: false  # whether to reset RAG database
+  embed_model: "text-embedding-3-large"  # RAG embedding model (default: "text-embedding-3-large", leave empty to use default)
+  collection_name: "rag_collection"  # RAG collection name
+  api_base_url: "http://123.129.219.111:3000/v1"  # RAG API base URL (if empty, will use obtainer's base_url)
+  api_key_path: "./rag_api_key.txt"  # RAG API key file path (if empty, will use obtainer's api_key)
+
+default_states:
+  eval_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
+  eval_base_url: "http://127.0.0.1:8911/v1"
+  eval_api_key: "EMPTY"
+  eval_temperature: 0
+  eval_top_p: 0.95
+  eval_test_case_path: "./outputs/test.json"
+  eval_problem_path: "./data/human-eval-v2-20210705.jsonl"
+  eval_result_path: "./outputs/result.json"
+  eval_batch_size: 10
+
+  analyze_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
+  analyze_base_url: "http://127.0.0.1:8911/v1"
+  analyze_api_key: "EMPTY"
+  analyze_temperature: 0
+  analyze_top_p: 0.95
+
+  output_dir: "./outputs"
+  output_brief: true
+  analyze_task_type: "code"
+  analyze_sampling_top_k: 5
+  output_suggestion: true
+  analyze_batch_size: 20
+
+  # Obtainer agent configuration
+  obtainer_model_path: ""  # if empty, will use analyze_model_path or starter model
+  obtainer_base_url: ""  # if empty, will use analyze_base_url or starter base_url
+  obtainer_api_key: ""  # if empty, will use starter api_key
+  obtainer_temperature: 0.7
+  obtainer_search_engine: "tavily"  # tavily, duckduckgo, jina
+  obtainer_max_urls: 10
+  obtainer_max_download_subtasks: null  # null means no limit
+  obtainer_category: "PT"  # PT or SFT
+  obtainer_debug: false
