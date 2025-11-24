@@ -70,7 +70,7 @@ class TaskManager:
         
         # 从环境变量中获取配置，如果没有则使用默认值
         env["CUDA_VISIBLE_DEVICES"] = os.getenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
-        env["NCCL_ALGO"] = os.getenv("NCCL_ALGO", "Ring")
+        env["NCCL_ALGO"] = "Ring"
         
         # 检查必需的API密钥
         swanlab_key = os.getenv("SWANLAB_API_KEY")
