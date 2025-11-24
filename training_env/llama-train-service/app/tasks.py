@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 from .models import TaskStatus
 from .utils import ensure_directory_exists, get_current_timestamp
 
+from dotenv import load_dotenv
+load_dotenv()
 
 class TaskManager:
     """训练任务管理器"""
@@ -62,6 +64,23 @@ class TaskManager:
         
         return True
     
+    def _get_safe_env(self) -> dict:
+        """获取安全的环境变量配置"""
+        env = os.environ.copy()
+        
+        # 从环境变量中获取配置，如果没有则使用默认值
+        env["CUDA_VISIBLE_DEVICES"] = os.getenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+        env["NCCL_ALGO"] = os.getenv("NCCL_ALGO", "Ring")
+        
+        # 检查必需的API密钥
+        swanlab_key = os.getenv("SWANLAB_API_KEY")
+        if swanlab_key:
+            env["SWANLAB_API_KEY"] = swanlab_key
+        else:
+            print("警告: 未找到SWANLAB_API_KEY环境变量，某些功能可能无法正常工作")
+        
+        return env
+    
     def _run_training(self, task_id: str) -> None:
         """执行训练任务的内部方法"""
         task_info = self.tasks[task_id]
@@ -70,10 +89,7 @@ class TaskManager:
         
         try:
             # 构建训练命令
-            env = os.environ.copy()
-            env["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
-            env["NCCL_ALGO"] = "Ring"
-            env["SWANLAB_API_KEY"] = "KIEB0fVZ47rXumUuccVxO"
+            env = self._get_safe_env()
             cmd = ["llamafactory-cli", "train", config_path]
             
             # 启动训练进程

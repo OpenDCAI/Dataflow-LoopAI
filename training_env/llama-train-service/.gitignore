@@ -40,3 +40,5 @@ Thumbs.db
 *.safetensors
 *.pt
 *.pth
+
+.env
