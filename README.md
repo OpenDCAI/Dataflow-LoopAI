@@ -340,3 +340,32 @@ from loopai.schema.events import StreamEvent
 writer = get_stream_writer()
 writer(StreamEvent(current=state['current'], data={'configer_error': state['configer_error']}).json())
 ```
+
+## 异常处理
+
+### 参数异常
+
+如果需要抛出异常, 请在节点中添加如下代码:
+
+```python
+if missing_fields:
+    state['exception'] = 'ConfigerError'
+    state['next_to'] = 'config_node'
+    state['automated_query'] = self.prompt_loader("automated_query", "analyzer_missing_fields_prompt")
+    state['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
+    goto_node = runtime.context['exception_navigate']
+    logger.info(f'found missing fields, goto {goto_node}')
+    return Command(
+        update=state,
+        goto=goto_node,
+        graph=Command.PARENT
+    )
+```
+
+其中:
+
+- `exception` 为异常类型, 这里为 `ConfigerError`
+- `next_to` 为异常处理节点, 这里为 `config_node`
+- `automated_query` 为异常处理完后, 为用户自动创建完成查询文本以提示`Starter Agent`完成了相关配置, 这里为调用 `analyzer_missing_fields_prompt`
+- `configer_error` 为加入到`Congier Agent`的异常信息, 用来提示用户补全参数, 这里为 `Missing required fields: ...`
+- `goto_node` 为异常处理跳转节点, 这里为 `exception_navigate`, 默认在外部设置为`route_node`.

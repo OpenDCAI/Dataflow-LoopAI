@@ -54,10 +54,10 @@ class PromptLoader:
                 else:
                     # Flat structure (like system_prompt.json)
                     # Merge all prompts into 'system' prompt_type
-                    if 'system' not in self.prompt_dict:
-                        self.prompt_dict['system'] = {}
+                    if prefix not in self.prompt_dict:
+                        self.prompt_dict[prefix] = {}
                     if isinstance(prompt_dict, dict):
-                        self.prompt_dict['system'].update(prompt_dict)
+                        self.prompt_dict[prefix].update(prompt_dict)
                         
             except (FileNotFoundError, json.JSONDecodeError) as e:
                 logger.error(f"Failed to load prompt file '{match_path}': {e}")
