@@ -2,7 +2,9 @@ from tqdm import tqdm
 from langchain_openai import ChatOpenAI
 import json
 from .data import read_problems, write_jsonl
-from .customer_func import Customize_Funcs
+from langgraph.config import get_stream_writer
+from loopai.schema.events import streamEvent
+# from .customer_func import Customize_Funcs
 
 
 def filter_code(completion: str) -> str:
@@ -21,8 +23,8 @@ def init_model(model_path: str, base_url: str, api_key: str, temperature: float 
     return model
 
 
-def generate_sample(model_path, base_url, api_key, temperature, top_p, test_case_path, problem_path, batch_size=20, num_samples_per_task=10, prompt_function_name='prompt_example'):
-    print(f"进入生成样本")
+def generate_sample(model_path, base_url, api_key, temperature, top_p, test_case_path, problem_path, batch_size=20, num_samples_per_task=10):
+    logger.info(f"进入生成样本")
 
     model = init_model(
         model_path=model_path,
@@ -43,25 +45,51 @@ def generate_sample(model_path, base_url, api_key, temperature, top_p, test_case
     print(f"总样本数：{total_samples}")
 
     samples = []
-
+    response_ptr = 0
     # 进度条中实时显示当前任务ID
+    # with tqdm(total=total_samples, desc="生成进度", dynamic_ncols=True) as pbar:
+    #     for batch_idx in range(0, total_tasks, batch_size):
+    #         batch_task_ids = all_task_ids[batch_idx:batch_idx + batch_size]
+    #         pbar.set_postfix({"当前任务ID": f"{batch_task_ids[0]}-{batch_task_ids[-1]}"})
+    #         prompts = []
+    #         for task_id in batch_task_ids:
+    #             prompt = problems[task_id]['prompt']
+    #             prompts.extend([prompt] * num_samples_per_task)
+    #         responses = model.batch(prompts)
+    #         for task_id in batch_task_ids:
+    #             task_responses = responses[response_ptr:response_ptr + num_samples_per_task]
+    #             response_ptr += num_samples_per_task
+    #             for idx, resp in enumerate(task_responses):
+    #                 completion = filter_code(resp.content)
+    #                 samples.append({
+    #                     "task_id": task_id,
+    #                     "completion": completion.lstrip(),
+    #                     "response_idx": idx + 1,
+    #                     "batch_size": batch_size,
+    #                     "num_samples_per_task": num_samples_per_task
+    #                 })
+    #                 pbar.update(1)
     with tqdm(total=total_samples, desc="生成进度") as pbar:
         for batch_idx in range(0, total_tasks, batch_size):
             batch_task_ids = all_task_ids[batch_idx:batch_idx + batch_size]
-            customer_prompt_func = getattr(
-                Customize_Funcs, prompt_function_name)
+            
             prompts = []
+            batch_task_id_list = []
+            t = 0
             for task_id in batch_task_ids:
-                prompt = customer_prompt_func(problems[task_id])
-                prompts.append(prompt)
+                prompt = problems[task_id]['prompt']
+                for i in range(0,num_samples_per_task,1):
+                    prompts.append(prompt)
+                    batch_task_id_list.append(batch_task_ids[t])
+                t = t + 1
             responses = model.batch(prompts)
-            for task_id, response in zip(batch_task_ids, responses):
+            for task_id, response in zip(batch_task_id_list, responses):
                 completion = filter_code(response.content)
                 samples.append({
                     "task_id": task_id,
                     "completion": completion
                 })
-                pbar.update(batch_size)
+                pbar.update(1)
 
     write_jsonl(test_case_path, samples)
 
