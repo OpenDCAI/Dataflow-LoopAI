@@ -4,6 +4,7 @@
 """
 
 import json
+import yaml
 import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -31,9 +32,9 @@ class ConfigGenerator:
             base_url: 模型服务base_url
             api_key: API密钥
             temperature: 生成温度
-            top_p: top_p参数
-        """
-        self.default_template = self._get_default_template()
+            top_p: top_p参数        """
+        self.default_yaml_template_path = self._get_default_yaml_template_path()
+        self.default_template = self._load_yaml_template(self.default_yaml_template_path)
         self.model_path = model_path
         self.base_url = base_url
         self.api_key = api_key
@@ -86,10 +87,9 @@ class ConfigGenerator:
         Returns:
             生成的配置字典
         """
-        
-        # 加载模板
+          # 加载YAML模板
         if template_path and os.path.exists(template_path):
-            template = self._load_template(template_path)
+            template = self._load_yaml_template(template_path)
         else:
             template = self.default_template.copy()
         
@@ -131,14 +131,117 @@ class ConfigGenerator:
             logger.error(f"保存配置文件失败: {str(e)}")
             return False
     
-    def _load_template(self, template_path: str) -> Dict[str, Any]:
-        """加载配置模板"""
+    def save_config_as_yaml(self, config: Dict[str, Any], output_path: str) -> bool:
+        """
+        保存配置到YAML文件
+        
+        Args:
+            config: 配置字典
+            output_path: 输出文件路径
+        
+        Returns:
+            是否保存成功
+        """
+        try:
+            output_dir = Path(output_path).parent
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 直接保存YAML配置，无需转换
+            with open(output_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, 
+                         default_flow_style=False, 
+                         allow_unicode=True, 
+                         indent=2,
+                         sort_keys=False)
+            
+            logger.info(f"YAML配置文件已保存到: {output_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"保存YAML配置文件失败: {str(e)}")
+            return False
+    def _get_default_yaml_template_path(self) -> str:
+        """获取默认YAML模板路径"""
+        current_dir = Path(__file__).parent.parent
+        template_path = current_dir / "templates" / "qwen2_5_coder_bird_full_sft.yaml"
+        return str(template_path)
+    
+    def _load_yaml_template(self, template_path: str) -> Dict[str, Any]:
+        """加载YAML配置模板"""
         try:
             with open(template_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                config = yaml.safe_load(f)
+                logger.info(f"成功加载YAML模板: {template_path}")
+                return config
         except Exception as e:
-            logger.warning(f"加载模板文件失败，使用默认模板: {str(e)}")
-            return self.default_template.copy()
+            logger.warning(f"加载YAML模板文件失败: {str(e)}")
+            # 如果加载失败，返回基本的YAML配置
+            return self._get_fallback_yaml_template()
+    
+    def _get_fallback_yaml_template(self) -> Dict[str, Any]:
+        """获取备用YAML配置模板"""
+        return {
+            # 模型配置
+            "model_name_or_path": "qwen2.5-7b-instruct",
+            "trust_remote_code": True,
+            
+            # 训练方法
+            "stage": "sft",
+            "do_train": True,
+            "finetuning_type": "lora",
+            
+            # 数据集配置
+            "dataset": "custom_dataset",
+            "template": "qwen",
+            "cutoff_len": 2048,
+            "max_samples": 10000,
+            "overwrite_cache": True,
+            "preprocessing_num_workers": 16,
+            "dataloader_num_workers": 4,
+            
+            # 输出配置
+            "output_dir": "./output",
+            "logging_steps": 10,
+            "save_steps": 100,
+            "plot_loss": True,
+            "overwrite_output_dir": True,
+            "save_only_model": False,
+            "report_to": "none",
+            
+            # 训练配置
+            "per_device_train_batch_size": 1,
+            "gradient_accumulation_steps": 2,
+            "learning_rate": 1e-4,
+            "num_train_epochs": 3.0,
+            "lr_scheduler_type": "cosine",
+            "warmup_ratio": 0.1,
+            "bf16": True,
+            "ddp_timeout": 180000000,
+            "resume_from_checkpoint": None,
+            
+            # LoRA配置（如果是lora微调）
+            "lora_r": 8,
+            "lora_alpha": 16,
+            "lora_dropout": 0.1,
+            "lora_target": "q_proj,v_proj",
+            
+            # 评估配置
+            "val_size": 0.1,
+            "per_device_eval_batch_size": 1,
+            "eval_strategy": "steps",
+            "eval_steps": 100
+        }
+    def _load_template(self, template_path: str) -> Dict[str, Any]:
+        """加载配置模板（支持JSON和YAML）"""
+        if template_path.endswith('.yaml') or template_path.endswith('.yml'):
+            return self._load_yaml_template(template_path)
+        else:
+            try:
+                with open(template_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"加载JSON模板文件失败，使用默认YAML模板: {str(e)}")
+                return self.default_template.copy()
     
     def _customize_config(
         self,
@@ -151,11 +254,10 @@ class ConfigGenerator:
         swanlab_project: str
     ) -> Dict[str, Any]:
         """根据任务描述定制配置"""
-        
         config = template.copy()
         
-        # 基础设置
-        config["model_name"] = model_name
+        # 基础设置（适配YAML格式）
+        config["model_name_or_path"] = model_name
         config["dataset"] = self._get_dataset_name(dataset_path)
         config["output_dir"] = output_dir
         
@@ -422,12 +524,11 @@ class ConfigGenerator:
             config["learning_rate"] = 1e-5
         elif any(keyword in task_lower for keyword in ["对话", "聊天", "简单"]):
             config["learning_rate"] = 5e-5
-        
-        # 调整训练轮数
+          # 调整训练轮数
         if any(keyword in task_lower for keyword in ["微调", "适应", "few-shot"]):
-            config["num_train_epochs"] = 1
+            config["num_train_epochs"] = 1.0
         elif any(keyword in task_lower for keyword in ["从头", "完整", "全面"]):
-            config["num_train_epochs"] = 5
+            config["num_train_epochs"] = 5.0
         
         # LoRA 设置
         if config.get("finetuning_type") == "lora":
@@ -439,78 +540,21 @@ class ConfigGenerator:
                 config["lora_r"] = 8
                 config["lora_alpha"] = 16
                 config["lora_target"] = "q_proj,v_proj"
-        
-        # SwanLab 监控设置
+          # SwanLab 监控设置 (YAML格式)
         if use_swanlab:
-            config["report_to"] = ["swanlab"]
-            config["run_name"] = f"llamafactory_{swanlab_project}"
+            config["report_to"] = "swanlab"
         else:
-            config["report_to"] = []
+            config["report_to"] = "none"
         
         return config
-    
     def _get_dataset_name(self, dataset_path: str) -> str:
         """从数据集路径获取数据集名称"""
         return Path(dataset_path).stem
     
     def _get_default_template(self) -> Dict[str, Any]:
-        """获取默认配置模板"""
-        return {
-            # 模型设置
-            "model_name": "qwen2.5-7b-instruct",
-            "model_revision": "main",
-            
-            # 数据设置
-            "dataset": "custom_dataset",
-            "dataset_dir": "./data",
-            "template": "qwen",
-            "cutoff_len": 2048,
-            "max_samples": 10000,
-            "overwrite_cache": True,
-            "preprocessing_num_workers": 16,
-            
-            # 训练设置
-            "stage": "sft",
-            "do_train": True,
-            "finetuning_type": "lora",
-            "lora_target": "all",
-            "lora_r": 8,
-            "lora_alpha": 16,
-            "lora_dropout": 0.1,
-            "create_new_adapter": True,
-            
-            # 优化器设置
-            "learning_rate": 1e-4,
-            "num_train_epochs": 3,
-            "max_grad_norm": 1.0,
-            "per_device_train_batch_size": 2,
-            "gradient_accumulation_steps": 8,
-            "lr_scheduler_type": "cosine",
-            "warmup_ratio": 0.1,
-            
-            # 评估设置
-            "val_size": 0.1,
-            "per_device_eval_batch_size": 1,
-            "eval_strategy": "steps",
-            "eval_steps": 100,
-            
-            # 保存设置
-            "output_dir": "./output",
-            "logging_steps": 10,
-            "save_steps": 100,
-            "save_total_limit": 3,
-            "save_only_model": True,
-            
-            # 其他设置
-            "fp16": True,
-            "ddp_timeout": 180000000,
-            "include_num_input_tokens_seen": True,
-            "plot_loss": True,
-            
-            # 监控设置
-            "report_to": ["swanlab"],
-            "run_name": "llamafactory_training"
-        }
+        """获取默认配置模板（已废弃，使用YAML模板）"""
+        # 这个方法保留是为了向后兼容，实际使用YAML模板
+        return self._get_fallback_yaml_template()
 
 
 def generate_config_explanation(config: Dict[str, Any], task_description: str) -> str:
@@ -518,7 +562,7 @@ def generate_config_explanation(config: Dict[str, Any], task_description: str) -
     
     explanation = []
     explanation.append("="*60)
-    explanation.append("LlamaFactory 训练配置说明")
+    explanation.append("LlamaFactory 训练配置说明 (YAML)")
     explanation.append("="*60)
     explanation.append("")
     
@@ -526,7 +570,7 @@ def generate_config_explanation(config: Dict[str, Any], task_description: str) -
     explanation.append("")
     
     explanation.append("主要配置参数:")
-    explanation.append(f"  模型名称: {config.get('model_name', 'N/A')}")
+    explanation.append(f"  模型路径: {config.get('model_name_or_path', config.get('model_name', 'N/A'))}")
     explanation.append(f"  微调类型: {config.get('finetuning_type', 'N/A')}")
     explanation.append(f"  学习率: {config.get('learning_rate', 'N/A')}")
     explanation.append(f"  训练轮数: {config.get('num_train_epochs', 'N/A')}")
@@ -541,16 +585,17 @@ def generate_config_explanation(config: Dict[str, Any], task_description: str) -
         explanation.append(f"  LoRA Target: {config.get('lora_target', 'N/A')}")
         explanation.append("")
     
-    if "swanlab" in config.get('report_to', []):
+    report_to = config.get('report_to', 'none')
+    if report_to == 'swanlab' or (isinstance(report_to, list) and 'swanlab' in report_to):
         explanation.append("SwanLab 监控:")
-        explanation.append(f"  项目名称: {config.get('run_name', 'N/A')}")
+        explanation.append("  已启用SwanLab监控")
         explanation.append(f"  日志步数: {config.get('logging_steps', 'N/A')}")
         explanation.append("")
     
     explanation.append("配置调整说明:")
-    explanation.append("  - 使用大模型智能分析任务特征")
-    explanation.append("  - 根据数据集规模自动调优")
-    explanation.append("  - 基于任务复杂度优化参数")
-    explanation.append("  - 自动验证参数合理性")
+    explanation.append("  - 直接使用YAML模板，避免格式转换")
+    explanation.append("  - 基于qwen2.5-coder配置优化")
+    explanation.append("  - 根据任务特征自动调优参数")
+    explanation.append("  - 保持与LlamaFactory完全兼容")
     
     return "\n".join(explanation)

@@ -4,8 +4,8 @@ Trainer Agent
 
 该 Agent 包含三个主要节点：
 1. 数据检查节点 - 验证数据集格式是否符合 LlamaFactory 要求
-2. 配置生成节点 - 根据任务描述生成合理的训练配置
-3. 训练执行节点 - 执行 LlamaFactory 训练并提供 SwanLab 监控
+2. 配置生成节点 - 根据任务描述生成合理的YAML训练配置
+3. 训练执行节点 - 调用远程训练服务执行训练任务
 """
 
 import json
@@ -29,10 +29,10 @@ class TrainerAgent(BaseAgent):
     
     功能特性：
     - 自动验证数据集格式
-    - 智能生成训练配置
-    - 集成 SwanLab 监控
+    - 智能生成YAML训练配置
+    - 调用远程训练服务执行训练
     - 支持 LoRA 微调
-    - 提供详细的训练报告
+    - 提供详细的训练报告和日志
     """
     
     @property
@@ -186,6 +186,7 @@ class TrainerAgent(BaseAgent):
             'train_output_dir': './output/training',
             'train_use_swanlab': True,
             'train_swanlab_project': 'llamafactory_training',
+            'training_service_url': 'http://localhost:8000',
             'output_dir': './output/trainer'
         }
         
@@ -225,8 +226,9 @@ class TrainerAgent(BaseAgent):
                 "training_execution": {
                     "success": state.get('training_success', False),
                     "training_time": state.get('training_execution_time'),
+                    "task_id": state.get('training_task_id'),
+                    "final_status": state.get('training_final_status'),
                     "log_path": state.get('training_log_path'),
-                    "swanlab_url": state.get('swanlab_url'),
                     "report_path": state.get('training_report_path'),
                     "error": state.get('training_error')
                 }

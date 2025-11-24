@@ -1,9 +1,10 @@
 """
 配置生成节点
-根据任务描述生成 LlamaFactory 训练配置
+根据任务描述生成 LlamaFactory 训练配置（YAML格式）
 """
 
 import os
+import yaml
 from pathlib import Path
 from loopai.states.base import LoopAIState
 from loopai.agents.Trainer.utils.config_generator import ConfigGenerator, generate_config_explanation
@@ -77,15 +78,15 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
         # 确保输出目录存在
         output_dir = state.get('output_dir', './output/trainer')
         os.makedirs(output_dir, exist_ok=True)
-        
-        # 保存配置文件
+          # 保存配置文件为YAML格式
         config_output_path = state.get('train_config_output_path')
         if not config_output_path:
-            config_output_path = os.path.join(output_dir, 'training_config.json')
+            config_output_path = os.path.join(output_dir, 'training_config.yaml')
         
-        success = generator.save_config(config, config_output_path)
+        # 保存为YAML格式
+        success = generator.save_config_as_yaml(config, config_output_path)
         if not success:
-            raise RuntimeError("保存配置文件失败")
+            raise RuntimeError("保存YAML配置文件失败")
         
         # 生成配置说明文档
         explanation = generate_config_explanation(config, task_description)
