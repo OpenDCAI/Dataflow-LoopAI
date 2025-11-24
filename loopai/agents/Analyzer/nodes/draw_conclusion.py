@@ -259,17 +259,13 @@ def make_human_text(final_json: dict, background: str = None) -> str:
 
     lines = []
 
-    # ---------------------------
-    # 背景介绍（如果有）
-    # ---------------------------
+   
     if background:
         lines.append("【背景介绍】")
         lines.append(background.strip())
         lines.append("")
 
-    # ---------------------------
-    # 结果概览
-    # ---------------------------
+
     lines.append(f"本次评测共 {t} 个样本，其中通过 {p} 个，样本正确率 {pass_rate_str}。")
     if top_cnt > 0:
         lines.append(f"最主要的失败类型是 “{top_name}”，共有 {top_cnt} 次。")

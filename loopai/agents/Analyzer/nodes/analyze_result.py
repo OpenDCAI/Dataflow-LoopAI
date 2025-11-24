@@ -13,10 +13,12 @@ from loopai.logger import get_logger
 logger = get_logger()
 
 
+
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     使用标准 vLLM(OpenAI 兼容) 客户端
     """
+   
     model = ChatOpenAI(
         model=state['analyze_model_path'],
         api_key=state['analyze_api_key'],
@@ -71,7 +73,8 @@ def build_prompt_for_llm(summary: Dict[str, Any], failure_snippets: List[Dict[st
     loader = PromptLoader()
     total = summary.get("total_samples", 0)
     passed = summary.get("passed_samples", 0)
-    pass_rate = summary.get("pass_rate_samples", 0.0)
+    # ★ 修正：统一用 pass_rate_samples，并派生出百分比 pass_rate_pct
+    pass_rate_samples = float(summary.get("pass_rate_samples", 0.0))
     fail_dist = json.dumps(summary.get("failure_stage_distribution", {}), ensure_ascii=False)
     loc_dist = json.dumps(summary.get("loc_distribution", {}), ensure_ascii=False)
     kw_dist = json.dumps(summary.get("kw_distribution", {}), ensure_ascii=False)
@@ -93,11 +96,14 @@ def build_prompt_for_llm(summary: Dict[str, Any], failure_snippets: List[Dict[st
 
     fail_block = "\n".join(short(x) for x in failure_snippets) or "(无)"
 
-    template = loader("analyze_result_user", "v1")
+    template = loader("analyze_result_user", "analyze_user")
     return template.format(
         total=int(total),
         passed=int(passed),
-        pass_rate_percent=f"{pass_rate * 100:.2f}",
+        # ★ 同时提供两个 key，避免 prompt 里用哪一个都报错
+        pass_rate_samples=pass_rate_samples,
+        pass_rate_pct=f"{pass_rate_samples * 100:.2f}",
+        pass_rate_percent=f"{pass_rate_samples * 100:.2f}",
         fail_dist=fail_dist,
         loc_dist=loc_dist,
         kw_dist=kw_dist,
