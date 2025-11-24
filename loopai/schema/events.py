@@ -12,12 +12,13 @@ class AgentEvent:
     node: Optional[str] = None
     node_path: Optional[list] = None
     state: Optional[Any] = None
+    custom_info: Optional[dict] = None
     stream_message: Optional[AIMessage] = None
 
     def set_stream_message(self, msg_chunk):
         """
         Set the stream message content.
-        
+
         Args:
             msg_chunk (AIMessage): The message chunk to be set.
         """
@@ -30,18 +31,18 @@ class AgentEvent:
         Clear the stream message content.
         """
         self.stream_message = None
-    
+
     def set_path(self, node: str):
         """
         Set the node path.
-        
+
         Args:
             node (str): The node to be set.
         """
         if not self.node_path:
             self.node_path = []
         self.node_path.append(node)
-    
+
     def clear_path(self):
         """
         Clear the node path.
@@ -51,7 +52,7 @@ class AgentEvent:
     def update(self, chunk):
         """
         Update the state with the given chunk.
-        
+
         Args:
             chunk (Any): The chunk to update the state with. 
             ```
@@ -59,6 +60,20 @@ class AgentEvent:
             ```
         """
         self.state = chunk
+
+    def set_custom_info(self, key: str, info: dict):
+        """
+        Set the custom info.
+
+        Args:
+            key (str): The key of the custom info.
+            info (dict): The custom info to be set.
+        """
+        if not self.custom_info:
+            self.custom_info = {}
+        if key not in self.custom_info:
+            self.custom_info[key] = []
+        self.custom_info[key].append(info)
 
     def text(self):
         """
@@ -68,7 +83,7 @@ class AgentEvent:
         other_state_info = []
         msgs = []
         for f in fields(self):
-            if f.name not in ['state', 'stream_message', 'node_path']:
+            if f.name not in ['state', 'stream_message', 'node_path', 'custom_info']:
                 value = getattr(self, f.name)
                 lines.append(f"{f.name}: {value}")
             elif f.name == 'node_path':
@@ -92,17 +107,17 @@ class AgentEvent:
         lines.append('='*10 + 'Messages' + '='*10)
         lines.extend(msgs)
         return "\n".join(lines)
-    
+
     def __str__(self):
         return self.text()
-    
+
     def json(self):
         """
         Convert dataclass fields to JSON representation.
         """
         results = {}
         for f in fields(self):
-            if f.name not in ['state', 'stream_message']:
+            if f.name not in ['state', 'stream_message', 'custom_info']:
                 results[f.name] = getattr(self, f.name)
             elif f.name == 'state':
                 results['state'] = {}
@@ -120,6 +135,54 @@ class AgentEvent:
                                     f"Role: {msg.type}, Content: {msg.content}")
         if self.stream_message:
             results['stream_message'] = self.stream_message.content
-        
+
         return results
-        
+
+    def get_custom_info(self, key: str = None):
+        """
+        Get the custom info.
+
+        Args:
+            key (str): The key of the custom info.
+
+        Returns:
+            list: The custom info list.
+        """
+        if not self.custom_info:
+            return []
+        if key not in self.custom_info:
+            if key is None:
+                return self.custom_info
+            else:
+                return []
+        return self.custom_info[key]
+
+
+@dataclass
+class StreamEvent:
+    """
+    Stream event.
+    """
+    current: str
+    progress: Optional[float] = None
+    progress_num: Optional[int] = None
+    total: Optional[int] = None
+    message: Optional[str] = None
+    data: Optional[Any] = None
+
+    def __init__(self, current: str, progress: Optional[float] = None, progress_num: Optional[int] = None, total: Optional[int] = None, message: Optional[str] = None, data: Optional[Any] = None):
+        self.current = current
+        self.progress = progress
+        self.progress_num = progress_num
+        self.total = total
+        self.message = message
+        self.data = data
+    
+    def json(self):
+        """
+        Convert dataclass fields to JSON representation.
+        """
+        results = {}
+        for f in fields(self):
+            results[f.name] = getattr(self, f.name)
+        return results
