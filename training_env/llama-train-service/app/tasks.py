@@ -51,10 +51,12 @@ class TaskManager:
         
         if task_info['status'] != TaskStatus.PENDING:
             return False
-        
-        # 更新任务状态
+          # 更新任务状态
         task_info['status'] = TaskStatus.RUNNING
         task_info['started_at'] = get_current_timestamp()
+          # 启动监控窗口
+        log_path = os.path.join(self.logs_dir, f"{task_id}.log")
+        self._start_monitor_process(task_id, log_path)
         
         # 在线程池中异步执行训练
         future = self.executor.submit(self._run_training, task_id)
@@ -105,10 +107,37 @@ class TaskManager:
             # 记录错误到日志文件
             with open(log_path, 'a', encoding='utf-8') as log_file:
                 log_file.write(f"\n\nError: {str(e)}\n")
-        
         finally:
             task_info['completed_at'] = get_current_timestamp()
             task_info['process'] = None
+    
+    def _start_monitor_process(self, task_id: str, log_path: str) -> None:
+        """启动独立的监控进程"""
+        try:
+            import sys
+            monitor_script = os.path.join(os.path.dirname(__file__), "start_monitor.py")
+            cmd = [sys.executable, monitor_script, task_id]
+            
+            # 在Windows上启动独立进程
+            if os.name == 'nt':
+                process = subprocess.Popen(
+                    cmd,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            else:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    preexec_fn=os.setsid
+                )
+            
+            print(f"✅ Monitor process started for task {task_id} (PID: {process.pid})")
+            
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to start monitor for task {task_id}: {e}")
     
     def get_task_status(self, task_id: str) -> Optional[Dict]:
         """获取任务状态"""

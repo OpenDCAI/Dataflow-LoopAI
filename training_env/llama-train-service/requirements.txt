@@ -4,3 +4,5 @@ pydantic==2.5.0
 python-multipart==0.0.6
 aiofiles==23.2.0
 llamafactory
+PyQt5==5.15.9
+pyqtgraph==0.13.3
