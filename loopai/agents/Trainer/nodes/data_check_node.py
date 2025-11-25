@@ -5,7 +5,7 @@
 
 import os
 from pathlib import Path
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.agents.Trainer.utils.data_checker import check_data_format, generate_format_report
 from loopai.logger import get_logger
 

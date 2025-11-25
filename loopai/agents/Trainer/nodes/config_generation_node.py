@@ -6,7 +6,7 @@
 import os
 import yaml
 from pathlib import Path
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.agents.Trainer.utils.config_generator import ConfigGenerator, generate_config_explanation
 from loopai.logger import get_logger
 
