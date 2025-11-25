@@ -46,5 +46,12 @@ default_states:
   obtainer_search_engine: "tavily"  # tavily, duckduckgo, jina
   obtainer_max_urls: 60
   obtainer_max_download_subtasks: null  # null means no limit
-  obtainer_category: "PT"  # PT or SFT
+  obtainer_category: "SFT"  # PT or SFT
   obtainer_debug: false
+  obtainer_proxy: "http://127.0.0.1:9090"
+  # Webpage collect node configuration
+  obtainer_max_exploration_depth: 5  # Maximum depth for Playwright exploration
+  obtainer_max_jina_urls: 50  # Maximum URLs to explore with Jina per resource list page
+  # Webpage dataset node configuration
+  obtainer_max_records_per_page: 20  # Maximum dataset records to generate per webpage (default: 10)
+  obtainer_min_relevance_score: 0.7  # Minimum relevance score for records (0.0-1.0, default: 0.7)

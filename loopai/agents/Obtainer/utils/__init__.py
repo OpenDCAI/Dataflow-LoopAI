@@ -11,6 +11,10 @@ from .data_convertor import DataConvertor
 from .webpage_reader import WebPageReader
 from .url_selector import URLSelector
 from .category_classifier import CategoryClassifier
+from .playwright_manager import PlaywrightBrowserManager
+from .playwright_tools import PlaywrightActionTools
+from .webpage_action_agent import WebPageActionAgent
+from .webpage_data_saver import WebPageDataSaver
 
 __all__ = [
     'RAGManager', 
@@ -26,5 +30,9 @@ __all__ = [
     'WebPageReader',
     'URLSelector',
     'CategoryClassifier',
+    'PlaywrightBrowserManager',
+    'PlaywrightActionTools',
+    'WebPageActionAgent',
+    'WebPageDataSaver',
 ]
 
