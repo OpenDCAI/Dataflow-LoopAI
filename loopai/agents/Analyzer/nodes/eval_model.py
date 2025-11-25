@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from langchain_openai import ChatOpenAI
 
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.agents.Analyzer.utils.llmaj import LLMJudge
 from loopai.logger import get_logger
 

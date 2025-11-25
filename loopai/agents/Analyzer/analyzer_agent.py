@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Type
 from langgraph.graph import StateGraph
 from langgraph.types import interrupt, Command
 
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.agents import BaseAgent
 from .nodes import eval_model_node, analyze_result_node, draw_conclusion_node
 

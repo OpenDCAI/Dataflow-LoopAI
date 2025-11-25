@@ -6,7 +6,7 @@
 import os
 import time
 from pathlib import Path
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.agents.Trainer.utils.training_service_client import create_training_client
 from loopai.logger import get_logger
 
