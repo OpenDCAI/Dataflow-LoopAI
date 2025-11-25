@@ -175,13 +175,17 @@ async def _postprocess_workflow(
     try:
         _ensure_hf_cache_env(download_dir)
         
-        # Initialize data convertor
+        # Initialize data convertor with timeout and retry settings
+        llm_timeout = state.get("obtainer_llm_timeout", 120.0)  # Default 120 seconds
+        max_retries = state.get("obtainer_max_retries", 3)  # Default 3 retries
         convertor = DataConvertor(
             model_name=model_name,
             base_url=base_url,
             api_key=api_key,
             temperature=temperature,
             prompt_loader=prompt_loader,
+            timeout=llm_timeout,
+            max_retries=max_retries,
         )
         
         # Set up controlled temp directory
@@ -387,12 +391,14 @@ async def _postprocess_workflow(
                         "sample_record": sample_record,
                     })
             
-            # Process all mapping tasks with 50 concurrent tasks
-            logger.info(f"Found {len(mapping_tasks)} splits to process, starting concurrent mapping (50 concurrent)...")
+            # Process all mapping tasks with limited concurrency (reduced from 50 to 10 for stability)
+            max_concurrent = state.get("obtainer_max_concurrent_mapping", 10)  # Default 10 concurrent tasks
+            logger.info(f"Found {len(mapping_tasks)} splits to process, starting concurrent mapping ({max_concurrent} concurrent)...")
             
             async def process_mapping_task(task: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[Exception]]:
                 """Process a single mapping task"""
                 try:
+                    logger.info(f"Starting LLM mapping for {task['file_name']} ({task['split_name']})...")
                     annotation_result = await convertor.invoke_data_mapping(
                         column_names=task["column_names"],
                         sample_record=task["sample_record"],
@@ -400,14 +406,14 @@ async def _postprocess_workflow(
                         user_target=user_query,
                         category=category
                     )
-                    logger.info(f"LLM mapping result for {task['file_name']} ({task['split_name']}): {annotation_result}")
+                    logger.info(f"✓ LLM mapping succeeded for {task['file_name']} ({task['split_name']}): {annotation_result}")
                     return (task, annotation_result, None)
                 except Exception as e:
-                    logger.error(f"LLM data mapping failed for {task['file_name']} ({task['split_name']}): {e}")
+                    logger.error(f"✗ LLM data mapping failed for {task['file_name']} ({task['split_name']}): {e}")
                     return (task, None, e)
             
-            # Use semaphore to limit concurrent mapping tasks to 50
-            mapping_semaphore = asyncio.Semaphore(50)
+            # Use semaphore to limit concurrent mapping tasks
+            mapping_semaphore = asyncio.Semaphore(max_concurrent)
             
             async def process_mapping_with_semaphore(task: Dict[str, Any]):
                 """Process mapping task with semaphore control"""
@@ -420,8 +426,10 @@ async def _postprocess_workflow(
                 for task in mapping_tasks
             ]
             
-            # Execute all mapping tasks concurrently (max 50 at a time)
+            # Execute all mapping tasks concurrently (limited by semaphore)
+            logger.info(f"Executing {len(mapping_tasks_list)} mapping tasks with max {max_concurrent} concurrent...")
             mapping_results = await asyncio.gather(*mapping_tasks_list, return_exceptions=True)
+            logger.info(f"Completed {len(mapping_results)} mapping tasks")
             
             # Process datasets with mapping results concurrently
             # Filter out failed mappings first

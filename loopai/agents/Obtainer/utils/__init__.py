@@ -9,6 +9,8 @@ from .hf_decision_agent import HuggingFaceDecisionAgent
 from .kaggle_decision_agent import KaggleDecisionAgent
 from .data_convertor import DataConvertor
 from .webpage_reader import WebPageReader
+from .url_selector import URLSelector
+from .category_classifier import CategoryClassifier
 
 __all__ = [
     'RAGManager', 
@@ -22,5 +24,7 @@ __all__ = [
     'KaggleDecisionAgent',
     'DataConvertor',
     'WebPageReader',
+    'URLSelector',
+    'CategoryClassifier',
 ]
 

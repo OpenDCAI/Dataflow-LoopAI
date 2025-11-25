@@ -96,8 +96,15 @@ class DataConvertor:
         max_sample_length: int = 200,
         num_sample_records: int = 3,
         prompt_loader: Optional[PromptLoader] = None,
+        timeout: float = 120.0,
+        max_retries: int = 3,
     ):
-        """Initialize Data Convertor"""
+        """Initialize Data Convertor
+        
+        Args:
+            timeout: Timeout in seconds for LLM API calls (default: 120.0)
+            max_retries: Maximum number of retries for failed LLM calls (default: 3)
+        """
         self.model_name = model_name
         self.base_url = base_url
         self.api_key = api_key
@@ -106,6 +113,8 @@ class DataConvertor:
         self.max_sample_length = max_sample_length
         self.num_sample_records = num_sample_records
         self.prompt_loader = prompt_loader
+        self.timeout = timeout
+        self.max_retries = max_retries
         
         self.llm = ChatOpenAI(
             model=model_name,
@@ -113,6 +122,7 @@ class DataConvertor:
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout=timeout,
         )
         self._temp_dirs = []
 
@@ -398,24 +408,63 @@ class DataConvertor:
             HumanMessage(content=human_prompt)
         ]
         
-        try:
-            answer_msg = await self.llm.ainvoke(messages)
-            answer_text = answer_msg.content.strip()
-            logger.info(f'LLM data mapping response: {answer_text}')
+        # Retry logic with timeout protection
+        last_exception = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                logger.info(f"Calling LLM for data mapping (attempt {attempt}/{self.max_retries})...")
+                
+                # Add timeout protection
+                answer_msg = await asyncio.wait_for(
+                    self.llm.ainvoke(messages),
+                    timeout=self.timeout
+                )
+                answer_text = answer_msg.content.strip()
+                logger.info(f'LLM data mapping response received (attempt {attempt}): {answer_text[:200]}...')
 
-            pattern = r'```json([\s\S]*?)```'
-            match = re.search(pattern, answer_text)
-            if match:
-                match_text = match.group(1).strip()
-            else:
-                match_text = answer_text
+                pattern = r'```json([\s\S]*?)```'
+                match = re.search(pattern, answer_text)
+                if match:
+                    match_text = match.group(1).strip()
+                else:
+                    match_text = answer_text
 
-            annotation_result = json.loads(match_text)
-            logger.info(f"Data mapping result: {annotation_result}")
-            return annotation_result
-        except Exception as e:
-            logger.error(f"Failed to parse LLM response: {e}")
-            raise ValueError(f"Failed to parse LLM response as JSON: {e}")
+                annotation_result = json.loads(match_text)
+                logger.info(f"Data mapping result parsed successfully: {annotation_result}")
+                return annotation_result
+                
+            except asyncio.TimeoutError:
+                last_exception = asyncio.TimeoutError(f"LLM call timed out after {self.timeout}s (attempt {attempt}/{self.max_retries})")
+                logger.warning(f"LLM call timeout on attempt {attempt}/{self.max_retries}")
+                if attempt < self.max_retries:
+                    wait_time = min(2 ** attempt, 10)  # Exponential backoff, max 10s
+                    logger.info(f"Retrying after {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"All {self.max_retries} attempts timed out")
+                    
+            except json.JSONDecodeError as e:
+                last_exception = ValueError(f"Failed to parse LLM response as JSON: {e}")
+                logger.error(f"JSON parsing failed on attempt {attempt}/{self.max_retries}: {e}")
+                if attempt < self.max_retries:
+                    wait_time = min(2 ** attempt, 10)
+                    logger.info(f"Retrying after {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise last_exception
+                    
+            except Exception as e:
+                last_exception = e
+                logger.error(f"LLM call failed on attempt {attempt}/{self.max_retries}: {e}")
+                if attempt < self.max_retries:
+                    wait_time = min(2 ** attempt, 10)
+                    logger.info(f"Retrying after {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise ValueError(f"Failed to get LLM response after {self.max_retries} attempts: {e}")
+        
+        # If we get here, all retries failed
+        raise ValueError(f"Failed to get valid LLM response after {self.max_retries} attempts: {last_exception}")
 
     def _get_default_system_prompt(self, category: str) -> str:
         """Get default system prompt"""

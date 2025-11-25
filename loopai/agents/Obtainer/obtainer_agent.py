@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from langgraph.graph import StateGraph
@@ -11,6 +12,8 @@ from loopai.schema.events import StreamEvent
 
 from loopai.logger import get_logger
 from loopai.agents.Obtainer.nodes import websearch_node, download_node, postprocess_node, deep_explore_node
+from loopai.agents.Obtainer.utils import CategoryClassifier
+from loopai.common.prompts import PromptLoader
 
 logger = get_logger()
 
@@ -79,10 +82,12 @@ class ObtainerAgent(BaseAgent):
             if "obtainer_temperature" not in state:
                 state["obtainer_temperature"] = self.temperature if hasattr(self, 'temperature') else 0.7
             
-            # Auto-detect category from user query if not specified
+            # Auto-detect category from user query if not specified using LLM
             if "obtainer_category" not in state or not state.get("obtainer_category"):
                 # Try to extract category from user query
                 user_query = ""
+                objective = ""
+                
                 if state.get("messages") and len(state["messages"]) > 0:
                     last_message = state["messages"][-1]
                     if hasattr(last_message, "content"):
@@ -93,14 +98,65 @@ class ObtainerAgent(BaseAgent):
                 if not user_query:
                     user_query = state.get("automated_query", "")
                 
-                # Check for SFT keywords in query
-                user_query_lower = user_query.lower()
-                if any(keyword in user_query_lower for keyword in ["sft", "supervised fine-tuning", "fine-tuning", "微调", "问答", "qa", "question", "answer"]):
-                    state["obtainer_category"] = "SFT"
-                    logger.info("Auto-detected category: SFT from user query")
+                # Get objective if available
+                objective = state.get("automated_query", user_query)
+                
+                # Use LLM to intelligently classify category
+                if user_query:
+                    try:
+                        # Get model configuration
+                        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
+                        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
+                        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
+                        temperature = state.get("obtainer_temperature", 0.3)  # Lower temperature for classification
+                        
+                        if model_name and base_url and api_key:
+                            # Initialize prompt loader
+                            prompt_loader = PromptLoader(state.get("prompt_template_dir"))
+                            
+                            # Initialize category classifier
+                            category_classifier = CategoryClassifier(
+                                model_name=model_name,
+                                base_url=base_url,
+                                api_key=api_key,
+                                temperature=temperature,
+                                prompt_loader=prompt_loader,
+                            )
+                            
+                            # Classify category using LLM
+                            logger.info("Analyzing user query to determine task category (SFT/PT)...")
+                            category = asyncio.run(
+                                category_classifier.classify_category(
+                                    user_query=user_query,
+                                    objective=objective
+                                )
+                            )
+                            state["obtainer_category"] = category
+                            logger.info(f"LLM classified category: {category}")
+                        else:
+                            # Fallback to keyword-based detection if model config is missing
+                            logger.warning("Model configuration missing, using keyword-based category detection")
+                            user_query_lower = user_query.lower()
+                            if any(keyword in user_query_lower for keyword in ["sft", "supervised fine-tuning", "fine-tuning", "微调", "问答", "qa", "question", "answer"]):
+                                state["obtainer_category"] = "SFT"
+                                logger.info("Keyword-based detection: SFT")
+                            else:
+                                state["obtainer_category"] = "PT"
+                                logger.info("Keyword-based detection: PT (default)")
+                    except Exception as e:
+                        logger.error(f"Error in category classification: {e}, falling back to keyword detection")
+                        # Fallback to keyword-based detection on error
+                        user_query_lower = user_query.lower()
+                        if any(keyword in user_query_lower for keyword in ["sft", "supervised fine-tuning", "fine-tuning", "微调", "问答", "qa", "question", "answer"]):
+                            state["obtainer_category"] = "SFT"
+                            logger.info("Fallback keyword detection: SFT")
+                        else:
+                            state["obtainer_category"] = "PT"
+                            logger.info("Fallback keyword detection: PT (default)")
                 else:
+                    # No user query available, default to PT
                     state["obtainer_category"] = "PT"
-                    logger.info("Auto-detected category: PT (default)")
+                    logger.info("No user query found, defaulting to PT")
             else:
                 # Ensure category is uppercase
                 state["obtainer_category"] = state["obtainer_category"].upper()
@@ -115,6 +171,19 @@ class ObtainerAgent(BaseAgent):
             
             if "obtainer_max_urls" not in state:
                 state["obtainer_max_urls"] = 10
+            
+            # Web exploration forest parameters (for websearch_node)
+            if "obtainer_max_depth" not in state:
+                state["obtainer_max_depth"] = 4  # Maximum exploration depth
+            
+            if "obtainer_concurrent_limit" not in state:
+                state["obtainer_concurrent_limit"] = 10  # Concurrent URL processing
+            
+            if "obtainer_topk_urls" not in state:
+                state["obtainer_topk_urls"] = 5  # Top-k URLs to select from each page
+            
+            if "obtainer_url_timeout" not in state:
+                state["obtainer_url_timeout"] = 60  # Timeout in seconds for each URL exploration (default: 60s)
             
             if "obtainer_max_download_subtasks" not in state:
                 state["obtainer_max_download_subtasks"] = None
