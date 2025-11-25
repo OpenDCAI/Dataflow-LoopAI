@@ -2,6 +2,8 @@ __pycache__/
 api_key.txt
 data/
 output/
+**/.ipynb_checkpoints/
+temp/
 outputs/
 loopai.egg-info/
 tavily_api_key.txt
