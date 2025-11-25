@@ -11,7 +11,7 @@ from tqdm import tqdm
 from loopai.common.prompts.prompt_loader import PromptLoader
 from langchain_openai import ChatOpenAI
 from ..utils.llmaj import LLMJudge
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
 logger = get_logger()

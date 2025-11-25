@@ -8,7 +8,7 @@ from collections import Counter
 from typing import List, Dict, Any
 
 from langchain_openai import ChatOpenAI
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
 from loopai.common.prompts.prompt_loader import PromptLoader
