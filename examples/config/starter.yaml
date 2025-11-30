@@ -48,3 +48,9 @@ default_states:
   obtainer_max_download_subtasks: null  # null means no limit
   obtainer_category: "PT"  # PT or SFT
   obtainer_debug: false
+
+  train_dataset_path: "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json"  # to defined the path of training dataset (json/jsonl format)
+  train_task_description: "训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务"  # to defined the task description for training
+  train_config_template_path: "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml"  # to defined the path of llamafactory config template
+  train_output_dir: "./output/training_test"  # to defined the output directory for training
+  train_model_name: "/jizhicfs/hymiezhao/models/Qwen2.5-1.5B"  # to defined the base model name for training
