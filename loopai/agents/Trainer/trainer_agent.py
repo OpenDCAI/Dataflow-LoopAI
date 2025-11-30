@@ -13,8 +13,10 @@ from typing import Any, Dict, List, Optional, Type
 
 from langgraph.graph import StateGraph
 from langgraph.types import interrupt, Command
+from langgraph.runtime import Runtime
 
 from loopai.schema.states import LoopAIState
+from loopai.schema.states import RuntimeContext
 from loopai.agents import BaseAgent
 from .nodes import data_check_node, config_generation_node, training_execution_node
 
@@ -102,6 +104,7 @@ class TrainerAgent(BaseAgent):
         builder = StateGraph(LoopAIState)
         
         # 添加节点
+        builder.add_node("check_required_fields", self.get_check_required_fields_node())
         builder.add_node("data_check", self.data_check_node_wrapper)
         builder.add_node("config_generation", self.config_generation_node_wrapper) 
         builder.add_node("training_execution", self.training_execution_node_wrapper)
@@ -117,6 +120,9 @@ class TrainerAgent(BaseAgent):
             }
         )
         
+        # 从前置检查进入数据检查
+        builder.add_edge("check_required_fields", "data_check")
+
         builder.add_conditional_edges(
             "config_generation", 
             self.should_continue_after_config_generation,
@@ -128,8 +134,8 @@ class TrainerAgent(BaseAgent):
         
         builder.add_edge("training_execution", "end")
         
-        # 设置入口点和结束点
-        builder.set_entry_point("data_check")
+        # 将前置检查设为入口点，这样可以在缺少配置时触发 Configer 子图
+        builder.set_entry_point("check_required_fields")
         builder.set_finish_point("end")
         
         # 编译图
@@ -251,3 +257,34 @@ class TrainerAgent(BaseAgent):
         summary["output_files"] = [path for path in file_paths if path]
         
         return summary
+
+    def get_check_required_fields_node(self):
+        @BaseAgent.set_current
+        def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
+            # Trainer 运行前需要的字段，如果缺失则触发 Configer 子图来补全配置
+            required_fields = [
+                'train_dataset_path',
+                'train_task_description',
+                'train_config_template_path',
+                'train_output_dir',
+                'train_model_name'
+            ]
+            missing_fields = []
+            for field in required_fields:
+                if field not in state:
+                    missing_fields.append(field)
+            if missing_fields:
+                state['exception'] = 'ConfigerError'
+                state['next_to'] = 'config_node'
+                # 使用 PromptLoader 生成引导自动化填充的 query
+                state['automated_query'] = self.prompt_loader(
+                    "automated_query", "trainer_missing_fields_prompt")
+                state['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
+                goto_node = runtime.context['exception_navigate']
+                logger.info(f'found missing fields, goto {goto_node}')
+                return Command(
+                    update=state,
+                    goto=goto_node,
+                    graph=Command.PARENT
+                )
+        return check_required_fields
