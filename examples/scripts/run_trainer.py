@@ -46,7 +46,7 @@ graph = trainer()
 # 准备训练状态
 training_state = {
     # 必需字段
-    'train_dataset_path': "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/train_bird_llama.json",  # 使用 JSON 格式数据集
+    'train_dataset_path': "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json",  # 使用 JSON 格式数据集
     'train_task_description': '训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务',
     
     # 可选字段（如果不提供将使用默认值）

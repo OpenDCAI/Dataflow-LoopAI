@@ -81,6 +81,4 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
         state['data_check_error'] = str(e)
     
     logger.info("数据检查节点执行完成")
-    print("state after data_check:\n")
-    print(state)
     return state
