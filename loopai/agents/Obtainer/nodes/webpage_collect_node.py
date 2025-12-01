@@ -267,16 +267,72 @@ async def _webpage_collect_workflow(
                     # Create a new page for this URL to avoid conflicts
                     page = await browser_manager.get_page()
                     
-                    # Navigate to URL with fallback
-                    try:
-                        await page.goto(url, wait_until="networkidle", timeout=60000)
-                    except Exception as nav_error:
-                        logger.warning(f"networkidle timeout for {url}, trying with 'load': {nav_error}")
+                    # Navigate to URL with retry and fallback
+                    navigation_success = False
+                    nav_error_msg = None
+                    
+                    # Retry navigation up to 2 times
+                    for retry_attempt in range(2):
                         try:
-                            await page.goto(url, wait_until="load", timeout=60000)
-                        except Exception as load_error:
-                            logger.warning(f"load timeout for {url}, trying with 'domcontentloaded': {load_error}")
-                            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                            # Try networkidle first
+                            try:
+                                await page.goto(url, wait_until="networkidle", timeout=60000)
+                                navigation_success = True
+                                break
+                            except Exception as nav_error:
+                                nav_error_msg = str(nav_error)
+                                # Check if it's ERR_ABORTED (non-retryable)
+                                if "ERR_ABORTED" in str(nav_error) or "net::ERR" in str(nav_error):
+                                    logger.warning(f"Navigation aborted for {url}: {nav_error_msg}")
+                                    # Try with less strict wait condition
+                                    try:
+                                        await page.goto(url, wait_until="load", timeout=30000)
+                                        navigation_success = True
+                                        break
+                                    except Exception:
+                                        # If still fails, try domcontentloaded
+                                        try:
+                                            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                                            navigation_success = True
+                                            break
+                                        except Exception:
+                                            # If all fail, break retry loop
+                                            if retry_attempt < 1:
+                                                logger.info(f"Retrying navigation for {url} (attempt {retry_attempt + 1}/2)")
+                                                await asyncio.sleep(2)  # Wait before retry
+                                                continue
+                                            else:
+                                                raise
+                                else:
+                                    # Other errors, try with less strict conditions
+                                    logger.warning(f"networkidle timeout for {url}, trying with 'load': {nav_error_msg}")
+                                    try:
+                                        await page.goto(url, wait_until="load", timeout=60000)
+                                        navigation_success = True
+                                        break
+                                    except Exception as load_error:
+                                        logger.warning(f"load timeout for {url}, trying with 'domcontentloaded': {load_error}")
+                                        try:
+                                            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                                            navigation_success = True
+                                            break
+                                        except Exception as dom_error:
+                                            if retry_attempt < 1:
+                                                logger.info(f"Retrying navigation for {url} (attempt {retry_attempt + 1}/2)")
+                                                await asyncio.sleep(2)
+                                                continue
+                                            else:
+                                                raise
+                        except Exception as e:
+                            if retry_attempt < 1:
+                                logger.info(f"Navigation failed for {url}, retrying (attempt {retry_attempt + 1}/2): {e}")
+                                await asyncio.sleep(2)
+                                continue
+                            else:
+                                raise
+                    
+                    if not navigation_success:
+                        raise Exception(f"Failed to navigate to {url} after retries: {nav_error_msg}")
                     
                     await asyncio.sleep(2)  # Wait for page to stabilize
                     
@@ -331,12 +387,21 @@ async def _webpage_collect_workflow(
                         return result
                         
                 except Exception as e:
-                    logger.error(f"Error exploring URL {url}: {e}")
+                    error_msg = str(e)
+                    # Check if it's a navigation error (ERR_ABORTED, timeout, etc.)
+                    if "ERR_ABORTED" in error_msg or "net::ERR" in error_msg:
+                        logger.warning(f"Navigation aborted for {url}: {error_msg}. This may be due to network issues, proxy problems, or server restrictions.")
+                    elif "timeout" in error_msg.lower():
+                        logger.warning(f"Navigation timeout for {url}: {error_msg}")
+                    else:
+                        logger.error(f"Error exploring URL {url}: {error_msg}")
+                    
                     return {
                         "url": url,
                         "is_resource_list": False,
                         "final_url": url,
-                        "error": str(e),
+                        "error": error_msg,
+                        "error_type": "navigation_failed",
                     }
         
         # Process URLs concurrently
@@ -518,7 +583,13 @@ async def _webpage_collect_workflow(
         # Cleanup
         if browser_manager:
             try:
+                # Close MCP connection if action_agent was created
+                if 'action_agent' in locals() and hasattr(action_agent, 'playwright_tools'):
+                    try:
+                        await action_agent.playwright_tools.close()
+                    except Exception as e:
+                        logger.warning(f"Error closing MCP connection: {e}")
                 await browser_manager.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Error closing browser manager: {e}")
 

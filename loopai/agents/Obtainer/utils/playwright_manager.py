@@ -162,6 +162,298 @@ class PlaywrightBrowserManager:
                 "error": str(e),
             }
     
+    async def get_aria_snapshot(self, root: Optional[Any] = None) -> str:
+        """
+        Get accessibility tree snapshot in aria_snapshot (YAML-like) format
+        
+        Uses Playwright's CDP (Chrome DevTools Protocol) to get the real
+        accessibility tree, which is more accurate than DOM-based parsing.
+        
+        Args:
+            root: Optional root node selector (default: None, uses page root)
+        
+        Returns:
+            YAML-like string representation of accessibility tree (aria_snapshot format)
+        """
+        try:
+            page = await self.get_page()
+            
+            # Try to use CDP to get accessibility tree
+            try:
+                # Get CDP session from the page
+                cdp_session = await page.context.new_cdp_session(page)
+                # Get accessibility tree using CDP
+                ax_tree = await cdp_session.send("Accessibility.getFullAXTree")
+                await cdp_session.detach()
+                
+                # Convert CDP accessibility tree to aria_snapshot format
+                def format_aria_snapshot_from_cdp(nodes):
+                    """Convert CDP accessibility nodes to aria_snapshot YAML format"""
+                    if not nodes:
+                        return ""
+                    
+                    # Build node ID to node mapping
+                    node_map = {node.get('nodeId'): node for node in nodes}
+                    
+                    def format_node(node, indent=0):
+                        if not node:
+                            return ""
+                        
+                        lines = []
+                        # CDP format: role is an object with 'type' and sometimes 'value'
+                        role_obj = node.get('role', {})
+                        if isinstance(role_obj, dict):
+                            role = role_obj.get('type', 'generic')
+                        else:
+                            role = role_obj or 'generic'
+                        
+                        # CDP format: name is an object with 'value'
+                        name_obj = node.get('name', {})
+                        if isinstance(name_obj, dict):
+                            name = name_obj.get('value', '')
+                        else:
+                            name = name_obj or ''
+                        
+                        child_ids = node.get('childIds', [])
+                        
+                        # Format: role "name" [attributes]
+                        indent_str = "  " * indent
+                        if name:
+                            # Escape quotes and newlines in name
+                            escaped_name = name.replace('"', '\\"').replace('\n', ' ').strip()
+                            if escaped_name:
+                                line = f'{indent_str}- {role}: "{escaped_name}"'
+                            else:
+                                line = f'{indent_str}- {role}:'
+                        else:
+                            line = f'{indent_str}- {role}:'
+                        
+                        # Add level for headings
+                        if role == 'heading':
+                            level = 1
+                            if isinstance(role_obj, dict):
+                                level_val = role_obj.get('value')
+                                if isinstance(level_val, dict):
+                                    level = level_val.get('value', 1)
+                                elif isinstance(level_val, (int, float)):
+                                    level = int(level_val)
+                            line += f' [level={level}]'
+                        
+                        lines.append(line)
+                        
+                        # Add children
+                        for child_id in child_ids:
+                            child_node = node_map.get(child_id)
+                            if child_node:
+                                child_lines = format_node(child_node, indent + 1)
+                                if child_lines:
+                                    lines.append(child_lines)
+                        
+                        return "\n".join(lines)
+                    
+                    # Find root node (usually one without parentId or the first one)
+                    root_node = None
+                    for node in nodes:
+                        if not node.get('parentId'):
+                            root_node = node
+                            break
+                    if not root_node and nodes:
+                        root_node = nodes[0]
+                    
+                    if root_node:
+                        return format_node(root_node)
+                    return ""
+                
+                if ax_tree and 'nodes' in ax_tree:
+                    aria_snapshot = format_aria_snapshot_from_cdp(ax_tree['nodes'])
+                    if aria_snapshot:
+                        logger.info(f"[PlaywrightManager] Generated aria_snapshot via CDP ({len(aria_snapshot)} chars)")
+                        return aria_snapshot
+                
+            except Exception as cdp_error:
+                logger.warning(f"[PlaywrightManager] CDP method failed, using fallback: {cdp_error}")
+            
+            # Fallback: Use Playwright's accessibility.snapshot() if available
+            try:
+                # Note: accessibility.snapshot() is deprecated but may still work
+                snapshot = await page.accessibility.snapshot()
+                if snapshot:
+                    def format_aria_snapshot(node, indent=0):
+                        """Format accessibility tree node to aria_snapshot YAML format"""
+                        if not node:
+                            return ""
+                        
+                        lines = []
+                        role = node.get('role', 'generic')
+                        name = node.get('name', '')
+                        children = node.get('children', [])
+                        
+                        # Format: role "name" [attributes]
+                        indent_str = "  " * indent
+                        if name:
+                            # Escape quotes in name
+                            escaped_name = name.replace('"', '\\"').replace('\n', ' ').strip()
+                            if escaped_name:
+                                line = f'{indent_str}- {role}: "{escaped_name}"'
+                            else:
+                                line = f'{indent_str}- {role}:'
+                        else:
+                            line = f'{indent_str}- {role}:'
+                        
+                        # Add level for headings
+                        if role == 'heading':
+                            level = node.get('level', 1)
+                            line += f' [level={level}]'
+                        
+                        lines.append(line)
+                        
+                        # Add children
+                        for child in children:
+                            child_lines = format_aria_snapshot(child, indent + 1)
+                            if child_lines:
+                                lines.append(child_lines)
+                        
+                        return "\n".join(lines)
+                    
+                    aria_snapshot = format_aria_snapshot(snapshot)
+                    if aria_snapshot:
+                        logger.info(f"[PlaywrightManager] Generated aria_snapshot via accessibility.snapshot() ({len(aria_snapshot)} chars)")
+                        return aria_snapshot
+            except Exception as acc_error:
+                logger.warning(f"[PlaywrightManager] accessibility.snapshot() failed: {acc_error}")
+            
+            # Final fallback: Use DOM-based extraction
+            logger.warning("[PlaywrightManager] Using DOM-based fallback for aria_snapshot")
+            snapshot = await page.evaluate("""
+                () => {
+                    function getAriaRole(node) {
+                        const role = node.getAttribute('role');
+                        if (role) return role;
+                        
+                        const tagName = node.tagName.toLowerCase();
+                        const roleMap = {
+                            'button': 'button',
+                            'a': 'link',
+                            'input': node.type === 'submit' ? 'button' : (node.type === 'checkbox' ? 'checkbox' : 'textbox'),
+                            'img': 'img',
+                            'h1': 'heading', 'h2': 'heading', 'h3': 'heading',
+                            'h4': 'heading', 'h5': 'heading', 'h6': 'heading',
+                            'nav': 'navigation',
+                            'main': 'main',
+                            'article': 'article',
+                            'section': 'region',
+                            'ul': 'list', 'ol': 'list',
+                            'li': 'listitem',
+                            'header': 'banner',
+                            'footer': 'contentinfo',
+                        };
+                        return roleMap[tagName] || 'generic';
+                    }
+                    
+                    function getAriaName(node) {
+                        const ariaLabel = node.getAttribute('aria-label');
+                        if (ariaLabel) return ariaLabel;
+                        
+                        const labelledBy = node.getAttribute('aria-labelledby');
+                        if (labelledBy) {
+                            const labelEl = document.getElementById(labelledBy);
+                            if (labelEl) return labelEl.textContent.trim();
+                        }
+                        
+                        const text = node.textContent?.trim();
+                        if (text && text.length < 200 && node.children.length === 0) return text;
+                        
+                        if (node.tagName === 'IMG') {
+                            return node.getAttribute('alt') || '';
+                        }
+                        
+                        return '';
+                    }
+                    
+                    function buildTree(node, depth = 0) {
+                        if (depth > 15) return null;
+                        
+                        const role = getAriaRole(node);
+                        const name = getAriaName(node);
+                        
+                        if (role === 'generic' && !name && node.children.length === 0) {
+                            return null;
+                        }
+                        
+                        const result = { role: role, name: name, children: [], level: null };
+                        
+                        if (role === 'heading') {
+                            const match = node.tagName.match(/^H([1-6])$/i);
+                            result.level = match ? parseInt(match[1]) : 1;
+                        }
+                        
+                        for (let child of node.children) {
+                            const childTree = buildTree(child, depth + 1);
+                            if (childTree) {
+                                result.children.push(childTree);
+                            }
+                        }
+                        
+                        if (name || result.children.length > 0) {
+                            return result;
+                        }
+                        return null;
+                    }
+                    
+                    return buildTree(document.body);
+                }
+            """)
+            
+            def format_aria_snapshot(node, indent=0):
+                """Format accessibility tree node to aria_snapshot YAML format"""
+                if not node:
+                    return ""
+                
+                lines = []
+                role = node.get('role', 'generic')
+                name = node.get('name', '')
+                children = node.get('children', [])
+                level = node.get('level')
+                
+                indent_str = "  " * indent
+                if name:
+                    escaped_name = name.replace('"', '\\"').replace('\n', ' ').strip()
+                    if escaped_name:
+                        line = f'{indent_str}- {role}: "{escaped_name}"'
+                    else:
+                        line = f'{indent_str}- {role}:'
+                else:
+                    line = f'{indent_str}- {role}:'
+                
+                if role == 'heading' and level:
+                    line += f' [level={level}]'
+                
+                lines.append(line)
+                
+                for child in children:
+                    child_lines = format_aria_snapshot(child, indent + 1)
+                    if child_lines:
+                        lines.append(child_lines)
+                
+                return "\n".join(lines)
+            
+            if snapshot:
+                aria_snapshot = format_aria_snapshot(snapshot)
+                logger.info(f"[PlaywrightManager] Generated aria_snapshot via DOM fallback ({len(aria_snapshot)} chars)")
+                return aria_snapshot
+            else:
+                # Ultimate fallback
+                return await page.evaluate("() => document.body.innerText")
+                
+        except Exception as e:
+            logger.error(f"[PlaywrightManager] Error getting aria_snapshot: {e}")
+            # Fallback to innerText
+            try:
+                page = await self.get_page()
+                return await page.evaluate("() => document.body.innerText")
+            except Exception:
+                return ""
+    
     def __del__(self):
         """Cleanup on deletion"""
         if self._playwright or self._browser or self._context or self._page:
