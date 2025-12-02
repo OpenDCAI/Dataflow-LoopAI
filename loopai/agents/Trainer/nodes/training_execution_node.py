@@ -6,14 +6,16 @@
 import os
 import time
 from pathlib import Path
+from langgraph.config import get_stream_writer
 from loopai.schema.states import LoopAIState
+from loopai.schema.events import StreamEvent
 from loopai.agents.Trainer.utils.training_service_client import create_training_client
 from loopai.logger import get_logger
 
 logger = get_logger()
 
 
-def training_execution_node(state: LoopAIState) -> LoopAIState:
+def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
     """
     训练执行节点
     
@@ -25,11 +27,14 @@ def training_execution_node(state: LoopAIState) -> LoopAIState:
             - train_task_description: 训练任务描述
             - training_service_url: 训练服务地址（可选）
             - output_dir: 输出目录
+        writer: StreamEvent writer，可选
     
     Returns:
         更新后的 LoopAIState 对象
-    """
-    
+    """    
+    if writer is None:
+        writer = get_stream_writer()
+        
     logger.info("开始执行训练节点")
     
     try:
@@ -49,6 +54,15 @@ def training_execution_node(state: LoopAIState) -> LoopAIState:
         logger.info(f"训练服务地址: {service_url}")
         logger.info(f"任务描述: {task_description}")
         
+        # 进度：开始连接服务
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=0.1,
+                message="正在连接训练服务...",
+                data={"service_url": service_url, "config_path": config_path}
+            ))
+        
         # 创建训练服务客户端
         logger.info("连接训练服务...")
         client = create_training_client(service_url)
@@ -59,8 +73,25 @@ def training_execution_node(state: LoopAIState) -> LoopAIState:
         
         logger.info("✅ 训练服务连接成功")
         
+        # 进度：服务连接成功
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=0.2,
+                message="训练服务连接成功，准备提交任务...",
+                data={"service_status": "connected"}
+            ))        
         # 启动训练任务
         logger.info("🚀 提交训练任务到远程服务...")
+        
+        # 进度：正在提交任务
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=0.3,
+                message="正在提交训练任务到远程服务...",
+                data={"task_description": task_description}
+            ))
         
         start_time = time.time()
         success, task_id_or_error, error_detail = client.start_training(
@@ -74,6 +105,15 @@ def training_execution_node(state: LoopAIState) -> LoopAIState:
         task_id = task_id_or_error
         logger.info(f"✅ 训练任务启动成功，任务ID: {task_id}")
         
+        # 进度：任务提交成功
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=0.4,
+                message=f"训练任务提交成功，任务ID: {task_id}",
+                data={"task_id": task_id, "start_time": start_time}
+            ))
+        
         # 等待训练完成并监控进度
         def progress_callback(tid, status_info, elapsed_time):
             status = status_info.get('status', 'unknown')
@@ -82,7 +122,23 @@ def training_execution_node(state: LoopAIState) -> LoopAIState:
             # 更新状态到state中
             state['current_training_status'] = status
             state['current_training_elapsed'] = elapsed_time
-        
+            
+            # 实时进度报告
+            if writer:
+                progress_val = 0.4 + (elapsed_time / 3600.0) * 0.4  # 假设最多1小时，进度从0.4到0.8
+                progress_val = min(progress_val, 0.8)
+                
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=progress_val,
+                    message=f"训练进行中 - 状态: {status}",
+                    data={
+                        "task_id": tid,
+                        "status": status,
+                        "elapsed_time": int(elapsed_time),
+                        "estimated_progress": f"{int(progress_val * 100)}%"
+                    }
+                ))        
         logger.info("⏳ 等待训练完成...")
         success, final_status, error = client.wait_for_completion(
             state=state,
@@ -94,6 +150,19 @@ def training_execution_node(state: LoopAIState) -> LoopAIState:
         
         end_time = time.time()
         training_time = end_time - start_time
+        
+        # 进度：训练完成，开始获取日志
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=0.85,
+                message="训练完成，正在获取训练日志...",
+                data={
+                    "training_time": int(training_time),
+                    "final_status": final_status.get('status') if final_status else 'unknown',
+                    "success": success
+                }
+            ))
         
         # 获取训练日志
         logger.info("📄 获取训练日志...")
@@ -110,7 +179,15 @@ def training_execution_node(state: LoopAIState) -> LoopAIState:
                 f.write("="*60 + "\n\n")
                 f.write(logs)
             logger.info(f"训练日志已保存到: {log_path}")
-            state['training_log_path'] = log_path
+            state['training_log_path'] = log_path        
+        # 进度：生成训练报告
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=0.9,
+                message="正在生成训练报告...",
+                data={"log_retrieved": log_success, "log_lines": len(logs.split('\n')) if logs else 0}
+            ))
         
         # 生成训练报告
         report = _generate_remote_training_report(
@@ -140,6 +217,21 @@ def training_execution_node(state: LoopAIState) -> LoopAIState:
             
             state['training_success'] = True
             
+            # 进度：训练成功完成
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=1.0,
+                    message=f"训练任务成功完成！用时 {training_time:.1f} 秒",
+                    data={
+                        "success": True,
+                        "task_id": task_id,
+                        "training_time": training_time,
+                        "report_path": report_path,
+                        "log_path": state.get('training_log_path')
+                    }
+                ))
+            
         else:
             final_status_str = final_status.get('status', 'unknown') if final_status else 'unknown'
             logger.error(f"❌ 训练任务执行失败! 最终状态: {final_status_str}")
@@ -148,13 +240,39 @@ def training_execution_node(state: LoopAIState) -> LoopAIState:
             
             state['training_success'] = False
             state['training_error'] = error or f"训练未成功完成，最终状态: {final_status_str}"
+            
+            # 进度：训练失败
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=1.0,
+                    message=f"训练任务执行失败: {final_status_str}",
+                    data={
+                        "success": False,
+                        "final_status": final_status_str,
+                        "error": error,
+                        "training_time": training_time
+                    }
+                ))
         
-        logger.info(f"训练报告已保存到: {report_path}")
-        
+        logger.info(f"训练报告已保存到: {report_path}")        
     except Exception as e:
         logger.error(f"训练节点执行失败: {str(e)}")
         state['training_success'] = False
         state['training_error'] = str(e)
+        
+        # 进度：执行异常
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message=f"训练执行异常: {str(e)}",
+                data={
+                    "success": False,
+                    "error_type": "execution_exception",
+                    "error_message": str(e)
+                }
+            ))
     
     logger.info("训练节点执行完成")
     return state
