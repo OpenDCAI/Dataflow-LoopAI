@@ -57,15 +57,12 @@ def main():
     try:
         # 切换到LLaMA Factory目录
         os.chdir(llamafactory_dir)
-        print(f"✅ Changed working directory to: {os.getcwd()}")
-        
-        # 启动uvicorn服务器
+        print(f"✅ Changed working directory to: {os.getcwd()}")        # 启动uvicorn服务器
         cmd = [
             "uvicorn", 
             "app.main:app",
             "--host", "0.0.0.0", 
-            "--port", "8000", 
-            "--reload"
+            "--port", "8000"
         ]
         
         print(f"🔧 Running command: {' '.join(cmd)}")
