@@ -73,8 +73,6 @@ class TrainerAgent(BaseAgent):
     @staticmethod
     def should_continue_after_data_check(state: LoopAIState) -> str:
         """数据检查后的条件判断"""
-        print("before check:\n")
-        print(state)
         if state.get('data_check_passed', False):
             logger.info("数据检查通过，继续配置生成")
             return "config_generation"
