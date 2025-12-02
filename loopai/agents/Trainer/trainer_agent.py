@@ -14,9 +14,11 @@ from typing import Any, Dict, List, Optional, Type
 from langgraph.graph import StateGraph
 from langgraph.types import interrupt, Command
 from langgraph.runtime import Runtime
+from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState
 from loopai.schema.states import RuntimeContext
+from loopai.schema.events import StreamEvent
 from loopai.agents import BaseAgent
 from .nodes import data_check_node, config_generation_node, training_execution_node
 
@@ -51,24 +53,120 @@ class TrainerAgent(BaseAgent):
     def system_prompt_name(self) -> str:
         """系统提示名称"""
         return "default_prompt"
-    
     @staticmethod
+    @BaseAgent.set_current
     def data_check_node_wrapper(state: LoopAIState) -> LoopAIState:
         """数据检查节点包装器"""
+        writer = get_stream_writer()
+        
+        # 开始数据检查
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=0.0,
+                message="开始数据格式检查",
+                data={"dataset_path": state.get('train_dataset_path')}
+            ))
+        
         logger.info("执行数据检查节点")
-        return data_check_node(state)
+        result_state = data_check_node(state)
+        
+        # 完成数据检查
+        if writer:
+            check_passed = result_state.get('data_check_passed', False)
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message=f"数据检查{'通过' if check_passed else '失败'}",
+                data={
+                    "passed": check_passed,
+                    "total_samples": result_state.get('data_check_result', {}).get('total_samples'),
+                    "errors_count": len(result_state.get('data_check_result', {}).get('errors', [])),
+                    "warnings_count": len(result_state.get('data_check_result', {}).get('warnings', []))
+                }
+            ))
+        
+        return result_state
     
     @staticmethod
+    @BaseAgent.set_current
     def config_generation_node_wrapper(state: LoopAIState) -> LoopAIState:
         """配置生成节点包装器"""
+        writer = get_stream_writer()
+        
+        # 开始配置生成
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=0.0,
+                message="开始生成训练配置",
+                data={
+                    "model_name": state.get('train_model_name'),
+                    "task_description": state.get('train_task_description')
+                }
+            ))
+        
         logger.info("执行配置生成节点")
-        return config_generation_node(state)
+        result_state = config_generation_node(state)
+        
+        # 完成配置生成
+        if writer:
+            success = result_state.get('config_generation_success', False)
+            config = result_state.get('train_config', {})
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message=f"配置生成{'成功' if success else '失败'}",
+                data={
+                    "success": success,
+                    "model_name": config.get('model_name'),
+                    "finetuning_type": config.get('finetuning_type'),
+                    "learning_rate": config.get('learning_rate'),
+                    "num_train_epochs": config.get('num_train_epochs'),
+                    "config_path": result_state.get('train_config_output_path')
+                }
+            ))
+        
+        return result_state
     
     @staticmethod
+    @BaseAgent.set_current
     def training_execution_node_wrapper(state: LoopAIState) -> LoopAIState:
         """训练执行节点包装器"""
+        writer = get_stream_writer()
+        
+        # 开始训练执行
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=0.0,
+                message="开始提交训练任务",
+                data={
+                    "config_path": state.get('train_config_output_path'),
+                    "service_url": state.get('training_service_url')
+                }
+            ))
+        
         logger.info("执行训练节点")
-        return training_execution_node(state)
+        result_state = training_execution_node(state, writer)
+        
+        # 完成训练执行
+        if writer:
+            success = result_state.get('training_success', False)
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message=f"训练任务{'成功完成' if success else '执行失败'}",
+                data={
+                    "success": success,
+                    "task_id": result_state.get('training_task_id'),
+                    "execution_time": result_state.get('training_execution_time'),
+                    "final_status": result_state.get('training_final_status'),
+                    "report_path": result_state.get('training_report_path')
+                }
+            ))
+        
+        return result_state
     
     @staticmethod
     def should_continue_after_data_check(state: LoopAIState) -> str:
@@ -251,7 +349,6 @@ class TrainerAgent(BaseAgent):
             state.get('training_log_path'),
             state.get('training_report_path')
         ]
-        
         summary["output_files"] = [path for path in file_paths if path]
         
         return summary
@@ -259,6 +356,17 @@ class TrainerAgent(BaseAgent):
     def get_check_required_fields_node(self):
         @BaseAgent.set_current
         def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
+            writer = get_stream_writer()
+            
+            # 进度：开始检查必需字段
+            if writer:
+                writer(StreamEvent(
+                    current="Trainer.check_required_fields",
+                    progress=0.0,
+                    message="正在检查训练所需的配置字段...",
+                    data={"stage": "field_validation"}
+                ))
+            
             # Trainer 运行前需要的字段，如果缺失则触发 Configer 子图来补全配置
             required_fields = [
                 'train_dataset_path',
@@ -271,7 +379,21 @@ class TrainerAgent(BaseAgent):
             for field in required_fields:
                 if field not in state:
                     missing_fields.append(field)
+                    
             if missing_fields:
+                # 进度：发现缺失字段
+                if writer:
+                    writer(StreamEvent(
+                        current="Trainer.check_required_fields",
+                        progress=0.5,
+                        message=f"发现缺失字段，将转至配置补全: {', '.join(missing_fields)}",
+                        data={
+                            "missing_fields": missing_fields,
+                            "total_required": len(required_fields),
+                            "missing_count": len(missing_fields)
+                        }
+                    ))
+                
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
                 # 使用 PromptLoader 生成引导自动化填充的 query
@@ -285,4 +407,16 @@ class TrainerAgent(BaseAgent):
                     goto=goto_node,
                     graph=Command.PARENT
                 )
+            else:
+                # 进度：所有字段检查通过
+                if writer:
+                    writer(StreamEvent(
+                        current="Trainer.check_required_fields",
+                        progress=1.0,
+                        message="所有必需字段检查通过，开始训练流程",
+                        data={
+                            "all_fields_present": True,
+                            "total_required": len(required_fields)
+                        }
+                    ))
         return check_required_fields

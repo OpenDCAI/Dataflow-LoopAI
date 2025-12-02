@@ -152,7 +152,8 @@ class TrainingServiceClient:
             logger.error(error_msg)
             return False, None, error_msg
     
-    def wait_for_completion(self, task_id: str, 
+    def wait_for_completion(self, state, 
+                          task_id: str, 
                           check_interval: int = 30,
                           max_wait_time: int = 3600,
                           progress_callback: Optional[callable] = None) -> Tuple[bool, Optional[Dict[str, Any]], Optional[str]]:
@@ -188,6 +189,7 @@ class TrainingServiceClient:
                 return False, None, f"获取任务状态失败: {error}"
             
             task_status = status_info.get("status")
+            state['current_training_status'] = task_status
             
             # 调用进度回调
             if progress_callback:
