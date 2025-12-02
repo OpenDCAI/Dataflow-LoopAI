@@ -11,6 +11,7 @@ from loopai.agents.Configer import ConfigerAgent
 from loopai.agents.Judger import JudgerAgent
 from loopai.agents.Analyzer import AnalyzerAgent
 from loopai.agents.Obtainer import ObtainerAgent
+from loopai.agents.Trainer import TrainerAgent
 
 from loopai.logger import get_logger
 
@@ -42,15 +43,6 @@ class StarterAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
-    def train_node(state: LoopAIState, runtime: Runtime[RuntimeContext]) -> LoopAIState:
-        """Train the model"""
-        logger.info(
-            f"Exec: Train the model, next_to: query_node, exception_node: {runtime.context['exception_navigate']}, parent: {Command.PARENT}")
-        return state
-
-
-    @staticmethod
-    @BaseAgent.set_current
     def query_node(state: LoopAIState) -> LoopAIState:
         """Chat with the user"""
         if "automated_query" in state and state["automated_query"]:
@@ -76,7 +68,7 @@ class StarterAgent(BaseAgent):
         if hasattr(maybe_tool_message, 'tool_call_id'):
             tool_res = json.loads(maybe_tool_message.content)
             state["next_to"] = tool_res["next_to"]
-            last_message.content = '<cmd>根据用户指令执行: ' + tool_res["motivation"] + '</cmd>'
+            last_message.content = '<cmd>根据用户指令执行: ' + tool_res["motivation"] + '</cmd>\n' + last_message.content
         else:
             state["next_to"] = "query_node"
         logger.info(f'Messages: {state["messages"]}')
@@ -115,6 +107,8 @@ class StarterAgent(BaseAgent):
                                     store=self.store)(**kwargs)
         analyze_node = AnalyzerAgent(checkpointer=self.checkpointer,
                                     store=self.store)(**kwargs)
+        train_node = TrainerAgent(checkpointer=self.checkpointer,
+                                    store=self.store)(**kwargs)
         # ObtainerAgent will use model_name, base_url, api_key from StarterAgent
         # But it also needs to get these from state if not provided in constructor
         # So we pass them to ensure consistency
@@ -130,7 +124,7 @@ class StarterAgent(BaseAgent):
         builder.add_node("llm_node", self.llm_node)
         builder.add_node("feedback_node", self.feedback_node)
         builder.add_node("route_node", self.route_node)
-        builder.add_node("train_node", self.train_node)
+        builder.add_node("train_node", train_node)
         builder.add_node("obtain_node", obtainer_node)  # Use ObtainerAgent subgraph
         builder.add_node("evaluate_node", self.evaluate_node)
         builder.add_node("config_node", config_node)

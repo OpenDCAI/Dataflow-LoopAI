@@ -27,5 +27,5 @@ setup(
         "requests>=2.31.0",
         "mcp>=0.1.0",
     ],
-    python_requires=">=3.10",
+    python_requires=">=3.12",
 )
