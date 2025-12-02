@@ -85,6 +85,7 @@ def training_execution_node(state: LoopAIState) -> LoopAIState:
         
         logger.info("⏳ 等待训练完成...")
         success, final_status, error = client.wait_for_completion(
+            state=state,
             task_id=task_id,
             check_interval=30,  # 30秒检查一次
             max_wait_time=3600,  # 最多等待1小时

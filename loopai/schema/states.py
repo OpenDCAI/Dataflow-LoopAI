@@ -91,7 +91,8 @@ class LoopAIState(MessagesState):
     training_log_path: str = ""  # path to training log
     training_report_path: str = ""  # path to training report
     training_error: str = ""  # training error message
-    training_service_url: str = "http://localhost:8000"  # training service URL  
+    training_service_url: str = "http://localhost:8000"  # training service URL
+    current_training_status: str = ""  # current training status
     update_model_path: str  # to defined the save path of the post-trained model
 
     # graph state attributes
