@@ -151,6 +151,11 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
                 "processed_sources_count": result.get("processed_sources_count", 0),
                 "output_dir": result.get("output_dir", ""),
             }
+            # Save intermediate format path for mapping node
+            output_dir = result.get("output_dir", "")
+            if output_dir and os.path.exists(output_dir):
+                state["obtainer_intermediate_data_path"] = output_dir
+                logger.info(f"Intermediate format data saved at: {output_dir}")
             logger.info(
                 f"Post-process node completed: {result.get('total_records_processed', 0)} records processed."
             )

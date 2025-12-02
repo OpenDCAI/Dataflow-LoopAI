@@ -123,9 +123,116 @@ initial_state = {
 print("\nStarting ObtainerAgent complete workflow...")
 print(f"Query: {test_query}\n")
 
+# Import Command for handling interrupts
+from langgraph.types import Command
+
+
+def extract_interrupt_message(interrupt_info):
+    """Extract the message from interrupt info"""
+    if isinstance(interrupt_info, tuple):
+        if len(interrupt_info) > 0:
+            interrupt_obj = interrupt_info[0]
+            if hasattr(interrupt_obj, 'value'):
+                return str(interrupt_obj.value)
+    if isinstance(interrupt_info, list) and len(interrupt_info) > 0:
+        interrupt_obj = interrupt_info[0]
+        if hasattr(interrupt_obj, 'value'):
+            return str(interrupt_obj.value)
+    if isinstance(interrupt_info, dict):
+        return interrupt_info.get('value', '')
+    if isinstance(interrupt_info, str):
+        return interrupt_info
+    if hasattr(interrupt_info, 'value'):
+        return str(interrupt_info.value)
+    return ""
+
+
 try:
-    # Run the graph
-    result = graph.invoke(initial_state, config=config)
+    # Run the graph with interrupt handling
+    max_iterations = 30
+    iteration = 0
+    current_input = None
+    result = None
+    
+    while iteration < max_iterations:
+        iteration += 1
+        
+        # Use stream to handle interrupts
+        if current_input is not None:
+            # Resume with user input
+            stream_events = graph.stream(
+                Command(resume=current_input),
+                config=config,
+                stream_mode=["updates"]
+            )
+            current_input = None
+        else:
+            # First run or continue
+            stream_events = graph.stream(initial_state, config=config, stream_mode=["updates"])
+        
+        interrupted = False
+        
+        for event in stream_events:
+            # Handle different return formats
+            if isinstance(event, tuple):
+                if len(event) == 3:
+                    _, stream_mode, chunk_item = event
+                elif len(event) == 2:
+                    stream_mode, chunk_item = event
+                else:
+                    continue
+            elif isinstance(event, dict):
+                chunk_item = event
+                stream_mode = "updates"
+            else:
+                continue
+            
+            # For updates mode, chunk_item is a dict with node names as keys
+            if stream_mode == "updates" and isinstance(chunk_item, dict):
+                for node_name, node_state in chunk_item.items():
+                    if node_name == "__interrupt__":
+                        # Handle interrupt - display message and get user input
+                        interrupt_message = extract_interrupt_message(node_state)
+                        
+                        print("\n" + "=" * 80)
+                        print("[交互式输入] 系统正在等待您的输入")
+                        print("=" * 80)
+                        
+                        if interrupt_message:
+                            print(f"\n{interrupt_message}")
+                        else:
+                            # Fallback message
+                            print("\n请输入您的选择（输入格式ID、'list' 或描述自定义格式）：")
+                        
+                        print("\n" + "-" * 80)
+                        user_input = input("请输入您的选择: ").strip()
+                        
+                        if not user_input:
+                            print("输入为空，将使用默认选项。")
+                            current_input = ""
+                        else:
+                            current_input = user_input
+                        
+                        interrupted = True
+                        break
+                    else:
+                        # Normal node update - store as potential result
+                        result = node_state
+            
+            if interrupted:
+                break
+        
+        # If no interrupt occurred, we're done
+        if not interrupted:
+            break
+    
+    # Get final state if not already set
+    if result is None:
+        final_state = graph.get_state(config)
+        if final_state.values:
+            result = final_state.values
+        else:
+            result = initial_state
     
     print("\n" + "=" * 80)
     print("Complete Workflow Results")

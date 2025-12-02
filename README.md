@@ -135,7 +135,23 @@ bash examples/scripts/run_manager_vllm.sh
 ```bash
 python examples/scripts/run_judger.py
 ```
+## Running Obtainer Node Example
 
+### Configuration
+
+1. **Model Configuration**: Modify `config/starter.yaml` to configure the Obtainer-related model paths and parameters.
+   - Note: RAG currently supports only API-based embedding models.
+
+2. **Required API Keys**:
+   - **Kaggle Credentials**: Obtain your API credentials from [Kaggle](https://www.kaggle.com/) and configure them in the YAML file.
+   - **Tavily API Key**: Create a `tavily_api_key.txt` file in the `examples/scripts/` directory with your API key from [Tavily](https://www.tavily.com/).
+   - **RAG API Key**: Create a `rag_api_key.txt` file in the project root with your embedding model API key.
+
+### Execution
+
+```bash
+bash examples/scripts/run_obtainer.sh
+```
 ---
 
 ## 🛠️ 定义一个新 Agent

@@ -12,6 +12,7 @@ from loopai.schema.events import StreamEvent
 
 from loopai.logger import get_logger
 from loopai.agents.Obtainer.nodes import websearch_node, download_node, postprocess_node, deep_explore_node
+from loopai.agents.Obtainer.mapping import MappingSubgraph
 from loopai.agents.Obtainer.utils import CategoryClassifier
 from loopai.common.prompts import PromptLoader
 
@@ -436,6 +437,24 @@ class ObtainerAgent(BaseAgent):
             logger.info("No successful downloads found, routing to end_node")
             return "end_node"
 
+    @staticmethod
+    def should_trigger_mapping(state: LoopAIState) -> str:
+        """
+        Conditional edge function: check if mapping should be triggered
+        
+        Returns:
+            "mapping_subgraph" if intermediate data exists and format not confirmed, "end_node" otherwise
+        """
+        intermediate_path = state.get("obtainer_intermediate_data_path", "")
+        if intermediate_path and os.path.exists(intermediate_path):
+            confirmed_format = state.get("obtainer_confirmed_format")
+            if not confirmed_format:
+                logger.info("Intermediate data found, routing to mapping_subgraph for format selection")
+                return "mapping_subgraph"
+            else:
+                logger.info("Format already confirmed, skipping mapping_subgraph")
+        return "end_node"
+
     def init_graph(self, **kwargs):
         builder = StateGraph(LoopAIState)
         builder.add_node("start_node", self.get_start_node())
@@ -443,6 +462,14 @@ class ObtainerAgent(BaseAgent):
         builder.add_node("deep_explore_node", deep_explore_node)  # 占位节点，未实现，不接入工作流
         builder.add_node("download_node", download_node)
         builder.add_node("postprocess_node", postprocess_node)
+        
+        # 使用 MappingSubgraph 作为子图
+        mapping_subgraph = MappingSubgraph(
+            checkpointer=self.checkpointer,
+            store=self.store
+        )
+        builder.add_node("mapping_subgraph", mapping_subgraph.build())
+        
         builder.add_node("end_node", self.end_node)
         builder.set_entry_point("start_node")
         builder.add_edge("start_node", "websearch_node")
@@ -462,7 +489,15 @@ class ObtainerAgent(BaseAgent):
                 "end_node": "end_node",
             }
         )
-        builder.add_edge("postprocess_node", "end_node")
+        builder.add_conditional_edges(
+            "postprocess_node",
+            self.should_trigger_mapping,
+            {
+                "mapping_subgraph": "mapping_subgraph",
+                "end_node": "end_node",
+            }
+        )
+        builder.add_edge("mapping_subgraph", "end_node")
         builder.set_finish_point("end_node")
         
         self.graph = builder.compile(

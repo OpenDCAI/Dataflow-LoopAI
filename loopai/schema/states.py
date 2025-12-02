@@ -65,6 +65,15 @@ class LoopAIState(MessagesState):
     obtainer_category: str = "PT"  # data category for post-processing (PT or SFT)
     obtainer_postprocess_results: Dict[str, Any]  # post-processing results
     obtainer_debug: bool = False  # enable debug mode for obtainer agent (logs all levels and saves to file)
+    # mapping subgraph state attributes
+    obtainer_intermediate_data_path: str = ""  # path to intermediate format data
+    obtainer_mapping_user_intent: str = ""  # user intent: list_formats, preset_format, custom_format
+    obtainer_mapping_selected_format_id: str = ""  # selected preset format ID (e.g., alpaca, chatml)
+    obtainer_mapping_custom_description: str = ""  # custom format description from user
+    obtainer_pending_format: Dict[str, Any] = None  # pending format waiting for user confirmation
+    obtainer_confirmed_format: Dict[str, Any] = None  # confirmed format for mapping
+    obtainer_confirmation_result: str = ""  # confirmation result: confirmed, modify, restart
+    obtainer_mapping_results: Dict[str, Any] = None  # mapping execution results
 
     # graph state attributes
     current: str  # to defined the current task, e.g. train, evaluate, obtain, naive
