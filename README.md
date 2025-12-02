@@ -294,58 +294,110 @@ assistant_prompt.json
 
 ## 📡 状态监测机制
 
-`BaseAgent` 内置 `AgentEvent`，用于完整追踪 Agent 的执行过程：
+`BaseAgent` 内置了 `AgentEvent`，用于完整追踪 Agent 的执行过程。
 
-### 记录内容包括：
+### 🌟 其记录的信息包括：
 
-* `stream_mode`
-* 当前执行节点 (`node`)
-* 状态更新 (`state_updates`)
-* 消息流 (`stream_message`)
-* 执行路径 (`path`) 等
+* 当前事件类型（`stream_mode`）
+* 当前执行节点（`node`）
+* 状态更新（`state`）
+* 消息流（`stream_message`）
+* 执行路径（`node_path`）
+* 自定义事件字典（`custom_info`）
 
-### 检测的事件类型：
+虽然每个 Agent 理论上都可以维护自己的 `AgentEvent`，但在 LoopAI 中，为了统一管理，我们只使用 **StarterAgent** 中的 `AgentEvent`。
 
-* ✅ `update` —— 状态更新事件
-* ✅ `message` —— LLM 及节点消息
+---
+
+## 🔍 LangGraph 可捕获的事件类型
+
+* ✅ `update` —— 节点执行结束后的状态更新事件
+* ✅ `message` —— LLM 或节点返回的消息
 * ✅ `custom` —— 用户自定义事件
 
-这些事件使系统具备 **可观测性（observability）**，便于调试、可视化与日志分析。
+基于这些事件类型，LoopAI 将监测事件分为两类：
 
-## 自定义Stream事件
+### A. **预设事件**
 
-在子图中, 有些不必要存放在`LoopAIState`但仍需监测的参数信息可以通过触发自定义get_stream_writer来实现, 在LoopAI中我们通过`StreamEvent`来规范自定义事件的格式。这些字段将被记录在`AgentEvent`中, 并可以在可视化工具中展示。
+包括 `update` 与 `message`：
 
-### 字段说明
+* `update`：仅在节点执行完成后触发
+* `message`：捕获基于 ChatOpenAI 的消息，并支持流式返回
 
-`StreamEvent`包含以下字段:
+⚠️ 预设事件存在的局限性：
 
-* `current`: 当前节点名称
-* `progress`: 进度值（可选）
-* `progress_num`: 进度数值（可选）
-* `total`: 总进度（可选）
-* `message`: 消息内容（可选）
-* `data`: 自定义数据（可选）
+* 缺乏 **实时性**（无法在节点执行过程中触发）
+* 只能记录存放在 `LoopAIState` 中的字段变化
 
-### 示例
+### B. **自定义事件**
 
-假设我们在`AnalyzerAgent`中监测`configer_error`字段, 当该字段发生变化时, 我们希望将其记录下来。
+为提升实时性与灵活性，我们引入了自定义事件机制：
 
-在`AnalyzerAgent`中, 我们可以在`eval_model`节点中添加如下代码:
+* 可在节点执行过程中实时触发
+* 可记录无需写入 `LoopAIState` 的临时信息
+* 支持更灵活的业务扩展和状态监控
+
+---
+
+## 🚀 自定义 Stream 事件
+
+在子图中，有些参数无需保存到 `LoopAIState`，但仍需监测。这类信息可以通过 **自定义事件**（`get_stream_writer`）进行流式返回。
+
+LoopAI 使用 `StreamEvent` 规范自定义事件的格式。所有自定义事件都会被记录进 `AgentEvent` 的 `custom_info` 字段，并最终展示在可视化工具中。
+
+### 🧱 StreamEvent 字段说明
+
+| 字段           | 含义           | 可选 |
+| -------------- | -------------- | ---- |
+| `current`      | 当前节点名称   | 必填 |
+| `progress`     | 进度百分比     | 可选 |
+| `progress_num` | 当前进度数值   | 可选 |
+| `total`        | 总进度         | 可选 |
+| `message`      | 输出文本消息   | 可选 |
+| `data`         | 任意自定义数据 | 可选 |
+
+---
+
+## 📘 示例：实时监测 `configer_error` 字段
+
+假设我们希望在 `AnalyzerAgent` 的 `eval_model` 节点中，实时监测 `configer_error` 的变化。
+
+示例代码：
 
 ```python
 from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
 
+from loopai.schema.states import LoopAIState
+from loopai.agents import BaseAgent
+
 writer = get_stream_writer()
-writer(StreamEvent(current=state['current'], data={'configer_error': state['configer_error']}).json())
+
+@BaseAgent.set_current
+def node(state: LoopAIState):
+    writer(StreamEvent(
+        current=state['current'],
+        data={'configer_error': state['configer_error']}
+    ).json())
 ```
 
-## 异常处理
+`@BaseAgent.set_current` 会在执行前设置当前节点名称，这样事件中便能记录正确的 `current` 字段。
 
-### 参数异常
+StarterAgent 接收到该自定义事件后，会将其写入：
 
-如果需要抛出异常, 请在节点中添加如下代码:
+```
+AgentEvent.custom_info[state['current']]
+```
+
+其中 value 为数组，每触发一次 writer，就会追加一个事件对象。
+
+---
+
+## ❗ 异常处理机制
+
+### 🔎 参数异常示例
+
+如果节点检测到必要参数缺失，可以触发异常处理流程：
 
 ```python
 if missing_fields:
@@ -362,10 +414,12 @@ if missing_fields:
     )
 ```
 
-其中:
+字段说明：
 
-- `exception` 为异常类型, 这里为 `ConfigerError`
-- `next_to` 为异常处理节点, 这里为 `config_node`
-- `automated_query` 为异常处理完后, 为用户自动创建完成查询文本以提示`Starter Agent`完成了相关配置, 这里为调用 `analyzer_missing_fields_prompt`
-- `configer_error` 为加入到`Congier Agent`的异常信息, 用来提示用户补全参数, 这里为 `Missing required fields: ...`
-- `goto_node` 为异常处理跳转节点, 这里为 `exception_navigate`, 默认在外部设置为`route_node`.
+* **`exception`**：异常类型
+* **`next_to`**：需要跳转到的异常处理节点，如 `config_node`
+* **`automated_query`**：自动生成的查询，用于提示 StarterAgent 用户需补全信息
+* **`configer_error`**：传递给 ConfigerAgent 的错误提示
+* **`goto_node`**：异常处理跳转节点，如外部配置的 `exception_navigate`
+
+如果异常无法通过 Configer 修复，但仍希望继续流程，可以将 `next_to` 设置为 `query_node`，并定义相应的 `automated_query`。StarterAgent 会根据该提示引导用户进行必要的手动操作。
