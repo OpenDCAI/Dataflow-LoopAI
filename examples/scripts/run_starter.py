@@ -116,18 +116,18 @@ while thread_states.interrupts:
         # Short prompt (from query_node, etc.)
         query = input(f"Please input ({interrupt_value}): ")
     
-    # with Live(console=console, refresh_per_second=4) as live:
-    #     for chunk in sg(
-    #         query,
-    #         config=config
-    #     ):
-    #         live.update(Text(sg.agent_event.text(), style="cyan"))
+    with Live(console=console, refresh_per_second=4) as live:
+        for chunk in sg(
+            query,
+            config=config
+        ):
+            live.update(Text(sg.agent_event.text(), style="cyan"))
     
-    # 不使用Live显示，直接运行
-    for chunk in sg(
-        query,
-        config=config
-    ):
+    # # 不使用Live显示，直接运行
+    # for chunk in sg(
+    #     query,
+    #     config=config
+    # ):
         pass  # 不显示live输出
     
     thread_states = sg.get_state(config)

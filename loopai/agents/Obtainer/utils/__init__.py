@@ -11,6 +11,7 @@ from .data_convertor import DataConvertor
 from .webpage_reader import WebPageReader
 from .url_selector import URLSelector
 from .category_classifier import CategoryClassifier, ObtainQueryNormalizer
+from .config_builder import build_obtainer_rag_config
 from .playwright_manager import PlaywrightBrowserManager
 from .playwright_tools import PlaywrightActionTools
 from .webpage_action_agent import WebPageActionAgent
@@ -31,6 +32,7 @@ __all__ = [
     'URLSelector',
     'CategoryClassifier',
     'ObtainQueryNormalizer',
+    'build_obtainer_rag_config',
     'PlaywrightBrowserManager',
     'PlaywrightActionTools',
     'WebPageActionAgent',
