@@ -117,8 +117,7 @@ class StarterAgent(BaseAgent):
             base_url=self.base_url,
             api_key=self.api_key,
             checkpointer=self.checkpointer,
-            store=self.store,
-            prompt_template_dir="loopai/common/prompts"
+            store=self.store
         )(**kwargs)
         builder = StateGraph(LoopAIState, context_schema=RuntimeContext)
         builder.add_node("query_node", self.query_node)
