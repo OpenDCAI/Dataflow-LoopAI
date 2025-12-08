@@ -24,7 +24,7 @@ default_states:
   eval_problem_path: "./data/human-eval-v2-20210705.jsonl"
   eval_result_path: "./outputs/result.json"
   eval_batch_size: 10
-
+  prompt_template_dir: "./loopai/common/prompts"
   analyze_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
   analyze_base_url: "http://123.129.219.111:3000/v1"
   analyze_api_key: "EMPTY"
@@ -44,14 +44,15 @@ default_states:
   obtainer_api_key: ""  # if empty, will use starter api_key
   obtainer_temperature: 0.7
   obtainer_search_engine: "tavily"  # tavily, duckduckgo, jina
-  obtainer_max_urls: 60
+  obtainer_max_urls: 6
   obtainer_max_download_subtasks: null  # null means no limit
   obtainer_category: "SFT"  # PT or SFT
   obtainer_debug: false
   obtainer_proxy: "http://127.0.0.1:9090"
+  obtainer_default_mapping_format: "alpaca"  # default mapping format to auto-skip interaction
   # Webpage collect node configuration
-  obtainer_max_exploration_depth: 5  # Maximum depth for Playwright exploration
-  obtainer_max_jina_urls: 50  # Maximum URLs to explore with Jina per resource list page
+  obtainer_max_exploration_depth: 3  # Maximum depth for Playwright exploration
+  obtainer_max_jina_urls: 30  # Maximum URLs to explore with Jina per resource list page
   # Webpage dataset node configuration
   obtainer_max_records_per_page: 20  # Maximum dataset records to generate per webpage (default: 10)
   obtainer_min_relevance_score: 0.7  # Minimum relevance score for records (0.0-1.0, default: 0.7)

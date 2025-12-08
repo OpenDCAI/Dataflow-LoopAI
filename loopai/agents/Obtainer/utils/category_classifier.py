@@ -142,3 +142,133 @@ Please analyze the user's query and objective to determine if they need:
 Return a JSON object with "category" and "reasoning", or simply "SFT" or "PT"."""
 
 
+class ObtainQueryNormalizer:
+    """
+    Detect evaluation-recommendation style inputs and rewrite them into
+    concrete dataset collection objectives suitable for obtain workflow.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        base_url: str,
+        api_key: str,
+        temperature: float = 0.2,
+        prompt_loader: Optional[PromptLoader] = None,
+    ):
+        self.llm = ChatOpenAI(
+            model=model_name,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=temperature,
+        )
+        self.prompt_loader = prompt_loader
+
+    async def normalize(self, user_query: str, objective: str = "") -> dict:
+        """
+        Identify whether the query is:
+        - dataset_request: already a direct dataset collection ask
+        - eval_recommendation: based on evaluation results / suggestions, needs rewrite
+        Returns dict with intent_type, normalized_query, reason, raw_response.
+        """
+        if not user_query:
+            return {}
+
+        logger.info("\n--- Obtain Query Normalizer ---")
+
+        system_prompt, human_prompt = self._build_prompts(user_query, objective)
+
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=human_prompt)
+        ]
+
+        try:
+            response = await self.llm.ainvoke(messages)
+            logger.info(f"Query normalizer raw response: {response.content}")
+            clean = response.content.strip().replace("```json", "").replace("```", "").strip()
+
+            result = self._parse_response(clean, user_query, objective)
+            return result
+        except Exception as e:
+            logger.error(f"Error in query normalization: {e}")
+            return {}
+
+    def _build_prompts(self, user_query: str, objective: str):
+        """Use prompt loader if available, otherwise default prompts."""
+        if self.prompt_loader:
+            try:
+                system_prompt = self.prompt_loader("system", "obtain_query_normalizer_prompt")
+                task_prompt = self.prompt_loader("task", "obtain_query_normalizer_prompt")
+                human_prompt = task_prompt.format(
+                    user_query=user_query,
+                    objective=objective if objective else user_query
+                )
+                return system_prompt, human_prompt
+            except Exception as e:
+                logger.warning(f"Failed to load obtain_query_normalizer_prompt, using default: {e}")
+
+        # Default prompts
+        system_prompt = (
+            "You detect whether a request is a direct dataset collection ask, "
+            "or an evaluation-based recommendation (e.g., suggests data improvements from eval results). "
+            "If it is evaluation-based, rewrite it into a clear dataset collection objective "
+            "that the data-obtainer can execute."
+        )
+        human_prompt = self._default_task_prompt(user_query, objective)
+        return system_prompt, human_prompt
+
+    def _default_task_prompt(self, user_query: str, objective: str) -> str:
+        query_text = objective if objective else user_query
+        return f"""User query: {user_query}
+
+Research objective: {query_text}
+
+Classify intent:
+- dataset_request: direct ask to collect datasets for a domain/use (fine-tuning/pretraining).
+- eval_recommendation: suggestions derived from model evaluation results about what data to add or improve.
+
+If eval_recommendation, rewrite into a specific dataset collection objective the obtainer can execute.
+
+Respond in JSON:
+{{
+  "intent_type": "dataset_request" | "eval_recommendation",
+  "normalized_query": "<if eval_recommendation, the rewritten dataset collection objective; otherwise original>",
+  "reason": "short reason",
+  "confidence": 0-1
+}}"""
+
+    def _parse_response(self, content: str, user_query: str, objective: str) -> dict:
+        try:
+            data = json.loads(content)
+            if isinstance(data, str):
+                # If plain string, treat as intent_type only
+                return {
+                    "intent_type": data,
+                    "normalized_query": user_query,
+                    "reason": "",
+                    "raw": content,
+                }
+            intent = data.get("intent_type") or data.get("intent") or ""
+            normalized = data.get("normalized_query") or data.get("rewritten_query") or data.get("query") or ""
+            reason = data.get("reason", "")
+            confidence = data.get("confidence")
+        except Exception:
+            # Fallback: heuristic text parsing
+            intent = "eval_recommendation" if "eval" in content.lower() else "dataset_request"
+            normalized = ""
+            reason = content
+            confidence = None
+
+        if not normalized:
+            normalized = user_query if intent == "dataset_request" else objective or user_query
+
+        return {
+            "intent_type": intent,
+            "normalized_query": normalized,
+            "reason": reason,
+            "confidence": confidence,
+            "raw": content,
+        }
+
+

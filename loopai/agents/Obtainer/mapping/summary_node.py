@@ -52,6 +52,9 @@ def summary_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState:
     
     # 保存到 store
     _save_to_store(state, store, mapping_results, summary_message)
+
+    # 清理本轮映射的临时交互状态，保留 auto/default 配置供下轮复用
+    _reset_mapping_runtime_state(state)
     
     logger.info("=== Summary Node: Completed ===")
     return state
@@ -161,4 +164,22 @@ def _save_to_store(state: LoopAIState, store: BaseStore, results: Dict[str, Any]
         logger.debug(f"Saved mapping summary to store")
     except Exception as e:
         logger.warning(f"Failed to save to store: {e}")
+
+
+def _reset_mapping_runtime_state(state: LoopAIState):
+    """
+    清理映射流程的临时状态，方便下一轮循环重新触发映射。
+    保留 automode/default 配置；仅清理确认/交互相关字段。
+    """
+    transient_keys = [
+        "obtainer_confirmed_format",
+        "obtainer_confirmation_result",
+        "obtainer_pending_format",
+        "obtainer_mapping_user_intent",
+        "obtainer_mapping_selected_format_id",
+        "obtainer_mapping_custom_description",
+    ]
+    for key in transient_keys:
+        if key in state:
+            state[key] = None if key.endswith("_format") else ""
 

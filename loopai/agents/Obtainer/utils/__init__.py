@@ -10,7 +10,7 @@ from .kaggle_decision_agent import KaggleDecisionAgent
 from .data_convertor import DataConvertor
 from .webpage_reader import WebPageReader
 from .url_selector import URLSelector
-from .category_classifier import CategoryClassifier
+from .category_classifier import CategoryClassifier, ObtainQueryNormalizer
 from .playwright_manager import PlaywrightBrowserManager
 from .playwright_tools import PlaywrightActionTools
 from .webpage_action_agent import WebPageActionAgent
@@ -30,6 +30,7 @@ __all__ = [
     'WebPageReader',
     'URLSelector',
     'CategoryClassifier',
+    'ObtainQueryNormalizer',
     'PlaywrightBrowserManager',
     'PlaywrightActionTools',
     'WebPageActionAgent',

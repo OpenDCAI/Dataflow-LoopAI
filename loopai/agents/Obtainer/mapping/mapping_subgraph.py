@@ -4,6 +4,7 @@ Mapping Subgraph - 映射子图
 将中间格式数据转换为目标格式的完整子图。
 
 节点流程:
+0. entry_check_node: 检查是否有默认格式，有则跳过用户交互
 1. inquiry_node: 询问用户需要什么格式
 2. list_formats_node: 显示所有格式详情 (非LLM)
 3. preset_format_node: 处理预设格式选择 (非LLM)
@@ -12,6 +13,10 @@ Mapping Subgraph - 映射子图
 6. script_mapping_node: 脚本映射 (非LLM, 用于预设格式)
 7. llm_mapping_node: LLM映射 (用于自定义格式)
 8. summary_node: 总结结果
+
+State 参数:
+- obtainer_default_mapping_format: 默认映射格式ID（如 "alpaca"），设置后跳过用户交互
+  如果为空或不设置，则走用户交互流程
 """
 import os
 from typing import Optional, Callable
@@ -69,6 +74,7 @@ class MappingSubgraph:
         builder = StateGraph(LoopAIState)
         
         # 添加节点
+        builder.add_node("entry_check_node", self._entry_check_node)  # 入口检查节点
         builder.add_node("inquiry_node", self._wrap_node(inquiry_node))
         builder.add_node("list_formats_node", self._wrap_node(list_formats_node))
         builder.add_node("preset_format_node", self._wrap_node(preset_format_node))
@@ -79,8 +85,20 @@ class MappingSubgraph:
         builder.add_node("summary_node", self._wrap_node(summary_node))
         builder.add_node("end_node", self._end_node)
         
-        # 设置入口点
-        builder.set_entry_point("inquiry_node")
+        # 设置入口点为 entry_check_node
+        builder.set_entry_point("entry_check_node")
+        
+        # entry_check_node -> 根据是否有默认格式路由
+        builder.add_conditional_edges(
+            "entry_check_node",
+            self._route_after_entry_check,
+            {
+                "script_mapping_node": "script_mapping_node",  # 自动模式：预设格式
+                "llm_mapping_node": "llm_mapping_node",  # 自动模式：自定义格式
+                "inquiry_node": "inquiry_node",  # 用户交互模式
+                "end_node": "end_node",  # 出错时退出
+            }
+        )
         
         # 添加条件边: inquiry_node -> 根据意图路由
         builder.add_conditional_edges(
@@ -165,6 +183,86 @@ class MappingSubgraph:
         """结束节点"""
         logger.info("=== Mapping Subgraph: End Node ===")
         return state
+    
+    def _entry_check_node(self, state: LoopAIState) -> LoopAIState:
+        """
+        入口检查节点 - 检查是否有默认格式设置
+        
+        如果设置了 obtainer_default_mapping_format，则跳过用户交互直接使用该格式
+        """
+        logger.info("=== Mapping Subgraph: Entry Check Node ===")
+        
+        # 检查是否有默认格式设置；容错去除空格并统一小写
+        raw_default_format = state.get("obtainer_default_mapping_format", "")
+        default_format = ""
+        if raw_default_format:
+            default_format = str(raw_default_format).strip().lower()
+            state["obtainer_default_mapping_format"] = default_format  # 回写标准化值
+        logger.info(
+            f"Mapping entry check: raw_default='{raw_default_format}', "
+            f"normalized='{default_format}', "
+            f"confirmed_format_exists={bool(state.get('obtainer_confirmed_format'))}, "
+            f"category='{state.get('obtainer_category', '')}'"
+        )
+        
+        if default_format and default_format in PRESET_FORMATS:
+            logger.info(f"Default mapping format specified: {default_format}, skipping user interaction")
+            
+            # 设置格式选择相关的状态
+            format_info = PRESET_FORMATS[default_format]
+            state["obtainer_confirmed_format"] = {
+                "format_id": default_format,
+                "format_name": format_info.get("name", ""),
+                "description": format_info.get("description", ""),
+                "schema": format_info.get("schema", {}),
+                "example": format_info.get("example", {}),
+                "is_preset": True
+            }
+            state["obtainer_confirmation_result"] = "confirmed"
+            state["obtainer_mapping_auto_mode"] = True  # 标记为自动模式
+            
+            logger.info(f"Auto-confirmed format: {default_format}")
+        elif default_format:
+            # 设置了默认格式但不在预设列表中
+            logger.warning(f"Default format '{default_format}' not found in preset formats, falling back to user interaction")
+            state["obtainer_mapping_auto_mode"] = False
+        else:
+            # 没有设置默认格式，走用户交互流程
+            logger.info("No default format specified, proceeding with user interaction")
+            state["obtainer_mapping_auto_mode"] = False
+        
+        return state
+    
+    @staticmethod
+    def _route_after_entry_check(state: LoopAIState) -> str:
+        """
+        入口检查后的路由
+        
+        Returns:
+            "script_mapping_node" 如果已确认默认格式
+            "inquiry_node" 如果需要用户交互
+            "end_node" 如果出错
+        """
+        # 检查是否有异常
+        if state.get("exception"):
+            logger.error(f"Exception in state: {state.get('exception')}")
+            return "end_node"
+        
+        # 检查是否已经确认了格式（自动模式）
+        if state.get("obtainer_mapping_auto_mode") and state.get("obtainer_confirmed_format"):
+            confirmed_format = state.get("obtainer_confirmed_format", {})
+            format_id = confirmed_format.get("format_id", "")
+            
+            if format_id in PRESET_FORMATS:
+                logger.info(f"Auto mode: routing to script_mapping_node for format: {format_id}")
+                return "script_mapping_node"
+            else:
+                logger.info(f"Auto mode: routing to llm_mapping_node for custom format")
+                return "llm_mapping_node"
+        
+        # 否则进入用户交互流程
+        logger.info("Routing to inquiry_node for user interaction")
+        return "inquiry_node"
     
     @staticmethod
     def _route_by_intent(state: LoopAIState) -> str:

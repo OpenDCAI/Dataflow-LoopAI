@@ -13,7 +13,7 @@ from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
 from loopai.agents.Obtainer.nodes import websearch_node, download_node, postprocess_node, deep_explore_node
 from loopai.agents.Obtainer.mapping import MappingSubgraph
-from loopai.agents.Obtainer.utils import CategoryClassifier
+from loopai.agents.Obtainer.utils import CategoryClassifier, ObtainQueryNormalizer
 from loopai.common.prompts import PromptLoader
 
 logger = get_logger()
@@ -62,6 +62,12 @@ class ObtainerAgent(BaseAgent):
             
             # Ensure obtainer configuration is set in state
             # Use values from constructor if not already in state
+            # Prompt 目录写入 state，保证后续节点（如 postprocess_node）能拿到正确的 prompt_loader
+            if not state.get("prompt_template_dir") and self.prompt_template_dir:
+                print("77777777777777777777777777777777777777777777777777")
+                print(self.prompt_template_dir)
+                state["prompt_template_dir"] = self.prompt_template_dir
+            
             if not state.get("obtainer_model_path"):
                 if self.model_name:
                     state["obtainer_model_path"] = self.model_name
@@ -83,6 +89,14 @@ class ObtainerAgent(BaseAgent):
             if "obtainer_temperature" not in state:
                 state["obtainer_temperature"] = self.temperature if hasattr(self, 'temperature') else 0.7
             
+            # Prepare prompt loader for downstream nodes
+            prompt_loader = None
+            if state.get("prompt_template_dir"):
+                try:
+                    prompt_loader = PromptLoader(state.get("prompt_template_dir"))
+                except Exception as e:
+                    logger.debug(f"PromptLoader init failed, will use defaults: {e}")
+            
             # Auto-detect category from user query if not specified using LLM
             if "obtainer_category" not in state or not state.get("obtainer_category"):
                 # Try to extract category from user query
@@ -102,6 +116,49 @@ class ObtainerAgent(BaseAgent):
                 # Get objective if available
                 objective = state.get("automated_query", user_query)
                 
+                # LLM normalize: detect eval-based recommendations and rewrite to dataset request
+                if user_query:
+                    try:
+                        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
+                        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
+                        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
+                        temperature = state.get("obtainer_temperature", 0.2)
+                        if model_name and base_url and api_key:
+                            normalizer = ObtainQueryNormalizer(
+                                model_name=model_name,
+                                base_url=base_url,
+                                api_key=api_key,
+                                temperature=temperature,
+                                prompt_loader=prompt_loader,
+                            )
+                            norm_result = asyncio.run(
+                                normalizer.normalize(
+                                    user_query=user_query,
+                                    objective=objective
+                                )
+                            ) or {}
+                            intent_type = norm_result.get("intent_type")
+                            if intent_type:
+                                state["obtainer_intent_type"] = intent_type
+                            normalized_query = norm_result.get("normalized_query")
+                            reason = norm_result.get("reason", "")
+                            if normalized_query:
+                                state["obtainer_normalized_query"] = normalized_query
+                                state["obtainer_normalized_reason"] = reason
+                                # Only override when a rewrite is provided
+                                if normalized_query != user_query:
+                                    state["automated_query"] = normalized_query
+                                    user_query = normalized_query
+                                    objective = normalized_query
+                                    logger.info(
+                                        f"Obtain query normalized from eval-style to dataset request: "
+                                        f"{normalized_query[:120]}..."
+                                    )
+                        else:
+                            logger.debug("Skip normalization: missing model config")
+                    except Exception as e:
+                        logger.warning(f"Query normalization failed, continue with original query: {e}")
+                
                 # Use LLM to intelligently classify category
                 if user_query:
                     try:
@@ -112,9 +169,6 @@ class ObtainerAgent(BaseAgent):
                         temperature = state.get("obtainer_temperature", 0.3)  # Lower temperature for classification
                         
                         if model_name and base_url and api_key:
-                            # Initialize prompt loader
-                            prompt_loader = PromptLoader(state.get("prompt_template_dir"))
-                            
                             # Initialize category classifier
                             category_classifier = CategoryClassifier(
                                 model_name=model_name,
@@ -178,7 +232,7 @@ class ObtainerAgent(BaseAgent):
                 state["obtainer_max_depth"] = 4  # Maximum exploration depth
             
             if "obtainer_concurrent_limit" not in state:
-                state["obtainer_concurrent_limit"] = 10  # Concurrent URL processing
+                state["obtainer_concurrent_limit"] = 3 
             
             if "obtainer_topk_urls" not in state:
                 state["obtainer_topk_urls"] = 5  # Top-k URLs to select from each page
@@ -230,6 +284,12 @@ class ObtainerAgent(BaseAgent):
                             logger.debug(f"Failed to read Tavily API key from file: {e}")
                 state["obtainer_tavily_api_key"] = tavily_api_key
             
+            # Mapping configuration
+            # obtainer_default_mapping_format: If set (e.g., "alpaca"), skip user interaction and use this format directly
+            # If empty or not set, go through user interaction flow
+            if "obtainer_default_mapping_format" not in state:
+                state["obtainer_default_mapping_format"] = "alpaca"  # Empty means user interaction mode
+            
             # Handle debug mode
             debug_mode = state.get("obtainer_debug", False)
             if debug_mode:
@@ -276,7 +336,7 @@ class ObtainerAgent(BaseAgent):
                     logger.info(f"Debug mode enabled: Logs will be saved to {log_file}")
                     # Flush immediately to ensure the message is written
                     file_handler.flush()
-            
+
             logger.info(f"ObtainerAgent: Configuration set - model: {state.get('obtainer_model_path')}, "
                        f"base_url: {state.get('obtainer_base_url')}, category: {state.get('obtainer_category')}, "
                        f"search_engine: {state.get('obtainer_search_engine')}, max_urls: {state.get('obtainer_max_urls')}, "

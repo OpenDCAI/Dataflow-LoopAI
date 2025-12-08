@@ -290,6 +290,8 @@ async def _websearch_workflow(
         logger.info(f"Step 3: Exploring web forest (max_depth={max_depth}, concurrent={concurrent_limit}, topk={topk_urls}, timeout={url_timeout}s)...")
         visited_urls = []
         visited_urls_set = set()  # Track visited URLs to avoid duplicates
+        rag_tasks = []  # async tasks for RAG writes to avoid blocking exploration
+        rag_write_semaphore = asyncio.Semaphore(2)  # limit concurrent RAG writes
         
         # URL queue: each item is (url, depth)
         url_queue = [(url, 0) for url in unique_urls]  # Initialize with depth 0
@@ -298,54 +300,6 @@ async def _websearch_workflow(
         semaphore = asyncio.Semaphore(concurrent_limit)
         queue_lock = asyncio.Lock()  # Lock for queue operations
         
-        async def explore_url_with_timeout(url: str, depth: int) -> Optional[Dict[str, Any]]:
-            """Explore a URL with timeout protection: read content, store in RAG, and return candidate URLs for next layer
-            
-            This wrapper ensures:
-            1. Each URL exploration has a timeout to prevent indefinite blocking
-            2. Semaphore is properly released even if timeout occurs
-            3. Exceptions are caught and handled gracefully to prevent deadlock
-            """
-            try:
-                # Wrap the exploration with timeout to prevent deadlock
-                # asyncio.wait_for will cancel the task on timeout, but async with semaphore
-                # ensures the semaphore is released even if the task is cancelled
-                result = await asyncio.wait_for(
-                    explore_url(url, depth),
-                    timeout=url_timeout
-                )
-                return result
-            except asyncio.TimeoutError:
-                logger.warning(f"[Depth {depth}/{max_depth}] URL exploration timeout ({url_timeout}s): {url}")
-                # The semaphore will be released automatically by async with in explore_url
-                # even if the task is cancelled due to timeout
-                return {
-                    "url": url,
-                    "depth": depth,
-                    "candidate_urls": [],
-                    "success": False,
-                    "error": "timeout"
-                }
-            except asyncio.CancelledError:
-                # Handle cancellation gracefully (shouldn't happen in normal flow, but just in case)
-                logger.warning(f"[Depth {depth}/{max_depth}] URL exploration cancelled: {url}")
-                return {
-                    "url": url,
-                    "depth": depth,
-                    "candidate_urls": [],
-                    "success": False,
-                    "error": "cancelled"
-                }
-            except Exception as e:
-                logger.error(f"[Depth {depth}/{max_depth}] Unexpected error in explore_url_with_timeout for {url}: {e}")
-                return {
-                    "url": url,
-                    "depth": depth,
-                    "candidate_urls": [],
-                    "success": False,
-                    "error": str(e)
-                }
-        
         async def explore_url(url: str, depth: int) -> Optional[Dict[str, Any]]:
             """Explore a URL: read content, store in RAG, and return candidate URLs for next layer"""
             async with semaphore:
@@ -353,22 +307,28 @@ async def _websearch_workflow(
                     logger.info(f"[Depth {depth}/{max_depth}] Exploring URL: {url}")
                     
                     # Read webpage content
-                    page_content = await WebTools.read_with_jina_reader(url)
+                    page_content = await asyncio.wait_for(
+                        WebTools.read_with_jina_reader(url),
+                        timeout=url_timeout
+                    )
                     
                     webpage_text = page_content.get("text", "")
                     candidate_urls = page_content.get("urls", [])
                     
                     if webpage_text and len(webpage_text.strip()) > 50:
                         # Store content in RAG
-                        await rag_manager.add_webpage_content(
-                            url=url,
-                            text_content=webpage_text,
-                            metadata={
-                                "source": "websearch",
-                                "query": user_query,
-                                "depth": depth
-                            }
-                        )
+                        async def _store_to_rag(u: str, txt: str, d: int):
+                            async with rag_write_semaphore:
+                                await rag_manager.add_webpage_content(
+                                    url=u,
+                                    text_content=txt,
+                                    metadata={
+                                        "source": "websearch",
+                                        "query": user_query,
+                                        "depth": d
+                                    }
+                                )
+                        rag_tasks.append(asyncio.create_task(_store_to_rag(url, webpage_text, depth)))
                         
                         # Track visited URL
                         async with queue_lock:
@@ -457,10 +417,13 @@ async def _websearch_workflow(
                 except Exception:
                     pass
             
-            # Process all URLs at current depth concurrently
-            # Use return_exceptions=True to prevent one failed task from blocking others (deadlock prevention)
-            tasks = [explore_url_with_timeout(url, depth) for url, depth in current_layer]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Process URLs at current depth in batches to avoid queuing time counting toward timeout
+            results = []
+            for i in range(0, len(current_layer), concurrent_limit):
+                batch = current_layer[i:i + concurrent_limit]
+                tasks = [explore_url(url, depth) for url, depth in batch]
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                results.extend(batch_results)
             
             # Handle exceptions that might have been returned
             processed_results = []
@@ -508,6 +471,14 @@ async def _websearch_workflow(
         
         logger.info(f"Forest exploration completed: visited {len(visited_urls)} URLs across {current_depth} layers")
         
+        # Wait for all pending RAG writes before persisting and summarizing
+        if rag_tasks:
+            logger.info(f"[RAG] Waiting for {len(rag_tasks)} pending RAG write tasks...")
+            rag_results = await asyncio.gather(*rag_tasks, return_exceptions=True)
+            for res in rag_results:
+                if isinstance(res, Exception):
+                    logger.warning(f"[RAG] Write task error: {res}")
+
         # Force persist RAG data before moving to next step
         try:
             logger.info("[RAG] Force persisting all data after exploration...")

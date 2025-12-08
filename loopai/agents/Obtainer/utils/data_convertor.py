@@ -645,36 +645,43 @@ class DataConvertor:
         logger.info("Building data mapping prompt messages...")
         
         # Use prompt loader if available
-        if self.prompt_loader:
-            try:
-                system_prompt = self.prompt_loader("system", f"data_conversion_{category.lower()}_prompt")
-                task_prompt = self.prompt_loader("task", f"data_conversion_{category.lower()}_prompt")
-                
-                if dataset is not None:
-                    sampled_records = await self._sample_records(dataset)
-                    sample_rows_str = json.dumps(sampled_records, indent=2, ensure_ascii=False)
-                    task_params = {
-                        'column_names': str(column_names),
-                        'sample_rows': sample_rows_str,
-                        'user_target': user_target
-                    }
-                else:
-                    truncated_record = {k: self._truncate_value(v) for k, v in sample_record.items()}
-                    sample_rows_str = json.dumps([truncated_record], indent=2, ensure_ascii=False)
-                    task_params = {
-                        'column_names': str(column_names),
-                        'sample_rows': sample_rows_str,
-                        'user_target': user_target
-                    }
-                
-                human_prompt = task_prompt.format(**task_params)
-            except Exception as e:
-                logger.warning(f"Failed to load prompt, using default: {e}")
-                system_prompt = self._get_default_system_prompt(category)
-                human_prompt = self._get_default_task_prompt(column_names, sample_record, user_target, category, dataset)
-        else:
+        if not self.prompt_loader:
+            raise RuntimeError("prompt_loader is required for data mapping but is missing.")
+
+        try:
+            system_prompt = self.prompt_loader("system", f"data_conversion_{category.lower()}_prompt")
+            task_prompt = self.prompt_loader("task", f"data_conversion_{category.lower()}_prompt")
+            
+            if dataset is not None:
+                sampled_records = await self._sample_records(dataset)
+                sample_rows_str = json.dumps(sampled_records, indent=2, ensure_ascii=False)
+                task_params = {
+                    'column_names': str(column_names),
+                    'sample_rows': sample_rows_str,
+                    'user_target': user_target
+                }
+            else:
+                truncated_record = {k: self._truncate_value(v) for k, v in sample_record.items()}
+                sample_rows_str = json.dumps([truncated_record], indent=2, ensure_ascii=False)
+                task_params = {
+                    'column_names': str(column_names),
+                    'sample_rows': sample_rows_str,
+                    'user_target': user_target
+                }
+            
+            human_prompt = task_prompt.format(**task_params)
+
+        except Exception as e:
+            # 回退到默认提示，避免因模板缺失或格式错误导致崩溃
+            logger.warning(f"Failed to load data conversion prompts, using default. Error: {e}")
             system_prompt = self._get_default_system_prompt(category)
-            human_prompt = self._get_default_task_prompt(column_names, sample_record, user_target, category, dataset)
+            human_prompt = self._get_default_task_prompt(
+                column_names=column_names,
+                sample_record=sample_record,
+                user_target=user_target,
+                category=category,
+                dataset=dataset
+            )
         
         messages = [
             SystemMessage(content=system_prompt),
@@ -744,11 +751,24 @@ class DataConvertor:
         if category.upper() == "PT":
             return """You are an expert in dataset classification and analysis.
 
-Your task is to identify field mappings for language model pretraining, including the main text content and metadata fields."""
+Your task is to identify field mappings for language model pretraining.
+
+You need to identify:
+1. Text field(s): Which field(s) contain the main text content for pretraining
+2. Metadata fields (optional): Source, language, original ID, etc.
+
+The output format should be a JSON object with "text" field (string or array) and optional "meta" object."""
         else:  # SFT
             return """You are an expert in dataset classification and analysis.
 
-Your task is to identify field mappings for supervised fine-tuning, including conversation messages, system prompts, and metadata fields."""
+Your task is to identify field mappings for supervised fine-tuning (SFT).
+
+You need to identify:
+1. Message fields: Which fields contain user questions/inputs and assistant responses
+2. System prompt: Which field (if any) contains the system prompt
+3. Metadata fields: Source, language, original ID, etc.
+
+The output format should be a JSON object with "messages" array containing role and content field mappings."""
 
     def _get_default_task_prompt(
         self, 
@@ -790,12 +810,32 @@ Sample records:
 
 User target: {user_target}
 
-IMPORTANT: For pre-training, you need to identify field(s) that contain continuous, coherent text suitable for language model training.
-
-If the data is structured (e.g., conversations with "role" and "content" fields, or documents with multiple text fields), identify ALL fields that should be combined into a single continuous text passage.
+Please analyze the dataset and identify the field mappings for pre-training.
 
 Return a JSON object with:
-- "text": A list of field names that should be merged into continuous text. For example: ["role", "content"] for conversation data, or ["content"] for single-field text. The system will automatically format and merge these fields into readable, continuous text suitable for pre-training."""
+- "text": A single field name or a list of field names that should be merged into continuous text.
+  For example: "content" for single-field text, or ["title", "body"] for multi-field text.
+  
+- "meta": (optional) Object with field mappings for metadata:
+  - "source": Field name for data source
+  - "language": Field name or direct value for language (e.g., "zh", "en")
+  - "original_id": Field name for original record ID
+
+Example response:
+```json
+{{
+    "text": "content",
+    "meta": {{"source": "url", "language": "zh"}}
+}}
+```
+
+Or for multi-field data:
+```json
+{{
+    "text": ["title", "abstract", "body"],
+    "meta": {{"source": "dataset_name"}}
+}}
+```"""
         else:  # SFT
             return f"""Column names: {column_names}
 
@@ -804,7 +844,42 @@ Sample records:
 
 User target: {user_target}
 
-Please identify which fields contain question and answer. Return a JSON object with "question" and "answer" fields."""
+Please analyze the dataset and identify the field mappings for SFT (Supervised Fine-Tuning).
+
+Return a JSON object with:
+- "messages": An array of message specifications. Each message should have:
+  - "role": The role of the speaker ("user", "assistant", or "system")
+  - "content": The field name/path that contains the message content
+  - "loss_mask": (optional) Whether to compute loss on this message (default: true for assistant, false for others)
+  
+- "system": (optional) Field name that contains the system prompt, or a direct string value
+  
+- "meta": (optional) Object with field mappings for metadata:
+  - "source": Field name for data source
+  - "language": Field name or direct value for language (e.g., "zh", "en")
+  - "original_id": Field name for original record ID
+
+Example response for a Q&A dataset:
+```json
+{{
+    "messages": [
+        {{"role": "user", "content": "question"}},
+        {{"role": "assistant", "content": "answer"}}
+    ],
+    "meta": {{"source": "source_field"}}
+}}
+```
+
+Example response for a conversation dataset:
+```json
+{{
+    "messages": [
+        {{"role": "user", "content": "conversations[0].content"}},
+        {{"role": "assistant", "content": "conversations[1].content"}}
+    ],
+    "system": "system_prompt"
+}}
+```"""
 
     async def invoke_file_discovery(self, file_list_str: str) -> List[str]:
         """Invoke LLM for file discovery"""
