@@ -1,3 +1,4 @@
 {
-  "brief_user": "请根据下述信息给出 1~3 句中文短评，格式：\n【结论】：…；【原因要点】：…；【建议】：…。\n\n【题目片段】\n{prompt_head}\n\n【被测生成代码片段】\n{completion_head}\n\n【测试代码片段】\n{test_head}\n\n【OJ输出-stdout(尾)】\n{stdout_tail}\n\n【OJ输出-stderr(头)】\n{stderr_head}\n\n【已解析关键信息(JSON)】\n{meta_json}\n"
+  "brief_user": "请根据下述信息给出 1~3 句中文短评，格式： 【结论】：...；【原因要点】：...；【建议】：...。【题目片段】{prompt_head}【被测生成代码片段】{completion_head}【测试代码片段】{test_head}【OJ输出-stdout(尾)】{stdout_tail}【OJ输出-stderr(头)】{stderr_head}【已解析关键信息(JSON)】{meta_json}",
+  "brief_sql_user": "请根据下述 Text2SQL 任务信息给出 1~3 句中文短评，格式： 【结论】：...；【主要问题】：...；【改进建议】：...。【自然语言问题】{prompt_head}【模型生成 SQL】{completion_head}【参考标准 SQL】{test_head}【执行结果 stdout(尾部)】{stdout_tail}【执行错误 stderr(头部)】{stderr_head}【元信息(JSON)】{meta_json}"
 }
