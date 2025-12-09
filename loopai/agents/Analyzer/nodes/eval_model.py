@@ -7,36 +7,127 @@ from pathlib import Path
 from collections import defaultdict, Counter
 from typing import Dict, Any, List
 from tqdm import tqdm
-
+from langchain_core.language_models import BaseChatModel
 from loopai.common.prompts.prompt_loader import PromptLoader
 from langchain_openai import ChatOpenAI
 from ..utils.llmaj import LLMJudge
-from loopai.schema.states import LoopAIState
+from loopai.states.base import LoopAIState
 from loopai.logger import get_logger
-
+from loopai.agents.Analyzer.utils.openai_compat_llm import OpenAICompatChat
 logger = get_logger()
+from types import SimpleNamespace  
 
 
-def init_model(state: LoopAIState) -> ChatOpenAI:
+class SafeDict(dict):  # NEW
     """
-    初始化模型
+    安全字典，用于字符串 format_map 时，缺失 key 自动返回空字符串，避免 KeyError
+    """
+    def __missing__(self, key):
+        return ""
+
+
+def _trunc(s: str | None, n: int) -> str:  # NEW
+    """
+    将字符串截断到指定长度，并在末尾追加 truncated 标记
     Args:
-        - model_path: 模型路径
-        - base_url: 模型基础 URL
-        - api_key: 模型 API 密钥
-        - temperature: 温度参数，默认 0
-        - top_p: Top-p 参数，默认 0.95
+        - s: 原始字符串
+        - n: 最大保留长度
     Returns:
-        初始化后的模型实例
+        截断后的字符串
     """
-    model = ChatOpenAI(
-        model=state['analyze_model_path'],
-        api_key=state['analyze_api_key'],
-        base_url=state['analyze_base_url'],
-        temperature=state.get('analyze_temperature', 0.0),
-        top_p=state.get('analyze_top_p', 0.95),
+    s = s or ""
+    return s if len(s) <= n else s[:n] + "\n...[truncated]"
+
+
+
+def build_evidence_for_record_code(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    根据 code OJ 记录构造判因 evidence 结构。
+    Args:
+        - rec: 单条 code 评测记录
+    Returns:
+        判因 evidence 字典
+    """
+    return {
+        "task_id": rec.get("task_id"),
+        "sample_index": rec.get("sample_index"),
+        "entry_point": rec.get("entry_point", ""),
+        "prompt_head": (rec.get("problem_prompt") or "")[:800],
+        "completion_head": (rec.get("completion") or "")[:800],
+        "test_head": (rec.get("test_code") or "")[:800],
+        "stdout_tail": (rec.get("stdout") or "")[-600:],
+        "stderr_head": (rec.get("stderr") or "")[:600],
+        "err_text": f"stdout:\n{rec.get('stdout', '')}\n\nstderr:\n{rec.get('stderr', '')}",
+        "query": rec.get("query", "") or rec.get("completion", ""),
+    }
+
+
+def build_evidence_for_record_sql(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    根据 sql / text2sql OJ 记录构造判因 evidence 结构。
+    这里按 dev_bird_for_oj_20_result.jsonl 常见字段做兼容：
+        - question     : 自然语言问题
+        - completion   : 模型生成 SQL
+        - ground_truth : 标准 SQL
+        - result       : 查询执行结果（字符串）
+    Args:
+        - rec: 单条 sql 评测记录
+    Returns:
+        判因 evidence 字典
+    """
+    question = rec.get("question") or rec.get("problem_prompt") or ""
+    pred_sql = (
+        rec.get("completion")
+        or rec.get("pred_sql")
+        or rec.get("sql")
+        or ""
     )
-    return model
+    gold_sql = (
+        rec.get("ground_truth")
+        or rec.get("gold_sql")
+        or rec.get("reference_sql")
+        or rec.get("test_code")
+        or ""
+    )
+    stdout = (
+        rec.get("result")
+        or rec.get("stdout")
+        or rec.get("exec_stdout")
+        or ""
+    )
+    stderr = rec.get("stderr") or rec.get("exec_stderr") or ""
+
+    return {
+        "task_id": rec.get("task_id"),
+        "sample_index": rec.get("sample_index"),
+        "entry_point": rec.get("entry_point", "") or rec.get("db_id", ""),
+        "prompt_head": question[:800],
+        "completion_head": pred_sql[:800],
+        "test_head": gold_sql[:800],
+        "stdout_tail": stdout[-600:],
+        "stderr_head": stderr[:600],
+        "err_text": f"stdout:\n{stdout}\n\nstderr:\n{stderr}",
+        "query": pred_sql or rec.get("query", ""),
+    }
+
+
+
+def init_model(state: LoopAIState) -> BaseChatModel:
+    """
+    初始化用于判因 / 短评的 LLM 模型（OpenAI 兼容接口）
+    Args:
+        - state: LoopAIState，包含模型路径、base_url、api_key 等配置
+    Returns:
+        已初始化好的 BaseChatModel 实例
+    """
+    return OpenAICompatChat(
+        model=state["analyze_model_path"],
+        base_url=state["analyze_base_url"],
+        api_key=state["analyze_api_key"],
+        max_tokens=state.get("analyze_max_tokens", 512),
+        temperature=state.get("analyze_temperature", 0.0),
+        top_p=state.get("analyze_top_p", 0.95),
+    )
 
 
 def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
@@ -93,10 +184,41 @@ def parse_assert_from_stdout(stdout: str) -> Dict[str, Any]:
     return {"input_expr": input_expr, "expected": expected, "actual": actual}
 
 
-def summarize_brief(task_id: str, prompt_head: str, completion_head: str, test_head: str,
-                    oj: Dict[str, str], llm: ChatOpenAI) -> str:
+def call_llm_with_control(
+    llm: ChatOpenAI,
+    prompts: List[str],
+    max_concurrency: int = 4,
+    chunk_size: int = 8,
+):
     """
-    总结一句话中文短评（通用版：code / text2sql 共用）
+    带并发上限的批量调用封装，避免一次性开太多并发把引擎打挂。
+    - max_concurrency: 每一小批内部允许的最大并发数
+    - chunk_size: 每次送给 llm.batch 的样本数量
+    """
+    all_results = []
+    n = len(prompts)
+    for start in range(0, n, chunk_size):
+        sub_prompts = prompts[start:start + chunk_size]
+        # LangChain 的 ChatOpenAI.batch 支持 config，里面可以设置 max_concurrency
+        sub_results = llm.batch(
+            sub_prompts,
+            config={"max_concurrency": max_concurrency}
+        )
+        all_results.extend(sub_results)
+    return all_results
+    
+def summarize_brief(
+    task_id: str,
+    prompt_head: str,
+    completion_head: str,
+    test_head: str,
+    oj: Dict[str, str],
+    llm: ChatOpenAI,
+    task_type: str = "code",  
+) -> str:
+    """
+    总结一句话中文短评
+    - code / sql 共用结构，但 **使用不同的 prompt 模板**
     Args:
         - task_id: 任务 ID
         - prompt_head: 题目片段 / 自然语言问题
@@ -104,28 +226,110 @@ def summarize_brief(task_id: str, prompt_head: str, completion_head: str, test_h
         - test_head: 测试代码片段 / 标准 SQL 片段
         - oj: OJ 输出字典，包含 stdout, stderr, input_expr, expected, actual 等键
         - llm: 初始化后的模型实例
+        - task_type: "code" 或 "sql"，用于选择 prompt
     Returns:
         一句话中文短评
     """
     loader = PromptLoader()
-    user_block = loader("brief", "brief_user").format(
-        prompt_head=(prompt_head or "")[:600],
-        completion_head=(completion_head or "")[:800],
-        test_head=(test_head or "")[:600],
-        stdout=(oj.get("stdout") or "")[-600:],
-        stderr=(oj.get("stderr") or "")[:400],
-        meta_json=json.dumps({
+    if task_type == "sql":
+        tpl_name = "brief_sql_user"
+    else:
+        tpl_name = "brief_user"
+    tpl = loader("brief", tpl_name)
+
+    payload = SafeDict({
+        "prompt_head": (prompt_head or "")[:600],
+        "completion_head": (completion_head or "")[:800],
+        "test_head": (test_head or "")[:600],
+        "stdout": (oj.get("stdout") or "")[-600:],
+        "stderr": (oj.get("stderr") or "")[:400],
+        "stdout_tail": (oj.get("stdout") or "")[-600:],
+        "meta_json": json.dumps({
             "task_id": task_id,
             "assert_parsed": {
                 "input_expr": oj.get("input_expr"),
                 "expected": oj.get("expected"),
                 "actual": oj.get("actual"),
             }
-        }, ensure_ascii=False)
-    )
+        }, ensure_ascii=False),
+    })
+
+    user_block = tpl.format_map(payload)
     # ChatOpenAI.batch 返回 BaseMessage，取 content
     out = llm.batch([user_block])[0].content
     return (out or "").strip() or "（模型未返回内容）"
+
+
+def build_brief_inputs_code(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    构造 code 任务的一句话短评输入（方便 eval_model_node 调用）。
+    Args:
+        - rec: 单条 code 评测记录
+    Returns:
+        包含 prompt_head / completion_head / test_head / oj 四个键的字典
+    """
+    apx = rec.get("assert_parsed") or parse_assert_from_stdout(rec.get("stdout") or "")
+    return {
+        "prompt_head": rec.get("problem_prompt") or "",
+        "completion_head": rec.get("completion") or "",
+        "test_head": rec.get("test_code") or "",
+        "oj": {
+            "stdout": rec.get("stdout") or "",
+            "stderr": rec.get("stderr") or "",
+            "input_expr": apx.get("input_expr"),
+            "expected": apx.get("expected"),
+            "actual": apx.get("actual"),
+        },
+    }
+
+
+def build_brief_inputs_sql(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    构造 sql / text2sql 任务的一句话短评输入。
+    这里按 dev_bird_for_oj_20_result.jsonl 的字段做兼容：
+        - question     : 自然语言问题
+        - completion   : 模型生成 SQL
+        - ground_truth : 标准 SQL
+        - result       : 查询执行结果（字符串）
+    Args:
+        - rec: 单条 sql 评测记录
+    Returns:
+        包含 prompt_head / completion_head / test_head / oj 四个键的字典
+    """
+    question = rec.get("question") or rec.get("problem_prompt") or ""
+    pred_sql = (
+        rec.get("completion")
+        or rec.get("pred_sql")
+        or rec.get("sql")
+        or ""
+    )
+    gold_sql = (
+        rec.get("ground_truth")
+        or rec.get("gold_sql")
+        or rec.get("reference_sql")
+        or rec.get("test_code")
+        or ""
+    )
+    stdout = (
+        rec.get("result")
+        or rec.get("stdout")
+        or rec.get("exec_stdout")
+        or ""
+    )
+    stderr = rec.get("stderr") or rec.get("exec_stderr") or ""
+
+    return {
+        "prompt_head": question,
+        "completion_head": pred_sql,
+        "test_head": gold_sql,
+        "oj": {
+            "stdout": stdout,
+            "stderr": stderr,
+            "input_expr": None,
+            "expected": None,
+            "actual": None,
+        },
+    }
 
 
 def build_evidence_for_record(rec: Dict[str, Any], task_type: str) -> Dict[str, Any]:
@@ -138,50 +342,10 @@ def build_evidence_for_record(rec: Dict[str, Any], task_type: str) -> Dict[str, 
     Returns:
         判因 evidence 字典
     """
+    # CHANGED: 分发到各自独立的方法，便于按任务类型维护字段映射
     if task_type == "sql":
-        # Text2SQL 常见字段命名尝试做兼容：
-        # - question       : 自然语言问题
-        # - pred_sql/sql   : 模型生成 SQL
-        # - gold_sql       : 标准 SQL
-        # - exec_stdout    : 执行输出
-        # - exec_stderr    : 执行错误
-        question = rec.get("question") or rec.get("problem_prompt") or ""
-        pred_sql = rec.get("pred_sql") or rec.get("completion") or rec.get("sql") or ""
-        gold_sql = rec.get("gold_sql") or rec.get("reference_sql") or rec.get("test_code") or ""
-        stdout = rec.get("stdout") or rec.get("exec_stdout") or ""
-        stderr = rec.get("stderr") or rec.get("exec_stderr") or ""
-
-        evidence = {
-            "task_id": rec.get("task_id"),
-            "sample_index": rec.get("sample_index"),
-            # 对于 sql，没有 entry_point 的概念，用 db_id 或留空
-            "entry_point": rec.get("entry_point", "") or rec.get("db_id", ""),
-            "prompt_head": question[:800],
-            "completion_head": pred_sql[:800],
-            "test_head": gold_sql[:800],
-            "stdout_tail": stdout[-600:],
-            "stderr_head": stderr[:600],
-            "err_text": f"stdout:\n{stdout}\n\nstderr:\n{stderr}",
-            # LLMJudge(sql) 会优先使用 query 字段做 sql_stats
-            "query": pred_sql or rec.get("query", ""),
-        }
-        return evidence
-
-    # 默认 code 分支：保持原有逻辑不变
-    evidence = {
-        "task_id": rec.get("task_id"),
-        "sample_index": rec.get("sample_index"),
-        "entry_point": rec.get("entry_point", ""),
-        "prompt_head": (rec.get("problem_prompt") or "")[:800],
-        "completion_head": (rec.get("completion") or "")[:800],
-        "test_head": (rec.get("test_code") or "")[:800],
-        "stdout_tail": (rec.get("stdout") or "")[-600:],
-        "stderr_head": (rec.get("stderr") or "")[:600],
-        "err_text": f"stdout:\n{rec.get('stdout', '')}\n\nstderr:\n{rec.get('stderr', '')}",
-        "query": rec.get("query", "") or rec.get("completion", ""),
-    }
-    return evidence
-
+        return build_evidence_for_record_sql(rec)
+    return build_evidence_for_record_code(rec)
 
 def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: str, task_type: str = "code"):
     """
@@ -210,12 +374,22 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
     task_ids = set()
 
     def bin_loc(n: int) -> str:
+        """
+        将数值粗分到几个区间：
+        - 对 code：代表 LOC
+        - 对 sql：代表 SQL 语句长度（字符数）
+        """
         if n <= 10: return "<=10"
         if n <= 30: return "11-30"
         if n <= 60: return "31-60"
         return ">60"
 
     def bin_kw(n: int) -> str:
+        """
+        将数值粗分到几个区间：
+        - 对 code：代表控制语句数量
+        - 对 sql：代表 SQL 词元数量
+        """
         if n == 0: return "0"
         if n <= 3: return "1-3"
         if n <= 8: return "4-8"
@@ -232,9 +406,21 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
             for t in tags:
                 tag_counter[t] += 1
 
-        # code 的 LOC / 控制语句分布保持原逻辑；
-        # 对于 sql，这里不再依赖 code_metrics，避免无意义统计。
-        if task_type != "sql":
+        # 复杂度 / 分布统计
+        if task_type == "sql":
+            # NEW: 对于 sql，用 SQL 语句长度 / 词元数量做粗分布统计
+            sql = (
+                rec.get("completion")
+                or rec.get("pred_sql")
+                or rec.get("sql")
+                or ""
+            )
+            sql_len = len(sql)
+            token_cnt = len(sql.split()) if sql else 0
+            loc_bins[bin_loc(sql_len)] += 1
+            kw_bins[bin_kw(token_cnt)] += 1
+        else:
+            # 原有 code 分支：LOC / 控制语句分布
             m = rec.get("code_metrics") or {}
             try:
                 loc = int(m.get("loc", 0))
@@ -278,7 +464,7 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
         "pass_rate_samples": round(passed_samples / (total_samples or 1), 4),
         "pass_at_k_task": pass_at_k_task,
         "failure_stage_distribution": dict(stage_counter),
-        # 对于 sql，这两个 dict 可能为空；下游会以 "（无数据）" 展示
+        # 对于 code：LOC / 控制语句；对于 sql：SQL 长度 / 词元数量
         "loc_distribution": dict(loc_bins),
         "kw_distribution": dict(kw_bins),
         "io_assert_parse": {
@@ -306,16 +492,28 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
         lines.append(f"  - {k}: {v}")
     lines.append("标签 Top： " + ", ".join([f"{k}:{v}" for k, v in tag_counter.most_common(8)]))
 
-    # 文本报表为了兼容，仍然打印 LOC / 控制语句分布；
-    # 对于 sql，这里的分布可能为空，最终展示为“（无数据）”。
-    if loc_bins:
-        lines.append("代码行数分布（LOC）： " + ", ".join([f"{k}:{v}" for k, v in loc_bins.items()]))
+    if task_type == "sql":
+     
+        if loc_bins:
+            lines.append("SQL 语句长度分布（按字符数粗分）： " +
+                         ", ".join([f"{k}:{v}" for k, v in loc_bins.items()]))
+        else:
+            lines.append("SQL 语句长度分布（按字符数粗分）： （无数据）")
+        if kw_bins:
+            lines.append("SQL 词元数量分布（粗粒度）： " +
+                         ", ".join([f"{k}:{v}" for k, v in kw_bins.items()]))
+        else:
+            lines.append("SQL 词元数量分布（粗粒度）： （无数据）")
     else:
-        lines.append("代码行数分布（LOC）： （无数据）")
-    if kw_bins:
-        lines.append("控制语句分布（粗复杂度）： " + ", ".join([f"{k}:{v}" for k, v in kw_bins.items()]))
-    else:
-        lines.append("控制语句分布（粗复杂度）： （无数据）")
+       
+        if loc_bins:
+            lines.append("代码行数分布（LOC）： " + ", ".join([f"{k}:{v}" for k, v in loc_bins.items()]))
+        else:
+            lines.append("代码行数分布（LOC）： （无数据）")
+        if kw_bins:
+            lines.append("控制语句分布（粗复杂度）： " + ", ".join([f"{k}:{v}" for k, v in kw_bins.items()]))
+        else:
+            lines.append("控制语句分布（粗复杂度）： （无数据）")
 
     lines.append(f"I/O断言解析成功：{io_parsed_ok}/{total_samples}")
     with open(summary_txt, "w", encoding="utf-8") as tf:
@@ -382,9 +580,16 @@ def eval_model_node(state: LoopAIState):
             evidence = build_evidence_for_record(rec, task_type)
             evidences.append(evidence)
             prompts.append(build_judge_prompt_generic(task_type, evidence))
+        overall_start = time.time()
 
         # 模型批处理
-        batch_responses = llm.batch(prompts)
+                # 模型批处理（带并发上限 + 分块）
+        batch_responses = call_llm_with_control(
+            llm,
+            prompts,
+            max_concurrency=int(state.get("analyze_max_concurrency", 4)),
+            chunk_size=int(state.get("analyze_chunk_size", 8)),
+        )
 
         # 合并判因 +（可选）中文短评
         for j, rec in enumerate(batch):
@@ -398,50 +603,29 @@ def eval_model_node(state: LoopAIState):
 
             if state.get('output_brief', False):
                 try:
+                    # CHANGED: 短评输入也按任务类型分发
                     if task_type == "sql":
-                        # Text2SQL 短评：用 question / pred_sql / gold_sql + 执行日志
-                        question = rec.get("question") or rec.get("problem_prompt") or ""
-                        pred_sql = rec.get("pred_sql") or rec.get("completion") or rec.get("sql") or ""
-                        gold_sql = rec.get("gold_sql") or rec.get("reference_sql") or rec.get("test_code") or ""
-                        stdout = rec.get("stdout") or rec.get("exec_stdout") or ""
-                        stderr = rec.get("stderr") or rec.get("exec_stderr") or ""
-
-                        rec["brief_analysis"] = summarize_brief(
-                            task_id=str(rec.get("task_id")),
-                            prompt_head=question,
-                            completion_head=pred_sql,
-                            test_head=gold_sql,
-                            oj={
-                                "stdout": stdout,
-                                "stderr": stderr,
-                                "input_expr": None,
-                                "expected": None,
-                                "actual": None,
-                            },
-                            llm=llm
-                        )
+                        brief_inputs = build_brief_inputs_sql(rec)
                     else:
-                        # code 短评：保持原有逻辑
-                        apx = rec.get("assert_parsed") or parse_assert_from_stdout(rec.get("stdout") or "")
-                        rec["brief_analysis"] = summarize_brief(
-                            task_id=str(rec.get("task_id")),
-                            prompt_head=rec.get("problem_prompt") or "",
-                            completion_head=rec.get("completion") or "",
-                            test_head=rec.get("test_code") or "",
-                            oj={
-                                "stdout": rec.get("stdout") or "",
-                                "stderr": rec.get("stderr") or "",
-                                "input_expr": apx.get("input_expr"),
-                                "expected": apx.get("expected"),
-                                "actual": apx.get("actual"),
-                            },
-                            llm=llm
-                        )
+                        brief_inputs = build_brief_inputs_code(rec)
+
+                    rec["brief_analysis"] = summarize_brief(
+                        task_id=str(rec.get("task_id")),
+                        prompt_head=brief_inputs["prompt_head"],
+                        completion_head=brief_inputs["completion_head"],
+                        test_head=brief_inputs["test_head"],
+                        oj=brief_inputs["oj"],
+                        llm=llm,
+                        task_type=task_type
+                    )
                 except Exception as e:
                     rec["brief_analysis"] = f"（短评生成失败：{e}）"
 
     logger.info(f" 判因完成：共 {len(failed_results)} 条")
     ts = time.strftime("%Y%m%d_%H%M%S")
+    out_dir = Path(state['output_dir'])
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     out_jsonl_path = Path(state['output_dir']) / f"oj_records_enriched_{ts}.jsonl"
     with open(out_jsonl_path, "w", encoding="utf-8") as f:
         for r in failed_results:
@@ -453,7 +637,7 @@ def eval_model_node(state: LoopAIState):
     # 生成 summary
     try:
         summary_json_path, summary_txt_path = _build_and_write_summary(
-            failed_results, Path(state['output_dir']), ts, task_type=task_type
+            result_content, Path(state['output_dir']), ts, task_type=task_type
         )
         with open(summary_json_path, "r", encoding="utf-8") as f:
             sdata = json.load(f)
