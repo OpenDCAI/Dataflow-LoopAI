@@ -7,8 +7,7 @@ from datetime import datetime, date, time
 import numpy as np
 import tqdm
 from .data import write_jsonl, stream_jsonl, read_problems
-from .execution import check_correctness
-
+from .execution_sql import compare_sql_wrapper
 def estimate_pass_at_k(
     num_samples: Union[int, List[int], np.ndarray],
     num_correct: Union[List[int], np.ndarray],
@@ -60,9 +59,12 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
         print("Reading samples...")
         for sample in tqdm.tqdm(stream_jsonl(sample_file)):
             task_id = sample["task_id"]
-            completion = sample["completion"]
-            args = (problems[task_id], completion, timeout, completion_id[task_id])
-            future = executor.submit(check_correctness, *args)
+            db_file = sample["db_file"]
+            question = sample["question"]
+            ground_truth = sample["ground_truth"]
+            pred_sql = sample["completion"]
+            args = ((task_id, db_file, question, ground_truth, pred_sql), timeout, completion_id[task_id])
+            future = executor.submit(compare_sql_wrapper, *args)
             futures.append(future)
             completion_id[task_id] += 1
             n_samples += 1
@@ -115,7 +117,7 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
 
     return pass_at_k
 
-def evaluate_sample(K, n_workers, timeout, test_case_path, problem_path, result_path):
+def evaluate_sample_sql(K, n_workers, timeout, test_case_path, problem_path, result_path):
     """
     Evaluates the functional correctness of generated samples, and writes
     results to f"{sample_file}_results.jsonl.gz"

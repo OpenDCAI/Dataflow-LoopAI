@@ -7,8 +7,9 @@ from langgraph.types import interrupt, Command
 
 from loopai.schema.states import LoopAIState, RuntimeContext
 from loopai.agents import BaseAgent
-from .utils.oj.generate import generate_sample
+from .utils.oj.generate import generate_sample, generate_sample_sql
 from .utils.oj.evaluate import evaluate_sample
+from .utils.oj.evaluate_sql import evaluate_sample_sql
 
 from loopai.logger import get_logger
 
@@ -54,6 +55,11 @@ class JudgerAgent(BaseAgent):
                     graph=Command.PARENT
                 )
         return check_required_fields
+    @staticmethod
+    @BaseAgent.set_current
+    def data_format_node(state: LoopAIState) -> LoopAIState:
+        data_format()
+        return state
 
     @staticmethod
     @BaseAgent.set_current
@@ -64,14 +70,29 @@ class JudgerAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
+    def generate_sql_node(state: LoopAIState) -> LoopAIState:
+        generate_sample_sql(model_path=state['eval_model_path'], base_url=state['eval_base_url'], api_key=state['eval_api_key'], temperature=state['eval_temperature'],
+                        top_p=state['eval_top_p'], test_case_path=state['eval_test_case_path'], problem_path=state['eval_problem_path'], batch_size=state['eval_batch_size'])
+        return state
+
+    @staticmethod
+    @BaseAgent.set_current
     def evaluate_node(state: LoopAIState) -> LoopAIState:
         evaluate_sample(K='1,10,100', n_workers=1, timeout=3.0, test_case_path=state['eval_test_case_path'], problem_path=state['eval_problem_path'], result_path=state[
-                        'eval_result_path'], test_code_function_name='test_code_example', test_function_name='test_example', entry_point_function_name='entry_point_example')
+                        'eval_result_path'])
+        return state
+
+    @staticmethod
+    @BaseAgent.set_current
+    def evaluate_sql_node(state: LoopAIState) -> LoopAIState:
+        evaluate_sample_sql(K='1,10,100', n_workers=1, timeout=3.0, test_case_path=state['eval_test_case_path'], problem_path=state['eval_problem_path'], result_path=state[
+                        'eval_result_path'])
         return state
 
     def init_graph(self, **kwargs):
         builder = StateGraph(LoopAIState)
         builder.add_node("check_required_fields", self.get_check_required_fields_node())
+        # builder.add_node("data_format", self.data_format_node)
         builder.add_node("generate", self.generate_node)
         builder.add_node("evaluate", self.evaluate_node)
         builder.add_edge("check_required_fields", "generate")
