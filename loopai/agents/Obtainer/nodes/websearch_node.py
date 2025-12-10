@@ -14,6 +14,7 @@ from loopai.agents.Obtainer.utils import (
     WebTools,
     QueryGenerator,
     SummaryAgent,
+    URLSelector,
 )
 from loopai.common.prompts import PromptLoader
 
@@ -117,6 +118,15 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
             max_download_subtasks=state.get("obtainer_max_download_subtasks"),
         )
         
+        # Initialize URL Selector for intelligent URL selection
+        url_selector = URLSelector(
+            model_name=model_name,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=0.3,  # Lower temperature for more consistent URL selection
+            prompt_loader=prompt_loader,
+        )
+        
         # Get Tavily API key from state or environment
         tavily_api_key = state.get("obtainer_tavily_api_key", "") or os.getenv("TAVILY_API_KEY", "")
         
@@ -127,8 +137,13 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
             query_generator=query_generator,
             summary_agent=summary_agent,
             rag_manager=rag_manager,
+            url_selector=url_selector,
             search_engine=state.get("obtainer_search_engine", "tavily"),
             max_urls=state.get("obtainer_max_urls", 10),
+            max_depth=state.get("obtainer_max_depth", 4),  # Maximum exploration depth
+            concurrent_limit=state.get("obtainer_concurrent_limit", 10),  # Concurrent URL processing
+            topk_urls=state.get("obtainer_topk_urls", 5),  # Top-k URLs to select from each page
+            url_timeout=state.get("obtainer_url_timeout", 60),  # Timeout in seconds for each URL exploration
             tavily_api_key=tavily_api_key if tavily_api_key else None,
             debug_mode=debug_mode,
         ))
@@ -176,8 +191,13 @@ async def _websearch_workflow(
     query_generator: QueryGenerator,
     summary_agent: SummaryAgent,
     rag_manager: RAGManager,
+    url_selector: URLSelector,
     search_engine: str = "tavily",
     max_urls: int = 10,
+    max_depth: int = 4,
+    concurrent_limit: int = 10,
+    topk_urls: int = 5,
+    url_timeout: int = 60,
     tavily_api_key: str = None,
     debug_mode: bool = False,
 ) -> Dict[str, Any]:
@@ -266,48 +286,206 @@ async def _websearch_workflow(
             except Exception:
                 pass
         
-        # Step 3: Visit URLs with Jina and store in RAG (concurrent, max 5 at a time)
-        logger.info("Step 3: Visiting URLs and storing in RAG (concurrent, max 5)...")
+        # Step 3: Explore web forest with depth-limited BFS (max depth 4, concurrent 10)
+        logger.info(f"Step 3: Exploring web forest (max_depth={max_depth}, concurrent={concurrent_limit}, topk={topk_urls}, timeout={url_timeout}s)...")
         visited_urls = []
+        visited_urls_set = set()  # Track visited URLs to avoid duplicates
+        rag_tasks = []  # async tasks for RAG writes to avoid blocking exploration
+        rag_write_semaphore = asyncio.Semaphore(2)  # limit concurrent RAG writes
         
-        # Semaphore to limit concurrent requests to 5
-        semaphore = asyncio.Semaphore(5)
+        # URL queue: each item is (url, depth)
+        url_queue = [(url, 0) for url in unique_urls]  # Initialize with depth 0
         
-        async def visit_and_store_url(url: str, index: int, total: int) -> Optional[str]:
-            """Visit a URL and store its content in RAG"""
+        # Semaphore to limit concurrent requests
+        semaphore = asyncio.Semaphore(concurrent_limit)
+        queue_lock = asyncio.Lock()  # Lock for queue operations
+        
+        async def explore_url(url: str, depth: int) -> Optional[Dict[str, Any]]:
+            """Explore a URL: read content, store in RAG, and return candidate URLs for next layer"""
             async with semaphore:
                 try:
-                    logger.info(f"Visiting URL {index}/{total}: {url}")
-                    page_content = await WebTools.read_with_jina_reader(url)
+                    logger.info(f"[Depth {depth}/{max_depth}] Exploring URL: {url}")
                     
-                    if page_content.get("text") and len(page_content["text"].strip()) > 50:
-                        await rag_manager.add_webpage_content(
-                            url=url,
-                            text_content=page_content["text"],
-                            metadata={"source": "websearch", "query": user_query}
-                        )
-                        logger.info(f"Successfully stored content from {url}")
-                        return url
+                    # Read webpage content
+                    page_content = await asyncio.wait_for(
+                        WebTools.read_with_jina_reader(url),
+                        timeout=url_timeout
+                    )
+                    
+                    webpage_text = page_content.get("text", "")
+                    candidate_urls = page_content.get("urls", [])
+                    
+                    if webpage_text and len(webpage_text.strip()) > 50:
+                        # Store content in RAG
+                        async def _store_to_rag(u: str, txt: str, d: int):
+                            async with rag_write_semaphore:
+                                await rag_manager.add_webpage_content(
+                                    url=u,
+                                    text_content=txt,
+                                    metadata={
+                                        "source": "websearch",
+                                        "query": user_query,
+                                        "depth": d
+                                    }
+                                )
+                        rag_tasks.append(asyncio.create_task(_store_to_rag(url, webpage_text, depth)))
+                        
+                        # Track visited URL
+                        async with queue_lock:
+                            if url not in visited_urls_set:
+                                visited_urls_set.add(url)
+                                visited_urls.append(url)
+                        
+                        logger.info(f"[Depth {depth}] Successfully stored content from {url} ({len(candidate_urls)} links found)")
+                        
+                        # If not at max depth, use LLM to select topk URLs from candidate links
+                        selected_urls = []
+                        if depth < max_depth - 1 and candidate_urls:
+                            # Filter out already visited URLs (with lock protection)
+                            async with queue_lock:
+                                new_candidate_urls = [u for u in candidate_urls if u not in visited_urls_set]
+                            
+                            if new_candidate_urls:
+                                try:
+                                    # Truncate webpage text to 8000 characters for LLM
+                                    truncated_text = webpage_text[:8000]
+                                    
+                                    # Use LLM to select topk most relevant URLs
+                                    selected_urls = await url_selector.select_top_urls(
+                                        research_objective=user_query,
+                                        url_list=new_candidate_urls,
+                                        webpage_content=truncated_text,
+                                        topk=topk_urls,
+                                    )
+                                    logger.info(f"[Depth {depth}] LLM selected {len(selected_urls)} URLs from {len(new_candidate_urls)} candidates")
+                                except Exception as e:
+                                    logger.warning(f"[Depth {depth}] URL selection failed: {e}, falling back to first {topk_urls} URLs")
+                                    selected_urls = new_candidate_urls[:topk_urls]
+                        
+                        return {
+                            "url": url,
+                            "depth": depth,
+                            "candidate_urls": selected_urls,
+                            "success": True
+                        }
                     else:
-                        logger.warning(f"URL {url} has insufficient content")
-                        return None
+                        logger.warning(f"[Depth {depth}] URL {url} has insufficient content")
+                        return {
+                            "url": url,
+                            "depth": depth,
+                            "candidate_urls": [],
+                            "success": False
+                        }
                 except Exception as e:
-                    logger.error(f"Error visiting URL {url}: {e}")
-                    return None
+                    logger.error(f"[Depth {depth}] Error exploring URL {url}: {e}")
+                    return {
+                        "url": url,
+                        "depth": depth,
+                        "candidate_urls": [],
+                        "success": False
+                    }
         
-        # Create tasks for all URLs
-        tasks = [
-            visit_and_store_url(url, i + 1, len(unique_urls))
-            for i, url in enumerate(unique_urls)
-        ]
+        # Process URLs layer by layer
+        current_depth = 0
+        while url_queue and current_depth < max_depth:
+            # Get all URLs at current depth
+            current_layer = [(url, depth) for url, depth in url_queue if depth == current_depth]
+            url_queue = [(url, depth) for url, depth in url_queue if depth != current_depth]
+            
+            if not current_layer:
+                current_depth += 1
+                continue
+            
+            logger.info(f"[Forest Exploration] Processing depth {current_depth}: {len(current_layer)} URLs")
+            
+            if debug_mode:
+                try:
+                    writer = get_stream_writer()
+                    if writer:
+                        writer(StreamEvent(
+                            current="websearch_workflow",
+                            message=f"Exploring depth {current_depth}/{max_depth} with {len(current_layer)} URLs",
+                            progress=0.5 + (current_depth / max_depth) * 0.25,
+                            data={
+                                'current_depth': current_depth,
+                                'max_depth': max_depth,
+                                'urls_at_depth': len(current_layer),
+                                'total_visited': len(visited_urls),
+                                'queue_size': len(url_queue)
+                            }
+                        ).json())
+                except Exception:
+                    pass
+            
+            # Process URLs at current depth in batches to avoid queuing time counting toward timeout
+            results = []
+            for i in range(0, len(current_layer), concurrent_limit):
+                batch = current_layer[i:i + concurrent_limit]
+                tasks = [explore_url(url, depth) for url, depth in batch]
+                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                results.extend(batch_results)
+            
+            # Handle exceptions that might have been returned
+            processed_results = []
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    url, depth = current_layer[i]
+                    logger.error(f"[Depth {depth}] Exception in task for {url}: {result}")
+                    processed_results.append({
+                        "url": url,
+                        "depth": depth,
+                        "candidate_urls": [],
+                        "success": False,
+                        "error": str(result)
+                    })
+                elif result is None:
+                    url, depth = current_layer[i]
+                    logger.warning(f"[Depth {depth}] Task returned None for {url}")
+                    processed_results.append({
+                        "url": url,
+                        "depth": depth,
+                        "candidate_urls": [],
+                        "success": False,
+                        "error": "None result"
+                    })
+                else:
+                    processed_results.append(result)
+            
+            results = processed_results
+            
+            # Collect candidate URLs for next layer
+            # Process all results within a single lock to improve efficiency
+            async with queue_lock:
+                for result in results:
+                    if result and result.get("success") and result.get("candidate_urls"):
+                        next_depth = current_depth + 1
+                        for candidate_url in result["candidate_urls"]:
+                            # Check if URL already in queue or visited
+                            if candidate_url not in visited_urls_set:
+                                url_already_in_queue = any(url == candidate_url for url, _ in url_queue)
+                                if not url_already_in_queue:
+                                    url_queue.append((candidate_url, next_depth))
+            
+            # Move to next depth
+            current_depth += 1
         
-        # Execute all tasks concurrently (max 5 at a time due to semaphore)
-        results = await asyncio.gather(*tasks)
+        logger.info(f"Forest exploration completed: visited {len(visited_urls)} URLs across {current_depth} layers")
         
-        # Collect successfully visited URLs
-        visited_urls = [url for url in results if url is not None]
-        
-        logger.info(f"Successfully visited and stored {len(visited_urls)} URLs")
+        # Wait for all pending RAG writes before persisting and summarizing
+        if rag_tasks:
+            logger.info(f"[RAG] Waiting for {len(rag_tasks)} pending RAG write tasks...")
+            rag_results = await asyncio.gather(*rag_tasks, return_exceptions=True)
+            for res in rag_results:
+                if isinstance(res, Exception):
+                    logger.warning(f"[RAG] Write task error: {res}")
+
+        # Force persist RAG data before moving to next step
+        try:
+            logger.info("[RAG] Force persisting all data after exploration...")
+            await rag_manager.force_persist()
+            logger.info("[RAG] Force persist completed")
+        except Exception as e:
+            logger.warning(f"[RAG] Force persist failed: {e}")
         
         if debug_mode:
             try:

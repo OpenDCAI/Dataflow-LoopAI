@@ -32,8 +32,8 @@ kaggle_username = getattr(cfg.starter, 'kaggle_username', '') or ''
 kaggle_key = getattr(cfg.starter, 'kaggle_key', '') or ''
 
 sg = StarterAgent(tools=[check_motivation],
-                  model_name="deepseek-chat",
-                  base_url="https://api.deepseek.com",
+                  model_name="gpt-4o",
+                  base_url="http://123.129.219.111:3000/v1",
                   api_key=api_key,
                   checkpointer=checkpointer,
                   store=store)
@@ -99,7 +99,22 @@ thread_states = sg.get_state(config)
 
 # %%
 while thread_states.interrupts:
-    query = input(f"Please input ({thread_states.interrupts[0].value}): ")
+    interrupt_value = thread_states.interrupts[0].value
+    
+    # Display interrupt message nicely
+    console.print("\n" + "=" * 80, style="cyan")
+    console.print("[bold cyan][交互式输入] 系统正在等待您的输入[/bold cyan]")
+    console.print("=" * 80, style="cyan")
+    
+    # Check if it's a long message (from MappingSubgraph)
+    if len(interrupt_value) > 100:
+        # Display the full message
+        console.print(f"\n{interrupt_value}")
+        console.print("\n" + "-" * 80, style="dim")
+        query = input("请输入您的选择: ")
+    else:
+        # Short prompt (from query_node, etc.)
+        query = input(f"Please input ({interrupt_value}): ")
     
     with Live(console=console, refresh_per_second=4) as live:
         for chunk in sg(
@@ -107,6 +122,13 @@ while thread_states.interrupts:
             config=config
         ):
             live.update(Text(sg.agent_event.text(), style="cyan"))
+    
+    # # 不使用Live显示，直接运行
+    # for chunk in sg(
+    #     query,
+    #     config=config
+    # ):
+        pass  # 不显示live输出
     
     thread_states = sg.get_state(config)
 

@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from typing import Any, Dict, List, Optional
 
 from langgraph.graph import StateGraph
@@ -10,7 +11,10 @@ from loopai.agents import BaseAgent
 from loopai.schema.events import StreamEvent
 
 from loopai.logger import get_logger
-from loopai.agents.Obtainer.nodes import websearch_node, download_node, postprocess_node
+from loopai.agents.Obtainer.nodes import websearch_node, download_node, postprocess_node, deep_explore_node
+from loopai.agents.Obtainer.mapping import MappingSubgraph
+from loopai.agents.Obtainer.utils import CategoryClassifier, ObtainQueryNormalizer
+from loopai.common.prompts import PromptLoader
 
 logger = get_logger()
 
@@ -58,6 +62,12 @@ class ObtainerAgent(BaseAgent):
             
             # Ensure obtainer configuration is set in state
             # Use values from constructor if not already in state
+            # Prompt 目录写入 state，保证后续节点（如 postprocess_node）能拿到正确的 prompt_loader
+            if not state.get("prompt_template_dir") and self.prompt_template_dir:
+                print("77777777777777777777777777777777777777777777777777")
+                print(self.prompt_template_dir)
+                state["prompt_template_dir"] = self.prompt_template_dir
+            
             if not state.get("obtainer_model_path"):
                 if self.model_name:
                     state["obtainer_model_path"] = self.model_name
@@ -79,10 +89,20 @@ class ObtainerAgent(BaseAgent):
             if "obtainer_temperature" not in state:
                 state["obtainer_temperature"] = self.temperature if hasattr(self, 'temperature') else 0.7
             
-            # Auto-detect category from user query if not specified
+            # Prepare prompt loader for downstream nodes
+            prompt_loader = None
+            if state.get("prompt_template_dir"):
+                try:
+                    prompt_loader = PromptLoader(state.get("prompt_template_dir"))
+                except Exception as e:
+                    logger.debug(f"PromptLoader init failed, will use defaults: {e}")
+            
+            # Auto-detect category from user query if not specified using LLM
             if "obtainer_category" not in state or not state.get("obtainer_category"):
                 # Try to extract category from user query
                 user_query = ""
+                objective = ""
+                
                 if state.get("messages") and len(state["messages"]) > 0:
                     last_message = state["messages"][-1]
                     if hasattr(last_message, "content"):
@@ -93,14 +113,105 @@ class ObtainerAgent(BaseAgent):
                 if not user_query:
                     user_query = state.get("automated_query", "")
                 
-                # Check for SFT keywords in query
-                user_query_lower = user_query.lower()
-                if any(keyword in user_query_lower for keyword in ["sft", "supervised fine-tuning", "fine-tuning", "微调", "问答", "qa", "question", "answer"]):
-                    state["obtainer_category"] = "SFT"
-                    logger.info("Auto-detected category: SFT from user query")
+                # Get objective if available
+                objective = state.get("automated_query", user_query)
+                
+                # LLM normalize: detect eval-based recommendations and rewrite to dataset request
+                if user_query:
+                    try:
+                        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
+                        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
+                        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
+                        temperature = state.get("obtainer_temperature", 0.2)
+                        if model_name and base_url and api_key:
+                            normalizer = ObtainQueryNormalizer(
+                                model_name=model_name,
+                                base_url=base_url,
+                                api_key=api_key,
+                                temperature=temperature,
+                                prompt_loader=prompt_loader,
+                            )
+                            norm_result = asyncio.run(
+                                normalizer.normalize(
+                                    user_query=user_query,
+                                    objective=objective
+                                )
+                            ) or {}
+                            intent_type = norm_result.get("intent_type")
+                            if intent_type:
+                                state["obtainer_intent_type"] = intent_type
+                            normalized_query = norm_result.get("normalized_query")
+                            reason = norm_result.get("reason", "")
+                            if normalized_query:
+                                state["obtainer_normalized_query"] = normalized_query
+                                state["obtainer_normalized_reason"] = reason
+                                # Only override when a rewrite is provided
+                                if normalized_query != user_query:
+                                    state["automated_query"] = normalized_query
+                                    user_query = normalized_query
+                                    objective = normalized_query
+                                    logger.info(
+                                        f"Obtain query normalized from eval-style to dataset request: "
+                                        f"{normalized_query[:120]}..."
+                                    )
+                        else:
+                            logger.debug("Skip normalization: missing model config")
+                    except Exception as e:
+                        logger.warning(f"Query normalization failed, continue with original query: {e}")
+                
+                # Use LLM to intelligently classify category
+                if user_query:
+                    try:
+                        # Get model configuration
+                        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
+                        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
+                        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
+                        temperature = state.get("obtainer_temperature", 0.3)  # Lower temperature for classification
+                        
+                        if model_name and base_url and api_key:
+                            # Initialize category classifier
+                            category_classifier = CategoryClassifier(
+                                model_name=model_name,
+                                base_url=base_url,
+                                api_key=api_key,
+                                temperature=temperature,
+                                prompt_loader=prompt_loader,
+                            )
+                            
+                            # Classify category using LLM
+                            logger.info("Analyzing user query to determine task category (SFT/PT)...")
+                            category = asyncio.run(
+                                category_classifier.classify_category(
+                                    user_query=user_query,
+                                    objective=objective
+                                )
+                            )
+                            state["obtainer_category"] = category
+                            logger.info(f"LLM classified category: {category}")
+                        else:
+                            # Fallback to keyword-based detection if model config is missing
+                            logger.warning("Model configuration missing, using keyword-based category detection")
+                            user_query_lower = user_query.lower()
+                            if any(keyword in user_query_lower for keyword in ["sft", "supervised fine-tuning", "fine-tuning", "微调", "问答", "qa", "question", "answer"]):
+                                state["obtainer_category"] = "SFT"
+                                logger.info("Keyword-based detection: SFT")
+                            else:
+                                state["obtainer_category"] = "PT"
+                                logger.info("Keyword-based detection: PT (default)")
+                    except Exception as e:
+                        logger.error(f"Error in category classification: {e}, falling back to keyword detection")
+                        # Fallback to keyword-based detection on error
+                        user_query_lower = user_query.lower()
+                        if any(keyword in user_query_lower for keyword in ["sft", "supervised fine-tuning", "fine-tuning", "微调", "问答", "qa", "question", "answer"]):
+                            state["obtainer_category"] = "SFT"
+                            logger.info("Fallback keyword detection: SFT")
+                        else:
+                            state["obtainer_category"] = "PT"
+                            logger.info("Fallback keyword detection: PT (default)")
                 else:
+                    # No user query available, default to PT
                     state["obtainer_category"] = "PT"
-                    logger.info("Auto-detected category: PT (default)")
+                    logger.info("No user query found, defaulting to PT")
             else:
                 # Ensure category is uppercase
                 state["obtainer_category"] = state["obtainer_category"].upper()
@@ -115,6 +226,19 @@ class ObtainerAgent(BaseAgent):
             
             if "obtainer_max_urls" not in state:
                 state["obtainer_max_urls"] = 10
+            
+            # Web exploration forest parameters (for websearch_node)
+            if "obtainer_max_depth" not in state:
+                state["obtainer_max_depth"] = 4  # Maximum exploration depth
+            
+            if "obtainer_concurrent_limit" not in state:
+                state["obtainer_concurrent_limit"] = 3 
+            
+            if "obtainer_topk_urls" not in state:
+                state["obtainer_topk_urls"] = 5  # Top-k URLs to select from each page
+            
+            if "obtainer_url_timeout" not in state:
+                state["obtainer_url_timeout"] = 60  # Timeout in seconds for each URL exploration (default: 60s)
             
             if "obtainer_max_download_subtasks" not in state:
                 state["obtainer_max_download_subtasks"] = None
@@ -159,6 +283,12 @@ class ObtainerAgent(BaseAgent):
                         except Exception as e:
                             logger.debug(f"Failed to read Tavily API key from file: {e}")
                 state["obtainer_tavily_api_key"] = tavily_api_key
+            
+            # Mapping configuration
+            # obtainer_default_mapping_format: If set (e.g., "alpaca"), skip user interaction and use this format directly
+            # If empty or not set, go through user interaction flow
+            if "obtainer_default_mapping_format" not in state:
+                state["obtainer_default_mapping_format"] = "alpaca"  # Empty means user interaction mode
             
             # Handle debug mode
             debug_mode = state.get("obtainer_debug", False)
@@ -206,7 +336,7 @@ class ObtainerAgent(BaseAgent):
                     logger.info(f"Debug mode enabled: Logs will be saved to {log_file}")
                     # Flush immediately to ensure the message is written
                     file_handler.flush()
-            
+
             logger.info(f"ObtainerAgent: Configuration set - model: {state.get('obtainer_model_path')}, "
                        f"base_url: {state.get('obtainer_base_url')}, category: {state.get('obtainer_category')}, "
                        f"search_engine: {state.get('obtainer_search_engine')}, max_urls: {state.get('obtainer_max_urls')}, "
@@ -367,12 +497,39 @@ class ObtainerAgent(BaseAgent):
             logger.info("No successful downloads found, routing to end_node")
             return "end_node"
 
+    @staticmethod
+    def should_trigger_mapping(state: LoopAIState) -> str:
+        """
+        Conditional edge function: check if mapping should be triggered
+        
+        Returns:
+            "mapping_subgraph" if intermediate data exists and format not confirmed, "end_node" otherwise
+        """
+        intermediate_path = state.get("obtainer_intermediate_data_path", "")
+        if intermediate_path and os.path.exists(intermediate_path):
+            confirmed_format = state.get("obtainer_confirmed_format")
+            if not confirmed_format:
+                logger.info("Intermediate data found, routing to mapping_subgraph for format selection")
+                return "mapping_subgraph"
+            else:
+                logger.info("Format already confirmed, skipping mapping_subgraph")
+        return "end_node"
+
     def init_graph(self, **kwargs):
         builder = StateGraph(LoopAIState)
         builder.add_node("start_node", self.get_start_node())
         builder.add_node("websearch_node", websearch_node)
+        builder.add_node("deep_explore_node", deep_explore_node)  # 占位节点，未实现，不接入工作流
         builder.add_node("download_node", download_node)
         builder.add_node("postprocess_node", postprocess_node)
+        
+        # 使用 MappingSubgraph 作为子图
+        mapping_subgraph = MappingSubgraph(
+            checkpointer=self.checkpointer,
+            store=self.store
+        )
+        builder.add_node("mapping_subgraph", mapping_subgraph.build())
+        
         builder.add_node("end_node", self.end_node)
         builder.set_entry_point("start_node")
         builder.add_edge("start_node", "websearch_node")
@@ -392,7 +549,15 @@ class ObtainerAgent(BaseAgent):
                 "end_node": "end_node",
             }
         )
-        builder.add_edge("postprocess_node", "end_node")
+        builder.add_conditional_edges(
+            "postprocess_node",
+            self.should_trigger_mapping,
+            {
+                "mapping_subgraph": "mapping_subgraph",
+                "end_node": "end_node",
+            }
+        )
+        builder.add_edge("mapping_subgraph", "end_node")
         builder.set_finish_point("end_node")
         
         self.graph = builder.compile(

@@ -50,7 +50,7 @@ class LoopAIState(MessagesState):
     obtainer_max_urls: int = 10  # maximum number of URLs to visit
     obtainer_max_download_subtasks: int = None  # maximum number of download subtasks
     # RAG configuration (independent from obtainer)
-    obtainer_reset_rag: bool = False  # whether to reset RAG database
+    obtainer_reset_rag: bool = True  # whether to reset RAG database
     obtainer_rag_embed_model: str = ""  # RAG embedding model (default: "text-embedding-3-large")
     obtainer_rag_collection_name: str = "rag_collection"  # RAG collection name
     obtainer_rag_api_base_url: str = ""  # RAG API base URL (if empty, uses obtainer's base_url)
@@ -65,6 +65,20 @@ class LoopAIState(MessagesState):
     obtainer_category: str = "PT"  # data category for post-processing (PT or SFT)
     obtainer_postprocess_results: Dict[str, Any]  # post-processing results
     obtainer_debug: bool = False  # enable debug mode for obtainer agent (logs all levels and saves to file)
+    # mapping subgraph state attributes
+    obtainer_default_mapping_format: str="alpaca"
+    obtainer_intent_type: str = ""  # dataset_request or eval_recommendation
+    obtainer_normalized_query: str = ""  # rewritten dataset request if input was eval-based
+    obtainer_normalized_reason: str = ""  # reason for normalization
+    obtainer_intermediate_data_path: str = ""  # path to intermediate format data
+    obtainer_mapping_user_intent: str = ""  # user intent: list_formats, preset_format, custom_format
+    obtainer_mapping_selected_format_id: str = ""  # selected preset format ID (e.g., alpaca, chatml)
+    obtainer_mapping_custom_description: str = ""  # custom format description from user
+    obtainer_pending_format: Dict[str, Any] = None  # pending format waiting for user confirmation
+    obtainer_confirmed_format: Dict[str, Any] = None  # confirmed format for mapping
+    obtainer_confirmation_result: str = ""  # confirmation result: confirmed, modify, restart
+    obtainer_mapping_auto_mode: bool = True  # whether mapping is in auto mode (skip user interaction)
+    obtainer_mapping_results: Dict[str, Any] = None  # mapping execution results
 
     # trainer state attributes
     train_dataset_path: str  # to defined the path of training dataset (json/jsonl format)

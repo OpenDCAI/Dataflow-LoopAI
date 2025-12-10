@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import httpx
 import asyncio
 
@@ -16,6 +16,31 @@ except ImportError:
 
 class WebTools:
     """Web search and reading tools"""
+    
+    @staticmethod
+    def _get_proxy() -> Optional[str]:
+        """Get proxy from environment variables"""
+        return (
+            os.getenv("HTTP_PROXY") or 
+            os.getenv("HTTPS_PROXY") or 
+            os.getenv("ALL_PROXY") or 
+            os.getenv("http_proxy") or 
+            os.getenv("https_proxy") or 
+            os.getenv("all_proxy") or
+            None
+        )
+    
+    @staticmethod
+    def _create_httpx_client(timeout: float = 20.0) -> httpx.AsyncClient:
+        """Create httpx client with proxy support"""
+        proxy = WebTools._get_proxy()
+        client_kwargs = {"timeout": timeout}
+        if proxy:
+            # httpx uses 'proxy' (singular) parameter, or can use 'proxies' dict
+            # For simple case, use 'proxy' parameter directly
+            client_kwargs["proxy"] = proxy
+            logger.info(f"[WebTools] Using proxy: {proxy}")
+        return httpx.AsyncClient(**client_kwargs)
     
     @staticmethod
     async def search_web(query: str, search_engine: str = "tavily", tavily_api_key: str = None) -> str:
@@ -44,7 +69,7 @@ class WebTools:
             return await WebTools._duckduckgo_search(query)
 
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
+            async with WebTools._create_httpx_client(timeout=20.0) as client:
                 resp = await client.post(
                     "https://api.tavily.com/search",
                     json={
@@ -104,7 +129,7 @@ class WebTools:
 
             logger.info(f"[Jina Search] Searching: {query}")
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with WebTools._create_httpx_client(timeout=30.0) as client:
                 resp = await client.get(
                     search_url,
                     headers={
@@ -149,7 +174,13 @@ class WebTools:
         try:
             jina_url = f"https://r.jina.ai/{url}"
 
-            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            client_kwargs = {"timeout": 60.0, "follow_redirects": True}
+            proxy = WebTools._get_proxy()
+            if proxy:
+                # httpx uses 'proxy' (singular) parameter
+                client_kwargs["proxy"] = proxy
+            
+            async with httpx.AsyncClient(**client_kwargs) as client:
                 resp = await client.get(
                     jina_url,
                     headers={

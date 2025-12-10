@@ -45,6 +45,20 @@ class WebPageReader(BaseAgent):
         # Override prompt_loader to use obtainer_prompt.json
         self.prompt_loader = PromptLoader()
     
+    def init_graph(self, **kwargs):
+        """
+        WebPageReader is not a full agent, so we don't need to initialize a graph.
+        This is just a placeholder to satisfy BaseAgent's abstract method requirement.
+        """
+        pass
+    
+    def __call__(self, **kwargs):
+        """
+        WebPageReader is not a full agent, so we don't need to return a graph.
+        This is just a placeholder to satisfy BaseAgent's abstract method requirement.
+        """
+        return None
+    
     async def analyze_page(
         self,
         url: str,

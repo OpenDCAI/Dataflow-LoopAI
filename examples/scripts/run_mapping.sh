@@ -1,9 +1,8 @@
 #!/bin/bash
 
-# Test script for Post-process Node
-# Usage: ./run_postprocess.sh [category] [download_dir]
-#   category: PT or SFT (default: PT)
-#   download_dir: Path to downloads directory (default: /mnt/DataFlow/lz/proj/agentgroup/binrui/postprocess_banchmark)
+# Test script for Mapping Node
+# Usage: ./run_mapping.sh [intermediate_data_path]
+#   intermediate_data_path: Path to intermediate format data directory (default: /mnt/DataFlow/lz/proj/agentgroup/binrui/postprocess_banchmark/processed_output)
 
 set -e
 
@@ -12,17 +11,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Default configuration
-OBTAINER_CATEGORY="${1:-PT}"  # PT or SFT
-if [ -n "$2" ]; then
-    DOWNLOAD_DIR="$2"
+if [ -n "$1" ]; then
+    INTERMEDIATE_DATA_PATH="$1"
 else
-    DOWNLOAD_DIR="${DOWNLOAD_DIR:-/mnt/DataFlow/lz/proj/agentgroup/binrui/postprocess_banchmark}"
+    INTERMEDIATE_DATA_PATH="${INTERMEDIATE_DATA_PATH:-/mnt/DataFlow/lz/proj/agentgroup/binrui/postprocess_banchmark/processed_output}"
 fi
 OBTAINER_MODEL_PATH="${OBTAINER_MODEL_PATH:-gpt-4o}"
 OBTAINER_BASE_URL="${OBTAINER_BASE_URL:-http://123.129.219.111:3000/v1}"
-OBTAINER_TEMPERATURE="${OBTAINER_TEMPERATURE:-0.0}"
+OBTAINER_TEMPERATURE="${OBTAINER_TEMPERATURE:-0.7}"
 OBTAINER_DEBUG="${OBTAINER_DEBUG:-False}"  # Enable debug mode (logs all levels and saves to file)
-OUTPUT_DIR="$(dirname "$DOWNLOAD_DIR")"
+OUTPUT_DIR="$(dirname "$INTERMEDIATE_DATA_PATH")"
+OBTAINER_CATEGORY="${OBTAINER_CATEGORY:-PT}"  # PT or SFT
 USER_QUERY="${USER_QUERY:-}"
 
 # Check if API key file exists
@@ -44,23 +43,23 @@ if [ "$OBTAINER_CATEGORY" != "PT" ] && [ "$OBTAINER_CATEGORY" != "SFT" ]; then
     exit 1
 fi
 
-# Check if download directory exists
-if [ ! -d "$DOWNLOAD_DIR" ]; then
-    echo "Error: Download directory does not exist: $DOWNLOAD_DIR"
-    echo "Please ensure that downloads have been completed first."
+# Check if intermediate data directory exists
+if [ ! -d "$INTERMEDIATE_DATA_PATH" ]; then
+    echo "Error: Intermediate data directory does not exist: $INTERMEDIATE_DATA_PATH"
+    echo "Please ensure that post-processing has been completed first."
     exit 1
 fi
 
 # Print configuration
 echo "============================================================"
-echo "Post-process Node - Convert Downloaded Datasets"
+echo "Mapping Node - Convert Intermediate Format to Target Format"
 echo "============================================================"
 echo "Category: $OBTAINER_CATEGORY"
 echo "Model: $OBTAINER_MODEL_PATH"
 echo "Base URL: $OBTAINER_BASE_URL"
 echo "Temperature: $OBTAINER_TEMPERATURE"
 echo "Debug Mode: $OBTAINER_DEBUG"
-echo "Download Dir: $DOWNLOAD_DIR"
+echo "Intermediate Data Path: $INTERMEDIATE_DATA_PATH"
 echo "Output Dir: $OUTPUT_DIR"
 if [ -n "$USER_QUERY" ]; then
     echo "User Query: $USER_QUERY"
@@ -75,7 +74,7 @@ export OBTAINER_TEMPERATURE="$OBTAINER_TEMPERATURE"
 export OBTAINER_CATEGORY="$OBTAINER_CATEGORY"
 export OBTAINER_DEBUG="$OBTAINER_DEBUG"
 export OUTPUT_DIR="$OUTPUT_DIR"
-export DOWNLOAD_DIR="$DOWNLOAD_DIR"
+export INTERMEDIATE_DATA_PATH="$INTERMEDIATE_DATA_PATH"
 export USER_QUERY="$USER_QUERY"
 
 # Change to project root
@@ -84,9 +83,10 @@ cd "$PROJECT_ROOT"
 # Add project root to PYTHONPATH so Python can find the loopai module
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 
-# Run the post-process script
-python "$SCRIPT_DIR/run_postprocess.py"
+# Run the mapping script
+python "$SCRIPT_DIR/run_mapping.py"
 
 echo ""
-echo "Post-process completed!"
+echo "Mapping completed!"
+
 
