@@ -25,6 +25,7 @@ class OpenAICompatChat(BaseChatModel):
         {"choices": [{"message": {"content": "..."}}, ...], ...}
     """
 
+
     model: str
     base_url: str
     api_key: str
@@ -34,6 +35,10 @@ class OpenAICompatChat(BaseChatModel):
 
     @property
     def _llm_type(self) -> str:
+
+        return "openai-compat"
+
+
         # 给 LangChain 一个类型标识
         return "openai-compat"
 
@@ -67,6 +72,7 @@ class OpenAICompatChat(BaseChatModel):
             "temperature": self.temperature,
             "top_p": self.top_p,
         }
+
 
         if stop:
             payload["stop"] = stop

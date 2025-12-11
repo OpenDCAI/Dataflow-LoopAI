@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import os
 import json
 import time
@@ -28,6 +27,7 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     Returns:
         初始化后的模型实例
     """
+
     model = ChatOpenAI(
         model=state['analyze_model_path'],
         api_key=state['analyze_api_key'],
@@ -91,6 +91,8 @@ def enhance_stats_with_oj(records):
     actual_counter = Counter()
 
     for rec in records:
+        if not isinstance(rec, dict):
+            continue
         judge = rec.get("judge") or {}
         tags = judge.get("tags")
         if isinstance(tags, list):
@@ -192,36 +194,34 @@ def build_suggestion_prompt(final_json: dict) -> str:
         改进建议的提示文本
     """
     loader = PromptLoader()
+    tpl = loader("suggestion", "suggest_user")
+
     t = final_json["totals"]["total_samples"]
     p = final_json["totals"]["passed_samples"]
+
     stage_top = final_json["failure_stage_distribution"]["top"]
     top_err = stage_top[0][0] if stage_top else "无明显错误类型"
-    by_stage = json.dumps(final_json["failure_stage_distribution"]["by_stage"], ensure_ascii=False)
-    tpl = loader("suggest", "suggest_user")
-    return tpl.format(total=t, passed=p, top_err=top_err, by_stage=by_stage)
 
+    by_stage_dict = final_json["failure_stage_distribution"]["by_stage"]
+    by_stage_json = json.dumps(by_stage_dict, ensure_ascii=False, indent=2)
 
+    return tpl.format(
+        total=t,
+        passed=p,
+        top_err=top_err,
+        by_stage=by_stage_json,
+        by_stage_json=by_stage_json,
+    )
 def build_background_prompt(final_json: dict) -> str:
     """
-    构建背景介绍的提示文本
-    Args:
-        final_json: 最终 JSON 输出
-    Returns:
-        背景介绍的提示文本
+    构建背景介绍的提示文本：只介绍数据集本身
     """
     loader = PromptLoader()
     tpl = loader("background", "v1")
 
-    # 为大模型准备一个简洁的统计视图
-    stats = {
-        "total_samples": final_json["totals"]["total_samples"],
-        "passed_samples": final_json["totals"]["passed_samples"],
-        "pass_rate": final_json["totals"]["pass_rate_samples"],
-        "top_failure": final_json["failure_stage_distribution"]["top"][:3],
-        "kw_distribution": final_json["control_kw_distribution"]["ordered"][:5],
-        "loc_distribution": final_json["loc_distribution"]["ordered"][:5],
-    }
-    return tpl.format(stats=json.dumps(stats, ensure_ascii=False))
+    ds_info = final_json.get("dataset", {})
+
+    return tpl.format(ds=json.dumps(ds_info, ensure_ascii=False))
 
 
 def make_human_text(final_json: dict, background: str = None) -> str:
@@ -259,12 +259,10 @@ def make_human_text(final_json: dict, background: str = None) -> str:
 
     lines = []
 
-   
     if background:
         lines.append("【背景介绍】")
         lines.append(background.strip())
         lines.append("")
-
 
     lines.append(f"本次评测共 {t} 个样本，其中通过 {p} 个，样本正确率 {pass_rate_str}。")
     if top_cnt > 0:
@@ -281,14 +279,11 @@ def make_human_text(final_json: dict, background: str = None) -> str:
 
     lines.append("整体来看，建议优先修复最常见错误并优化边界测试。")
     return "\n".join(lines)
-
-
 def draw_conclusion_node(state: LoopAIState):
     """
     绘制结论，生成 summary / final_report，并可选生成背景介绍与改进建议
     """
     outdir = state['output_dir']
-    os.makedirs(outdir, exist_ok=True)
     summary_path = state['analyze_output_summary_path']
 
     with open(summary_path, "r", encoding="utf-8") as f:
@@ -297,6 +292,32 @@ def draw_conclusion_node(state: LoopAIState):
 
     oj_records, _ = try_read_oj_records(summary.get("results_file"))
     run_ts, final_json = make_final_json(summary, oj_records)
+
+    # ===== 构造数据集元信息 + 样例，供 background 使用 =====
+    dataset_name = summary.get("dataset_name") or summary.get("task_name") or Path(summary_path).stem
+    task_type = state.get("analyze_task_type", "code")  # "code" / "sql" / "text2sql" 等
+
+    # 取前 10 条合法样例
+    samples = [rec for rec in oj_records if isinstance(rec, dict)][:10]
+
+    field_schema = []
+    example = {}
+    if samples:
+        first = samples[0]
+        field_schema = list(first.keys())
+        example = {
+            k: (str(v)[:200] + "…") if isinstance(v, str) and len(str(v)) > 200 else str(v)
+            for k, v in first.items()
+        }
+
+    final_json["dataset"] = {
+        "name": dataset_name,
+        "task_type": task_type,
+        "field_schema": field_schema,
+        "example": example,
+        "total_samples": final_json["totals"]["total_samples"],
+    }
+    final_json["samples"] = samples  
 
     # ===== 初始化模型（用于背景介绍 + 改进建议）=====
     llm = init_model(state)
@@ -330,7 +351,6 @@ def draw_conclusion_node(state: LoopAIState):
         logger.info("🤖 正在调用本地模型生成改进建议……")
         prompt = build_suggestion_prompt(final_json)
         try:
-            # ChatOpenAI.batch 返回 BaseMessage，取第一个的 content
             suggestion = llm.batch([prompt])[0].content
         except Exception as e:
             logger.error(f"生成改进建议时出错：{e}")
