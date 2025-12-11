@@ -1,0 +1,49 @@
+# LLaMA Factory 训练配置示例
+
+# 模型配置
+model_name: llama3
+model_name_or_path: /path/to/llama3-8b-hf
+
+# 数据集配置
+dataset: alpaca_gpt4_en
+template: llama3
+
+# 训练参数
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: q_proj,v_proj
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.1
+
+# 数据集参数
+dataset_dir: data
+cutoff_len: 1024
+max_samples: 1000
+overwrite_cache: true
+preprocessing_num_workers: 8
+
+# 输出配置
+output_dir: saves/llama3/lora/sft
+logging_steps: 10
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+
+# 训练超参数
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 5.0e-5
+lr_scheduler_type: cosine
+warmup_steps: 100
+num_train_epochs: 3.0
+max_grad_norm: 1.0
+bf16: true
+
+# 评估配置
+evaluation_strategy: steps
+eval_steps: 500
+per_device_eval_batch_size: 1
+load_best_model_at_end: true
+metric_for_best_model: eval_loss

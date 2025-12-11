@@ -3,6 +3,7 @@ import re
 import shutil
 import hashlib
 import asyncio
+import time
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
@@ -102,67 +103,171 @@ class RAGManager:
         
         # Deduplication set
         self._seen_hashes = set()
+        
+        # Lock for thread-safe ChromaDB operations
+        self._write_lock = asyncio.Lock()
+        
+        # Batch persist configuration
+        self._pending_persist = False
+        self._last_persist_time = 0
+        self._persist_interval = 5.0  # Persist every 5 seconds or after 10 documents
+        self._documents_since_persist = 0
+        self._persist_batch_size = 10
 
     async def add_webpage_content(
         self, url: str, text_content: str, metadata: Optional[Dict[str, Any]] = None
     ):
-        """Add webpage content to RAG"""
+        """Add webpage content to RAG with thread-safe operations and retry mechanism"""
         if not text_content or len(text_content.strip()) < 50:
             logger.info(f"[RAG] Skipping webpage with too short content: {url}")
             return
         
-        try:
-            logger.info(f"[RAG] Adding webpage content: {url} (length: {len(text_content)} chars)")
-            # Basic cleaning
-            cleaned = re.sub(r"\s+", " ", text_content).strip()
-            chunks = self.text_splitter.split_text(cleaned)
-            logger.info(f"[RAG] Text split into {len(chunks)} chunks")
-            
-            documents = []
-            for i, chunk in enumerate(chunks):
-                if not chunk or len(chunk.strip()) < 80:
-                    continue
-                # Content deduplication
-                digest = hashlib.sha1(chunk.strip().encode("utf-8")).hexdigest()
-                if digest in self._seen_hashes:
-                    continue
-                self._seen_hashes.add(digest)
+        # Use lock to serialize all ChromaDB operations
+        async with self._write_lock:
+            try:
+                logger.info(f"[RAG] Adding webpage content: {url} (length: {len(text_content)} chars)")
+                # Basic cleaning
+                cleaned = re.sub(r"\s+", " ", text_content).strip()
+                chunks = self.text_splitter.split_text(cleaned)
+                logger.info(f"[RAG] Text split into {len(chunks)} chunks")
                 
-                doc_metadata = {
-                    "source_url": url,
-                    "chunk_id": i,
-                    "total_chunks": len(chunks),
-                    "timestamp": datetime.now().isoformat()
-                }
-                if metadata:
-                    doc_metadata.update(metadata)
-                documents.append(Document(page_content=chunk, metadata=doc_metadata))
-            
-            if not documents:
-                logger.warning(f"[RAG] No valid document chunks after cleaning/deduplication: {url}")
-                return
-            
-            if self.vectorstore is None:
-                # Fallback: create if initialization failed
-                self.vectorstore = await asyncio.to_thread(
-                    Chroma.from_documents,
-                    documents=documents,
-                    embedding=self.embeddings,
-                    persist_directory=self.persist_directory,
+                documents = []
+                for i, chunk in enumerate(chunks):
+                    if not chunk or len(chunk.strip()) < 80:
+                        continue
+                    # Content deduplication
+                    digest = hashlib.sha1(chunk.strip().encode("utf-8")).hexdigest()
+                    if digest in self._seen_hashes:
+                        continue
+                    self._seen_hashes.add(digest)
+                    
+                    doc_metadata = {
+                        "source_url": url,
+                        "chunk_id": i,
+                        "total_chunks": len(chunks),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    if metadata:
+                        doc_metadata.update(metadata)
+                    documents.append(Document(page_content=chunk, metadata=doc_metadata))
+                
+                if not documents:
+                    logger.warning(f"[RAG] No valid document chunks after cleaning/deduplication: {url}")
+                    return
+                
+                # Retry mechanism for ChromaDB operations
+                max_retries = 3
+                retry_delay = 0.5
+                documents_added = False
+                last_error = None
+                
+                for attempt in range(max_retries):
+                    try:
+                        if self.vectorstore is None:
+                            # Fallback: create if initialization failed
+                            self.vectorstore = await asyncio.to_thread(
+                                Chroma.from_documents,
+                                documents=documents,
+                                embedding=self.embeddings,
+                                persist_directory=self.persist_directory,
+                            )
+                            documents_added = True
+                        else:
+                            await asyncio.to_thread(self.vectorstore.add_documents, documents)
+                            documents_added = True
+                        
+                        # Success, break out of retry loop
+                        last_error = None
+                        break
+                        
+                    except Exception as e:
+                        last_error = e
+                        error_str = str(e).lower()
+                        
+                        # Check if it's a compaction error (retryable)
+                        if "compaction" in error_str or "metadata segment" in error_str:
+                            if attempt < max_retries - 1:
+                                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                                logger.warning(
+                                    f"[RAG] ChromaDB compaction error (attempt {attempt + 1}/{max_retries}), "
+                                    f"retrying in {wait_time}s: {e}"
+                                )
+                                await asyncio.sleep(wait_time)
+                                continue
+                            else:
+                                logger.error(f"[RAG] ChromaDB compaction error after {max_retries} attempts: {e}")
+                        else:
+                            # Non-retryable error, raise immediately
+                            raise
+                
+                if not documents_added:
+                    # All retries failed, cannot add documents
+                    logger.error(f"[RAG] Failed to add documents after {max_retries} attempts: {last_error}")
+                    # Return early, don't update counters or persist
+                    return
+                
+                # Update counters only if documents were successfully added
+                self.document_count += len(documents)
+                self._documents_since_persist += len(documents)
+                
+                # Batch persist: only persist periodically or when batch size reached
+                current_time = time.time()
+                should_persist = (
+                    self._documents_since_persist >= self._persist_batch_size or
+                    (current_time - self._last_persist_time) >= self._persist_interval
                 )
-            else:
-                await asyncio.to_thread(self.vectorstore.add_documents, documents)
-            
-            # Persist immediately
+                
+                if should_persist:
+                    await self._persist_with_retry()
+                
+                logger.info(f"[RAG] Successfully added {len(documents)} document chunks, total: {self.document_count} chunks")
+                
+            except Exception as e:
+                logger.error(f"[RAG] Error adding webpage content ({url}): {e}")
+                # Re-raise to let caller know it failed
+                raise
+    
+    async def _persist_with_retry(self):
+        """Persist vectorstore with retry mechanism"""
+        if self.vectorstore is None:
+            return
+        
+        max_retries = 3
+        retry_delay = 0.5
+        
+        for attempt in range(max_retries):
             try:
                 await asyncio.to_thread(self.vectorstore.persist)
+                self._last_persist_time = time.time()
+                self._documents_since_persist = 0
+                self._pending_persist = False
+                return
             except Exception as e:
-                logger.error(f"[RAG] Persistence failed: {e}")
-            
-            self.document_count += len(documents)
-            logger.info(f"[RAG] Successfully added {len(documents)} document chunks, total: {self.document_count} chunks")
-        except Exception as e:
-            logger.error(f"[RAG] Error adding webpage content ({url}): {e}")
+                error_str = str(e).lower()
+                if "compaction" in error_str or "metadata segment" in error_str:
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** attempt)
+                        logger.warning(
+                            f"[RAG] Persist compaction error (attempt {attempt + 1}/{max_retries}), "
+                            f"retrying in {wait_time}s: {e}"
+                        )
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"[RAG] Persist failed after {max_retries} attempts: {e}")
+                        # Mark as pending for next time
+                        self._pending_persist = True
+                        return
+                else:
+                    # Non-compaction error, log and return
+                    logger.error(f"[RAG] Persist failed: {e}")
+                    self._pending_persist = True
+                    return
+    
+    async def force_persist(self):
+        """Force persist immediately (useful at end of workflow)"""
+        async with self._write_lock:
+            await self._persist_with_retry()
 
     async def get_context_for_single_query(self, query: str, max_chars: int = 18000) -> str:
         """Get context for a single query"""

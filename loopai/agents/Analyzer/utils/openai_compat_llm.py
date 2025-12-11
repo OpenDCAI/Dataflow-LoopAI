@@ -39,6 +39,9 @@ class OpenAICompatChat(BaseChatModel):
         return "openai-compat"
 
 
+        # 给 LangChain 一个类型标识
+        return "openai-compat"
+
     def _generate(
         self,
         messages: List[BaseMessage],

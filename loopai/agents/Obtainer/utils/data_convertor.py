@@ -96,8 +96,15 @@ class DataConvertor:
         max_sample_length: int = 200,
         num_sample_records: int = 3,
         prompt_loader: Optional[PromptLoader] = None,
+        timeout: float = 120.0,
+        max_retries: int = 3,
     ):
-        """Initialize Data Convertor"""
+        """Initialize Data Convertor
+        
+        Args:
+            timeout: Timeout in seconds for LLM API calls (default: 120.0)
+            max_retries: Maximum number of retries for failed LLM calls (default: 3)
+        """
         self.model_name = model_name
         self.base_url = base_url
         self.api_key = api_key
@@ -106,6 +113,8 @@ class DataConvertor:
         self.max_sample_length = max_sample_length
         self.num_sample_records = num_sample_records
         self.prompt_loader = prompt_loader
+        self.timeout = timeout
+        self.max_retries = max_retries
         
         self.llm = ChatOpenAI(
             model=model_name,
@@ -113,6 +122,7 @@ class DataConvertor:
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout=timeout,
         )
         self._temp_dirs = []
 
@@ -350,6 +360,279 @@ class DataConvertor:
             return [combined] if combined else []
         return self._extract_field_values(row, field_spec)
 
+    def _extract_meta_field(self, row: Dict[str, Any], field_spec: Optional[Any], column_names: List[str]) -> Optional[Any]:
+        """Extract a single metadata field value from a row.
+        
+        Args:
+            row: The data row
+            field_spec: Field specification (can be a field path string, a direct string value, or null)
+            column_names: List of column names for validation
+            
+        Returns:
+            The extracted value, or None if not found
+        """
+        if field_spec is None:
+            return None
+        
+        # If it's a direct string value (not a field path), return it as-is
+        if isinstance(field_spec, str):
+            # Check if it's a field path (contains dot or bracket) or a direct value
+            if '.' in field_spec or '[' in field_spec:
+                # It's a field path, extract it
+                values = self._extract_field_values(row, field_spec)
+                if values:
+                    # Return the first value, or join if multiple
+                    return values[0] if len(values) == 1 else " ".join(str(v) for v in values if v)
+                return None
+            else:
+                # Check if it exists as a column name
+                if field_spec in column_names:
+                    # It's a field path, extract it
+                    values = self._extract_field_values(row, field_spec)
+                    if values:
+                        return values[0] if len(values) == 1 else " ".join(str(v) for v in values if v)
+                    return None
+                else:
+                    # It's a direct string value, return as-is
+                    return field_spec
+        
+        # For other types, try to extract as field path
+        if isinstance(field_spec, (int, float, bool)):
+            return field_spec
+        
+        # Try to convert to string and extract
+        field_spec_str = str(field_spec)
+        values = self._extract_field_values(row, field_spec_str)
+        if values:
+            return values[0] if len(values) == 1 else " ".join(str(v) for v in values if v)
+        return None
+
+    def _build_meta_dict(
+        self, 
+        row: Dict[str, Any], 
+        annotation_result: Dict[str, Any], 
+        file_path: str,
+        column_names: List[str]
+    ) -> Dict[str, Any]:
+        """Build metadata dictionary from annotation result and row data.
+        
+        Args:
+            row: The data row
+            annotation_result: LLM mapping result containing meta field specifications
+            file_path: Source file path (used as fallback for source)
+            column_names: List of column names for validation
+            
+        Returns:
+            Metadata dictionary
+        """
+        meta_spec = annotation_result.get('meta', {}) if annotation_result else {}
+        
+        # Extract each metadata field
+        source = self._extract_meta_field(row, meta_spec.get('source'), column_names)
+        if source is None:
+            # Fallback to file path
+            source = os.path.basename(file_path) if file_path else None
+        
+        language = self._extract_meta_field(row, meta_spec.get('language'), column_names)
+        timestamp = self._extract_meta_field(row, meta_spec.get('timestamp'), column_names)
+        token_count = self._extract_meta_field(row, meta_spec.get('token_count'), column_names)
+        quality_score = self._extract_meta_field(row, meta_spec.get('quality_score'), column_names)
+        original_id = self._extract_meta_field(row, meta_spec.get('original_id'), column_names)
+        
+        meta = {
+            "source": source,
+            "language": language,
+            "timestamp": timestamp,
+            "token_count": token_count,
+            "quality_score": quality_score,
+            "original_id": original_id
+        }
+        
+        # Remove None values to keep the output clean
+        return {k: v for k, v in meta.items() if v is not None}
+
+    def _generate_record_id(self, file_path: str, record_index: int) -> str:
+        """Generate a unique record ID.
+        
+        Args:
+            file_path: Source file path
+            record_index: Index of the record in the dataset
+            
+        Returns:
+            Unique record ID string
+        """
+        import hashlib
+        import time
+        
+        # Create a hash from file path and record index
+        base_str = f"{file_path}:{record_index}:{time.time()}"
+        hash_obj = hashlib.md5(base_str.encode('utf-8'))
+        return hash_obj.hexdigest()[:16]
+
+    def _build_intermediate_format_pt(
+        self,
+        row: Dict[str, Any],
+        annotation_result: Dict[str, Any],
+        file_path: str,
+        record_index: int,
+        column_names: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Build intermediate format record for PT (Pre-training) mode.
+        
+        Args:
+            row: The data row
+            annotation_result: LLM mapping result
+            file_path: Source file path
+            record_index: Index of the record
+            column_names: List of column names
+            
+        Returns:
+            Intermediate format record dict, or None if invalid
+        """
+        if not annotation_result or annotation_result.get('text') is None:
+            return None
+        
+        text_field = annotation_result.get('text')
+        
+        # Handle both single field and list of fields
+        if isinstance(text_field, list):
+            text_fields = [self._sanitize_field_spec(field, column_names) for field in text_field]
+            text_fields = [f for f in text_fields if f is not None]
+        else:
+            text_field = self._sanitize_field_spec(text_field, column_names)
+            text_fields = [text_field] if text_field else []
+        
+        if not text_fields:
+            return None
+        
+        # Extract text values from all specified fields
+        all_text_parts = []
+        for field in text_fields:
+            values = self._extract_text_values(row, field)
+            all_text_parts.extend(values)
+        
+        if not all_text_parts:
+            return None
+        
+        # Merge text parts into continuous text
+        # For conversation-like data, try to merge naturally
+        merged_text = " ".join(str(part).strip() for part in all_text_parts if str(part).strip())
+        
+        if not merged_text:
+            return None
+        
+        # Build metadata
+        meta = self._build_meta_dict(row, annotation_result, file_path, column_names)
+        
+        # Generate unique ID
+        record_id = self._generate_record_id(file_path, record_index)
+        
+        return {
+            "id": record_id,
+            "dataset_type": "pretrain",
+            "text": merged_text,
+            "meta": meta
+        }
+
+    def _build_intermediate_format_sft(
+        self,
+        row: Dict[str, Any],
+        annotation_result: Dict[str, Any],
+        file_path: str,
+        record_index: int,
+        column_names: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Build intermediate format record for SFT (Supervised Fine-Tuning) mode.
+        
+        Args:
+            row: The data row
+            annotation_result: LLM mapping result
+            file_path: Source file path
+            record_index: Index of the record
+            column_names: List of column names
+            
+        Returns:
+            Intermediate format record dict, or None if invalid
+        """
+        if not annotation_result or not annotation_result.get('messages'):
+            return None
+        
+        messages_spec = annotation_result.get('messages', [])
+        if not isinstance(messages_spec, list) or len(messages_spec) == 0:
+            return None
+        
+        # Build messages array
+        messages = []
+        for msg_spec in messages_spec:
+            if not isinstance(msg_spec, dict):
+                continue
+            
+            role = msg_spec.get('role')
+            content_spec = msg_spec.get('content')
+            loss_mask = msg_spec.get('loss_mask')
+            
+            if not role or not content_spec:
+                continue
+            
+            # Extract content value(s)
+            if isinstance(content_spec, list):
+                # Multiple fields to concatenate
+                content_parts = []
+                for field in content_spec:
+                    field_sanitized = self._sanitize_field_spec(field, column_names)
+                    if field_sanitized:
+                        values = self._extract_text_values(row, field_sanitized)
+                        content_parts.extend(values)
+                content = " ".join(str(part).strip() for part in content_parts if str(part).strip())
+            else:
+                # Single field
+                field_sanitized = self._sanitize_field_spec(content_spec, column_names)
+                if field_sanitized:
+                    values = self._extract_text_values(row, field_sanitized)
+                    content = " ".join(str(v).strip() for v in values if str(v).strip()) if values else None
+                else:
+                    content = None
+            
+            if not content:
+                continue
+            
+            # Default loss_mask based on role
+            if loss_mask is None:
+                loss_mask = (role == "assistant")
+            
+            messages.append({
+                "role": role,
+                "content": content,
+                "loss_mask": loss_mask
+            })
+        
+        if not messages:
+            return None
+        
+        # Extract system prompt if available
+        system_spec = annotation_result.get('system')
+        system = None
+        if system_spec:
+            system = self._extract_meta_field(row, system_spec, column_names)
+        
+        # Build metadata
+        meta = self._build_meta_dict(row, annotation_result, file_path, column_names)
+        
+        # Generate unique ID
+        record_id = self._generate_record_id(file_path, record_index)
+        
+        result = {
+            "id": record_id,
+            "dataset_type": "sft",
+            "messages": messages,
+            "meta": meta
+        }
+        
+        if system:
+            result["system"] = system
+        
+        return result
+
     async def invoke_data_mapping(
         self, 
         column_names: List[str], 
@@ -362,86 +645,130 @@ class DataConvertor:
         logger.info("Building data mapping prompt messages...")
         
         # Use prompt loader if available
-        if self.prompt_loader:
-            try:
-                system_prompt = self.prompt_loader("system", f"data_conversion_{category.lower()}_prompt")
-                task_prompt = self.prompt_loader("task", f"data_conversion_{category.lower()}_prompt")
-                
-                if dataset is not None:
-                    sampled_records = await self._sample_records(dataset)
-                    sample_rows_str = json.dumps(sampled_records, indent=2, ensure_ascii=False)
-                    task_params = {
-                        'column_names': str(column_names),
-                        'sample_rows': sample_rows_str,
-                        'user_target': user_target
-                    }
-                else:
-                    truncated_record = {k: self._truncate_value(v) for k, v in sample_record.items()}
-                    sample_rows_str = json.dumps([truncated_record], indent=2, ensure_ascii=False)
-                    task_params = {
-                        'column_names': str(column_names),
-                        'sample_rows': sample_rows_str,
-                        'user_target': user_target
-                    }
-                
-                human_prompt = task_prompt.format(**task_params)
-            except Exception as e:
-                logger.warning(f"Failed to load prompt, using default: {e}")
-                system_prompt = self._get_default_system_prompt(category)
-                human_prompt = self._get_default_task_prompt(column_names, sample_record, user_target, category, dataset)
-        else:
+        if not self.prompt_loader:
+            raise RuntimeError("prompt_loader is required for data mapping but is missing.")
+
+        try:
+            system_prompt = self.prompt_loader("system", f"data_conversion_{category.lower()}_prompt")
+            task_prompt = self.prompt_loader("task", f"data_conversion_{category.lower()}_prompt")
+            
+            if dataset is not None:
+                sampled_records = await self._sample_records(dataset)
+                sample_rows_str = json.dumps(sampled_records, indent=2, ensure_ascii=False)
+                task_params = {
+                    'column_names': str(column_names),
+                    'sample_rows': sample_rows_str,
+                    'user_target': user_target
+                }
+            else:
+                truncated_record = {k: self._truncate_value(v) for k, v in sample_record.items()}
+                sample_rows_str = json.dumps([truncated_record], indent=2, ensure_ascii=False)
+                task_params = {
+                    'column_names': str(column_names),
+                    'sample_rows': sample_rows_str,
+                    'user_target': user_target
+                }
+            
+            human_prompt = task_prompt.format(**task_params)
+
+        except Exception as e:
+            # 回退到默认提示，避免因模板缺失或格式错误导致崩溃
+            logger.warning(f"Failed to load data conversion prompts, using default. Error: {e}")
             system_prompt = self._get_default_system_prompt(category)
-            human_prompt = self._get_default_task_prompt(column_names, sample_record, user_target, category, dataset)
+            human_prompt = self._get_default_task_prompt(
+                column_names=column_names,
+                sample_record=sample_record,
+                user_target=user_target,
+                category=category,
+                dataset=dataset
+            )
         
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=human_prompt)
         ]
         
-        try:
-            answer_msg = await self.llm.ainvoke(messages)
-            answer_text = answer_msg.content.strip()
-            logger.info(f'LLM data mapping response: {answer_text}')
+        # Retry logic with timeout protection
+        last_exception = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                logger.info(f"Calling LLM for data mapping (attempt {attempt}/{self.max_retries})...")
+                
+                # Add timeout protection
+                answer_msg = await asyncio.wait_for(
+                    self.llm.ainvoke(messages),
+                    timeout=self.timeout
+                )
+                answer_text = answer_msg.content.strip()
+                logger.info(f'LLM data mapping response received (attempt {attempt}): {answer_text[:200]}...')
 
-            pattern = r'```json([\s\S]*?)```'
-            match = re.search(pattern, answer_text)
-            if match:
-                match_text = match.group(1).strip()
-            else:
-                match_text = answer_text
+                pattern = r'```json([\s\S]*?)```'
+                match = re.search(pattern, answer_text)
+                if match:
+                    match_text = match.group(1).strip()
+                else:
+                    match_text = answer_text
 
-            annotation_result = json.loads(match_text)
-            logger.info(f"Data mapping result: {annotation_result}")
-            return annotation_result
-        except Exception as e:
-            logger.error(f"Failed to parse LLM response: {e}")
-            raise ValueError(f"Failed to parse LLM response as JSON: {e}")
+                annotation_result = json.loads(match_text)
+                logger.info(f"Data mapping result parsed successfully: {annotation_result}")
+                return annotation_result
+                
+            except asyncio.TimeoutError:
+                last_exception = asyncio.TimeoutError(f"LLM call timed out after {self.timeout}s (attempt {attempt}/{self.max_retries})")
+                logger.warning(f"LLM call timeout on attempt {attempt}/{self.max_retries}")
+                if attempt < self.max_retries:
+                    wait_time = min(2 ** attempt, 10)  # Exponential backoff, max 10s
+                    logger.info(f"Retrying after {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"All {self.max_retries} attempts timed out")
+                    
+            except json.JSONDecodeError as e:
+                last_exception = ValueError(f"Failed to parse LLM response as JSON: {e}")
+                logger.error(f"JSON parsing failed on attempt {attempt}/{self.max_retries}: {e}")
+                if attempt < self.max_retries:
+                    wait_time = min(2 ** attempt, 10)
+                    logger.info(f"Retrying after {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise last_exception
+                    
+            except Exception as e:
+                last_exception = e
+                logger.error(f"LLM call failed on attempt {attempt}/{self.max_retries}: {e}")
+                if attempt < self.max_retries:
+                    wait_time = min(2 ** attempt, 10)
+                    logger.info(f"Retrying after {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise ValueError(f"Failed to get LLM response after {self.max_retries} attempts: {e}")
+        
+        # If we get here, all retries failed
+        raise ValueError(f"Failed to get valid LLM response after {self.max_retries} attempts: {last_exception}")
 
     def _get_default_system_prompt(self, category: str) -> str:
         """Get default system prompt"""
         if category.upper() == "PT":
-            return """You are a data mapping expert for Pre-training (PT) tasks. 
-Your task is to analyze the dataset structure and identify which field(s) contain text content that should be extracted for pre-training.
+            return """You are an expert in dataset classification and analysis.
 
-IMPORTANT: For pre-training, the output must be continuous, coherent text that can be directly used for language model training. This means:
-1. If the data contains structured fields (like "role" and "content" for conversations), you should identify ALL relevant fields that need to be combined into a single continuous text.
-2. The output should be a complete, readable text passage, not fragmented pieces.
-3. For conversation data, identify fields that can be merged into a natural dialogue format.
-4. For document data, identify the main content field(s) that contain the full text.
+Your task is to identify field mappings for language model pretraining.
 
-Return a JSON object with:
-- "text": A list of field names or field specifications that should be combined into continuous text. For example: ["role", "content"] for conversation data, or ["content"] for single-field text data.
+You need to identify:
+1. Text field(s): Which field(s) contain the main text content for pretraining
+2. Metadata fields (optional): Source, language, original ID, etc.
 
-If multiple fields need to be combined, return them as a list. The system will automatically merge them into continuous text with appropriate formatting."""
+The output format should be a JSON object with "text" field (string or array) and optional "meta" object."""
         else:  # SFT
-            return """You are a data mapping expert for Supervised Fine-Tuning (SFT) tasks.
-Your task is to analyze the dataset structure and identify which fields contain question-answer pairs.
+            return """You are an expert in dataset classification and analysis.
 
-Return a JSON object with:
-- "question": The field name or field specification that contains the question
-- "answer": The field name or field specification that contains the answer
+Your task is to identify field mappings for supervised fine-tuning (SFT).
 
-The field specifications should match column names in the dataset."""
+You need to identify:
+1. Message fields: Which fields contain user questions/inputs and assistant responses
+2. System prompt: Which field (if any) contains the system prompt
+3. Metadata fields: Source, language, original ID, etc.
+
+The output format should be a JSON object with "messages" array containing role and content field mappings."""
 
     def _get_default_task_prompt(
         self, 
@@ -483,12 +810,32 @@ Sample records:
 
 User target: {user_target}
 
-IMPORTANT: For pre-training, you need to identify field(s) that contain continuous, coherent text suitable for language model training.
-
-If the data is structured (e.g., conversations with "role" and "content" fields, or documents with multiple text fields), identify ALL fields that should be combined into a single continuous text passage.
+Please analyze the dataset and identify the field mappings for pre-training.
 
 Return a JSON object with:
-- "text": A list of field names that should be merged into continuous text. For example: ["role", "content"] for conversation data, or ["content"] for single-field text. The system will automatically format and merge these fields into readable, continuous text suitable for pre-training."""
+- "text": A single field name or a list of field names that should be merged into continuous text.
+  For example: "content" for single-field text, or ["title", "body"] for multi-field text.
+  
+- "meta": (optional) Object with field mappings for metadata:
+  - "source": Field name for data source
+  - "language": Field name or direct value for language (e.g., "zh", "en")
+  - "original_id": Field name for original record ID
+
+Example response:
+```json
+{{
+    "text": "content",
+    "meta": {{"source": "url", "language": "zh"}}
+}}
+```
+
+Or for multi-field data:
+```json
+{{
+    "text": ["title", "abstract", "body"],
+    "meta": {{"source": "dataset_name"}}
+}}
+```"""
         else:  # SFT
             return f"""Column names: {column_names}
 
@@ -497,7 +844,42 @@ Sample records:
 
 User target: {user_target}
 
-Please identify which fields contain question and answer. Return a JSON object with "question" and "answer" fields."""
+Please analyze the dataset and identify the field mappings for SFT (Supervised Fine-Tuning).
+
+Return a JSON object with:
+- "messages": An array of message specifications. Each message should have:
+  - "role": The role of the speaker ("user", "assistant", or "system")
+  - "content": The field name/path that contains the message content
+  - "loss_mask": (optional) Whether to compute loss on this message (default: true for assistant, false for others)
+  
+- "system": (optional) Field name that contains the system prompt, or a direct string value
+  
+- "meta": (optional) Object with field mappings for metadata:
+  - "source": Field name for data source
+  - "language": Field name or direct value for language (e.g., "zh", "en")
+  - "original_id": Field name for original record ID
+
+Example response for a Q&A dataset:
+```json
+{{
+    "messages": [
+        {{"role": "user", "content": "question"}},
+        {{"role": "assistant", "content": "answer"}}
+    ],
+    "meta": {{"source": "source_field"}}
+}}
+```
+
+Example response for a conversation dataset:
+```json
+{{
+    "messages": [
+        {{"role": "user", "content": "conversations[0].content"}},
+        {{"role": "assistant", "content": "conversations[1].content"}}
+    ],
+    "system": "system_prompt"
+}}
+```"""
 
     async def invoke_file_discovery(self, file_list_str: str) -> List[str]:
         """Invoke LLM for file discovery"""
@@ -1101,99 +1483,13 @@ Please identify which files are data files that should be processed. Return a JS
             f_out = _open_chunk_file(current_chunk_index)
             try:
                 if category.upper() == 'PT':
-                    text_field = annotation_result.get('text') if annotation_result else None
-                    
-                    # Handle both single field and list of fields
-                    if isinstance(text_field, list):
-                        # Multiple fields need to be combined
-                        text_fields = [self._sanitize_field_spec(field, column_names) for field in text_field]
-                        text_fields = [f for f in text_fields if f is not None]
-                    else:
-                        # Single field
-                        text_field = self._sanitize_field_spec(text_field, column_names)
-                        text_fields = [text_field] if text_field else []
-                    
-                    if not text_fields:
-                        logger.warning(
-                            f"Did not find valid text field(s) in {file_name} ({split_name}) (from LLM: {annotation_result}), skipping."
+                    # Use new intermediate format builder
+                    for record_index, row in enumerate(data_content):
+                        intermediate_record = self._build_intermediate_format_pt(
+                            row, annotation_result, file_path, record_index, column_names
                         )
-                        continue
-
-                    # Collect all rows first to handle conversation merging
-                    rows_to_process = []
-                    for row in data_content:
-                        # Extract values from all specified fields
-                        all_values = []
-                        for field in text_fields:
-                            values = self._extract_text_values(row, field)
-                            all_values.extend(values)
-                        
-                        if all_values:
-                            rows_to_process.append(all_values)
-                    
-                    # Merge rows into continuous text
-                    # For conversation data, merge role and content fields naturally
-                    merged_texts = []
-                    current_conversation = []
-                    
-                    for row_values in rows_to_process:
-                        # Check if this looks like a conversation turn (has role-like and content-like parts)
-                        has_role = any("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower() for v in row_values)
-                        has_content = any(len(str(v)) > 20 and not ("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower()) for v in row_values)
-                        
-                        if has_role and has_content:
-                            # This is a conversation turn, merge role and content
-                            role_part = None
-                            content_part = None
-                            for v in row_values:
-                                v_str = str(v).strip()
-                                if "role" in v_str.lower() or "user" in v_str.lower() or "assistant" in v_str.lower():
-                                    # Extract role name
-                                    if "user" in v_str.lower():
-                                        role_part = "用户"
-                                    elif "assistant" in v_str.lower():
-                                        role_part = "助手"
-                                    else:
-                                        # Try to extract role from "role. xxx" format
-                                        parts = v_str.split(".", 1)
-                                        if len(parts) > 1:
-                                            role_part = parts[1].strip()
-                                        else:
-                                            role_part = v_str.replace("role", "").replace(".", "").strip()
-                                else:
-                                    # This is content
-                                    if "content" in v_str.lower():
-                                        # Extract content from "content. xxx" format
-                                        parts = v_str.split(".", 1)
-                                        if len(parts) > 1:
-                                            content_part = parts[1].strip()
-                                        else:
-                                            content_part = v_str.replace("content", "").replace(".", "").strip()
-                                    else:
-                                        content_part = v_str
-                            
-                            if role_part and content_part:
-                                current_conversation.append(f"{role_part}：{content_part}")
-                            elif content_part:
-                                current_conversation.append(content_part)
-                        else:
-                            # Regular text data, merge all values
-                            merged = " ".join(str(v).strip() for v in row_values if str(v).strip())
-                            if merged:
-                                if current_conversation:
-                                    # Finish current conversation
-                                    merged_texts.append("\n\n".join(current_conversation))
-                                    current_conversation = []
-                                merged_texts.append(merged)
-                    
-                    # Finish any remaining conversation
-                    if current_conversation:
-                        merged_texts.append("\n\n".join(current_conversation))
-                    
-                    # Write merged texts
-                    for text in merged_texts:
-                        if text and text.strip():
-                            json.dump({'text': text.strip()}, f_out, ensure_ascii=False)
+                        if intermediate_record:
+                            json.dump(intermediate_record, f_out, ensure_ascii=False)
                             f_out.write('\n')
                             split_record_count += 1
                             current_chunk_count += 1
@@ -1204,35 +1500,13 @@ Please identify which files are data files that should be processed. Return a JS
                                 f_out = _open_chunk_file(current_chunk_index)
                             
                 elif category.upper() == 'SFT':
-                    q_field = annotation_result.get('question') if annotation_result else None
-                    a_field = annotation_result.get('answer') if annotation_result else None
-
-                    q_field = self._sanitize_field_spec(q_field, column_names)
-                    a_field = self._sanitize_field_spec(a_field, column_names)
-
-                    if q_field is None and a_field is None:
-                        logger.warning(
-                            f"LLM returned null 'question' and 'answer' fields or they don't exist in column names, skipping {file_name} ({split_name})."
-                            f" LLM mapping result: {annotation_result}"
+                    # Use new intermediate format builder
+                    for record_index, row in enumerate(data_content):
+                        intermediate_record = self._build_intermediate_format_sft(
+                            row, annotation_result, file_path, record_index, column_names
                         )
-                        continue
-
-                    for row in data_content:
-                        questions = self._extract_text_values(row, q_field) if q_field else []
-                        answers = self._extract_text_values(row, a_field) if a_field else []
-
-                        if not questions and not answers:
-                            continue
-
-                        max_pairs = max(len(questions), len(answers), 1)
-                        for idx in range(max_pairs):
-                            question = questions[idx] if idx < len(questions) else None
-                            answer = answers[idx] if idx < len(answers) else None
-
-                            if question is None and answer is None:
-                                continue
-
-                            json.dump({'question': question, 'answer': answer}, f_out, ensure_ascii=False)
+                        if intermediate_record:
+                            json.dump(intermediate_record, f_out, ensure_ascii=False)
                             f_out.write('\n')
                             split_record_count += 1
                             current_chunk_count += 1
@@ -1286,99 +1560,13 @@ Please identify which files are data files that should be processed. Return a JS
         f_out = _open_chunk_file(current_chunk_index)
         try:
             if category.upper() == 'PT':
-                text_field = annotation_result.get('text') if annotation_result else None
-                
-                # Handle both single field and list of fields
-                if isinstance(text_field, list):
-                    # Multiple fields need to be combined
-                    text_fields = [self._sanitize_field_spec(field, column_names) for field in text_field]
-                    text_fields = [f for f in text_fields if f is not None]
-                else:
-                    # Single field
-                    text_field = self._sanitize_field_spec(text_field, column_names)
-                    text_fields = [text_field] if text_field else []
-                
-                if not text_fields:
-                    logger.warning(
-                        f"Did not find valid text field(s) in {file_name} ({split_name}) (from LLM: {annotation_result}), skipping."
+                # Use new intermediate format builder
+                for record_index, row in enumerate(data_content):
+                    intermediate_record = self._build_intermediate_format_pt(
+                        row, annotation_result, file_path, record_index, column_names
                     )
-                    return 0
-
-                # Collect all rows first to handle conversation merging
-                rows_to_process = []
-                for row in data_content:
-                    # Extract values from all specified fields
-                    all_values = []
-                    for field in text_fields:
-                        values = self._extract_text_values(row, field)
-                        all_values.extend(values)
-                    
-                    if all_values:
-                        rows_to_process.append(all_values)
-                
-                # Merge rows into continuous text
-                # For conversation data, merge role and content fields naturally
-                merged_texts = []
-                current_conversation = []
-                
-                for row_values in rows_to_process:
-                    # Check if this looks like a conversation turn (has role-like and content-like parts)
-                    has_role = any("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower() for v in row_values)
-                    has_content = any(len(str(v)) > 20 and not ("role" in str(v).lower() or "user" in str(v).lower() or "assistant" in str(v).lower()) for v in row_values)
-                    
-                    if has_role and has_content:
-                        # This is a conversation turn, merge role and content
-                        role_part = None
-                        content_part = None
-                        for v in row_values:
-                            v_str = str(v).strip()
-                            if "role" in v_str.lower() or "user" in v_str.lower() or "assistant" in v_str.lower():
-                                # Extract role name
-                                if "user" in v_str.lower():
-                                    role_part = "用户"
-                                elif "assistant" in v_str.lower():
-                                    role_part = "助手"
-                                else:
-                                    # Try to extract role from "role. xxx" format
-                                    parts = v_str.split(".", 1)
-                                    if len(parts) > 1:
-                                        role_part = parts[1].strip()
-                                    else:
-                                        role_part = v_str.replace("role", "").replace(".", "").strip()
-                            else:
-                                # This is content
-                                if "content" in v_str.lower():
-                                    # Extract content from "content. xxx" format
-                                    parts = v_str.split(".", 1)
-                                    if len(parts) > 1:
-                                        content_part = parts[1].strip()
-                                    else:
-                                        content_part = v_str.replace("content", "").replace(".", "").strip()
-                                else:
-                                    content_part = v_str
-                        
-                        if role_part and content_part:
-                            current_conversation.append(f"{role_part}：{content_part}")
-                        elif content_part:
-                            current_conversation.append(content_part)
-                    else:
-                        # Regular text data, merge all values
-                        merged = " ".join(str(v).strip() for v in row_values if str(v).strip())
-                        if merged:
-                            if current_conversation:
-                                # Finish current conversation
-                                merged_texts.append("\n\n".join(current_conversation))
-                                current_conversation = []
-                            merged_texts.append(merged)
-                
-                # Finish any remaining conversation
-                if current_conversation:
-                    merged_texts.append("\n\n".join(current_conversation))
-                
-                # Write merged texts
-                for text in merged_texts:
-                    if text and text.strip():
-                        json.dump({'text': text.strip()}, f_out, ensure_ascii=False)
+                    if intermediate_record:
+                        json.dump(intermediate_record, f_out, ensure_ascii=False)
                         f_out.write('\n')
                         split_record_count += 1
                         current_chunk_count += 1
@@ -1389,35 +1577,13 @@ Please identify which files are data files that should be processed. Return a JS
                             f_out = _open_chunk_file(current_chunk_index)
                         
             elif category.upper() == 'SFT':
-                q_field = annotation_result.get('question') if annotation_result else None
-                a_field = annotation_result.get('answer') if annotation_result else None
-
-                q_field = self._sanitize_field_spec(q_field, column_names)
-                a_field = self._sanitize_field_spec(a_field, column_names)
-
-                if q_field is None and a_field is None:
-                    logger.warning(
-                        f"LLM returned null 'question' and 'answer' fields or they don't exist in column names, skipping {file_name} ({split_name})."
-                        f" LLM mapping result: {annotation_result}"
+                # Use new intermediate format builder
+                for record_index, row in enumerate(data_content):
+                    intermediate_record = self._build_intermediate_format_sft(
+                        row, annotation_result, file_path, record_index, column_names
                     )
-                    return 0
-
-                for row in data_content:
-                    questions = self._extract_text_values(row, q_field) if q_field else []
-                    answers = self._extract_text_values(row, a_field) if a_field else []
-
-                    if not questions and not answers:
-                        continue
-
-                    max_pairs = max(len(questions), len(answers), 1)
-                    for idx in range(max_pairs):
-                        question = questions[idx] if idx < len(questions) else None
-                        answer = answers[idx] if idx < len(answers) else None
-
-                        if question is None and answer is None:
-                            continue
-
-                        json.dump({'question': question, 'answer': answer}, f_out, ensure_ascii=False)
+                    if intermediate_record:
+                        json.dump(intermediate_record, f_out, ensure_ascii=False)
                         f_out.write('\n')
                         split_record_count += 1
                         current_chunk_count += 1

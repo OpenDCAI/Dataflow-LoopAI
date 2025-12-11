@@ -12,7 +12,9 @@ class AgentEvent:
     node: Optional[str] = None
     node_path: Optional[list] = None
     state: Optional[Any] = None
+    updated_state: Optional[Any] = None
     custom_info: Optional[dict] = None
+    updated_custom_info: Optional[dict] = None
     stream_message: Optional[AIMessage] = None
 
     def set_stream_message(self, msg_chunk):
@@ -49,7 +51,7 @@ class AgentEvent:
         """
         self.node_path = None
 
-    def update(self, chunk):
+    def update_state(self, chunk):
         """
         Update the state with the given chunk.
 
@@ -59,7 +61,16 @@ class AgentEvent:
             e.g. {'messages': [HumanMessage(content='你好', additional_kwargs={}, response_metadata={}, id='0a834fe0-ee4b-49a2-996f-32d6fdc679c3'), AIMessage(content='你好！我是一个智能 Agent 助理，能够帮助您完成各种任务。', additional_kwargs={}, response_metadata={'finish_reason': 'stop', 'model_name': 'deepseek-chat', 'system_fingerprint': 'fp_ffc7281d48_prod0820_fp8_kvcache'}, id='run--90052c42-32d0-4282-8d98-4c52374c5363', usage_metadata={'input_tokens': 548, 'output_tokens': 82, 'total_tokens': 630, 'input_token_details': {'cache_read': 512}, 'output_token_details': {}})]}
             ```
         """
+        diff = {}
+        if self.state is not None:
+            for key in chunk:
+                if key not in self.state:
+                    diff[key] = chunk[key]
+                else:
+                    if self.state[key] != chunk[key]:
+                        diff[key] = chunk[key]
         self.state = chunk
+        self.updated_state = diff
 
     def set_custom_info(self, key: str, info: dict):
         """
@@ -74,39 +85,77 @@ class AgentEvent:
         if key not in self.custom_info:
             self.custom_info[key] = []
         self.custom_info[key].append(info)
+        self.updated_custom_info = {key: info}
 
-    def text(self):
+    def text(self, only_updated=False):
         """
         Convert dataclass fields to readable text representation.
         """
         lines = []
         other_state_info = []
         msgs = []
+        display_state = 'updated_state' if only_updated else 'state'
+
+        def print_normal(key, val):
+            return (f"{key}: {val}", "blue")
+
+        def print_path():
+            if not self.node_path:
+                return ('', 'yellow')
+            return (f"🧭 Node Path: {'->'.join(self.node_path)}", "yellow")
+        
+        def print_custom_info(obj: dict):
+            for key in obj:
+                if obj[key]['message']:
+                    return (f"🔧 {key}: {obj[key]['message']}", "purple")
+
+        def print_title(title: str):
+            return (f"{10*'='}{title}={10*'='}", "magenta")
+
+        def print_msg(msg: Any):
+            role = 'ai'
+            content = ''
+            if type(msg) == dict:
+                role = msg['role']
+                content = msg['content']
+            else:
+                role = msg.type
+                content = msg.content
+            color = "red"
+            if role == 'ai':
+                color = "green"
+            elif role == 'human':
+                color = "cyan"
+            return (f"● {role.upper()}: {content}", color)
+
         for f in fields(self):
-            if f.name not in ['state', 'stream_message', 'node_path', 'custom_info']:
+            if f.name not in ['state', 'updated_state', 'stream_message', 'node_path', 'custom_info', 'updated_custom_info']:
                 value = getattr(self, f.name)
-                lines.append(f"{f.name}: {value}")
+                lines.append(print_normal(f.name, value))
             elif f.name == 'node_path':
-                lines.append(f"{f.name}: {'->'.join(self.node_path)}")
-            elif f.name == 'state':
-                for key in self.state:
+                lines.append(print_path())
+            elif f.name == 'updated_custom_info':
+                lines.append(print_custom_info(self.updated_custom_info))
+            elif f.name == display_state:
+                self_state = getattr(self, display_state)
+                if not self_state:
+                    continue
+                for key in self_state:
                     if key != 'messages':
-                        other_state_info.append(f"{key}: {self.state[key]}")
-                    else:
-                        for msg in self.state[key]:
-                            if type(msg) == dict:
-                                msgs.append(
-                                    f"{msg['role'].upper()}: {msg['content']}")
-                            else:
-                                msgs.append(
-                                    f"{msg.type.upper()}: {msg.content}")
+                        other_state_info.append(
+                            print_normal(key, self_state[key]))
+                for msg in self.state['messages']:
+                    msgs.append(print_msg(msg))
+
         if self.stream_message:
-            msgs.append(f"AI: {self.stream_message.content}")
-        lines.append('='*10 + 'State' + '='*10)
+            msgs.append(print_msg(self.stream_message))
+        lines.append(print_title('🆕 Updated State'))
         lines.extend(other_state_info)
-        lines.append('='*10 + 'Messages' + '='*10)
+        lines.append(print_title('💭 Messages'))
         lines.extend(msgs)
-        return "\n".join(lines)
+        lines.append(print_title('🔧 Updated Custom Info'))
+        lines.append(print_custom_info(self.updated_custom_info))
+        return lines
 
     def __str__(self):
         return self.text()
@@ -177,7 +226,7 @@ class StreamEvent:
         self.total = total
         self.message = message
         self.data = data
-    
+
     def json(self):
         """
         Convert dataclass fields to JSON representation.

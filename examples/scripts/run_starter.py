@@ -97,16 +97,48 @@ merged_states = OmegaConf.merge(cfg.default_states, {
 sg.start(default_state=OmegaConf.to_container(merged_states, resolve=True), config=config)
 thread_states = sg.get_state(config)
 
+def render_text(lines):
+    t = Text()
+    if type(lines) == str:
+        t.append(lines)
+        return t
+    for line, color in lines:
+        t.append(line + '\n', style=color)
+    return t
+
 # %%
 while thread_states.interrupts:
-    query = input(f"Please input ({thread_states.interrupts[0].value}): ")
+    interrupt_value = thread_states.interrupts[0].value
     
-    with Live(console=console, refresh_per_second=4) as live:
+    # Display interrupt message nicely
+    console.print("\n" + "=" * 80, style="cyan")
+    console.print("[bold cyan][交互式输入] 系统正在等待您的输入[/bold cyan]")
+    console.print("=" * 80, style="cyan")
+    
+    # Check if it's a long message (from MappingSubgraph)
+    if len(interrupt_value) > 100:
+        # Display the full message
+        console.print(f"\n{interrupt_value}")
+        console.print("\n" + "-" * 80, style="dim")
+        query = input("请输入您的选择: ")
+    else:
+        # Short prompt (from query_node, etc.)
+        query = input(f"Please input ({interrupt_value}): ")
+    
+    with Live(console=console, refresh_per_second=1) as live:
         for chunk in sg(
             query,
             config=config
         ):
-            live.update(Text(sg.agent_event.text(), style="cyan"))
+            live.update(render_text(sg.agent_event.text(only_updated=True)))
+            # print(chunk)
+    
+    # # 不使用Live显示，直接运行
+    # for chunk in sg(
+    #     query,
+    #     config=config
+    # ):
+        # pass  # 不显示live输出
     
     thread_states = sg.get_state(config)
 

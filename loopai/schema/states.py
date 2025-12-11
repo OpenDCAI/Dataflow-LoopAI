@@ -50,7 +50,7 @@ class LoopAIState(MessagesState):
     obtainer_max_urls: int = 10  # maximum number of URLs to visit
     obtainer_max_download_subtasks: int = None  # maximum number of download subtasks
     # RAG configuration (independent from obtainer)
-    obtainer_reset_rag: bool = False  # whether to reset RAG database
+    obtainer_reset_rag: bool = True  # whether to reset RAG database
     obtainer_rag_embed_model: str = ""  # RAG embedding model (default: "text-embedding-3-large")
     obtainer_rag_collection_name: str = "rag_collection"  # RAG collection name
     obtainer_rag_api_base_url: str = ""  # RAG API base URL (if empty, uses obtainer's base_url)
@@ -65,6 +65,49 @@ class LoopAIState(MessagesState):
     obtainer_category: str = "PT"  # data category for post-processing (PT or SFT)
     obtainer_postprocess_results: Dict[str, Any]  # post-processing results
     obtainer_debug: bool = False  # enable debug mode for obtainer agent (logs all levels and saves to file)
+    # mapping subgraph state attributes
+    obtainer_default_mapping_format: str="alpaca"
+    obtainer_intent_type: str = ""  # dataset_request or eval_recommendation
+    obtainer_normalized_query: str = ""  # rewritten dataset request if input was eval-based
+    obtainer_normalized_reason: str = ""  # reason for normalization
+    obtainer_intermediate_data_path: str = ""  # path to intermediate format data
+    obtainer_mapping_user_intent: str = ""  # user intent: list_formats, preset_format, custom_format
+    obtainer_mapping_selected_format_id: str = ""  # selected preset format ID (e.g., alpaca, chatml)
+    obtainer_mapping_custom_description: str = ""  # custom format description from user
+    obtainer_pending_format: Dict[str, Any] = None  # pending format waiting for user confirmation
+    obtainer_confirmed_format: Dict[str, Any] = None  # confirmed format for mapping
+    obtainer_confirmation_result: str = ""  # confirmation result: confirmed, modify, restart
+    obtainer_mapping_auto_mode: bool = True  # whether mapping is in auto mode (skip user interaction)
+    obtainer_mapping_results: Dict[str, Any] = None  # mapping execution results
+
+    # trainer state attributes
+    train_dataset_path: str  # to defined the path of training dataset (json/jsonl format)
+    train_task_description: str  # to defined the task description for training
+    train_config_template_path: str  # to defined the path of llamafactory config template
+    train_config_output_path: str  # to defined the path of generated training config
+    train_output_dir: str  # to defined the output directory for training
+    train_model_name: str  # to defined the base model name for training
+    train_use_swanlab: bool = True  # whether to use swanlab for monitoring
+    train_swanlab_project: str  # to defined the swanlab project name
+    
+    # trainer workflow state fields
+    data_check_passed: bool = False  # whether data check passed
+    data_check_result: dict = {}  # data check result details
+    data_check_report_path: str = ""  # path to data check report
+    data_check_error: str = ""  # data check error message
+    config_generation_success: bool = False  # whether config generation succeeded
+    config_explanation_path: str = ""  # path to config explanation
+    config_generation_error: str = ""  # config generation error message
+    training_success: bool = False  # whether training succeeded
+    training_execution_time: float = 0.0  # training execution time
+    training_task_id: str = ""  # remote training task id
+    training_final_status: dict = {}  # final training status
+    training_log_path: str = ""  # path to training log
+    training_report_path: str = ""  # path to training report
+    training_error: str = ""  # training error message
+    training_service_url: str = "http://localhost:8000"  # training service URL
+    current_training_status: str = ""  # current training status
+    update_model_path: str  # to defined the save path of the post-trained model
 
     # graph state attributes
     current: str  # to defined the current task, e.g. train, evaluate, obtain, naive

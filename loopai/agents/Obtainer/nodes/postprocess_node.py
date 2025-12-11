@@ -26,8 +26,16 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
         if task.get("type") == "download" and task.get("status") == "completed_successfully"
     ]
     
-    output_dir = state.get("output_dir", "./output")
-    download_dir = os.path.join(output_dir, "downloads")
+    # Get download directory - prioritize environment variable, then state, then default
+    download_dir = os.getenv("DOWNLOAD_DIR")
+    if not download_dir:
+        # Try to get from state
+        download_dir = state.get("download_dir")
+        if not download_dir:
+            # Fallback to output_dir/downloads
+            output_dir = state.get("output_dir", "./output")
+            download_dir = os.path.join(output_dir, "downloads")
+    
     has_download_files = os.path.exists(download_dir) and any(
         os.path.isfile(os.path.join(download_dir, f)) or os.path.isdir(os.path.join(download_dir, f))
         for f in os.listdir(download_dir)
@@ -99,14 +107,25 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
         # Initialize prompt loader
         prompt_loader = PromptLoader(state.get("prompt_template_dir"))
         
-        # Output directory
-        output_dir = state.get("output_dir", "./output")
-        download_dir = os.path.join(output_dir, "downloads")
+        # Get download directory - prioritize environment variable, then state, then default
+        download_dir = os.getenv("DOWNLOAD_DIR")
+        if not download_dir:
+            # Try to get from state
+            download_dir = state.get("download_dir")
+            if not download_dir:
+                # Fallback to output_dir/downloads
+                output_dir = state.get("output_dir", "./output")
+                download_dir = os.path.join(output_dir, "downloads")
         
         if not os.path.exists(download_dir):
             logger.error(f"Download directory does not exist: {download_dir}")
             state["exception"] = f"Download directory does not exist: {download_dir}"
             return state
+        
+        # Get additional configuration from state or environment
+        llm_timeout = state.get("obtainer_llm_timeout", 120.0)
+        max_retries = state.get("obtainer_max_retries", 3)
+        max_concurrent_mapping = state.get("obtainer_max_concurrent_mapping", 10)
         
         # Run async workflow
         result = asyncio.run(_postprocess_workflow(
@@ -118,6 +137,9 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             api_key=api_key,
             temperature=temperature,
             prompt_loader=prompt_loader,
+            llm_timeout=llm_timeout,
+            max_retries=max_retries,
+            max_concurrent_mapping=max_concurrent_mapping,
         ))
         
         # Update state with results
@@ -129,6 +151,11 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
                 "processed_sources_count": result.get("processed_sources_count", 0),
                 "output_dir": result.get("output_dir", ""),
             }
+            # Save intermediate format path for mapping node
+            output_dir = result.get("output_dir", "")
+            if output_dir and os.path.exists(output_dir):
+                state["obtainer_intermediate_data_path"] = output_dir
+                logger.info(f"Intermediate format data saved at: {output_dir}")
             logger.info(
                 f"Post-process node completed: {result.get('total_records_processed', 0)} records processed."
             )
@@ -170,18 +197,23 @@ async def _postprocess_workflow(
     api_key: str,
     temperature: float,
     prompt_loader: Optional[PromptLoader] = None,
+    llm_timeout: float = 120.0,
+    max_retries: int = 3,
+    max_concurrent_mapping: int = 10,
 ) -> Dict[str, Any]:
     """Async workflow for post-processing downloaded datasets"""
     try:
         _ensure_hf_cache_env(download_dir)
         
-        # Initialize data convertor
+        # Initialize data convertor with timeout and retry settings
         convertor = DataConvertor(
             model_name=model_name,
             base_url=base_url,
             api_key=api_key,
             temperature=temperature,
             prompt_loader=prompt_loader,
+            timeout=llm_timeout,
+            max_retries=max_retries,
         )
         
         # Set up controlled temp directory
@@ -387,12 +419,13 @@ async def _postprocess_workflow(
                         "sample_record": sample_record,
                     })
             
-            # Process all mapping tasks with 50 concurrent tasks
-            logger.info(f"Found {len(mapping_tasks)} splits to process, starting concurrent mapping (50 concurrent)...")
+            # Process all mapping tasks with limited concurrency (reduced from 50 to 10 for stability)
+            logger.info(f"Found {len(mapping_tasks)} splits to process, starting concurrent mapping ({max_concurrent_mapping} concurrent)...")
             
             async def process_mapping_task(task: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], Optional[Exception]]:
                 """Process a single mapping task"""
                 try:
+                    logger.info(f"Starting LLM mapping for {task['file_name']} ({task['split_name']})...")
                     annotation_result = await convertor.invoke_data_mapping(
                         column_names=task["column_names"],
                         sample_record=task["sample_record"],
@@ -400,14 +433,14 @@ async def _postprocess_workflow(
                         user_target=user_query,
                         category=category
                     )
-                    logger.info(f"LLM mapping result for {task['file_name']} ({task['split_name']}): {annotation_result}")
+                    logger.info(f"✓ LLM mapping succeeded for {task['file_name']} ({task['split_name']}): {annotation_result}")
                     return (task, annotation_result, None)
                 except Exception as e:
-                    logger.error(f"LLM data mapping failed for {task['file_name']} ({task['split_name']}): {e}")
+                    logger.error(f"✗ LLM data mapping failed for {task['file_name']} ({task['split_name']}): {e}")
                     return (task, None, e)
             
-            # Use semaphore to limit concurrent mapping tasks to 50
-            mapping_semaphore = asyncio.Semaphore(50)
+            # Use semaphore to limit concurrent mapping tasks
+            mapping_semaphore = asyncio.Semaphore(max_concurrent_mapping)
             
             async def process_mapping_with_semaphore(task: Dict[str, Any]):
                 """Process mapping task with semaphore control"""
@@ -420,8 +453,10 @@ async def _postprocess_workflow(
                 for task in mapping_tasks
             ]
             
-            # Execute all mapping tasks concurrently (max 50 at a time)
+            # Execute all mapping tasks concurrently (limited by semaphore)
+            logger.info(f"Executing {len(mapping_tasks_list)} mapping tasks with max {max_concurrent_mapping} concurrent...")
             mapping_results = await asyncio.gather(*mapping_tasks_list, return_exceptions=True)
+            logger.info(f"Completed {len(mapping_results)} mapping tasks")
             
             # Process datasets with mapping results concurrently
             # Filter out failed mappings first

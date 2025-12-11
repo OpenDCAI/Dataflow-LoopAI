@@ -3,7 +3,7 @@
 # Test script for Post-process Node
 # Usage: ./run_postprocess.sh [category] [download_dir]
 #   category: PT or SFT (default: PT)
-#   download_dir: Path to downloads directory (default: output/obtainer_outputs/downloads)
+#   download_dir: Path to downloads directory (default: /mnt/DataFlow/lz/proj/agentgroup/binrui/postprocess_banchmark)
 
 set -e
 
@@ -16,7 +16,7 @@ OBTAINER_CATEGORY="${1:-PT}"  # PT or SFT
 if [ -n "$2" ]; then
     DOWNLOAD_DIR="$2"
 else
-    DOWNLOAD_DIR="${DOWNLOAD_DIR:-$PROJECT_ROOT/output/obtainer_outputs/downloads}"
+    DOWNLOAD_DIR="${DOWNLOAD_DIR:-/mnt/DataFlow/lz/proj/agentgroup/binrui/postprocess_banchmark}"
 fi
 OBTAINER_MODEL_PATH="${OBTAINER_MODEL_PATH:-gpt-4o}"
 OBTAINER_BASE_URL="${OBTAINER_BASE_URL:-http://123.129.219.111:3000/v1}"
