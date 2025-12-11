@@ -11,7 +11,7 @@ from langchain_core.language_models import BaseChatModel
 from loopai.common.prompts.prompt_loader import PromptLoader
 from langchain_openai import ChatOpenAI
 from ..utils.llmaj import LLMJudge
-from loopai.states.base import LoopAIState
+from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 from loopai.agents.Analyzer.utils.openai_compat_llm import OpenAICompatChat
 logger = get_logger()
