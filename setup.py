@@ -26,6 +26,7 @@ setup(
         "tenacity>=8.2.0",
         "requests>=2.31.0",
         "mcp>=0.1.0",
+        "aiosqlite>=0.21.0"
     ],
     python_requires=">=3.12",
 )

@@ -1,6 +1,6 @@
 starter:
-  model_name: "gpt-4o"
-  base_url: "http://123.129.219.111:3000/v1"
+  model_name: "deepseek-chat"
+  base_url: "https://api.deepseek.com"
   api_key_path: "./api_key.txt"
   tavily_api_key_path: "./tavily_api_key.txt"
   kaggle_username: "binrxu"  # Kaggle username (leave empty if not needed)
@@ -16,7 +16,7 @@ rag:
 
 default_states:
   eval_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
-  eval_base_url: "http://123.129.219.111:3000/v1"
+  eval_base_url: "http://127.0.0.1:8911/v1"
   eval_api_key: "EMPTY"
   eval_temperature: 0
   eval_top_p: 0.95
@@ -26,7 +26,7 @@ default_states:
   eval_batch_size: 10
   prompt_template_dir: "./loopai/common/prompts"
   analyze_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
-  analyze_base_url: "http://123.129.219.111:3000/v1"
+  analyze_base_url: "http://127.0.0.1:8911/v1"
   analyze_api_key: "EMPTY"
   analyze_temperature: 0
   analyze_top_p: 0.95
