@@ -130,8 +130,8 @@ while thread_states.interrupts:
             query,
             config=config
         ):
-            # live.update(render_text(sg.agent_event.text(only_updated=True)))
-            print(chunk)
+            live.update(render_text(sg.agent_event.text(only_updated=True)))
+            # print(chunk)
     
     # # 不使用Live显示，直接运行
     # for chunk in sg(
