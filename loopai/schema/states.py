@@ -80,6 +80,30 @@ class LoopAIState(MessagesState):
     obtainer_mapping_auto_mode: bool = True  # whether mapping is in auto mode (skip user interaction)
     obtainer_mapping_results: Dict[str, Any] = None  # mapping execution results
 
+    # webcrawler state attributes
+    webcrawler_deepseek_api_key: str = ""  # DeepSeek API key for WebCrawler
+    webcrawler_tavily_api_key: str = ""  # Tavily API key for WebCrawler
+    webcrawler_deepseek_api_base: str = "https://api.deepseek.com/v1"  # DeepSeek API base URL
+    webcrawler_model: str = "deepseek-chat"  # Model name for WebCrawler
+    webcrawler_max_pages: int = 10000  # Maximum pages to crawl
+    webcrawler_output_result: Dict[str, Any] = None  # Crawl results
+    webcrawler_output_run_id: str = ""  # Run ID for this crawl session
+    webcrawler_output_dir: str = ""  # Output directory for crawl results
+    num_queries: int = 5  # Number of search queries to generate
+    crawl_depth: int = 3  # Maximum crawl depth
+    max_links_per_page: int = 5  # Maximum links to follow per page
+    concurrent_pages: int = 3  # Number of concurrent pages to crawl
+    min_text_length: int = 500  # Minimum text length for content filtering
+    min_code_length: int = 50  # Minimum code length for content filtering
+    min_relevance_score: int = 6  # Minimum relevance score for content filtering
+    url_patterns: str = None  # URL patterns for filtering
+    request_delay: float = 2.0  # Delay between requests (seconds)
+    timeout: int = 30  # Request timeout (seconds)
+    max_retries: int = 3  # Maximum number of retries
+    output_format: str = "jsonl"  # Output format (jsonl/json)
+    save_html: bool = False  # Whether to save HTML content
+
+
     # trainer state attributes
     train_dataset_path: str  # to defined the path of training dataset (json/jsonl format)
     train_task_description: str  # to defined the task description for training

@@ -292,6 +292,7 @@ async def _websearch_workflow(
         visited_urls_set = set()  # Track visited URLs to avoid duplicates
         rag_tasks = []  # async tasks for RAG writes to avoid blocking exploration
         rag_write_semaphore = asyncio.Semaphore(2)  # limit concurrent RAG writes
+        crawled_pages = []  # Store crawled page content for return
         
         # URL queue: each item is (url, depth)
         url_queue = [(url, 0) for url in unique_urls]  # Initialize with depth 0
@@ -335,6 +336,16 @@ async def _websearch_workflow(
                             if url not in visited_urls_set:
                                 visited_urls_set.add(url)
                                 visited_urls.append(url)
+                                # Store page content for return (even if RAG is disabled)
+                                crawled_pages.append({
+                                    "source_url": url,
+                                    "text_content": webpage_text,
+                                    "extraction_method": "jina_reader",
+                                    "structured_content": {
+                                        "title": page_content.get("title", ""),
+                                        "url": url
+                                    }
+                                })
                         
                         logger.info(f"[Depth {depth}] Successfully stored content from {url} ({len(candidate_urls)} links found)")
                         
@@ -547,6 +558,7 @@ async def _websearch_workflow(
             "research_summary": research_summary,
             "subtasks": new_subtasks,
             "urls_visited": visited_urls,
+            "crawled_pages": crawled_pages,  # Return crawled page content
         }
         
     except Exception as e:
@@ -556,5 +568,6 @@ async def _websearch_workflow(
             "research_summary": "",
             "subtasks": [],
             "urls_visited": [],
+            "crawled_pages": [],
         }
 
