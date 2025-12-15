@@ -33,7 +33,7 @@ draw_conclusion_node
 
 ⸻
 
-🔍 Node 功能说明
+Node 功能说明
 
 1️⃣ eval_model_node（样本级分析）
 
@@ -87,7 +87,7 @@ draw_conclusion_node
 
 ⸻
 
-📂 输入数据要求
+输入数据要求
 
 Analyzer 直接读取 已有评测结果文件（jsonl），无需重新运行模型。
 
@@ -108,15 +108,7 @@ SQL / Text-to-SQL 任务常见字段示例
 
 ⸻
 
-🚀 如何运行 Analyzer Pipeline
-
-Analyzer 可以通过一个最小化的 Python 入口，直接运行整条 pipeline，完成：
-
-评测增强 → 分析 → 报告生成
-
-⸻
-
-🔍 Node 功能说明
+Node 功能说明
 
 1️⃣ eval_model_node（样本级分析）
 
@@ -170,7 +162,7 @@ Analyzer 可以通过一个最小化的 Python 入口，直接运行整条 pipel
 
 ⸻
 
-📂 输入数据要求
+输入数据要求
 
 Analyzer 直接读取 已有评测结果文件（jsonl），无需重新运行模型。
 
@@ -191,7 +183,7 @@ SQL / Text-to-SQL 任务常见字段示例
 
 ⸻
 
-## 🚀 如何运行 Analyzer Pipeline
+## 如何运行 Analyzer Pipeline
 
 Analyzer 可以通过一个最小化的 Python 入口，直接运行整条 pipeline，完成：
 
