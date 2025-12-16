@@ -7,7 +7,7 @@ import os
 import time
 import requests
 import yaml
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List, List
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -189,7 +189,7 @@ class TrainingServiceClient:
                 return False, None, f"获取任务状态失败: {error}"
             
             task_status = status_info.get("status")
-            state['current_training_status'] = task_status
+            state['trainer_current_training_status'] = task_status
             
             # 调用进度回调
             if progress_callback:
@@ -208,6 +208,67 @@ class TrainingServiceClient:
             
             # 等待下次检查
             time.sleep(check_interval)
+    
+    def get_train_output_swanlab_log_path(self, task_id: str) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        获取指定任务的SwanLab日志文件夹路径
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            (成功标志, SwanLab日志路径, 错误信息)
+        """
+        try:
+            response = self.session.get(f"{self.base_url}/swanlab-logs/{task_id}", timeout=10)
+            
+            if response.status_code == 200:
+                result = response.json()
+                log_path = result.get("log_path")
+                if log_path:
+                    logger.info(f"获取SwanLab日志路径成功: {log_path}")
+                    return True, log_path, None
+                else:
+                    message = result.get("message", "日志路径未找到")
+                    logger.warning(f"SwanLab日志路径未找到: {message}")
+                    return True, None, message
+            else:
+                error_msg = f"获取SwanLab日志路径失败，状态码: {response.status_code}"
+                try:
+                    error_detail = response.json().get("detail", "未知错误")
+                    error_msg = f"{error_msg}, 详情: {error_detail}"
+                except:
+                    error_msg = f"{error_msg}, 响应: {response.text}"
+                return False, None, error_msg
+                
+        except Exception as e:
+            error_msg = f"获取SwanLab日志路径时发生异常: {str(e)}"
+            logger.error(error_msg)
+            return False, None, error_msg
+    
+    def get_all_swanlab_logs(self) -> Tuple[bool, Optional[List[Dict[str, str]]], Optional[str]]:
+        """
+        获取所有SwanLab日志文件夹
+        
+        Returns:
+            (成功标志, 日志文件夹列表, 错误信息)
+        """
+        try:
+            response = self.session.get(f"{self.base_url}/swanlab-logs", timeout=10)
+            
+            if response.status_code == 200:
+                result = response.json()
+                logs = result.get("logs", [])
+                logger.info(f"获取所有SwanLab日志成功，共 {len(logs)} 个日志文件夹")
+                return True, logs, None
+            else:
+                error_msg = f"获取所有SwanLab日志失败，状态码: {response.status_code}"
+                return False, None, error_msg
+                
+        except Exception as e:
+            error_msg = f"获取所有SwanLab日志时发生异常: {str(e)}"
+            logger.error(error_msg)
+            return False, None, error_msg
 
 
 def create_training_client(base_url: Optional[str] = None) -> TrainingServiceClient:

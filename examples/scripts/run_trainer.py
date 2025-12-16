@@ -46,14 +46,15 @@ graph = trainer()
 # 准备训练状态
 training_state = {
     # 必需字段
-    'train_dataset_path': "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json",  # 使用 JSON 格式数据集
-    'train_task_description': '训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务',
-    
-    # 可选字段（如果不提供将使用默认值）
-    'train_model_name': '/jizhicfs/hymiezhao/models/Qwen2.5-1.5B',
+    'train_input_dataset_path': "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json",  # 使用 JSON 格式数据集
+    'train_input_task_description': '训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务',
+    'train_input_config_template_path': "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
+    'train_input_model_name': '/jizhicfs/hymiezhao/models/Qwen2.5-1.5B',
     'train_output_dir': './output/training_test',
-    'train_use_swanlab': True,
-    'train_swanlab_project': 'test_llamafactory_training',
+
+    # 可选字段（如果不提供将使用默认值）
+    'train_input_use_swanlab': True,
+    'train_input_swanlab_project': 'test_llamafactory_training',
     'training_service_url': 'http://localhost:8000',  # 远程训练服务地址
     'output_dir': './output/trainer_test'
 }
@@ -131,12 +132,15 @@ if validation_result['valid']:
             elif stage_name == 'training_execution' and status:
                 task_id = stage_info.get('task_id')
                 final_status = stage_info.get('final_status')
+                train_output_swanlab_log_path = stage_info.get('train_output_swanlab_log_path')
                 if task_id:
                     console.print(f"    🆔 训练任务ID: {task_id}")
                 if final_status:
                     status_text = final_status.get('status', '未知')
                     console.print(f"    📊 最终状态: {status_text}")
-            
+                if train_output_swanlab_log_path:
+                    console.print(f"    📜 SwanLab 日志: {train_output_swanlab_log_path}")
+
             if stage_info.get('error'):
                 console.print(f"    ❌ 错误: {stage_info['error']}")
         

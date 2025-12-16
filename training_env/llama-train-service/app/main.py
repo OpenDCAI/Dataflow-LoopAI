@@ -3,7 +3,8 @@ from fastapi.responses import JSONResponse
 import os
 from typing import Optional
 
-from .models import TrainRequest, TrainResponse, TaskStatusResponse, LogResponse, TaskStatus
+from .models import TrainRequest, TrainResponse, TaskStatusResponse, LogResponse, TaskStatus, SwanLabLogResponse, AllSwanLabLogsResponse, SwanLabLogResponse, AllSwanLabLogsResponse
+
 from .tasks import TaskManager
 from .utils import generate_task_id, save_yaml_config, read_log_file, validate_yaml_content
 
@@ -34,7 +35,9 @@ async def root():
             "train": "POST /train - 启动训练任务",
             "status": "GET /status/{task_id} - 查询任务状态",
             "logs": "GET /logs/{task_id} - 获取任务日志",
-            "tasks": "GET /tasks - 获取所有任务列表"
+            "tasks": "GET /tasks - 获取所有任务列表",
+            "swanlab-logs-task": "GET /swanlab-logs/{task_id} - 获取指定任务的SwanLab日志文件夹路径",
+            "swanlab-logs-all": "GET /swanlab-logs - 获取所有SwanLab日志文件夹"
         }
     }
 
@@ -175,6 +178,41 @@ async def cancel_task(task_id: str):
         return {"message": f"Task {task_id} cancelled successfully"}
     else:
         raise HTTPException(status_code=400, detail="Cannot cancel task")
+
+
+@app.get("/swanlab-logs/{task_id}", response_model=SwanLabLogResponse)
+async def get_train_output_swanlab_log_path(task_id: str):
+    """获取指定任务的SwanLab日志文件夹路径"""
+    task_info = task_manager.get_task_status(task_id)
+    
+    if not task_info:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    log_path = task_manager.get_train_output_swanlab_log_path(task_id)
+    
+    if log_path:
+        return SwanLabLogResponse(
+            task_id=task_id,
+            log_path=log_path,
+            message="SwanLab log folder found"
+        )
+    else:
+        return SwanLabLogResponse(
+            task_id=task_id,
+            log_path=None,
+            message="SwanLab log folder not found or task not started yet"
+        )
+
+
+@app.get("/swanlab-logs", response_model=AllSwanLabLogsResponse)
+async def get_all_swanlab_logs():
+    """获取所有SwanLab日志文件夹"""
+    logs = task_manager.get_all_swanlab_logs()
+    
+    return AllSwanLabLogsResponse(
+        total=len(logs),
+        logs=logs
+    )
 
 
 @app.get("/health")
