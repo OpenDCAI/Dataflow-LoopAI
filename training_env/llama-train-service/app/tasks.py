@@ -2,9 +2,10 @@ import os
 import subprocess
 import asyncio
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, List, List
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import glob
 
 from .models import TaskStatus
 from .utils import ensure_directory_exists, get_current_timestamp
@@ -173,3 +174,72 @@ class TaskManager:
             
             for task_id, _ in tasks_to_remove:
                 del self.tasks[task_id]
+    
+    def get_swanlab_log_path(self, task_id: str) -> Optional[str]:
+        """获取指定任务的SwanLab日志文件夹路径"""
+        if task_id not in self.tasks:
+            return None
+        
+        task_info = self.tasks[task_id]
+        swanlog_dir = os.path.join(self.llamafactory_dir, "swanlog")
+        
+        if not os.path.exists(swanlog_dir):
+            return None
+        
+        # 获取任务开始时间，用于筛选日志文件夹
+        started_at = task_info.get('started_at')
+        if not started_at:
+            return None
+        
+        try:
+            # 将时间字符串转换为datetime对象
+            task_start_time = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+            
+            # 查找所有符合格式的日志文件夹
+            log_folders = []
+            for item in os.listdir(swanlog_dir):
+                item_path = os.path.join(swanlog_dir, item)
+                if os.path.isdir(item_path) and item.startswith('run-'):
+                    # 获取文件夹创建时间
+                    folder_create_time = datetime.fromtimestamp(os.path.getctime(item_path))
+                    
+                    # 如果文件夹创建时间在任务开始时间之后，则认为是该任务的日志文件夹
+                    if folder_create_time >= task_start_time:
+                        log_folders.append((item_path, folder_create_time))
+            
+            # 按创建时间排序，返回最新的一个
+            if log_folders:
+                log_folders.sort(key=lambda x: x[1])
+                return log_folders[-1][0]
+            
+        except Exception as e:
+            print(f"Error finding SwanLab log folder for task {task_id}: {e}")
+        
+        return None
+    
+    def get_all_swanlab_logs(self) -> List[Dict[str, str]]:
+        """获取所有SwanLab日志文件夹"""
+        swanlog_dir = os.path.join(self.llamafactory_dir, "swanlog")
+        
+        if not os.path.exists(swanlog_dir):
+            return []
+        
+        log_folders = []
+        try:
+            for item in os.listdir(swanlog_dir):
+                item_path = os.path.join(swanlog_dir, item)
+                if os.path.isdir(item_path) and item.startswith('run-'):
+                    folder_create_time = datetime.fromtimestamp(os.path.getctime(item_path))
+                    log_folders.append({
+                        'folder_name': item,
+                        'folder_path': item_path,
+                        'created_at': folder_create_time.isoformat()
+                    })
+            
+            # 按创建时间排序（最新的在前）
+            log_folders.sort(key=lambda x: x['created_at'], reverse=True)
+            
+        except Exception as e:
+            print(f"Error listing SwanLab log folders: {e}")
+        
+        return log_folders

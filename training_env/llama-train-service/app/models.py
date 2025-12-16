@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, List
 from enum import Enum
 
 
@@ -40,3 +40,23 @@ class LogResponse(BaseModel):
     task_id: str
     logs: str
     total_lines: int
+
+
+class SwanLabLogResponse(BaseModel):
+    """SwanLab日志响应模型"""
+    task_id: str
+    log_path: Optional[str] = None
+    message: Optional[str] = None
+
+
+class SwanLabLogFolder(BaseModel):
+    """SwanLab日志文件夹信息"""
+    folder_name: str
+    folder_path: str
+    created_at: str
+
+
+class AllSwanLabLogsResponse(BaseModel):
+    """所有SwanLab日志响应模型"""
+    total: int
+    logs: List[SwanLabLogFolder]

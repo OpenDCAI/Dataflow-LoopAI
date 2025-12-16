@@ -108,6 +108,7 @@ class LoopAIState(MessagesState):
     training_service_url: str = "http://localhost:8000"  # training service URL
     current_training_status: str = ""  # current training status
     update_model_path: str  # to defined the save path of the post-trained model
+    swanlab_log_path: str  # to defined the path of swanlab log directory
 
     # graph state attributes
     current: str  # to defined the current task, e.g. train, evaluate, obtain, naive

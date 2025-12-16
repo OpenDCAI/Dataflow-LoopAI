@@ -163,10 +163,23 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                     "success": success
                 }
             ))
-        
-        # 获取训练日志
+          # 获取训练日志
         logger.info("📄 获取训练日志...")
         log_success, logs, log_error = client.get_task_logs(task_id, lines=1000)
+        
+        # 获取SwanLab日志路径
+        logger.info("📊 获取SwanLab日志路径...")
+        swanlab_success, swanlab_path, swanlab_error = client.get_swanlab_log_path(task_id)
+        
+        if swanlab_success and swanlab_path:
+            logger.info(f"SwanLab日志路径: {swanlab_path}")
+            state['swanlab_log_path'] = swanlab_path
+        elif swanlab_success:
+            logger.warning(f"SwanLab日志路径未找到: {swanlab_error}")
+            state['swanlab_log_path'] = None
+        else:
+            logger.error(f"获取SwanLab日志路径失败: {swanlab_error}")
+            state['swanlab_log_path'] = None
         
         # 保存训练日志
         output_dir = state.get('output_dir', './output/trainer')
@@ -179,22 +192,26 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 f.write("="*60 + "\n\n")
                 f.write(logs)
             logger.info(f"训练日志已保存到: {log_path}")
-            state['training_log_path'] = log_path        
-        # 进度：生成训练报告
+            state['training_log_path'] = log_path        # 进度：生成训练报告
         if writer:
             writer(StreamEvent(
                 current=state['current'],
                 progress=0.9,
                 message="正在生成训练报告...",
-                data={"log_retrieved": log_success, "log_lines": len(logs.split('\n')) if logs else 0}
+                data={
+                    "log_retrieved": log_success, 
+                    "log_lines": len(logs.split('\n')) if logs else 0,
+                    "swanlab_path": state.get('swanlab_log_path'),
+                    "swanlab_retrieved": swanlab_success
+                }
             ))
-        
-        # 生成训练报告
+          # 生成训练报告
         report = _generate_remote_training_report(
             task_id=task_id,
             final_status=final_status,
             training_time=training_time,
             task_description=task_description,
+            swanlab_log_path=state.get('swanlab_log_path'),
             error=error
         )
         
@@ -216,8 +233,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             logger.info(f"任务ID: {task_id}")
             
             state['training_success'] = True
-            
-            # 进度：训练成功完成
+              # 进度：训练成功完成
             if writer:
                 writer(StreamEvent(
                     current=state['current'],
@@ -228,7 +244,8 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                         "task_id": task_id,
                         "training_time": training_time,
                         "report_path": report_path,
-                        "log_path": state.get('training_log_path')
+                        "log_path": state.get('training_log_path'),
+                        "swanlab_log_path": state.get('swanlab_log_path')
                     }
                 ))
             
@@ -280,7 +297,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
 
 def _generate_remote_training_report(task_id: str, final_status: dict, 
                                    training_time: float, task_description: str, 
-                                   error: str = None) -> str:
+                                   swanlab_log_path: str = None, error: str = None) -> str:
     """
     生成远程训练报告
     
@@ -289,11 +306,11 @@ def _generate_remote_training_report(task_id: str, final_status: dict,
         final_status: 最终状态信息
         training_time: 训练用时
         task_description: 任务描述
+        swanlab_log_path: SwanLab日志路径
         error: 错误信息
     
     Returns:
-        训练报告文本
-    """
+        训练报告文本    """
     
     report = []
     report.append("="*60)
@@ -306,6 +323,12 @@ def _generate_remote_training_report(task_id: str, final_status: dict,
     report.append(f"  任务ID: {task_id}")
     report.append(f"  任务描述: {task_description}")
     report.append(f"  执行时间: {training_time:.2f} 秒")
+    
+    if swanlab_log_path:
+        report.append(f"  SwanLab日志路径: {swanlab_log_path}")
+    else:
+        report.append("  SwanLab日志路径: 未找到")
+    
     report.append("")
     
     # 状态信息
@@ -325,13 +348,16 @@ def _generate_remote_training_report(task_id: str, final_status: dict,
             report.append(f"  错误信息: {final_status['error_message']}")
         
         report.append("")
-    
-    # 结果总结
+      # 结果总结
     if final_status and final_status.get('status') == 'completed':
         report.append("✅ 训练执行成功")
         report.append("- 训练任务已成功完成")
         report.append("- 模型已保存到训练服务指定目录")
         report.append("- 可通过训练服务API获取详细日志和结果")
+        if swanlab_log_path:
+            report.append(f"- SwanLab训练监控日志: {swanlab_log_path}")
+        else:
+            report.append("- SwanLab训练监控日志: 未找到或未生成")
     elif error:
         report.append("❌ 训练执行失败")
         report.append(f"- 错误原因: {error}")
@@ -341,12 +367,14 @@ def _generate_remote_training_report(task_id: str, final_status: dict,
         report.append("⚠️  训练状态未知")
         report.append("- 无法确定训练最终状态")
         report.append("- 请手动检查训练服务状态")
-    
     report.append("")
     report.append("注意事项:")
     report.append("- 训练结果保存在远程训练服务中")
     report.append("- 如需下载模型，请使用训练服务提供的接口")
     report.append("- 训练日志和监控数据可通过服务API获取")
+    if swanlab_log_path:
+        report.append("- SwanLab实验监控数据可在指定路径查看")
+        report.append("- 可通过SwanLab界面查看训练曲线和指标")
     
     return "\n".join(report)
 
@@ -359,7 +387,7 @@ def get_training_status(state: LoopAIState) -> dict:
         state: 状态对象
     
     Returns:
-        训练状态字典
+    训练状态字典
     """
     
     status = {
@@ -367,7 +395,8 @@ def get_training_status(state: LoopAIState) -> dict:
         "config_generation_success": state.get('config_generation_success', False),
         "training_success": state.get('training_success', False),
         "training_time": state.get('training_execution_time', 0),
-        "swanlab_url": state.get('swanlab_url'),
+        "swanlab_url": state.get('swanlab_url'),  # 保持向后兼容
+        "swanlab_log_path": state.get('swanlab_log_path'),  # 新增SwanLab日志路径
         "training_log_path": state.get('training_log_path'),
         "output_dir": state.get('train_output_dir'),
         "errors": []

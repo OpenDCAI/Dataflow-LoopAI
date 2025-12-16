@@ -26,6 +26,7 @@ overwrite_output_dir: true
 save_only_model: false
 report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 use_swanlab: true
+swanlab_mode: local
 
 ### train
 per_device_train_batch_size: 1
