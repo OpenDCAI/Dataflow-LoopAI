@@ -48,6 +48,7 @@ training_state = {
     # 必需字段
     'train_dataset_path': "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json",  # 使用 JSON 格式数据集
     'train_task_description': '训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务',
+    'train_config_template_path': "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
     
     # 可选字段（如果不提供将使用默认值）
     'train_model_name': '/jizhicfs/hymiezhao/models/Qwen2.5-1.5B',
@@ -131,12 +132,15 @@ if validation_result['valid']:
             elif stage_name == 'training_execution' and status:
                 task_id = stage_info.get('task_id')
                 final_status = stage_info.get('final_status')
+                swanlab_log_path = stage_info.get('swanlab_log_path')
                 if task_id:
                     console.print(f"    🆔 训练任务ID: {task_id}")
                 if final_status:
                     status_text = final_status.get('status', '未知')
                     console.print(f"    📊 最终状态: {status_text}")
-            
+                if swanlab_log_path:
+                    console.print(f"    📜 SwanLab 日志: {swanlab_log_path}")
+
             if stage_info.get('error'):
                 console.print(f"    ❌ 错误: {stage_info['error']}")
         

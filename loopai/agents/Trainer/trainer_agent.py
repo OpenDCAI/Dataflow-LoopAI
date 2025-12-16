@@ -334,7 +334,8 @@ class TrainerAgent(BaseAgent):
                     "final_status": state.get('training_final_status'),
                     "log_path": state.get('training_log_path'),
                     "report_path": state.get('training_report_path'),
-                    "error": state.get('training_error')
+                    "error": state.get('training_error'),
+                    "swanlab_log_path": state.get('swanlab_log_path')
                 }
             },
             "final_status": "success" if state.get('training_success', False) else "failed",
