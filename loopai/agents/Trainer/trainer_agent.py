@@ -65,7 +65,7 @@ class TrainerAgent(BaseAgent):
                 current=state['current'],
                 progress=0.0,
                 message="开始数据格式检查",
-                data={"dataset_path": state.get('train_dataset_path')}
+                data={"dataset_path": state.get('train_input_dataset_path')}
             ))
         
         logger.info("执行数据检查节点")
@@ -73,16 +73,16 @@ class TrainerAgent(BaseAgent):
         
         # 完成数据检查
         if writer:
-            check_passed = result_state.get('data_check_passed', False)
+            check_passed = result_state.get('trainer_data_check_passed', False)
             writer(StreamEvent(
                 current=state['current'],
                 progress=1.0,
                 message=f"数据检查{'通过' if check_passed else '失败'}",
                 data={
                     "passed": check_passed,
-                    "total_samples": result_state.get('data_check_result', {}).get('total_samples'),
-                    "errors_count": len(result_state.get('data_check_result', {}).get('errors', [])),
-                    "warnings_count": len(result_state.get('data_check_result', {}).get('warnings', []))
+                    "total_samples": result_state.get('trainer_data_check_result', {}).get('total_samples'),
+                    "errors_count": len(result_state.get('trainer_data_check_result', {}).get('errors', [])),
+                    "warnings_count": len(result_state.get('trainer_data_check_result', {}).get('warnings', []))
                 }
             ))
         
@@ -101,8 +101,8 @@ class TrainerAgent(BaseAgent):
                 progress=0.0,
                 message="开始生成训练配置",
                 data={
-                    "model_name": state.get('train_model_name'),
-                    "task_description": state.get('train_task_description')
+                    "model_name": state.get('train_input_model_name'),
+                    "task_description": state.get('train_input_task_description')
                 }
             ))
         
@@ -111,7 +111,7 @@ class TrainerAgent(BaseAgent):
         
         # 完成配置生成
         if writer:
-            success = result_state.get('config_generation_success', False)
+            success = result_state.get('trainer_config_generation_success', False)
             config = result_state.get('train_config', {})
             writer(StreamEvent(
                 current=state['current'],
@@ -123,7 +123,7 @@ class TrainerAgent(BaseAgent):
                     "finetuning_type": config.get('finetuning_type'),
                     "learning_rate": config.get('learning_rate'),
                     "num_train_epochs": config.get('num_train_epochs'),
-                    "config_path": result_state.get('train_config_output_path')
+                    "config_path": result_state.get('train_output_config_path')
                 }
             ))
         
@@ -142,7 +142,7 @@ class TrainerAgent(BaseAgent):
                 progress=0.0,
                 message="开始提交训练任务",
                 data={
-                    "config_path": state.get('train_config_output_path'),
+                    "config_path": state.get('train_output_config_path'),
                     "service_url": state.get('training_service_url')
                 }
             ))
@@ -152,17 +152,17 @@ class TrainerAgent(BaseAgent):
         
         # 完成训练执行
         if writer:
-            success = result_state.get('training_success', False)
+            success = result_state.get('trainer_training_success', False)
             writer(StreamEvent(
                 current=state['current'],
                 progress=1.0,
                 message=f"训练任务{'成功完成' if success else '执行失败'}",
                 data={
                     "success": success,
-                    "task_id": result_state.get('training_task_id'),
-                    "execution_time": result_state.get('training_execution_time'),
-                    "final_status": result_state.get('training_final_status'),
-                    "report_path": result_state.get('training_report_path')
+                    "task_id": result_state.get('trainer_training_task_id'),
+                    "execution_time": result_state.get('trainer_training_execution_time'),
+                    "final_status": result_state.get('trainer_training_final_status'),
+                    "report_path": result_state.get('train_output_training_report_path')
                 }
             ))
         
@@ -171,7 +171,7 @@ class TrainerAgent(BaseAgent):
     @staticmethod
     def should_continue_after_data_check(state: LoopAIState) -> str:
         """数据检查后的条件判断"""
-        if state.get('data_check_passed', False):
+        if state.get('trainer_data_check_passed', False):
             logger.info("数据检查通过，继续配置生成")
             return "config_generation"
         else:
@@ -181,7 +181,7 @@ class TrainerAgent(BaseAgent):
     @staticmethod 
     def should_continue_after_config_generation(state: LoopAIState) -> str:
         """配置生成后的条件判断"""
-        if state.get('config_generation_success', False):
+        if state.get('trainer_config_generation_success', False):
             logger.info("配置生成成功，继续训练执行")
             return "training_execution"
         else:
@@ -275,8 +275,8 @@ class TrainerAgent(BaseAgent):
         
         # 检查必需的字段
         required_fields = [
-            'train_dataset_path',
-            'train_task_description'
+            'train_input_dataset_path',
+            'train_input_task_description'
         ]
         
         for field in required_fields:
@@ -286,10 +286,10 @@ class TrainerAgent(BaseAgent):
         
         # 检查可选字段并设置默认值
         defaults = {
-            'train_model_name': 'qwen2.5-7b-instruct',
+            'train_input_model_name': 'qwen2.5-7b-instruct',
             'train_output_dir': './output/training',
-            'train_use_swanlab': True,
-            'train_swanlab_project': 'llamafactory_training',
+            'train_input_use_swanlab': True,
+            'train_input_swanlab_project': 'llamafactory_training',
             'training_service_url': 'http://localhost:8000',
             'output_dir': './output/trainer'
         }
@@ -317,38 +317,38 @@ class TrainerAgent(BaseAgent):
             "execution_time": None,
             "stages": {
                 "data_check": {
-                    "passed": state.get('data_check_passed', False),
-                    "report_path": state.get('data_check_report_path'),
-                    "error": state.get('data_check_error')
+                    "passed": state.get('trainer_data_check_passed', False),
+                    "report_path": state.get('train_output_data_check_report_path'),
+                    "error": state.get('trainer_data_check_error')
                 },
                 "config_generation": {
-                    "success": state.get('config_generation_success', False),
-                    "config_path": state.get('train_config_output_path'),
-                    "explanation_path": state.get('config_explanation_path'),
-                    "error": state.get('config_generation_error')
+                    "success": state.get('trainer_config_generation_success', False),
+                    "config_path": state.get('train_output_config_path'),
+                    "explanation_path": state.get('trainer_config_explanation_path'),
+                    "error": state.get('trainer_config_generation_error')
                 },
                 "training_execution": {
-                    "success": state.get('training_success', False),
-                    "training_time": state.get('training_execution_time'),
-                    "task_id": state.get('training_task_id'),
-                    "final_status": state.get('training_final_status'),
-                    "log_path": state.get('training_log_path'),
-                    "report_path": state.get('training_report_path'),
-                    "error": state.get('training_error'),
-                    "swanlab_log_path": state.get('swanlab_log_path')
+                    "success": state.get('trainer_training_success', False),
+                    "training_time": state.get('trainer_training_execution_time'),
+                    "task_id": state.get('trainer_training_task_id'),
+                    "final_status": state.get('trainer_training_final_status'),
+                    "log_path": state.get('train_output_training_log_path'),
+                    "report_path": state.get('train_output_training_report_path'),
+                    "error": state.get('train_output_training_error'),
+                    "train_output_swanlab_log_path": state.get('train_output_swanlab_log_path')
                 }
             },
-            "final_status": "success" if state.get('training_success', False) else "failed",
+            "final_status": "success" if state.get('trainer_training_success', False) else "failed",
             "output_files": []
         }
         
         # 收集输出文件
         file_paths = [
-            state.get('data_check_report_path'),
-            state.get('train_config_output_path'),
-            state.get('config_explanation_path'),
-            state.get('training_log_path'),
-            state.get('training_report_path')
+            state.get('train_output_data_check_report_path'),
+            state.get('train_output_config_path'),
+            state.get('trainer_config_explanation_path'),
+            state.get('train_output_training_log_path'),
+            state.get('train_output_training_report_path')
         ]
         summary["output_files"] = [path for path in file_paths if path]
         
@@ -370,11 +370,11 @@ class TrainerAgent(BaseAgent):
             
             # Trainer 运行前需要的字段，如果缺失则触发 Configer 子图来补全配置
             required_fields = [
-                'train_dataset_path',
-                'train_task_description',
-                'train_config_template_path',
+                'train_input_dataset_path',
+                'train_input_task_description',
+                'train_input_config_template_path',
                 'train_output_dir',
-                'train_model_name'
+                'train_input_model_name'
             ]
             missing_fields = []
             for field in required_fields:

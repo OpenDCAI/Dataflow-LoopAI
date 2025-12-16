@@ -181,14 +181,14 @@ async def cancel_task(task_id: str):
 
 
 @app.get("/swanlab-logs/{task_id}", response_model=SwanLabLogResponse)
-async def get_swanlab_log_path(task_id: str):
+async def get_train_output_swanlab_log_path(task_id: str):
     """获取指定任务的SwanLab日志文件夹路径"""
     task_info = task_manager.get_task_status(task_id)
     
     if not task_info:
         raise HTTPException(status_code=404, detail="Task not found")
     
-    log_path = task_manager.get_swanlab_log_path(task_id)
+    log_path = task_manager.get_train_output_swanlab_log_path(task_id)
     
     if log_path:
         return SwanLabLogResponse(

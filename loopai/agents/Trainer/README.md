@@ -17,7 +17,7 @@ Trainer Agent 采用三阶段顺序执行架构：
 **功能：** 验证数据集格式是否符合 LlamaFactory 要求
 
 **输入：**
-- `train_dataset_path`: 数据集文件路径（支持 JSON/JSONL 格式）
+- `train_input_dataset_path`: 数据集文件路径（支持 JSON/JSONL 格式）
 
 **输出：**
 - 数据格式验证报告
@@ -50,9 +50,9 @@ Trainer Agent 采用三阶段顺序执行架构：
 **功能：** 根据任务描述智能生成 LlamaFactory 训练配置
 
 **输入：**
-- `train_task_description`: 训练任务描述
-- `train_model_name`: 基础模型名称（可选）
-- `train_config_template_path`: 配置模板路径（可选）
+- `train_input_task_description`: 训练任务描述
+- `train_input_model_name`: 基础模型名称（可选）
+- `train_input_config_template_path`: 配置模板路径（可选）
 
 **智能配置特性：**
 
@@ -92,14 +92,14 @@ trainer = TrainerAgent(checkpointer=checkpointer, store=store)
 # 准备训练状态
 training_state = {
     # 必需字段
-    'train_dataset_path': './data/my_dataset.json',
-    'train_task_description': '训练一个能够回答编程问题的AI助手',
+    'train_input_dataset_path': './data/my_dataset.json',
+    'train_input_task_description': '训练一个能够回答编程问题的AI助手',
     
     # 可选字段
-    'train_model_name': 'qwen2.5-7b-instruct',
+    'train_input_model_name': 'qwen2.5-7b-instruct',
     'train_output_dir': './output/training',
-    'train_use_swanlab': True,
-    'train_swanlab_project': 'my_training_project',
+    'train_input_use_swanlab': True,
+    'train_input_swanlab_project': 'my_training_project',
     'output_dir': './output/trainer'
 }
 
@@ -114,12 +114,12 @@ result = graph.invoke(training_state, config=config)
 ```python
 # 使用自定义配置模板
 training_state = {
-    'train_dataset_path': './data/dataset.jsonl',
-    'train_task_description': '训练数学推理模型',
-    'train_config_template_path': './templates/math_config.json',
-    'train_model_name': 'qwen2.5-14b-instruct',
-    'train_use_swanlab': True,
-    'train_swanlab_project': 'math_reasoning_model'
+    'train_input_dataset_path': './data/dataset.jsonl',
+    'train_input_task_description': '训练数学推理模型',
+    'train_input_config_template_path': './templates/math_config.json',
+    'train_input_model_name': 'qwen2.5-14b-instruct',
+    'train_input_use_swanlab': True,
+    'train_input_swanlab_project': 'math_reasoning_model'
 }
 ```
 
@@ -129,25 +129,25 @@ training_state = {
 
 | 字段名 | 类型 | 必需 | 默认值 | 说明 |
 |-------|------|-----|--------|-----|
-| `train_dataset_path` | str | ✅ | - | 训练数据集路径 |
-| `train_task_description` | str | ✅ | - | 训练任务描述 |
-| `train_model_name` | str | ❌ | qwen2.5-7b-instruct | 基础模型名称 |
-| `train_config_template_path` | str | ❌ | - | 配置模板路径 |
+| `train_input_dataset_path` | str | ✅ | - | 训练数据集路径 |
+| `train_input_task_description` | str | ✅ | - | 训练任务描述 |
+| `train_input_model_name` | str | ❌ | qwen2.5-7b-instruct | 基础模型名称 |
+| `train_input_config_template_path` | str | ❌ | - | 配置模板路径 |
 | `train_output_dir` | str | ❌ | ./output/training | 训练输出目录 |
-| `train_use_swanlab` | bool | ❌ | True | 是否使用SwanLab |
-| `train_swanlab_project` | str | ❌ | llamafactory_training | SwanLab项目名 |
+| `train_input_use_swanlab` | bool | ❌ | True | 是否使用SwanLab |
+| `train_input_swanlab_project` | str | ❌ | llamafactory_training | SwanLab项目名 |
 | `output_dir` | str | ❌ | ./output/trainer | Agent输出目录 |
 
 ### 输出字段
 
 | 字段名 | 类型 | 说明 |
 |-------|------|-----|
-| `data_check_passed` | bool | 数据检查是否通过 |
-| `data_check_report_path` | str | 数据检查报告路径 |
-| `config_generation_success` | bool | 配置生成是否成功 |
-| `train_config_output_path` | str | 生成的配置文件路径 |
-| `training_success` | bool | 训练是否成功 |
-| `training_log_path` | str | 训练日志文件路径 |
+| `trainer_data_check_passed` | bool | 数据检查是否通过 |
+| `train_output_data_check_report_path` | str | 数据检查报告路径 |
+| `trainer_config_generation_success` | bool | 配置生成是否成功 |
+| `train_output_config_path` | str | 生成的配置文件路径 |
+| `trainer_training_success` | bool | 训练是否成功 |
+| `train_output_training_log_path` | str | 训练日志文件路径 |
 | `swanlab_url` | str | SwanLab监控链接 |
 
 ## 🛠️ 工具类

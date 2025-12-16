@@ -20,7 +20,7 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
     
     Args:
         state: LoopAIState 对象，需要包含：
-            - train_dataset_path: 训练数据集路径
+            - train_input_dataset_path: 训练数据集路径
             - output_dir: 输出目录（用于保存检查报告）
     
     Returns:
@@ -31,9 +31,9 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
     
     try:
         # 获取数据集路径
-        dataset_path = state.get('train_dataset_path')
+        dataset_path = state.get('train_input_dataset_path')
         if not dataset_path:
-            raise ValueError("缺少训练数据集路径 (train_dataset_path)")
+            raise ValueError("缺少训练数据集路径 (train_input_dataset_path)")
         
         logger.info(f"检查数据集: {dataset_path}")
         
@@ -54,20 +54,20 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
         logger.info(f"数据检查报告已保存到: {report_path}")
         
         # 更新状态
-        state['data_check_result'] = check_result
-        state['data_check_report_path'] = report_path
+        state['trainer_data_check_result'] = check_result
+        state['train_output_data_check_report_path'] = report_path
         
         # 记录检查结果
         if check_result['is_valid']:
             logger.info("✅ 数据格式检查通过")
             logger.info(f"数据集包含 {check_result['total_samples']} 个样本")
-            state['data_check_passed'] = True
+            state['trainer_data_check_passed'] = True
         else:
             logger.warning("❌ 数据格式检查未通过")
             logger.warning(f"发现 {len(check_result['errors'])} 个错误")
             for error in check_result['errors'][:5]:  # 只显示前5个错误
                 logger.warning(f"  - {error}")
-            state['data_check_passed'] = False
+            state['trainer_data_check_passed'] = False
         
         # 显示警告信息
         if check_result.get('warnings'):
@@ -77,8 +77,8 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
         
     except Exception as e:
         logger.error(f"数据检查节点执行失败: {str(e)}")
-        state['data_check_passed'] = False
-        state['data_check_error'] = str(e)
+        state['trainer_data_check_passed'] = False
+        state['trainer_data_check_error'] = str(e)
     
     logger.info("数据检查节点执行完成")
     return state

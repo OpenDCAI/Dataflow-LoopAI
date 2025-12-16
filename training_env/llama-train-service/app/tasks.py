@@ -175,7 +175,7 @@ class TaskManager:
             for task_id, _ in tasks_to_remove:
                 del self.tasks[task_id]
     
-    def get_swanlab_log_path(self, task_id: str) -> Optional[str]:
+    def get_train_output_swanlab_log_path(self, task_id: str) -> Optional[str]:
         """获取指定任务的SwanLab日志文件夹路径"""
         if task_id not in self.tasks:
             return None

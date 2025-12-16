@@ -189,7 +189,7 @@ class TrainingServiceClient:
                 return False, None, f"获取任务状态失败: {error}"
             
             task_status = status_info.get("status")
-            state['current_training_status'] = task_status
+            state['trainer_current_training_status'] = task_status
             
             # 调用进度回调
             if progress_callback:
@@ -209,7 +209,7 @@ class TrainingServiceClient:
             # 等待下次检查
             time.sleep(check_interval)
     
-    def get_swanlab_log_path(self, task_id: str) -> Tuple[bool, Optional[str], Optional[str]]:
+    def get_train_output_swanlab_log_path(self, task_id: str) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         获取指定任务的SwanLab日志文件夹路径
         

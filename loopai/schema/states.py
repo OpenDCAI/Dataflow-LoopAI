@@ -81,34 +81,33 @@ class LoopAIState(MessagesState):
     obtainer_mapping_results: Dict[str, Any] = None  # mapping execution results
 
     # trainer state attributes
-    train_dataset_path: str  # to defined the path of training dataset (json/jsonl format)
-    train_task_description: str  # to defined the task description for training
-    train_config_template_path: str  # to defined the path of llamafactory config template
-    train_config_output_path: str  # to defined the path of generated training config
+    train_input_dataset_path: str  # to defined the path of training dataset (json/jsonl format)
+    train_input_task_description: str  # to defined the task description for training
+    train_input_config_template_path: str  # to defined the path of llamafactory config template
+    train_output_config_path: str  # to defined the path of generated training config
     train_output_dir: str  # to defined the output directory for training
-    train_model_name: str  # to defined the base model name for training
-    train_use_swanlab: bool = True  # whether to use swanlab for monitoring
-    train_swanlab_project: str  # to defined the swanlab project name
+    train_input_model_name: str  # to defined the base model name for training
+    train_input_use_swanlab: bool = True  # whether to use swanlab for monitoring
+    train_input_swanlab_project: str  # to defined the swanlab project name
     
     # trainer workflow state fields
-    data_check_passed: bool = False  # whether data check passed
-    data_check_result: dict = {}  # data check result details
-    data_check_report_path: str = ""  # path to data check report
-    data_check_error: str = ""  # data check error message
-    config_generation_success: bool = False  # whether config generation succeeded
-    config_explanation_path: str = ""  # path to config explanation
-    config_generation_error: str = ""  # config generation error message
-    training_success: bool = False  # whether training succeeded
-    training_execution_time: float = 0.0  # training execution time
-    training_task_id: str = ""  # remote training task id
-    training_final_status: dict = {}  # final training status
-    training_log_path: str = ""  # path to training log
-    training_report_path: str = ""  # path to training report
-    training_error: str = ""  # training error message
+    trainer_data_check_passed: bool = False  # whether data check passed
+    trainer_data_check_result: dict = {}  # data check result details
+    train_output_data_check_report_path: str = ""  # path to data check report
+    trainer_data_check_error: str = ""  # data check error message
+    trainer_config_generation_success: bool = False  # whether config generation succeeded
+    trainer_config_explanation_path: str = ""  # path to config explanation
+    trainer_config_generation_error: str = ""  # config generation error message
+    trainer_training_success: bool = False  # whether training succeeded
+    trainer_training_execution_time: float = 0.0  # training execution time
+    trainer_training_task_id: str = ""  # remote training task id
+    trainer_training_final_status: dict = {}  # final training status
+    train_output_training_log_path: str = ""  # path to training log
+    train_output_training_report_path: str = ""  # path to training report
+    train_output_training_error: str = ""  # training error message
     training_service_url: str = "http://localhost:8000"  # training service URL
-    current_training_status: str = ""  # current training status
-    update_model_path: str  # to defined the save path of the post-trained model
-    swanlab_log_path: str  # to defined the path of swanlab log directory
+    trainer_current_training_status: str = ""  # current training status
+    train_output_swanlab_log_path: str  # to defined the path of swanlab log directory
 
     # graph state attributes
     current: str  # to defined the current task, e.g. train, evaluate, obtain, naive
