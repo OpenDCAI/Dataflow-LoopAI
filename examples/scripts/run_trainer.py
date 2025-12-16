@@ -49,10 +49,10 @@ training_state = {
     'train_input_dataset_path': "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json",  # 使用 JSON 格式数据集
     'train_input_task_description': '训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务',
     'train_input_config_template_path': "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
-    
-    # 可选字段（如果不提供将使用默认值）
     'train_input_model_name': '/jizhicfs/hymiezhao/models/Qwen2.5-1.5B',
     'train_output_dir': './output/training_test',
+
+    # 可选字段（如果不提供将使用默认值）
     'train_input_use_swanlab': True,
     'train_input_swanlab_project': 'test_llamafactory_training',
     'training_service_url': 'http://localhost:8000',  # 远程训练服务地址
