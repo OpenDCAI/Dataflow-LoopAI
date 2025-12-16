@@ -15,6 +15,76 @@ from loopai.logger import get_logger
 logger = get_logger()
 
 
+def extract_code_blocks_from_markdown(text: str) -> List[Dict[str, str]]:
+    """
+    从 Markdown 文本中提取代码块
+    
+    支持两种格式:
+    1. 带语言标识的代码块: ```python ... ```
+    2. 不带语言标识的代码块: ``` ... ```
+    
+    Returns:
+        List[Dict[str, str]]: 每个字典包含 'language', 'code', 'length' 字段
+    """
+    code_blocks = []
+    
+    # 正则匹配 markdown 代码块
+    # 匹配 ```language\n code \n``` 或 ```\n code \n```
+    pattern = r'```(\w*)\n(.*?)```'
+    matches = re.findall(pattern, text, re.DOTALL)
+    
+    for match in matches:
+        language = match[0].strip() if match[0] else 'unknown'
+        code = match[1].strip()
+        
+        # 过滤掉过短的代码块（可能是示例或占位符）
+        if len(code) >= 20:  # 至少20字符
+            code_blocks.append({
+                'language': language,
+                'code': code,
+                'length': len(code)
+            })
+    
+    # 如果没有找到，尝试匹配缩进代码块（4个空格或1个tab开头的连续行）
+    if not code_blocks:
+        lines = text.split('\n')
+        current_block = []
+        in_code_block = False
+        
+        for line in lines:
+            # 检查是否是缩进的代码行
+            if line.startswith('    ') or line.startswith('\t'):
+                if not in_code_block:
+                    in_code_block = True
+                    current_block = []
+                # 去掉缩进
+                clean_line = line[4:] if line.startswith('    ') else line[1:]
+                current_block.append(clean_line)
+            else:
+                if in_code_block and current_block:
+                    code = '\n'.join(current_block).strip()
+                    if len(code) >= 20:
+                        code_blocks.append({
+                            'language': 'unknown',
+                            'code': code,
+                            'length': len(code)
+                        })
+                    current_block = []
+                in_code_block = False
+        
+        # 处理最后一个代码块
+        if in_code_block and current_block:
+            code = '\n'.join(current_block).strip()
+            if len(code) >= 20:
+                code_blocks.append({
+                    'language': 'unknown',
+                    'code': code,
+                    'length': len(code)
+                })
+    
+    return code_blocks
+
+
 class MockRAGManager:
     """临时的 RAG Mock 类，用于禁用 RAG 功能（测试用）"""
     
@@ -328,13 +398,20 @@ class CrawlOrchestrator:
                 logger.info(f"  跳过: 空内容或内容长度 < {self.min_text_length} 字符")
                 continue
             
+            # 从 Markdown 内容中提取代码块
+            code_blocks = extract_code_blocks_from_markdown(text_content)
+            if code_blocks:
+                logger.info(f"  提取到 {len(code_blocks)} 个代码块")
+            
             content = CrawledContent(
                 url=source_url,
                 title=raw_data.get('structured_content', {}).get('title', '') if 'structured_content' in raw_data else '',
                 content=text_content,
+                code_blocks=code_blocks if code_blocks else None,
                 metadata={
                     "extraction_method": raw_data.get('extraction_method', 'unknown'),
-                    "content_length": len(text_content)
+                    "content_length": len(text_content),
+                    "code_blocks_count": len(code_blocks) if code_blocks else 0
                 }
             )
             
