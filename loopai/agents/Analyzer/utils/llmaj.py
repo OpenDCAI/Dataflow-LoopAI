@@ -13,10 +13,33 @@ DEFAULT_STAGES = {
 }
 
 def _truncate(s: str, n: int) -> str:
+    """
+    将字符串截断到指定长度，并在末尾追加标记
+
+    Args:
+        s: 原始字符串
+        n: 最大保留长度
+
+    Returns:
+        截断后的字符串；如果 s 为 None，返回空串
+    """
     if s is None: return ""
     return s if len(s) <= n else s[:n] + "\n...[truncated]"
 
 def _safe_json(s: Any) -> Optional[Dict[str, Any]]:
+    """
+    尝试从字符串或字典中解析出合法 JSON 对象
+
+    支持以下输入形式：
+    - 已经是 dict：直接返回
+    - 字符串：自动去掉 ```json ... ``` 包裹，并从中提取最后一个 {...} 结构尝试解析
+
+    Args:
+        s: 待解析对象（dict 或 str）
+
+    Returns:
+        解析成功返回 dict；否则返回 None
+    """
     if isinstance(s, dict):
         return s
     if not isinstance(s, str):
@@ -31,6 +54,22 @@ def _safe_json(s: Any) -> Optional[Dict[str, Any]]:
     return None
 
 def _valid(obj: Any, stages: set) -> bool:
+    """
+    检查模型返回的 JSON 结构是否符合基础要求
+
+    规则：
+    - 必须是 dict
+    - 必须包含 stage、reason、evidence 字段
+    - stage 在允许的阶段集合中
+    - evidence 必须为 dict
+
+    Args:
+        obj: 待校验对象
+        stages: 允许的阶段集合
+
+    Returns:
+        是否为合法结构
+    """
     return (
         isinstance(obj, dict) and
         obj.get("stage") in stages and
@@ -40,6 +79,15 @@ def _valid(obj: Any, stages: set) -> bool:
 
 # ---------- code 侧的可统计因子 ----------
 def _infer_problem_type(prompt: str) -> str:
+    """
+    基于题面 prompt 的关键词，粗略推断问题类型
+
+    Args:
+        prompt: 题目描述文本
+
+    Returns:
+        归一化的问题类型标签，如 "string" / "list/array" / "math" / "general" 等
+    """
     p = (prompt or "").lower()
     rules = [
         ("string", ["string","palindrome","anagram"]),
@@ -59,6 +107,21 @@ def _infer_problem_type(prompt: str) -> str:
     return "general"
 
 def _code_stats(code: str) -> Dict[str, Any]:
+    """
+    对代码片段做静态统计，提取结构复杂度相关特征
+
+    特征包括：
+    - 行数、token 数、函数定义数
+    - 循环/分支/异常块数量
+    - 近似圈复杂度（loops + branches + try + 1）
+    - 是否存在递归调用
+
+    Args:
+        code: 代码字符串
+
+    Returns:
+        包含多种统计指标的字典
+    """
     import ast
     code = code or ""
     n_lines = code.count("\n") + 1 if code else 0
@@ -84,6 +147,21 @@ def _code_stats(code: str) -> Dict[str, Any]:
             "approx_complexity": cyclo,"possible_recursion": rec}
 
 def _extract_io_diff(stdout_tail: str, err_text: str) -> Dict[str, Any]:
+    """
+    从 stdout / err 文本中，启发式抽取断言失败的 I/O 差异信息
+
+    尝试识别以下内容：
+    - failing_expr: 实际断言表达式
+    - expected: 期望值
+    - got: 实际值（如 where ... = xxx）
+
+    Args:
+        stdout_tail: 评测标准输出尾部
+        err_text: 错误输出文本
+
+    Returns:
+        包含 failing_expr / expected / got 的字典，均已截断到安全长度
+    """
     text = (stdout_tail or "") + "\n" + (err_text or "")
     failing = expected = got = None
     m = re.search(r"E\s+assert\s+(.*)\s*==\s*(.*)", text) or re.search(r"AssertionError[: ]\s*assert\s+(.*)\s*==\s*(.*)", text)
@@ -95,6 +173,19 @@ def _extract_io_diff(stdout_tail: str, err_text: str) -> Dict[str, Any]:
 
 # ---------- SQL 侧的轻量统计 ----------
 def _sql_stats(query: str) -> Dict[str, Any]:
+    """
+    对 SQL 查询做轻量统计，用于附加诊断信息
+
+    特征包括：
+    - 长度、SELECT 数量、JOIN 数量
+    - 子查询数量、聚合函数、GROUP BY / ORDER BY / LIMIT 等使用情况
+
+    Args:
+        query: SQL 查询字符串
+
+    Returns:
+        包含 SQL 结构统计的字典
+    """
     q = (query or "").lower()
     return {
         "length": len(q),
@@ -109,6 +200,21 @@ def _sql_stats(query: str) -> Dict[str, Any]:
 
 # ---------- 启发式（不依赖 prompt） ----------
 def _heuristic_code(ev: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    仅依赖日志内容，对 code 题进行启发式错误归因
+
+    优先级顺序大致为：
+    - timeout / SyntaxError / ImportError
+    - NameError / TypeError / AssertionError / ValueError / ZeroDivisionError
+    - IndexError / KeyError / RecursionError
+    - 兜底的 other
+
+    Args:
+        ev: 证据信息字典，期望包含 stderr_head / err_text / stdout_tail 等字段
+
+    Returns:
+        基于规则的初步判因结果 dict
+    """
     text = f'{ev.get("stderr_head","")}\n{ev.get("err_text","")}\n{ev.get("stdout_tail","")}'
     def has(s): return s in text
     stage, exc, reason, file_line, assert_msg = "other","", "运行失败（未知错误），请看 evidence", "", ""
@@ -134,6 +240,23 @@ def _heuristic_code(ev: Dict[str, Any]) -> Dict[str, Any]:
     return _pack("other","",reason, ev, score=0.3)
 
 def _heuristic_sql(ev: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    仅依赖错误信息，对 SQL / text2sql 任务做启发式错误分类
+
+    主要类别：
+    - sql_syntax: 语法错误
+    - sql_schema: 表/列不存在等 schema 问题
+    - sql_type: 类型不匹配
+    - sql_timeout: 执行超时
+    - sql_perf: 性能问题（如全表扫描/内存不足）
+    - other: 未知原因
+
+    Args:
+        ev: 证据信息字典
+
+    Returns:
+        初步 SQL 判因结果 dict
+    """
     text = f'{ev.get("stderr_head","")}\n{ev.get("err_text","")}\n{ev.get("stdout_tail","")}'.lower()
     def has(*keys): return any(k in text for k in keys)
     if has("syntax error","parse error","near"):
@@ -149,6 +272,21 @@ def _heuristic_sql(ev: Dict[str, Any]) -> Dict[str, Any]:
     return _pack("other","", "SQL 执行失败（未知原因）", ev, score=0.3)
 
 def _pack(stage: str, exc: str, reason: str, ev: Dict[str, Any], *, file_line: str="", assert_msg: str="", score: float=0.0) -> Dict[str, Any]:
+    """
+    将核心判因信息打包为统一结构
+
+    Args:
+        stage: 错误阶段标签
+        exc: 异常类型字符串
+        reason: 人类可读的简要原因描述
+        ev: 原始 evidence 字典
+        file_line: 可选，文件名+行号信息
+        assert_msg: 可选，断言失败信息
+        score: 规则信心分（0~1 之间，主要用于融合）
+
+    Returns:
+        标准化的判因结果字典
+    """
     return {
         "stage": stage, "exception_type": exc or "", "reason": reason,
         "evidence": {
@@ -160,6 +298,15 @@ def _pack(stage: str, exc: str, reason: str, ev: Dict[str, Any], *, file_line: s
     }
 
 def _quick_advice(stage: str) -> str:
+    """
+    根据错误阶段快速给出一句中文建议
+
+    Args:
+        stage: 错误阶段标签
+
+    Returns:
+        简短的中文建议句子
+    """
     m = {
         "assert":"检查返回值与题意，完善边界条件",
         "syntax":"修复语法/缩进错误后重试",
@@ -177,12 +324,22 @@ def _quick_advice(stage: str) -> str:
 # =============== 主类（无 prompt，任务可切换）================
 class LLMJudge:
     """
-    一个“没有内置 prompt”的轻量 Judge：
-    - 你可以传入模型的 JSON 结果（或原始字符串，能被解析为 JSON）。
-    - 也可以完全不传模型结果，仅走规则兜底。
-    - 支持 task='code' / 'sql'（text2sql），便于在不同项目中复用。
+    一个“没有内置 prompt”的轻量 Judge 核心。
+
+    特点：
+    - 不依赖具体 prompt，只消费“模型 JSON 输出 + OJ 证据”
+    - 支持 task='code' 与 task='sql'（text2sql）
+    - 当模型输出结构非法或缺失时，会自动回退到纯规则判因
+    - 内部附带 code_stats / sql_stats 等统计信息，便于后续分析
     """
     def __init__(self, task: str = "code", stages: Optional[set] = None):
+        """
+        初始化 Judge
+
+        Args:
+            task: 任务类型，"code" 或 "sql"
+            stages: 允许的错误阶段集合；默认为 DEFAULT_STAGES
+        """
         self.task = task  # "code" | "sql"
         self.stages = stages or DEFAULT_STAGES
 
@@ -190,7 +347,24 @@ class LLMJudge:
                 evidence: Dict[str, Any],
                 *,
                 model_result: Optional[Dict[str, Any] | str] = None) -> Dict[str, Any]:
+        """
+        综合“规则启发式 + 模型 JSON 输出”给出最终判因结果
 
+        处理流程：
+        1. 根据 task 类型生成 rule-based 基线结果（code/sql 走不同分支）
+        2. 尝试从 model_result 解析出合法 JSON
+        3. 如果模型结果结构合法且 stage 非 "other"，则作为主导并与规则结果融合
+        4. 否则仅补充模型 factors / advice / tags 等信息
+
+        Args:
+            evidence: OJ/执行日志证据信息（包含 stderr_head / stdout_tail / err_text 等字段）
+            model_result: 可选，来自 LLM 的判因 JSON（dict 或 str）
+
+        Returns:
+            标准化后的判因结果 dict，包含：
+            - stage / exception_type / reason / evidence / factors / advice / tags
+            - 以及透传的 task_id / sample_index / passed / raw_model_output 等
+        """
         if self.task == "sql":
             base = _heuristic_sql(evidence)
             # SQL 的 factors（轻量统计）
@@ -225,6 +399,22 @@ class LLMJudge:
         return out
 
     def _merge(self, rule_obj: Dict[str, Any], model_obj: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        将规则结果与模型 JSON 结果进行融合
+
+        融合策略：
+        - 若模型结果合法且 stage 在允许集合且非 "other"，以模型结果为主：
+          * 非 evidence / factors 字段优先采用模型值
+          * evidence / factors 做字段级 merge（模型覆盖规则）
+        - 否则，仅把模型的 factors / advice / tags 视为增量信息附加到规则结果上
+
+        Args:
+            rule_obj: 规则启发式生成的判因结果
+            model_obj: 解析出的模型判因 JSON，可能为 None
+
+        Returns:
+            融合后的判因结果 dict
+        """
         if model_obj is None:
             return rule_obj
         if model_obj.get("stage") in self.stages and model_obj.get("stage") != "other":
@@ -246,6 +436,19 @@ class LLMJudge:
         return out
 
     def _auto_tags(self, obj: Dict[str, Any]) -> list:
+        """
+        在缺少模型 tags 时，基于 stage / 统计特征自动生成一组标签
+
+        规则示例：
+        - code 任务：根据 problem_type / 复杂度 / 是否返回 None 等打标签
+        - sql 任务：根据 joins / subqueries 等打标签
+
+        Args:
+            obj: 当前判因结果 dict
+
+        Returns:
+            去重后的标签列表
+        """
         tags = [obj.get("stage","other")]
         if self.task == "sql":
             s = (obj.get("factors") or {}).get("sql_stats") or {}

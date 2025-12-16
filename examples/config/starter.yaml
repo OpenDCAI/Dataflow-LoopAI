@@ -2,6 +2,17 @@ starter:
   model_name: "deepseek-chat"
   base_url: "https://api.deepseek.com"
   api_key_path: "./api_key.txt"
+  tavily_api_key_path: "./tavily_api_key.txt"
+  kaggle_username: "binrxu"  # Kaggle username (leave empty if not needed)
+  kaggle_key: "8c120e3a3c8d45f71ace8b4981f829ac"  # Kaggle API key (leave empty if not needed)
+
+# RAG configuration (independent from obtainer)
+rag:
+  reset: false  # whether to reset RAG database
+  embed_model: "text-embedding-3-large"  # RAG embedding model (default: "text-embedding-3-large", leave empty to use default)
+  collection_name: "rag_collection"  # RAG collection name
+  api_base_url: "http://123.129.219.111:3000/v1"  # RAG API base URL (if empty, will use obtainer's base_url)
+  api_key_path: "./rag_api_key.txt"  # RAG API key file path (if empty, will use obtainer's api_key)
 
 default_states:
   eval_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
@@ -10,10 +21,10 @@ default_states:
   eval_temperature: 0
   eval_top_p: 0.95
   eval_test_case_path: "./outputs/test.json"
-  eval_problem_path: "./data/human-eval-v2-20210705.jsonl"
+  eval_problem_path: "./data/human-eval-v2-20210705-format.jsonl"
   eval_result_path: "./outputs/result.json"
   eval_batch_size: 10
-
+  prompt_template_dir: "./loopai/common/prompts"
   analyze_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
   analyze_base_url: "http://127.0.0.1:8911/v1"
   analyze_api_key: "EMPTY"
@@ -26,3 +37,28 @@ default_states:
   analyze_sampling_top_k: 5
   output_suggestion: true
   analyze_batch_size: 20
+
+  # Obtainer agent configuration
+  obtainer_model_path: "gpt-4o"  # if empty, will use analyze_model_path or starter model
+  obtainer_base_url: "http://123.129.219.111:3000/v1"  # if empty, will use analyze_base_url or starter base_url
+  obtainer_api_key: ""  # if empty, will use starter api_key
+  obtainer_temperature: 0.7
+  obtainer_search_engine: "tavily"  # tavily, duckduckgo, jina
+  obtainer_max_urls: 6
+  obtainer_max_download_subtasks: null  # null means no limit
+  obtainer_category: "SFT"  # PT or SFT
+  obtainer_debug: false
+  obtainer_proxy: "http://127.0.0.1:9090"
+  obtainer_default_mapping_format: "alpaca"  # default mapping format to auto-skip interaction
+  # Webpage collect node configuration
+  obtainer_max_exploration_depth: 3  # Maximum depth for Playwright exploration
+  obtainer_max_jina_urls: 30  # Maximum URLs to explore with Jina per resource list page
+  # Webpage dataset node configuration
+  obtainer_max_records_per_page: 20  # Maximum dataset records to generate per webpage (default: 10)
+  obtainer_min_relevance_score: 0.7  # Minimum relevance score for records (0.0-1.0, default: 0.7)
+
+  train_dataset_path: "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json"  # to defined the path of training dataset (json/jsonl format)
+  train_task_description: "训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务"  # to defined the task description for training
+  train_config_template_path: "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml"  # to defined the path of llamafactory config template
+  train_output_dir: "./output/training_test"  # to defined the output directory for training
+  train_model_name: "/jizhicfs/hymiezhao/models/Qwen2.5-1.5B"  # to defined the base model name for training

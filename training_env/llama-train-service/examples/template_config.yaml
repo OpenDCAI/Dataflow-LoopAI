@@ -1,0 +1,34 @@
+# 这个文件只是示例，实际使用时请根据需要修改路径和参数
+
+# 基础模型配置
+model_name: llama3
+model_name_or_path: /path/to/your/model  # 请修改为实际模型路径
+
+# 数据集配置
+dataset: alpaca_gpt4_en  # 请根据实际数据集修改
+template: llama3
+dataset_dir: /path/to/your/data  # 请修改为实际数据路径
+
+# 训练方式
+stage: sft
+do_train: true
+finetuning_type: lora
+
+# LoRA配置
+lora_target: q_proj,v_proj
+lora_rank: 8
+lora_alpha: 16
+lora_dropout: 0.1
+
+# 训练参数
+cutoff_len: 1024
+max_samples: 1000
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 5.0e-5
+num_train_epochs: 3.0
+
+# 输出配置
+output_dir: ./saves/my_model
+logging_steps: 10
+save_steps: 500

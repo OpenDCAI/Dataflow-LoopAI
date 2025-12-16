@@ -2,5 +2,12 @@ __pycache__/
 api_key.txt
 data/
 output/
+**/.ipynb_checkpoints/
+temp/
 outputs/
 loopai.egg-info/
+tavily_api_key.txt
+rag_api_key.txt
+examples/scripts/test_mcp_tools.py
+examples/scripts/list_mcp_tools.py
+.gitattributes
