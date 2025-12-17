@@ -61,7 +61,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 progress=0.1,
                 message="正在连接训练服务...",
                 data={"service_url": service_url, "config_path": config_path}
-            ))
+            ).json())
         
         # 创建训练服务客户端
         logger.info("连接训练服务...")
@@ -80,7 +80,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 progress=0.2,
                 message="训练服务连接成功，准备提交任务...",
                 data={"service_status": "connected"}
-            ))        
+            ).json())        
         # 启动训练任务
         logger.info("🚀 提交训练任务到远程服务...")
         
@@ -91,7 +91,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 progress=0.3,
                 message="正在提交训练任务到远程服务...",
                 data={"task_description": task_description}
-            ))
+            ).json())
         
         start_time = time.time()
         success, task_id_or_error, error_detail = client.start_training(
@@ -112,7 +112,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 progress=0.4,
                 message=f"训练任务提交成功，任务ID: {task_id}",
                 data={"task_id": task_id, "start_time": start_time}
-            ))
+            ).json())
         
         # 等待训练完成并监控进度
         def progress_callback(tid, status_info, elapsed_time):
@@ -138,7 +138,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                         "elapsed_time": int(elapsed_time),
                         "estimated_progress": f"{int(progress_val * 100)}%"
                     }
-                ))        
+                ).json())        
         logger.info("⏳ 等待训练完成...")
         success, final_status, error = client.wait_for_completion(
             state=state,
@@ -162,7 +162,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                     "final_status": final_status.get('status') if final_status else 'unknown',
                     "success": success
                 }
-            ))
+            ).json())
           # 获取训练日志
         logger.info("📄 获取训练日志...")
         log_success, logs, log_error = client.get_task_logs(task_id, lines=1000)
@@ -204,7 +204,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                     "swanlab_path": state.get('train_output_swanlab_log_path'),
                     "swanlab_retrieved": swanlab_success
                 }
-            ))
+            ).json())
           # 生成训练报告
         report = _generate_remote_training_report(
             task_id=task_id,
@@ -247,7 +247,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                         "log_path": state.get('train_output_training_log_path'),
                         "train_output_swanlab_log_path": state.get('train_output_swanlab_log_path')
                     }
-                ))
+                ).json())
             
         else:
             final_status_str = final_status.get('status', 'unknown') if final_status else 'unknown'
@@ -270,7 +270,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                         "error": error,
                         "training_time": training_time
                     }
-                ))
+                ).json())
         
         logger.info(f"训练报告已保存到: {report_path}")        
     except Exception as e:
@@ -289,7 +289,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                     "error_type": "execution_exception",
                     "error_message": str(e)
                 }
-            ))
+            ).json())
     
     logger.info("训练节点执行完成")
     return state

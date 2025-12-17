@@ -66,7 +66,7 @@ class TrainerAgent(BaseAgent):
                 progress=0.0,
                 message="开始数据格式检查",
                 data={"dataset_path": state.get('train_input_dataset_path')}
-            ))
+            ).json())
         
         logger.info("执行数据检查节点")
         result_state = data_check_node(state)
@@ -84,7 +84,7 @@ class TrainerAgent(BaseAgent):
                     "errors_count": len(result_state.get('trainer_data_check_result', {}).get('errors', [])),
                     "warnings_count": len(result_state.get('trainer_data_check_result', {}).get('warnings', []))
                 }
-            ))
+            ).json())
         
         return result_state
     
@@ -104,7 +104,7 @@ class TrainerAgent(BaseAgent):
                     "model_name": state.get('train_input_model_name'),
                     "task_description": state.get('train_input_task_description')
                 }
-            ))
+            ).json())
         
         logger.info("执行配置生成节点")
         result_state = config_generation_node(state)
@@ -125,7 +125,7 @@ class TrainerAgent(BaseAgent):
                     "num_train_epochs": config.get('num_train_epochs'),
                     "config_path": result_state.get('train_output_config_path')
                 }
-            ))
+            ).json())
         
         return result_state
     
@@ -145,7 +145,7 @@ class TrainerAgent(BaseAgent):
                     "config_path": state.get('train_output_config_path'),
                     "service_url": state.get('training_service_url')
                 }
-            ))
+            ).json())
         
         logger.info("执行训练节点")
         result_state = training_execution_node(state, writer)
@@ -164,7 +164,7 @@ class TrainerAgent(BaseAgent):
                     "final_status": result_state.get('trainer_training_final_status'),
                     "report_path": result_state.get('train_output_training_report_path')
                 }
-            ))
+            ).json())
         
         return result_state
     
@@ -366,7 +366,7 @@ class TrainerAgent(BaseAgent):
                     progress=0.0,
                     message="正在检查训练所需的配置字段...",
                     data={"stage": "field_validation"}
-                ))
+                ).json())
             
             # Trainer 运行前需要的字段，如果缺失则触发 Configer 子图来补全配置
             required_fields = [
@@ -393,7 +393,7 @@ class TrainerAgent(BaseAgent):
                             "total_required": len(required_fields),
                             "missing_count": len(missing_fields)
                         }
-                    ))
+                    ).json())
                 
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
@@ -419,5 +419,5 @@ class TrainerAgent(BaseAgent):
                             "all_fields_present": True,
                             "total_required": len(required_fields)
                         }
-                    ))
+                    ).json())
         return check_required_fields
