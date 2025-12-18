@@ -106,7 +106,7 @@ class AgentEvent:
         
         def print_custom_info(obj: dict):
             for key in obj:
-                if obj[key]['message']:
+                if 'message' in obj[key]:
                     return (f"🔧 {key}: {obj[key]['message']}", "purple")
 
         def print_title(title: str):
