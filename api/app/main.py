@@ -220,7 +220,7 @@ async def health_check():
     """健康检查"""
     return {
         "status": "healthy",
-        "service": "llama-train-service",
+        "service": "loopai-service",
         "directories": {
             "configs": os.path.exists(CONFIGS_DIR),
             "logs": os.path.exists(LOGS_DIR),

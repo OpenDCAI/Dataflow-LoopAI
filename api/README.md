@@ -119,7 +119,7 @@ pip install llamafactory-cli
 
 1. **克隆项目**
 ```bash
-cd training_env/llama-train-service
+cd api/
 ```
 
 2. **安装依赖**
@@ -362,7 +362,7 @@ task_info = {
 
 #### 3. 文件系统组织
 ```
-llama-train-service/
+api/
 ├── configs/           # 训练配置文件
 │   └── {task_id}.yaml
 └── logs/             # 训练日志

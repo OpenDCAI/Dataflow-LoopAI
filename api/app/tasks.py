@@ -22,7 +22,7 @@ class TaskManager:
         self.runs_dir = runs_dir
         self.tasks: Dict[str, Dict] = {}
         self.executor = ThreadPoolExecutor(max_workers=4)
-        self.llamafactory_dir = "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory"
+        self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
         
         # 确保目录存在
         for directory in [configs_dir, logs_dir, runs_dir, self.llamafactory_dir]:
@@ -70,11 +70,11 @@ class TaskManager:
         env = os.environ.copy()
         
         # 从环境变量中获取配置，如果没有则使用默认值
-        env["CUDA_VISIBLE_DEVICES"] = os.getenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+        env["CUDA_VISIBLE_DEVICES"] = os.getenv("CUDA_VISIBLE_DEVICES", "0,1")
         env["NCCL_ALGO"] = "Ring"
         
         # 检查必需的API密钥
-        swanlab_key = os.getenv("SWANLAB_API_KEY")
+        swanlab_key = os.getenv("SWANLAB_API_KEY", "sGBINQXB1ThNYERXGPggy")
         if swanlab_key:
             env["SWANLAB_API_KEY"] = swanlab_key
         else:

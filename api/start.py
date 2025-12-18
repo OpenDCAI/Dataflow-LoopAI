@@ -25,7 +25,7 @@ def main():
         return 1
     
     # LLaMA Factory项目目录
-    llamafactory_dir = "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory"
+    llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
     
     # 检查LLaMA Factory目录是否存在
     if not os.path.exists(llamafactory_dir):
