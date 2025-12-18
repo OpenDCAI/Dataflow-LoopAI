@@ -19,7 +19,6 @@
                 <template v-slot:banner>
                     <div class="title-block name">
                         <img class="nav-icon" :src="img.logo" alt="" />
-                        <p v-show="isExpand" class="title">{{ local(`Dataflow`) }}</p>
                     </div>
                 </template>
                 <template v-slot:listItem="x">
@@ -51,7 +50,7 @@ import { mapState } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
 
-import logo from '@/assets/logo/logo.png'
+import logo from '@/assets/logo/logo.svg'
 import dataflow from '@/assets/nav/dataflow.svg'
 import serving from '@/assets/nav/serving.svg'
 
@@ -60,7 +59,7 @@ export default {
         return {
             currentNav: {
                 key: 0,
-                name: () => this.local('Dataflow'),
+                name: () => this.local('LoopAI'),
                 icon: 'World',
                 route: '/m/'
             },
@@ -68,12 +67,12 @@ export default {
             navList: [
                 {
                     key: -1,
-                    name: () => this.local('Data Preparation'),
+                    name: () => this.local('Menu'),
                     type: 'header'
                 },
                 {
                     key: 0,
-                    name: () => this.local('Dataflow'),
+                    name: () => this.local('Task Hub'),
                     icon: 'World',
                     img: dataflow,
                     route: '/m/'
@@ -157,8 +156,8 @@ export default {
                 user-select: none;
 
                 .nav-icon {
-                    width: 28px;
-                    height: 28px;
+                    width: auto;
+                    height: 45px;
                     margin-left: 5px;
                     object-fit: cover;
                 }

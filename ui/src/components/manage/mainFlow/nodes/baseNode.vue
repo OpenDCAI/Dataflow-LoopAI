@@ -1,6 +1,6 @@
 <template>
     <div
-        class="df-flow-default-node"
+        class="lp-flow-default-node"
         :class="[{ selected: selected }]"
         :style="{
             '--node-background': thisData.background,
@@ -139,7 +139,7 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
 </script>
 
 <style lang="scss">
-.df-flow-default-node {
+.lp-flow-default-node {
     --node-background: rgba(252, 252, 252, 0.8);
     --node-title-color: rgba(100, 108, 126, 1);
     --node-status-color: rgba(168, 170, 176, 1);

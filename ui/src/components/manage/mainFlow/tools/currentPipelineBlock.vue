@@ -1,13 +1,13 @@
 <template>
     <div
-        class="df-current-pipeline-container"
+        class="lp-current-pipeline-container"
         @mouseenter="inside = true"
         @mouseleave="inside = false"
     >
-        <div class="df-current-pipeline-title" :title="local('Current Pipeline')">
+        <div class="lp-current-pipeline-title" :title="local('Current Pipeline')">
             {{ modelValue ? modelValue.name : local('Temp. Pipeline') }}
         </div>
-        <transition name="df-cp-scale-up-to-up">
+        <transition name="lp-cp-scale-up-to-up">
             <time-rounder
                 v-if="modelValue"
                 v-show="inside"
@@ -56,7 +56,7 @@ export default {
 </script>
 
 <style lang="scss">
-.df-current-pipeline-container {
+.lp-current-pipeline-container {
     @include Vcenter;
 
     position: absolute;
@@ -87,7 +87,7 @@ export default {
         transform: scale(0.99);
     }
 
-    .df-current-pipeline-title {
+    .lp-current-pipeline-title {
         @include nowrap;
         @include color-golden;
 
@@ -99,11 +99,11 @@ export default {
     }
 }
 
-.df-cp-scale-up-to-up-enter-active {
+.lp-cp-scale-up-to-up-enter-active {
     animation: scaleUp 0.7s ease both;
     animation-delay: 0.3s;
 }
-.df-cp-scale-up-to-up-leave-active {
+.lp-cp-scale-up-to-up-leave-active {
     position: absolute;
     width: 100%;
     height: 100%;

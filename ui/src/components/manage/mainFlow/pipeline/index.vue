@@ -1,7 +1,7 @@
 <template>
     <transition name="pipeline-slide">
-        <div v-show="thisValue" class="df-pipeline-container">
-            <div class="df-pipeline-header">
+        <div v-show="thisValue" class="lp-pipeline-container">
+            <div class="lp-pipeline-header">
                 <div class="left-block">
                     <fv-img class="logo" :src="img.pipeline" alt="pipeline"></fv-img>
                     <p class="title">Pipeline</p>
@@ -14,7 +14,7 @@
                     <i class="ms-Icon ms-Icon--ChevronLeft"></i>
                 </fv-button>
             </div>
-            <div class="df-pipeline-content">
+            <div class="lp-pipeline-content">
                 <hr />
                 <div class="search-block">
                     <fv-text-box
@@ -366,7 +366,7 @@ export default {
 </script>
 
 <style lang="scss">
-.df-pipeline-container {
+.lp-pipeline-container {
     position: relative;
     width: 100%;
     height: 100%;
@@ -382,7 +382,7 @@ export default {
         border-top: rgba(120, 120, 120, 0.1) solid thin;
     }
 
-    .df-pipeline-header {
+    .lp-pipeline-header {
         position: relative;
         width: 100%;
         height: 50px;
@@ -411,7 +411,7 @@ export default {
         }
     }
 
-    .df-pipeline-content {
+    .lp-pipeline-content {
         position: relative;
         width: 100%;
         height: 10px;

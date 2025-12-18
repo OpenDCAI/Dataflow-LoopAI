@@ -1,5 +1,5 @@
 <template>
-    <div class="df-serving-container">
+    <div class="lp-serving-container">
         <div class="major-container">
             <div class="title-block">
                 <p class="main-title">{{ local('Serving') }}</p>
@@ -454,7 +454,7 @@ export default {
 </script>
 
 <style lang="scss">
-.df-serving-container {
+.lp-serving-container {
     position: relative;
     width: 100%;
     height: 100%;

@@ -42,7 +42,7 @@
                 background: `linear-gradient(${edgeColors.join(',')})`,
                 transform: `translate(-50%, -50%) translate(${path[1]}px,${path[2]}px)`
             }"
-            class="nodrag nopan df-flow-default-edge-label"
+            class="nodrag nopan lp-flow-default-edge-label"
         >
             {{ thisData.label }}
         </div>
@@ -111,7 +111,7 @@ export default {
 </script>
 
 <style lang="scss">
-.df-flow-default-edge-label {
+.lp-flow-default-edge-label {
     height: 20px;
     padding: 10px;
     font-size: 12px;

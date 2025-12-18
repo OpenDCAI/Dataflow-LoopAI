@@ -1,11 +1,11 @@
 <template>
-    <div v-show="modelValue" class="df-page-loading">
+    <div v-show="modelValue" class="lp-page-loading">
         <fv-progress-ring
             loading="true"
             background="rgba(245, 245, 245, 0.8)"
             :color="color"
         ></fv-progress-ring>
-        <div class="df-page-loading-title">{{ title }}</div>
+        <div class="lp-page-loading-title">{{ title }}</div>
     </div>
 </template>
 
@@ -44,7 +44,7 @@ export default {
 </script>
 
 <style lang="scss">
-.df-page-loading {
+.lp-page-loading {
     @include HcenterVcenterC;
 
     position: absolute;
@@ -55,7 +55,7 @@ export default {
     background-color: rgba(255, 255, 255, 0.8);
     z-index: 9999;
 
-    .df-page-loading-title {
+    .lp-page-loading-title {
         margin-top: 10px;
         font-size: 16px;
         font-weight: bold;

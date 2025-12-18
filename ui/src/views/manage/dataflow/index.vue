@@ -1,24 +1,7 @@
 <template>
-    <div class="df-default-container" :class="[{ 'show-pipeline': show.pipeline }]">
-        <pipeline
-            v-model="show.pipeline"
-            v-model:loading="lock.loading"
-            v-model:pipeline="currentPipeline"
-            :flow-id="flowId"
-            class="df-pipeline-container"
-            @confirm-dataset="confirmDataset($event, true)"
-        ></pipeline>
-        <div class="df-flow-container">
-            <mainFlow
-                :id="flowId"
-                v-model:nodes="nodes"
-                v-model:edges="edges"
-                @switch-database="show.dataset = true"
-                @connect="onConnect"
-                @connect-start="onConnectStart"
-                @connect-end="onConnectEnd"
-                @update-run-value="useEdgeSync.syncRunValue($event, flowId)"
-            ></mainFlow>
+    <div class="lp-default-container" :class="[{ 'show-pipeline': show.pipeline }]">
+        <div class="lp-flow-container">
+            <mainFlow :id="flowId" v-model:nodes="nodes" v-model:edges="edges"></mainFlow>
             <div class="control-menu-block">
                 <fv-command-bar
                     v-model="value"
@@ -48,162 +31,10 @@
                             ></i>
                         </div>
                     </template>
-                    <template v-slot:right-space>
-                        <div class="command-bar-right-space">
-                            <fv-toggle-switch
-                                v-model="isAutoConnectionModel"
-                                :width="75"
-                                :on="local('Auto')"
-                                :off="local('Manual')"
-                                :insideContent="true"
-                                :height="30"
-                                borderColor="rgba(235, 235, 235, 1)"
-                                ring-background="rgba(180, 180, 180, 1)"
-                                :switch-on-background="gradient"
-                                :title="local('Whether Auto Connect Run Edges')"
-                            >
-                            </fv-toggle-switch>
-                            <fv-button
-                                :theme="currentServing ? 'dark' : 'light'"
-                                :background="
-                                    currentServing
-                                        ? 'linear-gradient(135deg, rgba(69, 98, 213, 1), #ff0080, #ff8c00)'
-                                        : ''
-                                "
-                                border-radius="30"
-                                :disabled="!lock.serving"
-                                style="width: 30px; height: 30px"
-                                @click="showServing"
-                            >
-                                <transition-group tag="span" name="df-scale-up-to-up">
-                                    <i
-                                        v-show="currentServing"
-                                        key="0"
-                                        class="ms-Icon"
-                                        :class="[`ms-Icon--DialShape4`]"
-                                    ></i>
-                                    <i
-                                        v-show="!currentServing"
-                                        key="1"
-                                        class="ms-Icon"
-                                        :class="[`ms-Icon--More`]"
-                                    ></i>
-                                </transition-group>
-                                <i
-                                    v-show="false"
-                                    class="ms-Icon"
-                                    :class="[`ms-Icon--${currentServing ? 'DialShape4' : 'More'}`]"
-                                ></i>
-                            </fv-button>
-                            <fv-button
-                                theme="dark"
-                                background="linear-gradient(90deg, rgba(69, 98, 213, 1), rgba(161, 145, 206, 1))"
-                                foreground="rgba(255, 255, 255, 1)"
-                                border-color="rgba(255, 255, 255, 0.3)"
-                                border-radius="30"
-                                :disabled="!currentPipeline"
-                                :reveal-background-color="[
-                                    'rgba(255, 255, 255, 0.5)',
-                                    'rgba(103, 105, 251, 0.6)'
-                                ]"
-                                @click="executePipeline"
-                            >
-                                <i
-                                    v-show="lock.running"
-                                    class="ms-Icon ms-Icon--Play"
-                                    style="margin-right: 5px"
-                                ></i>
-                                <fv-progress-ring
-                                    v-show="!lock.running"
-                                    loading="true"
-                                    :r="10"
-                                    :border-width="2"
-                                    background="rgba(200, 200, 200, 1)"
-                                    :color="'white'"
-                                    style="margin-right: 5px"
-                                ></fv-progress-ring>
-                                <p>{{ this.local('Run') }}</p>
-                            </fv-button>
-                            <fv-button
-                                theme="dark"
-                                background="rgba(191, 95, 95, 0.6)"
-                                foreground="rgba(255, 255, 255, 1)"
-                                border-color="whitesmoke"
-                                border-radius="30"
-                                :title="local('Delete')"
-                                style="width: 30px; height: 30px"
-                                @click="resetFlow"
-                            >
-                                <i class="ms-Icon ms-Icon--Delete"></i>
-                            </fv-button>
-                        </div>
-                    </template>
                 </fv-command-bar>
-                <current-pipeline-block v-model="currentPipeline"></current-pipeline-block>
             </div>
         </div>
         <page-loading :model-value="!lock.loading" title="Loading..."></page-loading>
-        <datasetPanel
-            v-model="show.dataset"
-            :title="local('Dataset')"
-            @confirm="confirmDataset"
-        ></datasetPanel>
-        <operatorPanel v-model="show.operator" :title="local('Operator')"></operatorPanel>
-        <fv-right-menu
-            v-model="show.serving"
-            class="serving-menu"
-            ref="servingMenu"
-            :rightMenuWidth="250"
-            background="rgba(255, 255, 255, 0.3)"
-            :fullExpandAnimation="true"
-            style="z-index: 6"
-        >
-            <p
-                style="
-                    width: calc(100% - 20px);
-                    margin: 10px;
-                    font-size: 12px;
-                    font-weight: bold;
-                    user-select: none;
-                    cursor: default;
-                "
-            >
-                {{ local('Select Serving') }}
-            </p>
-            <hr />
-            <span
-                class="serving-item"
-                :class="{ choosen: currentServing && currentServing.id === servingItem.id }"
-                v-for="servingItem in servingList"
-                :key="servingItem.id"
-                @click="chooseServing(servingItem)"
-            >
-                <p class="main-title">{{ servingItem.name }}</p>
-                <p class="sec-title">{{ servingItem.cls_name }}</p>
-            </span>
-            <hr />
-            <fv-button
-                :icon="servingList.length > 0 ? '' : 'Add'"
-                border-radius="8"
-                style="width: calc(100% - 20px); margin-left: 10px; margin-top: 5px"
-                @click="$Go('/m/serving'), (show.serving = false)"
-                >{{
-                    servingList.length > 0 ? local('Serving Manage') : local('Add Serving')
-                }}</fv-button
-            >
-        </fv-right-menu>
-        <pipelinePanel
-            v-model="show.pipelinePanel"
-            :add-panel-mode="'custom'"
-            :title="local('Pipeline')"
-            @confirm="addPipeline"
-        ></pipelinePanel>
-        <execResultPanel
-            v-model="show.execResult"
-            :title="local('Execute Result')"
-            :current-pipeline="currentPipeline"
-            :running-result="runningResult"
-        ></execResultPanel>
     </div>
 </template>
 
@@ -211,38 +42,25 @@
 import { mapState, mapActions } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
-import { useDataflow } from '@/stores/dataflow'
 import { useVueFlow } from '@vue-flow/core'
-import { useEdgeSync } from '@/hooks/dataflow/useEdgeSync'
 
 import mainFlow from '@/components/manage/mainFlow/index.vue'
 import pipeline from '@/components/manage/mainFlow/pipeline/index.vue'
-import pipelinePanel from '@/components/manage/mainFlow/panels/piplinePanel.vue'
-import datasetPanel from '@/components/manage/mainFlow/panels/datasetPanel/index.vue'
-import operatorPanel from '@/components/manage/mainFlow/panels/operatorPanel.vue'
 import pageLoading from '@/components/general/pageLoading.vue'
-import currentPipelineBlock from '@/components/manage/mainFlow/tools/currentPipelineBlock.vue'
-import execResultPanel from '@/components/manage/mainFlow/panels/execResultPanel.vue'
 
 import databaseIcon from '@/assets/flow/database.svg'
 import pipelineIcon from '@/assets/flow/pipeline.svg'
-import operatorIcon from '@/assets/flow/operator.svg'
 import saveIcon from '@/assets/flow/save.svg'
 
 export default {
     components: {
         mainFlow,
         pipeline,
-        pipelinePanel,
-        datasetPanel,
-        operatorPanel,
-        pageLoading,
-        currentPipelineBlock,
-        execResultPanel
+        pageLoading
     },
     data() {
         return {
-            flowId: 'df-main-flow',
+            flowId: 'lp-main-flow',
             value: null,
             options: [
                 {
@@ -254,17 +72,10 @@ export default {
                     }
                 },
                 {
-                    name: () => this.local('Pipeline'),
+                    name: () => this.local('Task'),
                     img: pipelineIcon,
                     func: () => {
                         this.show.pipeline ^= true
-                    }
-                },
-                {
-                    name: () => this.local('Operator'),
-                    img: operatorIcon,
-                    func: () => {
-                        this.show.operator = true
                     }
                 },
                 {
@@ -276,66 +87,55 @@ export default {
                 }
             ],
             nodes: [
-                // {
-                //     id: '1',
-                //     type: 'base-node',
-                //     position: { x: 70, y: 160 },
-                //     data: {
-                //         label: 'Node 1',
-                //         nodeInfo:
-                //             'Node Info: This is node info block for displaying node information.',
-                //         iconColor: 'rgba(0, 108, 126, 1)'
-                //     }
-                // },
-                // {
-                //     id: '2',
-                //     type: 'base-node',
-                //     position: { x: 100, y: 400 },
-                //     data: {
-                //         label: 'Node 2',
-                //         nodeInfo:
-                //             'Node Info: This is node info block for displaying node information.',
-                //         icon: 'Accept'
-                //     }
-                // },
-                // {
-                //     id: '3',
-                //     type: 'base-node',
-                //     position: { x: 400, y: 800 },
-                //     data: { label: 'Node 3', icon: 'Cloud' }
-                // }
+                {
+                    id: '1',
+                    type: 'base-node',
+                    position: { x: 70, y: 160 },
+                    data: {
+                        label: 'Node 1',
+                        nodeInfo:
+                            'Node Info: This is node info block for displaying node information.',
+                        iconColor: 'rgba(0, 108, 126, 1)'
+                    }
+                },
+                {
+                    id: '2',
+                    type: 'base-node',
+                    position: { x: 100, y: 400 },
+                    data: {
+                        label: 'Node 2',
+                        nodeInfo:
+                            'Node Info: This is node info block for displaying node information.',
+                        icon: 'Accept'
+                    }
+                },
+                {
+                    id: '3',
+                    type: 'base-node',
+                    position: { x: 400, y: 800 },
+                    data: { label: 'Node 3', icon: 'Cloud' }
+                }
             ],
 
             edges: [
-                // {
-                //     id: 'e1->2',
-                //     type: 'base-edge',
-                //     source: '1',
-                //     target: '2'
-                // },
-                // {
-                //     id: 'e2->3',
-                //     type: 'base-edge',
-                //     source: '2',
-                //     target: '3',
-                //     animated: true,
-                //     data: {
-                //         label: 'world'
-                //     }
-                // }
+                {
+                    id: 'e1->2',
+                    type: 'base-edge',
+                    source: '1',
+                    target: '2'
+                },
+                {
+                    id: 'e2->3',
+                    type: 'base-edge',
+                    source: '2',
+                    target: '3',
+                    animated: true,
+                    data: {
+                        label: 'world'
+                    }
+                }
             ],
-            sourceDatabase: null,
-            currentPipeline: null,
-            runningResult: null,
-            useEdgeSync: new useEdgeSync(),
-            show: {
-                dataset: false,
-                pipeline: false,
-                pipelinePanel: false,
-                operator: false,
-                serving: false,
-                execResult: false
-            },
+            show: {},
             lock: {
                 serving: true,
                 running: true,
@@ -343,45 +143,15 @@ export default {
             }
         }
     },
-    watch: {
-        sourceDatabase: {
-            handler(newVal, oldVal) {
-                if (newVal !== oldVal) {
-                    this.updateDatabaseNode()
-                }
-            },
-            deep: true
-        },
-        isAutoConnection(val) {
-            if (val) {
-                this.useEdgeSync.autoConnectAllRunEdges(this.flowId, this.$Guid)
-            }
-        }
-    },
+    watch: {},
     computed: {
         ...mapState(useAppConfig, ['local']),
-        ...mapState(useTheme, ['color', 'gradient']),
-        ...mapState(useDataflow, ['isAutoConnection', 'servingList', 'currentServing']),
-        isAutoConnectionModel: {
-            get() {
-                return this.isAutoConnection
-            },
-            set(val) {
-                this.switchAutoConnection(val)
-            }
-        }
+        ...mapState(useTheme, ['color', 'gradient'])
     },
     mounted() {
         this.setViewport()
-        this.getServing()
     },
     methods: {
-        ...mapActions(useDataflow, [
-            'switchAutoConnection',
-            'getServingList',
-            'chooseServing',
-            'getPipelines'
-        ]),
         setViewport() {
             const flow = useVueFlow(this.flowId)
             flow.setViewport({
@@ -390,313 +160,13 @@ export default {
                 zoom: 1
             })
         },
-        updateDatabaseNode() {
-            if (!this.sourceDatabase) return
-            const flow = useVueFlow(this.flowId)
-            const existsNode = this.nodes.find((node) => node.type === 'database-node')
-            if (existsNode) {
-                flow.updateNodeData(existsNode.id, {
-                    ...existsNode.data,
-                    label: this.sourceDatabase.name,
-                    ...this.sourceDatabase
-                })
-            } else {
-                let position = { x: 500, y: 160 }
-                if (this.sourceDatabase.location) {
-                    position.x = this.sourceDatabase.location[0]
-                    position.y = this.sourceDatabase.location[1]
-                }
-                flow.addNodes({
-                    id: 'db-node',
-                    type: 'database-node',
-                    position,
-                    data: {
-                        flowId: this.flowId,
-                        label: this.sourceDatabase.name,
-                        ...this.sourceDatabase
-                    }
-                })
-            }
-        },
-        confirmDataset(dataset, refresh = false) {
-            this.sourceDatabase = dataset
-            this.show.dataset = false
-            if (refresh) this.updateDatabaseNode()
-        },
-        async getServing() {
-            if (!this.lock.serving) return
-            this.lock.serving = false
-            await this.getServingList()
-            this.lock.serving = true
-        },
-        showServing($event) {
-            $event.preventDefault()
-            $event.stopPropagation()
-            this.$refs.servingMenu.rightClick($event, document.body)
-        },
-        syncRunValue(item) {
-            const flow = useVueFlow(this.flowId)
-            let edges = flow.edges.value.filter((edge) => edge.source === item.nodeId)
-            for (let edge of edges) {
-                let sourceKeyName = edge.sourceHandle ? edge.sourceHandle.split('::')[0] : null
-                if (sourceKeyName !== item.name) continue
-                let targetNode = flow.findNode(edge.target)
-                let targetKeyName = edge.targetHandle ? edge.targetHandle.split('::')[0] : null
-                if (targetNode) {
-                    let targetIndex = targetNode.data.operatorParams.run.findIndex(
-                        (item) => item.name === targetKeyName
-                    )
-                    if (targetIndex !== -1) {
-                        targetNode.data.operatorParams.run[targetIndex].value = item.value
-                    }
-                }
-            }
-        },
-        sortPipeline() {
-            let flow = useVueFlow(this.flowId)
-            let nodeMap = {}
-            flow.nodes.value.forEach((node) => {
-                nodeMap[node.id] = {
-                    id: node.id,
-                    target: [],
-                    source: []
-                }
-            })
-            let N_nodes = flow.nodes.value.length
-            let edges = flow.edges.value
-            edges.forEach((edge) => {
-                const { source, target } = edge
-                nodeMap[source].target.push(target)
-                nodeMap[target].source.push(source)
-            })
-            let results = []
-            let outNodes = Object.values(nodeMap).filter((node) => node.source.length === 0)
-            while (outNodes.length > 0) {
-                let allTargetNodes = []
-                let exists = {}
-                for (let node of outNodes) {
-                    results.push(node)
-                    let targetIds = node.target
-                    for (let targetId of targetIds) {
-                        let targetNode = nodeMap[targetId]
-                        targetNode.source = targetNode.source.filter((item) => item !== node.id)
-                        if (!exists[targetNode.id]) {
-                            allTargetNodes.push(targetNode)
-                            exists[targetNode.id] = 1
-                        }
-                    }
-                }
-                outNodes = allTargetNodes.filter((node) => node.source.length === 0)
-            }
-            console.log(results, N_nodes)
-            if (results.length !== N_nodes) {
-                this.$barWarning(this.local('Pipeline is not a legal DAG'), {
-                    status: 'warning'
-                })
-                return
-            }
-            let nodeOperators = []
-            results.forEach((node) => {
-                if (node.id === 'db-node') return
-                let oriNode = flow.findNode(node.id)
-                nodeOperators.push({
-                    name: oriNode.data.name,
-                    params: oriNode.data.operatorParams,
-                    location: [oriNode.position.x, oriNode.position.y]
-                })
-            })
-            return nodeOperators
-        },
-        handleSaveClick() {
-            if (this.currentPipeline && this.currentPipeline.id) this.savePipeline()
-            else {
-                this.show.pipelinePanel = true
-            }
-        },
-        savePipeline() {
-            if (!this.sourceDatabase) {
-                this.$barWarning(this.local('Please select a dataset'), {
-                    status: 'warning'
-                })
-                return
-            }
-            let nodeOperators = this.sortPipeline()
-            const flow = useVueFlow(this.flowId)
-            let dbNode = flow.findNode('db-node')
-            this.$api.pipelines
-                .update_pipeline(this.currentPipeline.id, {
-                    name: this.currentPipeline.name,
-                    config: {
-                        file_path: this.currentPipeline.config.file_path,
-                        input_dataset: {
-                            id: this.sourceDatabase.id,
-                            location: [dbNode.position.x, dbNode.position.y]
-                        },
-                        operators: nodeOperators
-                    }
-                })
-                .then((res) => {
-                    if (res.code === 200) {
-                        this.getPipelines()
-                        this.$barWarning(this.local('Pipeline has been updated'), {
-                            status: 'correct'
-                        })
-                    }
-                })
-        },
-        addPipeline(name) {
-            if (!this.sourceDatabase) {
-                this.$barWarning(this.local('Please select a dataset'), {
-                    status: 'warning'
-                })
-                return
-            }
-            let nodeOperators = this.sortPipeline()
-            const flow = useVueFlow(this.flowId)
-            let dbNode = flow.findNode('db-node')
-            this.$api.pipelines
-                .create_pipeline({
-                    name: name,
-                    config: {
-                        file_path: '',
-                        input_dataset: {
-                            id: this.sourceDatabase.id,
-                            location: [dbNode.position.x, dbNode.position.y]
-                        },
-                        operators: nodeOperators
-                    }
-                })
-                .then((res) => {
-                    if (res.code === 200) {
-                        this.getPipelines()
-                        this.$barWarning(this.local('Pipeline has been created'), {
-                            status: 'correct'
-                        })
-                    }
-                })
-        },
-        executePipeline() {
-            if (!this.currentPipeline || !this.currentPipeline.id) {
-                this.$barWarning(this.local('Please select a pipeline'), {
-                    status: 'warning'
-                })
-                return
-            }
-            if (!this.lock.running) {
-                this.$barWarning(this.local('Please wait for the previous pipeline to finish'), {
-                    status: 'warning'
-                })
-                return
-            }
-            this.lock.running = false
-            this.$api.pipelines
-                .execute_pipeline(this.currentPipeline.id)
-                .then((res) => {
-                    if (res.code === 200) {
-                        this.runningResult = res.data
-                        this.show.execResult = true
-                        this.$barWarning(this.local('Pipeline has been executed'), {
-                            status: 'correct'
-                        })
-                    }
-                    this.lock.running = true
-                })
-                .catch((err) => {
-                    this.$barWarning(this.local('Pipeline execution failed'), {
-                        status: 'error'
-                    })
-                    this.lock.running = true
-                })
-        },
-        onConnect(connection) {
-            const { source, sourceHandle, target, targetHandle } = connection
-            let sourceHandleObj = this.useEdgeSync.decHandle(sourceHandle)
-            let targetHandleObj = this.useEdgeSync.decHandle(targetHandle)
-            let sourceType = sourceHandleObj.direction
-            let targetType = targetHandleObj.direction
-            let sourceKeyName = sourceHandleObj.name
-            let targetKeyName = targetHandleObj.name
-            let sourceKeyType = sourceHandleObj.edgeType
-            let targetKeyType = targetHandleObj.edgeType
-            if (sourceType === targetType) return
-            if (sourceKeyType !== targetKeyType) {
-                this.$barWarning(this.local('Illegal connection'), {
-                    status: 'warning'
-                })
-                return
-            }
-            const flow = useVueFlow(this.flowId)
-            let existsEdge = this.edges.find(
-                (edge) =>
-                    edge.source === source &&
-                    edge.target === target &&
-                    edge.sourceHandle === sourceHandle &&
-                    edge.targetHandle === targetHandle
-            )
-            if (existsEdge) {
-                if (existsEdge.data.edgeType === 'node' && this.isAutoConnection) {
-                    this.useEdgeSync.removeRunEdges(source, target, this.flowId)
-                }
-                flow.removeEdges(existsEdge.id)
-            } else {
-                flow.addEdges({
-                    id: this.$Guid(),
-                    type: 'base-edge',
-                    source: source,
-                    target: target,
-                    sourceHandle: sourceHandle,
-                    targetHandle: targetHandle,
-                    animated: sourceKeyType !== 'node',
-                    data: {
-                        label: sourceKeyType === 'node' ? 'Node' : 'Key',
-                        edgeType: sourceKeyType
-                    }
-                })
-                if (sourceKeyType === 'run_key') {
-                    let sourceNode = flow.findNode(source)
-                    let targetNode = flow.findNode(target)
-                    if (sourceNode && targetNode) {
-                        let targetIndex = targetNode.data.operatorParams.run.findIndex(
-                            (item) => item.name === targetKeyName
-                        )
-                        let sourceIndex = sourceNode.data.operatorParams.run.findIndex(
-                            (item) => item.name === sourceKeyName
-                        )
-                        if (targetIndex !== -1 && sourceIndex !== -1) {
-                            targetNode.data.operatorParams.run[targetIndex].value =
-                                sourceNode.data.operatorParams.run[sourceIndex].value
-                        }
-                    }
-                } else {
-                    if (this.isAutoConnection)
-                        this.useEdgeSync.autoConnectRunEdges(
-                            source,
-                            target,
-                            this.flowId,
-                            this.$Guid
-                        )
-                }
-            }
-        },
-        onConnectStart(params) {},
-        onConnectEnd(event) {
-            console.log(event)
-        },
-        resetFlow() {
-            this.$infoBox(this.local('Are you sure to reset the flow?'), {
-                status: 'error',
-                confirm: () => {
-                    const flow = useVueFlow(this.flowId)
-                    flow.$reset()
-                }
-            })
-        }
+        handleSaveClick() {}
     }
 }
 </script>
 
 <style lang="scss">
-.df-default-container {
+.lp-default-container {
     position: relative;
     width: 100%;
     height: 100%;
@@ -704,7 +174,7 @@ export default {
     background-color: rgba(241, 241, 241, 1);
     display: flex;
 
-    .df-pipeline-container {
+    .lp-pipeline-container {
         position: absolute;
         left: 0px;
         top: 15px;
@@ -716,7 +186,7 @@ export default {
         z-index: 2;
     }
 
-    .df-flow-container {
+    .lp-flow-container {
         position: relative;
         width: 100%;
         height: 100%;
@@ -832,11 +302,11 @@ export default {
     }
 }
 
-.df-scale-up-to-up-enter-active {
+.lp-scale-up-to-up-enter-active {
     animation: scaleUp 0.7s ease both;
     animation-delay: 0.3s;
 }
-.df-scale-up-to-up-leave-active {
+.lp-scale-up-to-up-leave-active {
     position: absolute;
     width: 100%;
     height: 100%;
