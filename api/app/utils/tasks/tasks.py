@@ -7,8 +7,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import glob
 
-from .models import TaskStatus
-from .utils import ensure_directory_exists, get_current_timestamp
+from ...models.task_models import TaskStatus
+from .tools import ensure_directory_exists, get_current_timestamp
 
 from dotenv import load_dotenv
 load_dotenv()

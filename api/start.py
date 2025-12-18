@@ -5,6 +5,7 @@
 
 import os
 import sys
+import json
 import subprocess
 
 def main():
@@ -24,12 +25,30 @@ def main():
         print("pip install -r requirements.txt")
         return 1
     
+    if not os.path.exists('./app_config.json'):
+        print("❌ app_config.json not found. Please copy from examples/app_config.json.example")
+        return 1
+    
+    app_config = json.load(open('./app_config.json'))
+
     # LLaMA Factory项目目录
-    llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
+    llamafactory_dir = app_config['llamafactory_dir']
     
     # 检查LLaMA Factory目录是否存在
     if not os.path.exists(llamafactory_dir):
         print(f"❌ LLaMA Factory directory not found: {llamafactory_dir}")
+        return 1
+    
+    # 从../examples/config/starter.yaml复制一份到./examples/starter.yaml
+    starter_yaml = '../examples/config/starter.yaml'
+    if not os.path.exists(starter_yaml):
+        print(f"❌ starter.yaml not found in /examples/config/starter.yaml: {starter_yaml}")
+        return 1
+    try:
+        subprocess.run(["cp", starter_yaml, "./examples/starter.yaml"], check=True)
+        print("✅ starter.yaml copied to ./examples/starter.yaml")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to copy starter.yaml: {e}")
         return 1
     
     # 检查是否安装了LLaMA Factory

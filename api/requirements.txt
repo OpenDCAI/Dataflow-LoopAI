@@ -6,3 +6,5 @@ aiofiles==23.2.0
 llamafactory
 swanlab[dashboard]
 dotenv
+tortoise-orm
+aiosqlite<0.21
