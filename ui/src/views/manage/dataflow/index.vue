@@ -1,5 +1,6 @@
 <template>
     <div class="lp-default-container" :class="[{ 'show-pipeline': show.pipeline }]">
+        <task-nav v-model="show.taskNav" class="lp-task-container"></task-nav>
         <div class="lp-flow-container">
             <mainFlow :id="flowId" v-model:nodes="nodes" v-model:edges="edges"></mainFlow>
             <div class="control-menu-block">
@@ -45,7 +46,7 @@ import { useTheme } from '@/stores/theme'
 import { useVueFlow } from '@vue-flow/core'
 
 import mainFlow from '@/components/manage/mainFlow/index.vue'
-import pipeline from '@/components/manage/mainFlow/pipeline/index.vue'
+import taskNav from '@/components/manage/mainFlow/tasks/index.vue'
 import pageLoading from '@/components/general/pageLoading.vue'
 
 import databaseIcon from '@/assets/flow/database.svg'
@@ -55,7 +56,7 @@ import saveIcon from '@/assets/flow/save.svg'
 export default {
     components: {
         mainFlow,
-        pipeline,
+        taskNav,
         pageLoading
     },
     data() {
@@ -75,7 +76,7 @@ export default {
                     name: () => this.local('Task'),
                     img: pipelineIcon,
                     func: () => {
-                        this.show.pipeline ^= true
+                        this.show.taskNav ^= true
                     }
                 },
                 {
@@ -135,7 +136,9 @@ export default {
                     }
                 }
             ],
-            show: {},
+            show: {
+                taskNav: false
+            },
             lock: {
                 serving: true,
                 running: true,
@@ -174,7 +177,7 @@ export default {
     background-color: rgba(241, 241, 241, 1);
     display: flex;
 
-    .lp-pipeline-container {
+    .lp-task-container {
         position: absolute;
         left: 0px;
         top: 15px;

@@ -7,6 +7,7 @@
                 :options="navList"
                 v-model:expand="isExpand"
                 :foreground="color"
+                :expandWidth="250"
                 :flyout-display="1368"
                 :mobile-display="1024"
                 class="navigation-view"
@@ -18,7 +19,14 @@
             >
                 <template v-slot:banner>
                     <div class="title-block name">
-                        <img class="nav-icon" :src="img.logo" alt="" />
+                        <img class="nav-icon" :src="img.loopai" alt="" style="height: 25px" />
+                        <img
+                            v-show="isExpand"
+                            class="nav-icon"
+                            :src="img.logo"
+                            alt=""
+                            style="margin-left: 15px"
+                        />
                     </div>
                 </template>
                 <template v-slot:listItem="x">
@@ -51,6 +59,7 @@ import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
 
 import logo from '@/assets/logo/logo.svg'
+import loopai from '@/assets/logo/LoopAI_logo.svg'
 import dataflow from '@/assets/nav/dataflow.svg'
 import serving from '@/assets/nav/serving.svg'
 
@@ -79,10 +88,10 @@ export default {
                 },
                 {
                     key: 1,
-                    name: () => this.local('Serving'),
+                    name: () => this.local('Config'),
                     icon: 'World',
                     img: serving,
-                    route: '/m/serving'
+                    route: '/m/config'
                 },
                 {
                     key: -1,
@@ -92,7 +101,8 @@ export default {
                 }
             ],
             img: {
-                logo: logo
+                logo: logo,
+                loopai: loopai
             }
         }
     },
@@ -157,7 +167,7 @@ export default {
 
                 .nav-icon {
                     width: auto;
-                    height: 45px;
+                    height: 35px;
                     margin-left: 5px;
                     object-fit: cover;
                 }
