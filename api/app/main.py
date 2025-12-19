@@ -1,12 +1,28 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
+from tortoise.contrib.fastapi import register_tortoise
+from fastapi.middleware.cors import CORSMiddleware
+
+from .controllers.config import router as config_router
+from .controllers.starter import router as starter_router
+from .controllers.task import router as task_router
+
 import os
 from typing import Optional
 
-from .models import TrainRequest, TrainResponse, TaskStatusResponse, LogResponse, TaskStatus, SwanLabLogResponse, AllSwanLabLogsResponse, SwanLabLogResponse, AllSwanLabLogsResponse
+from .models.task_models import TrainRequest, TrainResponse, TaskStatusResponse, LogResponse, TaskStatus, SwanLabLogResponse, AllSwanLabLogsResponse, SwanLabLogResponse, AllSwanLabLogsResponse
 
-from .tasks import TaskManager
-from .utils import generate_task_id, save_yaml_config, read_log_file, validate_yaml_content
+from .utils.tasks import TaskManager
+from .utils.tasks import generate_task_id, save_yaml_config, read_log_file, validate_yaml_content
+
+# 配置目录
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIGS_DIR = os.path.join(BASE_DIR, "configs")
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+RUNS_DIR = os.path.join(BASE_DIR, "runs")
+DB_PATH = os.path.join(BASE_DIR, "db", "db.sqlite3")
+
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -15,11 +31,25 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# 配置目录
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIGS_DIR = os.path.join(BASE_DIR, "configs")
-LOGS_DIR = os.path.join(BASE_DIR, "logs")
-RUNS_DIR = os.path.join(BASE_DIR, "runs")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 允许的前端地址
+    allow_credentials=True,  # 是否允许发送 Cookie
+    allow_methods=["*"],  # 允许的 HTTP 方法
+    allow_headers=["*"],  # 允许的请求头
+)
+
+register_tortoise(
+    app,
+    db_url=f"sqlite://{DB_PATH}",
+    modules={"models": ["app.models.db_models"]},
+    generate_schemas=True,
+    add_exception_handlers=True,
+)
+
+app.include_router(config_router, prefix="/config", tags=["config"])
+app.include_router(starter_router, prefix="/starter", tags=["starter"])
+app.include_router(task_router, prefix="/task", tags=["task"])
 
 # 创建任务管理器
 task_manager = TaskManager(CONFIGS_DIR, LOGS_DIR, RUNS_DIR)
