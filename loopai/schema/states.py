@@ -89,19 +89,36 @@ class LoopAIState(MessagesState):
     webcrawler_output_result: Dict[str, Any] = None  # Crawl results
     webcrawler_output_run_id: str = ""  # Run ID for this crawl session
     webcrawler_output_dir: str = ""  # Output directory for crawl results
-    num_queries: int = 5  # Number of search queries to generate
-    crawl_depth: int = 3  # Maximum crawl depth
-    max_links_per_page: int = 5  # Maximum links to follow per page
-    concurrent_pages: int = 3  # Number of concurrent pages to crawl
-    min_text_length: int = 500  # Minimum text length for content filtering
-    min_code_length: int = 50  # Minimum code length for content filtering
-    min_relevance_score: int = 6  # Minimum relevance score for content filtering
-    url_patterns: str = None  # URL patterns for filtering
-    request_delay: float = 2.0  # Delay between requests (seconds)
-    timeout: int = 30  # Request timeout (seconds)
-    max_retries: int = 3  # Maximum number of retries
-    output_format: str = "jsonl"  # Output format (jsonl/json)
-    save_html: bool = False  # Whether to save HTML content
+    webcrawler_num_queries: int = 5  # Number of search queries to generate
+    webcrawler_crawl_depth: int = 3  # Maximum crawl depth
+    webcrawler_max_links_per_page: int = 5  # Maximum links to follow per page
+    webcrawler_concurrent_pages: int = 3  # Number of concurrent pages to crawl
+    webcrawler_min_text_length: int = 500  # Minimum text length for content filtering
+    webcrawler_min_code_length: int = 50  # Minimum code length for content filtering
+    webcrawler_min_relevance_score: int = 6  # Minimum relevance score for content filtering
+    webcrawler_url_patterns: str = None  # URL patterns for filtering
+    webcrawler_request_delay: float = 2.0  # Delay between requests (seconds)
+    webcrawler_timeout: int = 30  # Request timeout (seconds)
+    webcrawler_max_retries: int = 3  # Maximum number of retries
+    webcrawler_output_format: str = "jsonl"  # Output format (jsonl/json)
+    webcrawler_save_html: bool = False  # Whether to save HTML content
+    # webcrawler dataset generation state attributes
+    webcrawler_dataset_summary: str = ""  # Summary of dataset generation
+    webcrawler_dataset_sft_count: int = 0  # Number of SFT records generated
+    webcrawler_dataset_pt_count: int = 0  # Number of PT records generated
+    webcrawler_dataset_sft_path: str = ""  # Path to SFT JSONL file
+    webcrawler_dataset_pt_path: str = ""  # Path to PT JSONL file
+    webcrawler_max_records_per_page: int = 10  # Max records per webpage
+    webcrawler_min_relevance_score: float = 0.6  # Min relevance score for filtering
+    webcrawler_dataset_concurrent_limit: int = 5  # Concurrent limit for dataset generation
+    webcrawler_max_content_length: int = 50000  # Max content length (characters) for LLM processing
+    webcrawler_debug: bool = False  # Enable debug mode for webcrawler
+    # webcrawler dataset mapping state attributes (using Obtainer.mapping.script_mapping_node)
+    webcrawler_sft_mapping_format: str = "jsonl_sft"  # target format for SFT intermediate data (FORMAT_MAPPERS key)
+    webcrawler_pt_mapping_format: str = "jsonl_pt"  # target format for PT intermediate data (FORMAT_MAPPERS key)
+    webcrawler_dataset_sft_mapped_path: str = ""  # Path to mapped SFT dataset file
+    webcrawler_dataset_pt_mapped_path: str = ""  # Path to mapped PT dataset file
+    webcrawler_dataset_mapping_results: Dict[str, Any] = None  # Mapping result summary for SFT/PT
 
 
     # trainer state attributes

@@ -9,7 +9,7 @@ from loopai.agents import BaseAgent
 from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
 
-from .nodes import start_node, crawl_node, end_node
+from .nodes import start_node, crawl_node, webcrawler_dataset_node, end_node
 
 logger = get_logger()
 
@@ -56,16 +56,27 @@ class WebCrawlerAgent(BaseAgent):
         def _crawl_node(state: LoopAIState):
             return crawl_node(state)
         return _crawl_node
+    
+    def get_webcrawler_dataset_node(self):
+        """
+        Get webcrawler dataset node function that can access self
+        """
+        @BaseAgent.set_current
+        def _webcrawler_dataset_node(state: LoopAIState):
+            return webcrawler_dataset_node(state)
+        return _webcrawler_dataset_node
 
     def init_graph(self, **kwargs):
         builder = StateGraph(LoopAIState)
         builder.add_node("start_node", self.get_start_node())
         builder.add_node("crawl_node", self.get_crawl_node())
+        builder.add_node("webcrawler_dataset_node", self.get_webcrawler_dataset_node())
         builder.add_node("end_node", self.get_end_node())
         
         builder.set_entry_point("start_node")
         builder.add_edge("start_node", "crawl_node")
-        builder.add_edge("crawl_node", "end_node")
+        builder.add_edge("crawl_node", "webcrawler_dataset_node")
+        builder.add_edge("webcrawler_dataset_node", "end_node")
         builder.set_finish_point("end_node")
         
         self.graph = builder.compile(

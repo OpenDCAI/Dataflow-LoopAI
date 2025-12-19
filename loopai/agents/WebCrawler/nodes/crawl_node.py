@@ -66,22 +66,22 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
             output_dir=os.path.join(state.get("output_dir", "./output"), "webcrawler_output"),
             stream_callback=writer,  # 传递 writer 作为回调
             # 爬取策略参数
-            num_queries=state.get("num_queries", 5),
-            crawl_depth=state.get("crawl_depth", 3),
-            max_links_per_page=state.get("max_links_per_page", 5),
-            concurrent_pages=state.get("concurrent_pages", 3),
+            num_queries=state.get("webcrawler_num_queries", 5),
+            crawl_depth=state.get("webcrawler_crawl_depth", 3),
+            max_links_per_page=state.get("webcrawler_max_links_per_page", 5),
+            concurrent_pages=state.get("webcrawler_concurrent_pages", 3),
             # 内容过滤参数
-            min_text_length=state.get("min_text_length", 500),
-            min_code_length=state.get("min_code_length", 50),
-            min_relevance_score=state.get("min_relevance_score", 6),
-            url_patterns=state.get("url_patterns", None),
+            min_text_length=state.get("webcrawler_min_text_length", 500),
+            min_code_length=state.get("webcrawler_min_code_length", 50),
+            min_relevance_score=state.get("webcrawler_min_relevance_score", 6),
+            url_patterns=state.get("webcrawler_url_patterns", None),
             # 运行时配置参数
-            request_delay=state.get("request_delay", 2.0),
-            timeout=state.get("timeout", 30),
-            max_retries=state.get("max_retries", 3),
+            request_delay=state.get("webcrawler_request_delay", 2.0),
+            timeout=state.get("webcrawler_timeout", 30),
+            max_retries=state.get("webcrawler_max_retries", 3),
             # 输出配置参数
-            output_format=state.get("output_format", "jsonl"),
-            save_html=state.get("save_html", False)
+            output_format=state.get("webcrawler_output_format", "jsonl"),
+            save_html=state.get("webcrawler_save_html", False)
         )
         
         # 执行爬取任务

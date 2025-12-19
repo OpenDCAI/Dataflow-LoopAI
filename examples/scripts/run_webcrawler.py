@@ -42,28 +42,28 @@ MODEL_CONFIG = {
     'webcrawler_model': os.getenv('WEBCRAWLER_MODEL', 'deepseek-chat'),
     
     # === 生成查询配置 ===
-    'num_queries': int(os.getenv('WEBCRAWLER_NUM_QUERIES', '5')),  # 生成的搜索查询数量
+    'webcrawler_num_queries': int(os.getenv('WEBCRAWLER_NUM_QUERIES', '5')),  # 生成的搜索查询数量
     
     # === 爬取策略 ===
     'webcrawler_max_pages': int(os.getenv('WEBCRAWLER_MAX_PAGES', '100')),  # 最大爬取页面数
-    'crawl_depth': int(os.getenv('WEBCRAWLER_DEPTH', '3')),  # 爬取深度
-    'max_links_per_page': int(os.getenv('WEBCRAWLER_MAX_LINKS', '5')),  # 每页最大链接数
-    'concurrent_pages': int(os.getenv('WEBCRAWLER_CONCURRENT', '3')),  # 并发爬取页面数
+    'webcrawler_crawl_depth': int(os.getenv('WEBCRAWLER_DEPTH', '3')),  # 爬取深度
+    'webcrawler_max_links_per_page': int(os.getenv('WEBCRAWLER_MAX_LINKS', '5')),  # 每页最大链接数
+    'webcrawler_concurrent_pages': int(os.getenv('WEBCRAWLER_CONCURRENT', '3')),  # 并发爬取页面数
     
     # === 内容过滤 ===
-    'min_text_length': int(os.getenv('WEBCRAWLER_MIN_TEXT_LENGTH', '500')),  # 最小文本长度
-    'min_code_length': int(os.getenv('WEBCRAWLER_MIN_CODE_LENGTH', '50')),  # 最小代码长度
-    'min_relevance_score': int(os.getenv('WEBCRAWLER_MIN_RELEVANCE', '6')),  # 最小相关性分数
-    'url_patterns': os.getenv('WEBCRAWLER_URL_PATTERNS', None),  # URL 模式匹配（可选）
+    'webcrawler_min_text_length': int(os.getenv('WEBCRAWLER_MIN_TEXT_LENGTH', '500')),  # 最小文本长度
+    'webcrawler_min_code_length': int(os.getenv('WEBCRAWLER_MIN_CODE_LENGTH', '50')),  # 最小代码长度
+    'webcrawler_min_relevance_score': int(os.getenv('WEBCRAWLER_MIN_RELEVANCE', '6')),  # 最小相关性分数
+    'webcrawler_url_patterns': os.getenv('WEBCRAWLER_URL_PATTERNS', None),  # URL 模式匹配（可选）
     
     # === 运行时配置 ===
-    'request_delay': float(os.getenv('WEBCRAWLER_REQUEST_DELAY', '2.0')),  # 请求延迟（秒）
-    'timeout': int(os.getenv('WEBCRAWLER_TIMEOUT', '30')),  # 请求超时（秒）
-    'max_retries': int(os.getenv('WEBCRAWLER_MAX_RETRIES', '3')),  # 最大重试次数
+    'webcrawler_request_delay': float(os.getenv('WEBCRAWLER_REQUEST_DELAY', '2.0')),  # 请求延迟（秒）
+    'webcrawler_timeout': int(os.getenv('WEBCRAWLER_TIMEOUT', '30')),  # 请求超时（秒）
+    'webcrawler_max_retries': int(os.getenv('WEBCRAWLER_MAX_RETRIES', '3')),  # 最大重试次数
     
     # === 输出配置 ===
-    'output_format': os.getenv('WEBCRAWLER_OUTPUT_FORMAT', 'jsonl'),  # 输出格式 (jsonl/json)
-    'save_html': os.getenv('WEBCRAWLER_SAVE_HTML', 'False').lower() == 'true',  # 是否保存HTML
+    'webcrawler_output_format': os.getenv('WEBCRAWLER_OUTPUT_FORMAT', 'jsonl'),  # 输出格式 (jsonl/json)
+    'webcrawler_save_html': os.getenv('WEBCRAWLER_SAVE_HTML', 'False').lower() == 'true',  # 是否保存HTML
 }
 
 # Output directory
@@ -105,17 +105,17 @@ print("=" * 80)
 print(f"Model: {MODEL_CONFIG['webcrawler_model']}")
 print(f"API Base: {MODEL_CONFIG['webcrawler_deepseek_api_base']}")
 print(f"Max Pages: {MODEL_CONFIG['webcrawler_max_pages']}")
-print(f"Crawl Depth: {MODEL_CONFIG['crawl_depth']}")
-print(f"Concurrent Pages: {MODEL_CONFIG['concurrent_pages']}")
-print(f"Max Links Per Page: {MODEL_CONFIG['max_links_per_page']}")
-print(f"Num Queries: {MODEL_CONFIG['num_queries']}")
-print(f"Min Text Length: {MODEL_CONFIG['min_text_length']}")
-print(f"Min Code Length: {MODEL_CONFIG['min_code_length']}")
-print(f"Min Relevance Score: {MODEL_CONFIG['min_relevance_score']}")
-print(f"Request Delay: {MODEL_CONFIG['request_delay']}s")
-print(f"Timeout: {MODEL_CONFIG['timeout']}s")
-print(f"Output Format: {MODEL_CONFIG['output_format']}")
-print(f"Save HTML: {MODEL_CONFIG['save_html']}")
+print(f"Crawl Depth: {MODEL_CONFIG['webcrawler_crawl_depth']}")
+print(f"Concurrent Pages: {MODEL_CONFIG['webcrawler_concurrent_pages']}")
+print(f"Max Links Per Page: {MODEL_CONFIG['webcrawler_max_links_per_page']}")
+print(f"Num Queries: {MODEL_CONFIG['webcrawler_num_queries']}")
+print(f"Min Text Length: {MODEL_CONFIG['webcrawler_min_text_length']}")
+print(f"Min Code Length: {MODEL_CONFIG['webcrawler_min_code_length']}")
+print(f"Min Relevance Score: {MODEL_CONFIG['webcrawler_min_relevance_score']}")
+print(f"Request Delay: {MODEL_CONFIG['webcrawler_request_delay']}s")
+print(f"Timeout: {MODEL_CONFIG['webcrawler_timeout']}s")
+print(f"Output Format: {MODEL_CONFIG['webcrawler_output_format']}")
+print(f"Save HTML: {MODEL_CONFIG['webcrawler_save_html']}")
 print(f"Test Query: {test_query}")
 print(f"Output Dir: {output_dir}")
 print("=" * 80)
