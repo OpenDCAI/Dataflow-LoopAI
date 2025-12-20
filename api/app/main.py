@@ -2,12 +2,16 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from tortoise.contrib.fastapi import register_tortoise
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
+
+from .utils.starter.starter import starter_process
 
 from .controllers.config import router as config_router
 from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
 
 import os
+import signal
 from typing import Optional
 
 from .models.task_models import TrainRequest, TrainResponse, TaskStatusResponse, LogResponse, TaskStatus, SwanLabLogResponse, AllSwanLabLogsResponse, SwanLabLogResponse, AllSwanLabLogsResponse
@@ -24,11 +28,21 @@ DB_PATH = os.path.join(BASE_DIR, "db", "db.sqlite3")
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield  # 在 yield 前的代码会在应用 启动时执行，在 yield 后的代码会在应用 关闭时执行。
+    for p in starter_process:
+        print(f"terminate process {p.pid}")
+        if p.is_alive():
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+
 # 创建FastAPI应用
 app = FastAPI(
     title="LLaMA Factory Remote Training Service",
     description="远程训练服务，支持通过API触发LLaMA Factory训练任务",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -78,17 +92,19 @@ async def start_training(request: TrainRequest):
     try:
         # 验证YAML配置
         if not validate_yaml_content(request.config):
-            raise HTTPException(status_code=400, detail="Invalid YAML configuration")
-        
+            raise HTTPException(
+                status_code=400, detail="Invalid YAML configuration")
+
         # 生成任务ID
         task_id = generate_task_id()
-        
+
         # 保存配置文件
         config_path = save_yaml_config(task_id, request.config, CONFIGS_DIR)
-        
+
         # 创建训练任务
-        task_info = task_manager.create_task(task_id, config_path, request.task_name)
-        
+        task_info = task_manager.create_task(
+            task_id, config_path, request.task_name)
+
         # 启动训练
         if task_manager.start_training(task_id):
             return TrainResponse(
@@ -97,10 +113,12 @@ async def start_training(request: TrainRequest):
                 message="Training task started successfully"
             )
         else:
-            raise HTTPException(status_code=500, detail="Failed to start training task")
-            
+            raise HTTPException(
+                status_code=500, detail="Failed to start training task")
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @app.post("/train/upload", response_model=TrainResponse)
@@ -112,25 +130,27 @@ async def start_training_upload(
     try:
         # 检查文件类型
         if not file.filename.endswith(('.yaml', '.yml')):
-            raise HTTPException(status_code=400, detail="Only YAML files are supported")
-        
+            raise HTTPException(
+                status_code=400, detail="Only YAML files are supported")
+
         # 读取文件内容
         content = await file.read()
         config_content = content.decode('utf-8')
-        
+
         # 验证YAML配置
         if not validate_yaml_content(config_content):
-            raise HTTPException(status_code=400, detail="Invalid YAML configuration")
-        
+            raise HTTPException(
+                status_code=400, detail="Invalid YAML configuration")
+
         # 生成任务ID
         task_id = generate_task_id()
-        
+
         # 保存配置文件
         config_path = save_yaml_config(task_id, config_content, CONFIGS_DIR)
-        
+
         # 创建训练任务
         task_info = task_manager.create_task(task_id, config_path, task_name)
-        
+
         # 启动训练
         if task_manager.start_training(task_id):
             return TrainResponse(
@@ -139,20 +159,22 @@ async def start_training_upload(
                 message="Training task started successfully"
             )
         else:
-            raise HTTPException(status_code=500, detail="Failed to start training task")
-            
+            raise HTTPException(
+                status_code=500, detail="Failed to start training task")
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @app.get("/status/{task_id}", response_model=TaskStatusResponse)
 async def get_task_status(task_id: str):
     """获取任务状态"""
     task_info = task_manager.get_task_status(task_id)
-    
+
     if not task_info:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     return TaskStatusResponse(
         task_id=task_info['task_id'],
         status=task_info['status'],
@@ -167,13 +189,13 @@ async def get_task_status(task_id: str):
 async def get_task_logs(task_id: str, max_lines: Optional[int] = None):
     """获取任务日志"""
     task_info = task_manager.get_task_status(task_id)
-    
+
     if not task_info:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     log_path = os.path.join(LOGS_DIR, f"{task_id}.log")
     logs, total_lines = read_log_file(log_path, max_lines)
-    
+
     return LogResponse(
         task_id=task_id,
         logs=logs,
@@ -214,12 +236,12 @@ async def cancel_task(task_id: str):
 async def get_train_output_swanlab_log_path(task_id: str):
     """获取指定任务的SwanLab日志文件夹路径"""
     task_info = task_manager.get_task_status(task_id)
-    
+
     if not task_info:
         raise HTTPException(status_code=404, detail="Task not found")
-    
+
     log_path = task_manager.get_train_output_swanlab_log_path(task_id)
-    
+
     if log_path:
         return SwanLabLogResponse(
             task_id=task_id,
@@ -238,7 +260,7 @@ async def get_train_output_swanlab_log_path(task_id: str):
 async def get_all_swanlab_logs():
     """获取所有SwanLab日志文件夹"""
     logs = task_manager.get_all_swanlab_logs()
-    
+
     return AllSwanLabLogsResponse(
         total=len(logs),
         logs=logs

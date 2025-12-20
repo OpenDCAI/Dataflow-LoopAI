@@ -4,7 +4,7 @@ from multiprocessing import Queue
 from loopai.agents import StarterAgent
 
 
-def extract_state(sg, config, running=True) -> dict:
+def extract_state(sg, config, running=True, event_streaming=False) -> dict:
     thread_states = sg.get_state(config)
     agent_event = sg.agent_event
     state = agent_event.state
@@ -19,7 +19,8 @@ def extract_state(sg, config, running=True) -> dict:
     stream_message = agent_event.stream_message
     return {
         "running": running,
-        "waiting_input": bool(thread_states.interrupts),
+        "event_streaming": event_streaming, # the agent is yielding event_streaming messages
+        "waiting_llm": stream_message is not None, # the agent is waiting for the LLM response
         "current": current,
         "interrupt_value": interrupt_value,
         "state": state,
@@ -47,34 +48,30 @@ def agent_worker(cmd_q: Queue, state_q: Queue, sg_init_args: dict):
             continue
 
         if cmd["type"] == "START":
-            running = True
             
             sg.start(default_state=cmd["default_state"], config=config)
             thread_states = sg.get_state(config)
 
             while thread_states.interrupts:
                 # 输出状态
-                state_q.put(extract_state(sg, config, running))
+                state_q.put(extract_state(sg, config, True, False))
                 sub_cmd = cmd_q.get()
                 if sub_cmd["type"] == "INPUT":
                     query = sub_cmd["text"]
                     print('get', query)
                 elif sub_cmd["type"] == "STOP":
-                    running = False
                     return
 
                 for chunk in sg(
                     query,
                     config=config
                 ):
-                    state_q.put(extract_state(sg, config, running))
+                    state_q.put(extract_state(sg, config, True, True))
                 
                 thread_states = sg.get_state(config)
 
-            running = False
-            state_q.put(extract_state(sg, config, running))
+            state_q.put(extract_state(sg, config, False, False))
 
         elif cmd["type"] == "STOP":
-            running = False
-            state_q.put(extract_state(sg, config, running))
+            state_q.put(extract_state(sg, config, False, False))
             return

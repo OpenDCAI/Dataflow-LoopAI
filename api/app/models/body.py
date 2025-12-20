@@ -1,3 +1,4 @@
+import json
 from typing import Optional, List
 from pydantic import BaseModel
 
@@ -15,6 +16,14 @@ class response_body:
             if value:
                 res[key] = value
         return res
+    
+    def text(self):
+        res = self.__call__()
+        return json.dumps(res, ensure_ascii=False)
+    
+    def stream(self):
+        text = self.text()
+        return f'data: {text}\n\n'
 
 
 class ConfigModel(BaseModel):

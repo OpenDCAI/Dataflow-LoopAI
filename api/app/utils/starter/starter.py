@@ -4,6 +4,8 @@ from multiprocessing import Process, Queue
 from typing import Optional
 from .worker import agent_worker as _worker_entry
 
+starter_process = []
+
 
 class StarterManager:
     def __init__(self, sg_init_args: dict):
@@ -55,6 +57,7 @@ class StarterManager:
             daemon=True
         )
         self.process.start()
+        starter_process.append(self.process)
 
         self.cmd_q.put({
             "type": "START",
@@ -85,4 +88,4 @@ class StarterManager:
     def _kill_if_running(self):
         if self.process and self.process.is_alive():
             self.process.terminate()
-            self.process.join()
+            self.process.join(timeout=1)

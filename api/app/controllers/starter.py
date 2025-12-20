@@ -1,8 +1,10 @@
 import os
 import json
 import uuid
+import asyncio
 from fastapi import APIRouter
-from omegaconf import OmegaConf
+from fastapi.responses import StreamingResponse
+from langchain_core.messages import message_to_dict
 from tortoise.expressions import Q
 from ..models.body import response_body, ConfigModel
 from ..models.db_models import StarterConfig
@@ -25,6 +27,7 @@ async def load_config():
 
 manager = None
 default_states = {}
+
 
 async def init_manager():
     global manager
@@ -83,12 +86,14 @@ async def init_manager():
 
     default_states = config['default_states']
 
+
 @router.post("/agent/start", operation_id='startAgent', summary="Start the agent")
 async def start_agent():
     if not manager:
         await init_manager()
     manager.start(default_state=default_states)
     return response_body(message="Agent started")
+
 
 @router.post("/agent/input", operation_id='agentInput', summary="Send input to the agent")
 async def agent_input(text: str):
@@ -113,17 +118,55 @@ def get_status():
     data = manager.poll_state()
     return response_body(message="Agent status", data=data)
 
+
 @router.get("/agent/messages", operation_id='getAgentMessages', summary="Get the agent messages")
-def get_messages():
+def get_state_messages():
     if not manager:
-        return response_body(code=400, message="Starter manager not initialized")
+        return response_body(code=400, message="Starter manager not initialized").stream()
     data = manager.poll_state()
-    if "state" not in data:
-        return response_body(code=400, message="No messages available")
-    if "messages" not in data["state"]:
-        return response_body(code=400, message="No messages available")
-    messages = data["state"]["messages"]
-    if "stream_message" in data:
-        messages.append(data["stream_message"])
+    if "state" not in data or not data['state']:
+        return response_body(code=400, message="No messages available").stream()
+    if "messages" not in data["state"] or not data["state"]["messages"]:
+        return response_body(code=400, message="No messages available").stream()
+
+    def decode_msg(msg):
+        if type(msg) != dict:
+            return message_to_dict(msg)
+        return msg
+    messages = [decode_msg(item) for item in data["state"]["messages"]]
     return response_body(message="Agent messages", data=messages)
 
+
+async def get_message_call():
+    if not manager:
+        yield response_body(code=400, message="Starter manager not initialized").stream()
+        return
+
+    def decode_msg(msg):
+        if type(msg) != dict:
+            return message_to_dict(msg)
+        return msg
+
+    while True:
+        await asyncio.sleep(0.1)
+        data = manager.poll_state()
+        if "state" not in data:
+            yield response_body(code=401, message="No messages available").stream()
+            continue
+        if "messages" not in data["state"] or not data["state"]["messages"]:
+            yield response_body(code=401, message="No messages available").stream()
+            continue
+        messages = []
+        if "stream_message" in data and data["stream_message"]:
+            messages.append(decode_msg(data["stream_message"]))
+        is_finished = data["stream_message"] is None
+        if data["event_streaming"] and is_finished:
+            yield response_body(code=401, message="wait for message").stream()
+        else:
+            yield response_body(message="Agent messages", status='loading' if not is_finished else 'success', data=messages).stream()
+        if not data["event_streaming"] and is_finished:
+            return
+
+@router.get("/agent/message/stream", operation_id='getAgentMessageStream', summary="Get the agent message stream")
+def get_message():
+    return StreamingResponse(get_message_call(), media_type="text/event-stream")
