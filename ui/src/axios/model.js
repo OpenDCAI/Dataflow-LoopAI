@@ -167,11 +167,7 @@ export class TaskItem {
   
     /**
      *
-     * @param {Number} id 
-     * @param {String} task_id 
-     * @param {String} name 
-     * @param {String} config 
-     * @param {String} state 
+
      */ 
     constructor(id = undefined,task_id = undefined,name = undefined,config = undefined,state = undefined,createdAt = undefined,updatedAt = undefined){
         this.id = id
@@ -182,32 +178,7 @@ export class TaskItem {
         this.createdAt = createdAt
         this.updatedAt = updatedAt
     }
-       
-    /**
-     * 
-     * @type {Number}
-     */
-    id=undefined   
-    /**
-     * 
-     * @type {String}
-     */
-    task_id=undefined   
-    /**
-     * 
-     * @type {String}
-     */
-    name=undefined   
-    /**
-     * 
-     * @type {String}
-     */
-    config=undefined   
-    /**
-     * 
-     * @type {String}
-     */
-    state=undefined
+    
     
 }
 export class TaskStatus {

@@ -32,8 +32,52 @@
                             ></i>
                         </div>
                     </template>
+                    <template v-slot:right-space>
+                        <div class="command-bar-right-space">
+                            <fv-button
+                                theme="dark"
+                                background="linear-gradient(
+                                    90deg,
+                                    rgba(129, 208, 246, 1),
+                                    rgba(146, 156, 218, 1)
+                                )"
+                                foreground="rgba(255, 255, 255, 1)"
+                                border-color="rgba(255, 255, 255, 0.3)"
+                                border-radius="30"
+                                :reveal-background-color="[
+                                    'rgba(255, 255, 255, 0.5)',
+                                    'rgba(103, 105, 251, 0.6)'
+                                ]"
+                                @click="execute"
+                            >
+                                <i class="ms-Icon ms-Icon--Play" style="margin-right: 5px"></i>
+                                <fv-progress-ring
+                                    v-show="!lock.loading"
+                                    loading="true"
+                                    :r="10"
+                                    :border-width="2"
+                                    background="rgba(200, 200, 200, 1)"
+                                    :color="'white'"
+                                    style="margin-right: 5px"
+                                ></fv-progress-ring>
+                                <p>{{ this.local('Run') }}</p>
+                            </fv-button>
+                            <i
+                                class="ms-Icon ms-Icon--FullCircleMask status-coin"
+                                :class="[
+                                    { ready: taskStatus.running && !taskStatus.waiting_llm },
+                                    { running: taskStatus.running && taskStatus.waiting_llm }
+                                ]"
+                                style="margin-left: 5px"
+                            ></i>
+                        </div>
+                    </template>
                 </fv-command-bar>
             </div>
+            <div class="chat-query-block" :class="[{ 'full-screen': show.fullScreen }]">
+                <query-block v-model:full-screen-editor="show.fullScreen"></query-block>
+            </div>
+            <msg-list></msg-list>
         </div>
         <page-loading :model-value="!lock.loading" title="Loading..."></page-loading>
     </div>
@@ -44,10 +88,13 @@ import { mapState, mapActions } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
 import { useVueFlow } from '@vue-flow/core'
+import { useLoopAI } from '@/stores/loopAI'
 
 import mainFlow from '@/components/manage/mainFlow/index.vue'
 import taskNav from '@/components/manage/mainFlow/tasks/index.vue'
 import pageLoading from '@/components/general/pageLoading.vue'
+import queryBlock from '@/components/manage/chat/queryBlock.vue'
+import msgList from '@/components/manage/chat/msgList.vue'
 
 import databaseIcon from '@/assets/flow/database.svg'
 import pipelineIcon from '@/assets/flow/pipeline.svg'
@@ -57,7 +104,9 @@ export default {
     components: {
         mainFlow,
         taskNav,
-        pageLoading
+        pageLoading,
+        queryBlock,
+        msgList
     },
     data() {
         return {
@@ -136,25 +185,35 @@ export default {
                     }
                 }
             ],
+            timer: {
+                healthCheck: null
+            },
             show: {
-                taskNav: false
+                taskNav: false,
+                fullScreen: false
             },
             lock: {
-                serving: true,
-                running: true,
                 loading: true
             }
         }
     },
-    watch: {},
+    watch: {
+        'taskStatus.running'(val) {
+            if (val) this.getMessages()
+        }
+    },
     computed: {
         ...mapState(useAppConfig, ['local']),
-        ...mapState(useTheme, ['color', 'gradient'])
+        ...mapState(useTheme, ['color', 'gradient']),
+        ...mapState(useLoopAI, ['taskStatus', 'taskMessages', 'msgStreamModel'])
     },
     mounted() {
         this.setViewport()
+        this.getStatus()
+        this.healthCheckInit()
     },
     methods: {
+        ...mapActions(useLoopAI, ['getStatus', 'getMessages', 'getMsgStream']),
         setViewport() {
             const flow = useVueFlow(this.flowId)
             flow.setViewport({
@@ -163,7 +222,40 @@ export default {
                 zoom: 1
             })
         },
-        handleSaveClick() {}
+        healthCheckInit() {
+            clearInterval(this.timer.healthCheck)
+            this.timer.healthCheck = setInterval(() => {
+                this.getStatus()
+            }, 5000)
+        },
+        handleSaveClick() {},
+        execute() {
+            if (!this.lock.loading) return
+            this.lock.loading = false
+            this.$api.starter
+                .startAgent()
+                .then(async (res) => {
+                    if (res.code === 200) {
+                        await this.getStatus()
+                        this.healthCheckInit()
+                        this.lock.loading = true
+                    } else {
+                        this.lock.loading = true
+                        this.$barWarning(res.msg, {
+                            status: 'warning'
+                        })
+                    }
+                })
+                .catch((error) => {
+                    this.lock.loading = true
+                    proxy.$barWarning(error.message, {
+                        status: 'error'
+                    })
+                })
+        }
+    },
+    beforeUnmount() {
+        clearInterval(this.timer.healthCheck)
     }
 }
 </script>
@@ -186,7 +278,7 @@ export default {
         border-top-left-radius: 15px;
         border-bottom-left-radius: 15px;
         box-shadow: 1px 0px 2px rgba(120, 120, 120, 0.1);
-        z-index: 2;
+        z-index: 3;
     }
 
     .lp-flow-container {
@@ -199,6 +291,27 @@ export default {
         border-radius: 15px;
         box-shadow: inset 0px 0px 6px rgba(0, 0, 0, 0.1);
         overflow: hidden;
+
+        .chat-query-block {
+            position: absolute;
+            left: 0px;
+            bottom: 0px;
+            width: 100%;
+            height: 250px;
+            padding: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            box-sizing: border-box;
+            transition: all 0.3s;
+            z-index: 2;
+
+            &.full-screen {
+                height: 600px;
+                max-height: 100%;
+            }
+        }
     }
 
     .control-menu-block {
@@ -210,6 +323,7 @@ export default {
         padding: 35px 0px;
         display: flex;
         justify-content: center;
+        z-index: 2;
 
         .command-bar {
             min-width: 320px;
@@ -264,6 +378,31 @@ export default {
                 height: 100%;
                 padding-right: 5px;
                 gap: 3px;
+
+                .status-coin {
+                    font-size: 10px;
+                    color: rgba(220, 38, 45, 1);
+                    animation-direction: alternate;
+                    transition: color 0.3s;
+
+                    &.running {
+                        color: rgba(255, 165, 0, 1);
+                        animation: coin-running 0.5s linear infinite;
+                    }
+
+                    &.ready {
+                        color: rgba(45, 168, 83, 1);
+                    }
+
+                    @keyframes coin-running {
+                        0% {
+                            transform: scale(1);
+                        }
+                        100% {
+                            transform: scale(1.2);
+                        }
+                    }
+                }
             }
         }
     }
