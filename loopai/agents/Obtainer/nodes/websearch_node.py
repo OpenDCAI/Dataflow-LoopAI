@@ -1,6 +1,10 @@
 import json
 import asyncio
 import os
+import random
+import time
+from urllib.parse import urlparse
+
 from typing import Dict, Any, List, Optional
 
 from langgraph.config import get_stream_writer
@@ -19,6 +23,24 @@ from loopai.agents.Obtainer.utils import (
 from loopai.common.prompts import PromptLoader
 
 logger = get_logger()
+
+# 需要跳过的域名列表（这些网站可能会触发 CAPTCHA 验证或有反爬虫保护）
+BLOCKED_DOMAINS = [
+    "stackoverflow.com",
+]
+
+
+def _is_blocked_url(url: str) -> bool:
+    """检查 URL 是否属于被阻止的域名"""
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        for blocked in BLOCKED_DOMAINS:
+            if blocked in domain:
+                return True
+        return False
+    except Exception:
+        return False
 
 
 def websearch_node(state: LoopAIState) -> LoopAIState:
@@ -264,8 +286,10 @@ async def _websearch_workflow(
         for query in queries:
             search_results = await WebTools.search_web(query, search_engine, tavily_api_key=tavily_api_key)
             urls = WebTools.extract_urls_from_search_results(search_results)
+            # 过滤掉被阻止的域名
+            urls = [u for u in urls if not _is_blocked_url(u)]
             all_urls.extend(urls)
-            logger.info(f"Query '{query}' found {len(urls)} URLs")
+            logger.info(f"Query '{query}' found {len(urls)} URLs (after filtering blocked domains)")
         
         # Remove duplicates and limit
         unique_urls = list(dict.fromkeys(all_urls))[:max_urls]
@@ -305,6 +329,22 @@ async def _websearch_workflow(
             """Explore a URL: read content, store in RAG, and return candidate URLs for next layer"""
             async with semaphore:
                 try:
+                    # 检查 URL 是否属于被阻止的域名
+                    if _is_blocked_url(url):
+                        logger.info(f"[Depth {depth}/{max_depth}] Skipping blocked domain: {url}")
+                        return {
+                            "url": url,
+                            "depth": depth,
+                            "candidate_urls": [],
+                            "success": False,
+                            "reason": "blocked_domain"
+                        }
+                    
+                    # 每个网页实际爬取前增加 2-4 秒的随机延迟
+                    delay = random.uniform(2.0, 4.0)
+                    logger.info(f"[Depth {depth}/{max_depth}] Sleeping {delay:.2f}s before crawling URL: {url}")
+                    time.sleep(delay)
+
                     logger.info(f"[Depth {depth}/{max_depth}] Exploring URL: {url}")
                     
                     # Read webpage content
@@ -354,7 +394,8 @@ async def _websearch_workflow(
                         if depth < max_depth - 1 and candidate_urls:
                             # Filter out already visited URLs (with lock protection)
                             async with queue_lock:
-                                new_candidate_urls = [u for u in candidate_urls if u not in visited_urls_set]
+                                # 过滤已访问的 URL 和被阻止的域名
+                                new_candidate_urls = [u for u in candidate_urls if u not in visited_urls_set and not _is_blocked_url(u)]
                             
                             if new_candidate_urls:
                                 try:

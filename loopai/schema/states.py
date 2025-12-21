@@ -109,7 +109,7 @@ class LoopAIState(MessagesState):
     webcrawler_dataset_sft_path: str = ""  # Path to SFT JSONL file
     webcrawler_dataset_pt_path: str = ""  # Path to PT JSONL file
     webcrawler_max_records_per_page: int = 10  # Max records per webpage
-    webcrawler_min_relevance_score: float = 0.6  # Min relevance score for filtering
+    webcrawler_min_relevance_score: int = 6  # Min relevance score for filtering
     webcrawler_dataset_concurrent_limit: int = 5  # Concurrent limit for dataset generation
     webcrawler_max_content_length: int = 50000  # Max content length (characters) for LLM processing
     webcrawler_debug: bool = False  # Enable debug mode for webcrawler
