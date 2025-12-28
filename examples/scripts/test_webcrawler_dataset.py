@@ -44,8 +44,8 @@ MODEL_CONFIG = {
     
     # === 爬取策略 ===
     'webcrawler_num_queries': int(os.getenv('WEBCRAWLER_NUM_QUERIES', '3')),  
-    'webcrawler_max_pages': int(os.getenv('WEBCRAWLER_MAX_PAGES', '200')), 
-    'webcrawler_crawl_depth': int(os.getenv('WEBCRAWLER_DEPTH', '3')),  # 深度为2
+    'webcrawler_max_pages': int(os.getenv('WEBCRAWLER_MAX_PAGES', '50')), 
+    'webcrawler_crawl_depth': int(os.getenv('WEBCRAWLER_DEPTH', '2')),  # 深度为2
     'webcrawler_max_links_per_page': int(os.getenv('WEBCRAWLER_MAX_LINKS', '10')),  
     'webcrawler_concurrent_pages': int(os.getenv('WEBCRAWLER_CONCURRENT', '3')),  
     
@@ -254,7 +254,42 @@ try:
         print("⚠ 未生成任何数据")
         print("- 请查看调试日志了解详情")
 
-    print("\n[3. 映射后的最终数据集文件]")
+    print("\n[3. 网页摘要和相关性评分]")
+    print("-" * 80)
+    # 查找网页摘要文件
+    dataset_dir = os.path.join(output_dir, "webcrawler_dataset")
+    if os.path.exists(dataset_dir):
+        import glob
+        summary_files = glob.glob(os.path.join(dataset_dir, "webpage_summaries_*.jsonl"))
+        if summary_files:
+            latest_summary_file = max(summary_files, key=os.path.getctime)
+            print(f"  摘要文件: {latest_summary_file}")
+            
+            # 读取并显示摘要
+            with open(latest_summary_file, 'r', encoding='utf-8') as f:
+                summaries = [json.loads(line) for line in f]
+            
+            print(f"  生成了SFT的网页数: {len(summaries)}")
+            if summaries:
+                avg_relevance = sum(s.get('relevance_score', 0) for s in summaries) / len(summaries)
+                print(f"  平均相关性评分: {avg_relevance:.2f}/10")
+                
+                # 显示相关性最高的2个网页
+                print("\n  [相关性最高的网页（前2个）]")
+                sorted_summaries = sorted(summaries, key=lambda x: x.get('relevance_score', 0), reverse=True)
+                for i, summary in enumerate(sorted_summaries[:2], 1):
+                    print(f"    {i}. {summary.get('title', 'N/A')}")
+                    print(f"       URL: {summary.get('url', 'N/A')[:60]}...")
+                    print(f"       相关性评分: {summary.get('relevance_score', 0)}/10")
+                    summary_text = summary.get('summary', '')
+                    summary_preview = summary_text[:100] + "..." if len(summary_text) > 100 else summary_text
+                    print(f"       摘要: {summary_preview}")
+        else:
+            print("  [未生成网页摘要文件]")
+    else:
+        print("  [数据集目录不存在]")
+
+    print("\n[4. 映射后的最终数据集文件]")
     print("-" * 80)
     if mapped_sft_path:
         print(f"  SFT 映射文件: {mapped_sft_path}")

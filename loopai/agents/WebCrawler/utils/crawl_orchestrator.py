@@ -367,11 +367,11 @@ class CrawlOrchestrator:
             data={"total_collected": len(all_crawled_data)}
         )
         
-        # 3. 转换为统一格式并生成AI摘要
-        logger.info("\n步骤3: 处理网页数据并生成AI摘要...")
+        # 3. 转换为统一格式
+        logger.info("\n步骤3: 处理网页数据...")
         self._send_stream_event(
             current="process_content",
-            message="开始处理网页内容并生成AI摘要",
+            message="开始处理网页内容",
             total=min(len(all_crawled_data), self.max_pages)
         )
         
@@ -415,15 +415,7 @@ class CrawlOrchestrator:
                 }
             )
             
-            logger.info(f"  生成AI摘要...")
-            try:
-                summary = await self.content_analyzer.generate_summary(content)
-                content.ai_summary = summary
-                preview = summary[:100] + "..." if len(summary) > 100 else summary
-                logger.info(f"  AI摘要: {preview}")
-            except Exception as e:
-                logger.error(f"  生成摘要失败: {e}")
-                content.ai_summary = "摘要生成失败"
+            content.ai_summary = None
             
             converted_data.append(content)
             self.logger.log_data(f"page_{i:03d}", content.to_dict())
@@ -436,35 +428,14 @@ class CrawlOrchestrator:
             data={"valid_pages": len(converted_data)}
         )
         
-        # 4. 生成整体摘要
+        # 4. 整体摘要
         if converted_data:
-            logger.info("\n步骤4: 生成整体摘要...")
-            self._send_stream_event(
-                current="generate_summary",
-                message="正在生成整体摘要..."
-            )
-            
-            overall_summary = await self._generate_overall_summary(task, converted_data)
-            self.logger.log_data("overall_summary", overall_summary)
-            logger.info(f"整体摘要生成完成")
-            
-            self._send_stream_event(
-                current="generate_summary",
-                message="整体摘要生成完成",
-                data={
-                    "overview": overall_summary.get("overview", "")[:200],
-                    "key_findings_count": len(overall_summary.get("key_findings", [])),
-                    "sources_count": len(overall_summary.get("sources", []))
-                }
-            )
+            overall_summary = {
+                "total_pages": len(converted_data)
+            }
         else:
-            logger.warning("无有效爬取数据,跳过整体摘要生成")
+            logger.warning("无有效爬取数据")
             overall_summary = {"message": "无有效爬取数据"}
-            
-            self._send_stream_event(
-                current="generate_summary",
-                message="无有效数据，跳过摘要生成"
-            )
         
         # 5. 保存最终结果
         logger.info("\n步骤5: 保存最终结果...")

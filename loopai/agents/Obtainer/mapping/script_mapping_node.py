@@ -93,6 +93,8 @@ def _map_to_alpaca(record: Dict[str, Any]) -> Dict[str, Any]:
     Map to Alpaca format
     
     Target: {"instruction": "...", "input": "...", "output": "..."}
+    
+    For WebCrawler: system message (schema) content goes to "input" field
     """
     messages = _extract_messages_from_intermediate(record)
     
@@ -100,6 +102,9 @@ def _map_to_alpaca(record: Dict[str, Any]) -> Dict[str, Any]:
         # SFT 模式: 从 messages 提取
         instruction = ""
         output = ""
+        
+        # Extract system message content (schema) for input field
+        system_content = _get_system_prompt(record)
         
         for msg in messages:
             role = msg.get("role", "")
@@ -112,7 +117,7 @@ def _map_to_alpaca(record: Dict[str, Any]) -> Dict[str, Any]:
         
         return {
             "instruction": instruction,
-            "input": "",  # Alpaca 的 input 通常用于额外上下文，中间格式没有对应字段
+            "input": system_content,  # Put system message (schema) content into input field
             "output": output
         }
     else:
