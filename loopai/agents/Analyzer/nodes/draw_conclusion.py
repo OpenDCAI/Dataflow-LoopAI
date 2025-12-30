@@ -13,8 +13,61 @@ from loopai.logger import get_logger
 from loopai.common.prompts.prompt_loader import PromptLoader
 
 logger = get_logger()
+from collections import defaultdict
+from typing import List, Dict, Any
 
+def pick_samples_by_stage(
+    records: List[Dict[str, Any]],
+    limit: int = 20,
+    stage_key: str = "stage",
+) -> List[Dict[str, Any]]:
+    """
+    从失败样本中按 judge.stage 覆盖性抽样
+    - 小类优先
+    - 轮询抽样
+    - 顺序稳定
+    """
+    groups = defaultdict(list)
 
+    # 1. 按 stage 分组
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        judge = r.get("judge") or {}
+        stage = str(judge.get(stage_key) or "other")
+        groups[stage].append(r)
+
+    if not groups:
+        return []
+
+    # 2. 组内稳定排序（保证多次运行一致）
+    def stable_key(r):
+        return (
+            str(r.get("task_id") or ""),
+            int(r.get("sample_index") or -1),
+        )
+
+    for k in groups:
+        groups[k].sort(key=stable_key)
+
+    # 3. 小类优先
+    stage_order = sorted(groups.keys(), key=lambda k: (len(groups[k]), k))
+    ptr = {k: 0 for k in stage_order}
+
+    picked = []
+    while len(picked) < limit:
+        progressed = False
+        for k in stage_order:
+            if ptr[k] < len(groups[k]):
+                picked.append(groups[k][ptr[k]])
+                ptr[k] += 1
+                progressed = True
+                if len(picked) >= limit:
+                    break
+        if not progressed:
+            break
+
+    return picked
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     初始化模型
@@ -74,6 +127,17 @@ def try_read_oj_records(path_from_summary: str):
     except Exception as e:
         return [], f"读取 OJ 记录失败：{e}"
 
+def _as_dict(x) -> Dict[str, Any]:
+    """兼容 dict / JSON字符串 / 其它类型"""
+    if isinstance(x, dict):
+        return x
+    if isinstance(x, str):
+        try:
+            v = json.loads(x)
+            return v if isinstance(v, dict) else {}
+        except Exception:
+            return {}
+    return {}
 
 def enhance_stats_with_oj(records):
     """
@@ -93,22 +157,26 @@ def enhance_stats_with_oj(records):
     for rec in records:
         if not isinstance(rec, dict):
             continue
-        judge = rec.get("judge") or {}
+
+        judge = _as_dict(rec.get("judge") or {})
         tags = judge.get("tags")
         if isinstance(tags, list):
             tags_counter.update([t for t in tags if isinstance(t, str) and t])
 
-        ap = rec.get("assert_parsed") or {}
+        ap = _as_dict(rec.get("assert_parsed") or {})
         if any([ap.get("input_expr"), ap.get("expected"), ap.get("actual")]):
             io_total += 1
             if all([ap.get("input_expr"), ap.get("expected"), ap.get("actual")]):
                 io_ok += 1
 
         if not rec.get("passed", False):
-            io = (judge.get("factors") or {}).get("io_diff") or {}
+            factors = _as_dict(judge.get("factors") or {})
+            io = _as_dict(factors.get("io_diff") or {})
+
             failing_expr = io.get("failing_expr") or str(ap.get("input_expr") or "")
             expected = io.get("expected") or str(ap.get("expected") or "")
             actual = io.get("got") or str(ap.get("actual") or "")
+
             if failing_expr:
                 failing_expr_counter.update([failing_expr.strip()])
             if expected:
@@ -205,12 +273,20 @@ def build_suggestion_prompt(final_json: dict) -> str:
     by_stage_dict = final_json["failure_stage_distribution"]["by_stage"]
     by_stage_json = json.dumps(by_stage_dict, ensure_ascii=False, indent=2)
 
+    quick_samples = (final_json.get("quick_brief") or {}).get("samples") or []
+    quick_samples_json = json.dumps(quick_samples, ensure_ascii=False, indent=2)
+
+    summary_obj = final_json.get("summary") or {}
+    summary_json = json.dumps(summary_obj, ensure_ascii=False, indent=2)
+
     return tpl.format(
         total=t,
         passed=p,
         top_err=top_err,
         by_stage=by_stage_json,
         by_stage_json=by_stage_json,
+        quick_samples=quick_samples_json,
+        summary_json=summary_json,   # ★ NEW
     )
 def build_background_prompt(final_json: dict) -> str:
     """
@@ -286,19 +362,45 @@ def draw_conclusion_node(state: LoopAIState):
     outdir = state['output_dir']
     summary_path = state['analyze_output_summary_path']
 
+    # ===== 读取 summary =====
     with open(summary_path, "r", encoding="utf-8") as f:
         summary = json.load(f)
     summary["_file_path"] = summary_path
 
+    # ===== 读取 OJ 记录 =====
     oj_records, _ = try_read_oj_records(summary.get("results_file"))
     run_ts, final_json = make_final_json(summary, oj_records)
+
+    final_json["summary"] = summary
+
+    failed = [
+        r for r in (oj_records or [])
+        if isinstance(r, dict) and not r.get("passed", False)
+    ]
+    limit = int(state.get("quick_brief_limit", 20))
+    qb_samples = pick_samples_by_stage(failed, limit=limit)
+
+    final_json["quick_brief"] = {
+        "limit": limit,
+        "failed_total": len(failed),
+        "by_stage": { 
+            str((r.get("judge") or {}).get("stage") or "other"): 0 for r in qb_samples
+        },
+        "samples": qb_samples,
+    }
+
+    stage_cnt = {}
+    for r in qb_samples:
+        st = str((r.get("judge") or {}).get("stage") or "other")
+        stage_cnt[st] = stage_cnt.get(st, 0) + 1
+    final_json["quick_brief"]["by_stage"] = stage_cnt
 
     # ===== 构造数据集元信息 + 样例，供 background 使用 =====
     dataset_name = summary.get("dataset_name") or summary.get("task_name") or Path(summary_path).stem
     task_type = state.get("analyze_task_type", "code")  # "code" / "sql" / "text2sql" 等
 
-    # 取前 10 条合法样例
-    samples = [rec for rec in oj_records if isinstance(rec, dict)][:10]
+    qb = final_json.get("quick_brief") or {}
+    samples = qb.get("samples") or []
 
     field_schema = []
     example = {}

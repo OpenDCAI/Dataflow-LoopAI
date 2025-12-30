@@ -17,7 +17,21 @@ from loopai.agents.Analyzer.utils.openai_compat_llm import OpenAICompatChat
 logger = get_logger()
 from types import SimpleNamespace  
 
+# ===== PromptLoader 单例 & 模板缓存 =====
+_PROMPT_LOADER: PromptLoader | None = None
+_TEMPLATE_CACHE: dict[tuple[str, str], str] = {}
 
+def get_prompt_loader() -> PromptLoader:
+    global _PROMPT_LOADER
+    if _PROMPT_LOADER is None:
+        _PROMPT_LOADER = PromptLoader()
+    return _PROMPT_LOADER
+
+def get_template(group: str, name: str) -> str:
+    key = (group, name)
+    if key not in _TEMPLATE_CACHE:
+        _TEMPLATE_CACHE[key] = get_prompt_loader()(group, name)
+    return _TEMPLATE_CACHE[key]
 class SafeDict(dict):  # NEW
     """
     安全字典，用于字符串 format_map 时，缺失 key 自动返回空字符串，避免 KeyError
@@ -140,8 +154,6 @@ def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
     Returns:
         完整 prompt
     """
-    loader = PromptLoader()
-
     def trunc(s, n):
         s = s or ""
         return s if len(s) <= n else s[:n] + "\n...[truncated]"
@@ -155,7 +167,7 @@ def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
         "err_text": trunc(evidence.get("err_text", ""), 256),
         "query": trunc(evidence.get("query", ""), 256),
     }
-    tpl = loader("judge", "judge_user")
+    tpl = get_template("judge", "judge_user")
     return tpl.format(task=task, **ev)
 
 
@@ -206,6 +218,63 @@ def call_llm_with_control(
         )
         all_results.extend(sub_results)
     return all_results
+def _pick_quick_brief_records(
+    failed_results: List[Dict[str, Any]],
+    limit: int = 20,
+    prefer_key: str = "stage",  # "stage" 或 "tag"
+) -> List[int]:
+    """
+    从失败样本里挑选用于 quick_brief 的样本下标（返回 index 列表）。
+    - 尽量覆盖不同错误类型（按 stage 或 tag 分组）
+    - 轮询抽样，优先覆盖小类
+    """
+    groups: Dict[str, List[int]] = defaultdict(list)
+
+    def _group_key(rec: Dict[str, Any]) -> str:
+        j = rec.get("judge") or {}
+        if prefer_key == "tag":
+            tags = j.get("tags") or []
+            if isinstance(tags, list) and tags:
+                return str(tags[0])
+        return str(j.get("stage") or "other")
+
+    for idx, rec in enumerate(failed_results):
+        groups[_group_key(rec)].append(idx)
+
+    if not groups:
+        return []
+
+    def _stable_sort_key(i: int):
+        r = failed_results[i]
+        return (str(r.get("task_id") or ""), int(r.get("sample_index") or -1), i)
+
+    for k in list(groups.keys()):
+        groups[k].sort(key=_stable_sort_key)
+
+    group_keys = sorted(groups.keys(), key=lambda k: (len(groups[k]), k))
+    ptrs = {k: 0 for k in group_keys}
+
+    picked: List[int] = []
+    while len(picked) < limit:
+        progressed = False
+        for k in group_keys:
+            p = ptrs[k]
+            if p < len(groups[k]):
+                picked.append(groups[k][p])
+                ptrs[k] += 1
+                progressed = True
+                if len(picked) >= limit:
+                    break
+        if not progressed:
+            break
+
+    seen = set()
+    out = []
+    for i in picked:
+        if i not in seen:
+            out.append(i)
+            seen.add(i)
+    return out
     
 def summarize_brief(
     task_id: str,
@@ -230,12 +299,11 @@ def summarize_brief(
     Returns:
         一句话中文短评
     """
-    loader = PromptLoader()
     if task_type == "sql":
         tpl_name = "brief_sql_user"
     else:
         tpl_name = "brief_user"
-    tpl = loader("brief", tpl_name)
+    tpl = get_template("brief", tpl_name) 
 
     payload = SafeDict({
         "prompt_head": (prompt_head or "")[:600],
@@ -342,7 +410,6 @@ def build_evidence_for_record(rec: Dict[str, Any], task_type: str) -> Dict[str, 
     Returns:
         判因 evidence 字典
     """
-    # CHANGED: 分发到各自独立的方法，便于按任务类型维护字段映射
     if task_type == "sql":
         return build_evidence_for_record_sql(rec)
     return build_evidence_for_record_code(rec)
@@ -406,7 +473,6 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
             for t in tags:
                 tag_counter[t] += 1
 
-        # 复杂度 / 分布统计
         if task_type == "sql":
             # NEW: 对于 sql，用 SQL 语句长度 / 词元数量做粗分布统计
             sql = (
@@ -420,7 +486,6 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
             loc_bins[bin_loc(sql_len)] += 1
             kw_bins[bin_kw(token_cnt)] += 1
         else:
-            # 原有 code 分支：LOC / 控制语句分布
             m = rec.get("code_metrics") or {}
             try:
                 loc = int(m.get("loc", 0))
@@ -464,7 +529,6 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
         "pass_rate_samples": round(passed_samples / (total_samples or 1), 4),
         "pass_at_k_task": pass_at_k_task,
         "failure_stage_distribution": dict(stage_counter),
-        # 对于 code：LOC / 控制语句；对于 sql：SQL 长度 / 词元数量
         "loc_distribution": dict(loc_bins),
         "kw_distribution": dict(kw_bins),
         "io_assert_parse": {
@@ -522,12 +586,11 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
     logger.info(f" 已生成 summary：{summary_json} ，文本简报：{summary_txt}")
     return str(summary_json), str(summary_txt)
 
-
 def eval_model_node(state: LoopAIState):
     """
     模型评测分析节点函数
     该函数处理模型评测结果，分析失败案例原因，并生成增强版评测记录和总结报告
-    
+
     Args:
         state: LoopAIState对象，包含以下关键参数：
             - analyze_task_type: 任务类型（"code" 或 "sql"）
@@ -539,19 +602,19 @@ def eval_model_node(state: LoopAIState):
             - analyze_temperature: 模型温度参数
             - analyze_top_p: 模型top_p参数
             - output_dir: 输出目录路径
-            - output_brief: 是否输出中文短评，默认False
-    
+            - quick_brief: 是否输出中文短评（失败<=20全量；失败>20抽样20条覆盖错误类型），默认False
+
     Returns:
         更新后的LoopAIState对象，包含以下新增字段：
             - analyze_output_result_path: 增强版评测记录文件路径
             - analyze_output_summary_path: 评测摘要JSON文件路径
-    
+
     处理流程：
         1. 初始化LLMJudge和分析模型
         2. 读取评测结果并过滤失败案例
         3. 批量处理失败案例，收集证据并构建提示词
         4. 使用模型分析失败原因
-        5. 可选地生成中文短评
+        5. 可选地生成中文短评（quick_brief）
         6. 输出增强版评测记录
         7. 生成评测摘要报告
     """
@@ -591,7 +654,7 @@ def eval_model_node(state: LoopAIState):
             chunk_size=int(state.get("analyze_chunk_size", 8)),
         )
 
-        # 合并判因 +（可选）中文短评
+        # 合并判因
         for j, rec in enumerate(batch):
             # ChatOpenAI.batch 返回 BaseMessage，取 content 作为 JSON 字符串
             model_json = batch_responses[j].content
@@ -601,25 +664,77 @@ def eval_model_node(state: LoopAIState):
                 except Exception as e:
                     rec["judge"] = {"stage": "other", "reason": f"LLMaJ 运行异常：{e}", "evidence": {}}
 
-            if state.get('output_brief', False):
-                try:
-                    # CHANGED: 短评输入也按任务类型分发
-                    if task_type == "sql":
-                        brief_inputs = build_brief_inputs_sql(rec)
-                    else:
-                        brief_inputs = build_brief_inputs_code(rec)
+    # ===== quick_brief：仅对失败样本生成短评（失败<=20全量；失败>20抽样20条覆盖错误类型）=====
+    if state.get("quick_brief", False) and len(failed_results) > 0:
+        limit = int(state.get("quick_brief_limit", 20))
 
-                    rec["brief_analysis"] = summarize_brief(
-                        task_id=str(rec.get("task_id")),
-                        prompt_head=brief_inputs["prompt_head"],
-                        completion_head=brief_inputs["completion_head"],
-                        test_head=brief_inputs["test_head"],
-                        oj=brief_inputs["oj"],
-                        llm=llm,
-                        task_type=task_type
-                    )
-                except Exception as e:
-                    rec["brief_analysis"] = f"（短评生成失败：{e}）"
+        def _pick_quick_brief_indices() -> List[int]:
+            # 失败<=limit：全量
+            if len(failed_results) <= limit:
+                return list(range(len(failed_results)))
+
+            # 失败>limit：尽量覆盖不同错误类型（按 judge.stage 分组轮询抽样）
+            groups: Dict[str, List[int]] = defaultdict(list)
+            for idx, rec in enumerate(failed_results):
+                stg = (rec.get("judge") or {}).get("stage") or "other"
+                groups[str(stg)].append(idx)
+
+            # 组内保持稳定顺序（task_id / sample_index / idx）
+            def _stable_key(i: int):
+                r = failed_results[i]
+                return (str(r.get("task_id") or ""), int(r.get("sample_index") or -1), i)
+
+            for k in list(groups.keys()):
+                groups[k].sort(key=_stable_key)
+
+            # 小类优先轮询，尽量覆盖更多类型
+            keys = sorted(groups.keys(), key=lambda k: (len(groups[k]), k))
+            ptr = {k: 0 for k in keys}
+
+            picked: List[int] = []
+            while len(picked) < limit:
+                progressed = False
+                for k in keys:
+                    p = ptr[k]
+                    if p < len(groups[k]):
+                        picked.append(groups[k][p])
+                        ptr[k] += 1
+                        progressed = True
+                        if len(picked) >= limit:
+                            break
+                if not progressed:
+                    break
+
+            # 去重保序
+            seen = set()
+            out = []
+            for i in picked:
+                if i not in seen:
+                    out.append(i)
+                    seen.add(i)
+            return out
+
+        picked_idx = _pick_quick_brief_indices()
+
+        for idx in picked_idx:
+            rec = failed_results[idx]
+            try:
+                if task_type == "sql":
+                    brief_inputs = build_brief_inputs_sql(rec)
+                else:
+                    brief_inputs = build_brief_inputs_code(rec)
+
+                rec["brief_analysis"] = summarize_brief(
+                    task_id=str(rec.get("task_id")),
+                    prompt_head=brief_inputs["prompt_head"],
+                    completion_head=brief_inputs["completion_head"],
+                    test_head=brief_inputs["test_head"],
+                    oj=brief_inputs["oj"],
+                    llm=llm,
+                    task_type=task_type
+                )
+            except Exception as e:
+                rec["brief_analysis"] = f"（短评生成失败：{e}）"
 
     logger.info(f" 判因完成：共 {len(failed_results)} 条")
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -632,9 +747,8 @@ def eval_model_node(state: LoopAIState):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     state['analyze_output_result_path'] = str(out_jsonl_path.resolve())
     logger.info(f" 已写入增强版 OJ：{out_jsonl_path}")
-    logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if state.get('output_brief', False) else ""))
+    logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if state.get('quick_brief', False) else ""))
 
-    # 生成 summary
     try:
         summary_json_path, summary_txt_path = _build_and_write_summary(
             result_content, Path(state['output_dir']), ts, task_type=task_type
