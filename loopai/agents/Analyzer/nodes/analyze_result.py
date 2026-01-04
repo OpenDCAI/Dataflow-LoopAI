@@ -12,8 +12,6 @@ from loopai.logger import get_logger
 
 logger = get_logger()
 
-
-
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     使用标准 vLLM(OpenAI 兼容) 客户端
@@ -98,19 +96,23 @@ def build_prompt_for_llm(summary: Dict[str, Any], failure_snippets: List[Dict[st
 
     template = loader("analyze_result_user", "analyze_user")
     return template.format(
-        total=int(total),
-        passed=int(passed),
-        # ★ 同时提供两个 key，避免 prompt 里用哪一个都报错
-        pass_rate_samples=pass_rate_samples,
-        pass_rate_pct=f"{pass_rate_samples * 100:.2f}",
-        pass_rate_percent=f"{pass_rate_samples * 100:.2f}",
-        fail_dist=fail_dist,
-        loc_dist=loc_dist,
-        kw_dist=kw_dist,
-        top_fail=top_fail,
-        fail_block=fail_block
-    )
+    total=int(total),
+    passed=int(passed),
 
+    pass_rate_samples=pass_rate_samples,
+    pass_rate_pct=f"{pass_rate_samples * 100:.2f}",
+    pass_rate_percent=f"{pass_rate_samples * 100:.2f}",
+    fail_dist=fail_dist,
+    loc_dist=loc_dist,
+    kw_dist=kw_dist,
+    top_fail=top_fail,
+    fail_block=fail_block,
+
+    top_err=top_fail,
+    by_stage_json=fail_dist,
+    quick_samples=json.dumps(failure_snippets, ensure_ascii=False),
+    summary_json=json.dumps(summary, ensure_ascii=False),
+     )
 
 def rule_based_brief(summary: Dict[str, Any]) -> Dict[str, Any]:
     """
