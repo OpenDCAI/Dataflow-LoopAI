@@ -83,3 +83,18 @@ async def update_config(config: ConfigModel):
         'name': original_config.name,
         'config': original_config_obj,
     })()
+
+
+@router.get("/list_dir", operation_id='listDir', summary="列出目录下的文件, 且判定是否为文件夹")
+async def list_dir(path: str):
+    """列出目录下的文件, 且判定是否为文件夹"""
+    if not os.path.exists(path):
+        return response_body(code=400, status='error', message='目录不存在')()
+    files = os.listdir(path)
+    res = []
+    for file in files:
+        res.append({
+            'name': file,
+            'is_dir': os.path.isdir(os.path.join(path, file)),
+        })
+    return response_body(data=res)()

@@ -82,9 +82,8 @@ class AgentEvent:
         """
         if not self.custom_info:
             self.custom_info = {}
-        if key not in self.custom_info:
-            self.custom_info[key] = []
-        self.custom_info[key].append(info)
+        current_key = info.get('current', 'unknown_key')
+        self.custom_info[current_key] = info
         self.updated_custom_info = {key: info}
 
     def text(self, only_updated=False):
