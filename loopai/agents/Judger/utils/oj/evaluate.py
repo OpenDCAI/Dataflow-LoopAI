@@ -8,6 +8,8 @@ import numpy as np
 import tqdm
 from .data import write_jsonl, stream_jsonl, read_problems
 from .execution import check_correctness
+from loopai.logger import get_logger
+logger = get_logger()
 
 def estimate_pass_at_k(
     num_samples: Union[int, List[int], np.ndarray],
@@ -57,7 +59,7 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
         n_samples = 0
         results = defaultdict(list)
 
-        print("Reading samples...")
+        logger.info("Reading samples...")
         for sample in tqdm.tqdm(stream_jsonl(sample_file)):
             task_id = sample["task_id"]
             completion = sample["completion"]
@@ -69,7 +71,7 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
 
         assert len(completion_id) == len(problems), "Some problems are not attempted."
 
-        print("Running test suites...")
+        logger.info("Running test suites...")
         for future in tqdm.tqdm(as_completed(futures), total=len(futures)):
             result = future.result()
             results[result["task_id"]].append((result["completion_id"], result))
@@ -98,7 +100,7 @@ def evaluate_functional_correctness(K, n_workers, timeout, test_case_path, probl
             yield sample
 
     out_file = result_path
-    print(f"Writing results to {out_file}...")
+    logger.info(f"Writing results to {out_file}...")
     write_jsonl(out_file, tqdm.tqdm(combine_results(), total=n_samples))
 
     file_path = os.path.join(os.path.dirname(out_file),"log.txt")
@@ -121,5 +123,5 @@ def evaluate_sample(K, n_workers, timeout, test_case_path, problem_path, result_
     results to f"{sample_file}_results.jsonl.gz"
     """
     results = evaluate_functional_correctness(K, n_workers, timeout, test_case_path, problem_path, result_path)
-    print(results)
+    logger.info(results)
     return results
