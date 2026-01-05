@@ -74,7 +74,7 @@ class JudgerAgent(BaseAgent):
                 progress=0.0,
                 message="常规任务样本合成开始",
                 data={"msg": ''}
-            ))
+            ).json())
         
         generate_sample(state)
         return state
@@ -89,7 +89,7 @@ class JudgerAgent(BaseAgent):
                 progress=0.0,
                 message="SQL任务样本合成开始",
                 data={"msg": ''}
-            ))
+            ).json())
         generate_sample_sql(state)
         return state
 
@@ -103,7 +103,7 @@ class JudgerAgent(BaseAgent):
                 progress=0.0,
                 message="常规任务评测样本开始",
                 data={"msg": ''}
-            ))
+            ).json())
         evaluate_sample(K='1,10,100', n_workers=1, timeout=3.0, test_case_path=state['eval_test_case_path'], problem_path=state['eval_problem_path'], result_path=state[
                         'eval_result_path'])
         return state
@@ -118,7 +118,7 @@ class JudgerAgent(BaseAgent):
                 progress=0.0,
                 message="SQL任务评测样本开始",
                 data={"msg": ''}
-            ))
+            ).json())
         evaluate_sample_sql(K='1,10,100', n_workers=1, timeout=3.0, test_case_path=state['eval_test_case_path'], problem_path=state['eval_problem_path'], result_path=state[
                         'eval_result_path'])
         return state

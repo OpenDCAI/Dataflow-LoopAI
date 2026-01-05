@@ -25,7 +25,7 @@ def extract_state(sg, config, running=True, event_streaming=False) -> dict:
         "interrupt_value": interrupt_value,
         "state": state,
         "custom_info": agent_event.custom_info,
-        "update_custom_info": agent_event.updated_custom_info,
+        "updated_custom_info": agent_event.updated_custom_info,
         "stream_message": stream_message
     }
 
