@@ -73,6 +73,13 @@ class TaskManager:
         env["CUDA_VISIBLE_DEVICES"] = os.getenv("CUDA_VISIBLE_DEVICES", "0,1")
         env["NCCL_ALGO"] = "Ring"
         
+        # 获取 LLaMA Factory 环境路径
+        llamafactory_env_path = os.getenv("LLAMAFACTORY_ENV_PATH")
+        if llamafactory_env_path:
+            env["LLAMAFACTORY_ENV_PATH"] = llamafactory_env_path
+        else:
+            print("警告: 未找到LLAMAFACTORY_ENV_PATH环境变量，将使用系统默认的llamafactory-cli")
+        
         # 检查必需的API密钥
         swanlab_key = os.getenv("SWANLAB_API_KEY", "sGBINQXB1ThNYERXGPggy")
         if swanlab_key:
@@ -87,11 +94,22 @@ class TaskManager:
         task_info = self.tasks[task_id]
         config_path = task_info['config_path']
         log_path = os.path.join(self.logs_dir, f"{task_id}.log")
-        
         try:
             # 构建训练命令
             env = self._get_safe_env()
-            cmd = ["llamafactory-cli", "train", config_path]
+            
+            # 根据环境路径构建命令
+            llamafactory_env_path = env.get("LLAMAFACTORY_ENV_PATH")
+            if llamafactory_env_path:
+                # 如果指定了环境路径，使用完整路径
+                cmd = [os.path.join(llamafactory_env_path, "llamafactory-cli"), "train", config_path]
+                print(f"使用指定环境路径执行训练: {llamafactory_env_path}")
+            else:
+                # 否则使用系统PATH中的llamafactory-cli
+                cmd = ["llamafactory-cli", "train", config_path]
+                print("使用系统默认的llamafactory-cli执行训练")
+            
+            print(f"训练命令: {' '.join(cmd)}")
             
             # 启动训练进程
             with open(log_path, 'w', encoding='utf-8') as log_file:
