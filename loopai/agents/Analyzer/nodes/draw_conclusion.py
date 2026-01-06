@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import os
 import json
 import time
@@ -14,8 +13,86 @@ from loopai.logger import get_logger
 from loopai.common.prompts.prompt_loader import PromptLoader
 
 logger = get_logger()
+from collections import defaultdict
+from typing import List, Dict, Any
+def string_writer(
+    state: LoopAIState,
+    node: str,
+    message: str,
+    *,
+    progress: float | None = None,
+    data: Dict[str, Any] | None = None,
+):
+    entry = {
+        "node": node,
+        "message": message,
+        "ts": time.time(),
+    }
+    if progress is not None:
+        entry["progress"] = float(progress)
+    if data is not None:
+        entry["data"] = data
 
+    if "_events" not in state:
+        state["_events"] = []
+    state["_events"].append(entry)
 
+    logger.info(f"[UI:{node}] {message} " +
+                (f"| progress={progress:.3f} " if progress is not None else "") +
+                (f"| data={data}" if data else ""))
+
+def pick_samples_by_stage(
+    records: List[Dict[str, Any]],
+    limit: int = 20,
+    stage_key: str = "stage",
+) -> List[Dict[str, Any]]:
+    """
+    从失败样本中按 judge.stage 覆盖性抽样
+    - 小类优先
+    - 轮询抽样
+    - 顺序稳定
+    """
+    groups = defaultdict(list)
+
+    # 1. 按 stage 分组
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        judge = r.get("judge") or {}
+        stage = str(judge.get(stage_key) or "other")
+        groups[stage].append(r)
+
+    if not groups:
+        return []
+
+    # 2. 组内稳定排序（保证多次运行一致）
+    def stable_key(r):
+        return (
+            str(r.get("task_id") or ""),
+            int(r.get("sample_index") or -1),
+        )
+
+    for k in groups:
+        groups[k].sort(key=stable_key)
+
+    # 3. 小类优先
+    stage_order = sorted(groups.keys(), key=lambda k: (len(groups[k]), k))
+    ptr = {k: 0 for k in stage_order}
+
+    picked = []
+    while len(picked) < limit:
+        progressed = False
+        for k in stage_order:
+            if ptr[k] < len(groups[k]):
+                picked.append(groups[k][ptr[k]])
+                ptr[k] += 1
+                progressed = True
+                if len(picked) >= limit:
+                    break
+        if not progressed:
+            break
+
+    return picked
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     初始化模型
@@ -28,6 +105,7 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     Returns:
         初始化后的模型实例
     """
+
     model = ChatOpenAI(
         model=state['analyze_model_path'],
         api_key=state['analyze_api_key'],
@@ -74,6 +152,17 @@ def try_read_oj_records(path_from_summary: str):
     except Exception as e:
         return [], f"读取 OJ 记录失败：{e}"
 
+def _as_dict(x) -> Dict[str, Any]:
+    """兼容 dict / JSON字符串 / 其它类型"""
+    if isinstance(x, dict):
+        return x
+    if isinstance(x, str):
+        try:
+            v = json.loads(x)
+            return v if isinstance(v, dict) else {}
+        except Exception:
+            return {}
+    return {}
 
 def enhance_stats_with_oj(records):
     """
@@ -91,22 +180,28 @@ def enhance_stats_with_oj(records):
     actual_counter = Counter()
 
     for rec in records:
-        judge = rec.get("judge") or {}
+        if not isinstance(rec, dict):
+            continue
+
+        judge = _as_dict(rec.get("judge") or {})
         tags = judge.get("tags")
         if isinstance(tags, list):
             tags_counter.update([t for t in tags if isinstance(t, str) and t])
 
-        ap = rec.get("assert_parsed") or {}
+        ap = _as_dict(rec.get("assert_parsed") or {})
         if any([ap.get("input_expr"), ap.get("expected"), ap.get("actual")]):
             io_total += 1
             if all([ap.get("input_expr"), ap.get("expected"), ap.get("actual")]):
                 io_ok += 1
 
         if not rec.get("passed", False):
-            io = (judge.get("factors") or {}).get("io_diff") or {}
+            factors = _as_dict(judge.get("factors") or {})
+            io = _as_dict(factors.get("io_diff") or {})
+
             failing_expr = io.get("failing_expr") or str(ap.get("input_expr") or "")
             expected = io.get("expected") or str(ap.get("expected") or "")
             actual = io.get("got") or str(ap.get("actual") or "")
+
             if failing_expr:
                 failing_expr_counter.update([failing_expr.strip()])
             if expected:
@@ -192,36 +287,42 @@ def build_suggestion_prompt(final_json: dict) -> str:
         改进建议的提示文本
     """
     loader = PromptLoader()
+    tpl = loader("suggestion", "suggest_user")
+
     t = final_json["totals"]["total_samples"]
     p = final_json["totals"]["passed_samples"]
+
     stage_top = final_json["failure_stage_distribution"]["top"]
     top_err = stage_top[0][0] if stage_top else "无明显错误类型"
-    by_stage = json.dumps(final_json["failure_stage_distribution"]["by_stage"], ensure_ascii=False)
-    tpl = loader("suggest", "suggest_user")
-    return tpl.format(total=t, passed=p, top_err=top_err, by_stage=by_stage)
 
+    by_stage_dict = final_json["failure_stage_distribution"]["by_stage"]
+    by_stage_json = json.dumps(by_stage_dict, ensure_ascii=False, indent=2)
 
+    quick_samples = (final_json.get("quick_brief") or {}).get("samples") or []
+    quick_samples_json = json.dumps(quick_samples, ensure_ascii=False, indent=2)
+
+    summary_obj = final_json.get("summary") or {}
+    summary_json = json.dumps(summary_obj, ensure_ascii=False, indent=2)
+
+    return tpl.format(
+        total=t,
+        passed=p,
+        top_err=top_err,
+        by_stage=by_stage_json,
+        by_stage_json=by_stage_json,
+        quick_samples=quick_samples_json,
+        summary_json=summary_json,   # ★ NEW
+    )
 def build_background_prompt(final_json: dict) -> str:
     """
-    构建背景介绍的提示文本
-    Args:
-        final_json: 最终 JSON 输出
-    Returns:
-        背景介绍的提示文本
+    构建背景介绍的提示文本：只介绍数据集本身
     """
     loader = PromptLoader()
     tpl = loader("background", "v1")
 
-    # 为大模型准备一个简洁的统计视图
-    stats = {
-        "total_samples": final_json["totals"]["total_samples"],
-        "passed_samples": final_json["totals"]["passed_samples"],
-        "pass_rate": final_json["totals"]["pass_rate_samples"],
-        "top_failure": final_json["failure_stage_distribution"]["top"][:3],
-        "kw_distribution": final_json["control_kw_distribution"]["ordered"][:5],
-        "loc_distribution": final_json["loc_distribution"]["ordered"][:5],
-    }
-    return tpl.format(stats=json.dumps(stats, ensure_ascii=False))
+    ds_info = final_json.get("dataset", {})
+
+    return tpl.format(ds=json.dumps(ds_info, ensure_ascii=False))
 
 
 def make_human_text(final_json: dict, background: str = None) -> str:
@@ -259,12 +360,10 @@ def make_human_text(final_json: dict, background: str = None) -> str:
 
     lines = []
 
-   
     if background:
         lines.append("【背景介绍】")
         lines.append(background.strip())
         lines.append("")
-
 
     lines.append(f"本次评测共 {t} 个样本，其中通过 {p} 个，样本正确率 {pass_rate_str}。")
     if top_cnt > 0:
@@ -281,27 +380,98 @@ def make_human_text(final_json: dict, background: str = None) -> str:
 
     lines.append("整体来看，建议优先修复最常见错误并优化边界测试。")
     return "\n".join(lines)
-
-
 def draw_conclusion_node(state: LoopAIState):
     """
     绘制结论，生成 summary / final_report，并可选生成背景介绍与改进建议
     """
+    final_json_path = None
+    string_writer(
+    state,
+    "JudgerAgent.draw_conclusion_node",
+    "开始生成最终报告",
+    progress=0.0
+)
     outdir = state['output_dir']
-    os.makedirs(outdir, exist_ok=True)
     summary_path = state['analyze_output_summary_path']
 
+    # ===== 读取 summary =====
+    string_writer(
+    state,
+    "JudgerAgent.draw_conclusion_node",
+    "读取评测摘要",
+    data={"summary_path": summary_path}
+)
     with open(summary_path, "r", encoding="utf-8") as f:
         summary = json.load(f)
     summary["_file_path"] = summary_path
 
+    # ===== 读取 OJ 记录 =====
+    string_writer(
+    state,
+    "JudgerAgent.draw_conclusion_node",
+    "读取评测记录",
+    data={"results_file": summary.get("results_file")}
+)
     oj_records, _ = try_read_oj_records(summary.get("results_file"))
     run_ts, final_json = make_final_json(summary, oj_records)
+
+    final_json["summary"] = summary
+
+    failed = [
+        r for r in (oj_records or [])
+        if isinstance(r, dict) and not r.get("passed", False)
+    ]
+    limit = int(state.get("quick_brief_limit", 20))
+    qb_samples = pick_samples_by_stage(failed, limit=limit)
+
+    final_json["quick_brief"] = {
+        "limit": limit,
+        "failed_total": len(failed),
+        "samples": qb_samples,
+    }
+
+    stage_cnt = {}
+    for r in qb_samples:
+        st = str((r.get("judge") or {}).get("stage") or "other")
+        stage_cnt[st] = stage_cnt.get(st, 0) + 1
+    final_json["quick_brief"]["by_stage"] = stage_cnt
+
+    # ===== 构造数据集元信息 + 样例，供 background 使用 =====
+    dataset_name = summary.get("dataset_name") or summary.get("task_name") or Path(summary_path).stem
+    task_type = state.get("analyze_task_type", "code")  # "code" / "sql" / "text2sql" 等
+
+    qb = final_json.get("quick_brief") or {}
+    samples = qb.get("samples") or []
+
+    field_schema = []
+    example = {}
+    if samples:
+        first = samples[0]
+        field_schema = list(first.keys())
+        example = {
+            k: (str(v)[:200] + "…") if isinstance(v, str) and len(str(v)) > 200 else str(v)
+            for k, v in first.items()
+        }
+
+    final_json["dataset"] = {
+        "name": dataset_name,
+        "task_type": task_type,
+        "field_schema": field_schema,
+        "example": example,
+        "total_samples": final_json["totals"]["total_samples"],
+    }
+    final_json["samples"] = samples  
 
     # ===== 初始化模型（用于背景介绍 + 改进建议）=====
     llm = init_model(state)
 
     # ===== 生成背景介绍 =====
+    string_writer(
+    state,
+    "JudgerAgent.draw_conclusion_node",
+    "生成背景介绍",
+    progress=0.3
+)
     logger.info("🤖 正在生成背景介绍……")
     try:
         bg_prompt = build_background_prompt(final_json)
@@ -313,11 +483,23 @@ def draw_conclusion_node(state: LoopAIState):
 
     # ===== 写入 JSON 报告 =====
     final_json_path = os.path.join(outdir, f"final_report_{run_ts}.json")
+    string_writer(
+    state,
+    "JudgerAgent.draw_conclusion_node",
+    "写入最终 JSON 报告",
+    data={"path": final_json_path}
+)
     with open(final_json_path, "w", encoding="utf-8") as f:
         f.write(json.dumps(final_json, ensure_ascii=False, indent=2))
 
     # ===== 写入文本报告（包含背景介绍）=====
     final_txt_path = os.path.join(outdir, f"final_report_{run_ts}.txt")
+    string_writer(
+    state,
+    "JudgerAgent.draw_conclusion_node",
+    "写入文本报告",
+    data={"path": final_txt_path}
+)
     with open(final_txt_path, "w", encoding="utf-8") as f:
         f.write(make_human_text(final_json, background=background_text))
 
@@ -327,10 +509,15 @@ def draw_conclusion_node(state: LoopAIState):
 
     # ===== 可选：生成改进建议 =====
     if state.get('output_suggestion'):
+        string_writer(
+    state,
+    "JudgerAgent.draw_conclusion_node",
+    "生成改进建议",
+    progress=0.6
+)
         logger.info("🤖 正在调用本地模型生成改进建议……")
         prompt = build_suggestion_prompt(final_json)
         try:
-            # ChatOpenAI.batch 返回 BaseMessage，取第一个的 content
             suggestion = llm.batch([prompt])[0].content
         except Exception as e:
             logger.error(f"生成改进建议时出错：{e}")
@@ -346,7 +533,22 @@ def draw_conclusion_node(state: LoopAIState):
             f.write((suggestion or "").strip() + "\n")
 
         logger.info("模型建议生成完成并已写入报告：")
+        string_writer(
+    state,
+    "JudgerAgent.draw_conclusion_node",
+    "改进建议已写入",
+    data={
+        "suggestion_path": suggest_path,
+        "final_report": final_txt_path,
+    }
+)
         logger.info(f"→ {suggest_path}")
         logger.info(f"→ {final_txt_path}")
+    string_writer(
+    state,
+    "JudgerAgent.draw_conclusion_node",
+    "最终报告生成完成",
+    progress=1.0
+)
 
     return state

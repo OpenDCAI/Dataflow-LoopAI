@@ -34,8 +34,8 @@ kaggle_username = getattr(cfg.starter, 'kaggle_username', '') or ''
 kaggle_key = getattr(cfg.starter, 'kaggle_key', '') or ''
 
 sg = StarterAgent(tools=[check_motivation],
-                  model_name="gpt-4o",
-                  base_url="http://123.129.219.111:3000/v1",
+                  model_name="deepseek-chat",
+                  base_url="https://api.deepseek.com",
                   api_key=api_key,
                   checkpointer=checkpointer,
                   store=store)
@@ -144,6 +144,15 @@ console.print(f"[green]日志文件已启用: {log_file_path}[/green]")
 sg.start(default_state=OmegaConf.to_container(merged_states, resolve=True), config=config)
 thread_states = sg.get_state(config)
 
+def render_text(lines):
+    t = Text()
+    if type(lines) == str:
+        t.append(lines)
+        return t
+    for line, color in lines:
+        t.append(line + '\n', style=color)
+    return t
+
 # %%
 while thread_states.interrupts:
     interrupt_value = thread_states.interrupts[0].value
@@ -163,19 +172,20 @@ while thread_states.interrupts:
         # Short prompt (from query_node, etc.)
         query = input(f"Please input ({interrupt_value}): ")
     
-    # with Live(console=console, refresh_per_second=4) as live:
-    #     for chunk in sg(
-    #         query,
-    #         config=config
-    #     ):
-    #         live.update(Text(sg.agent_event.text(), style="cyan"))
+    with Live(console=console, refresh_per_second=1) as live:
+        for chunk in sg(
+            query,
+            config=config
+        ):
+            live.update(render_text(sg.agent_event.text(only_updated=True)))
+            # print(chunk)
     
-    # 不使用Live显示，直接运行
-    for chunk in sg(
-        query,
-        config=config
-    ):
-        pass  # 不显示live输出
+    # # 不使用Live显示，直接运行
+    # for chunk in sg(
+    #     query,
+    #     config=config
+    # ):
+        # pass  # 不显示live输出
     
     thread_states = sg.get_state(config)
 

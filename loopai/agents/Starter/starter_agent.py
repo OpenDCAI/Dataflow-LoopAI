@@ -4,8 +4,10 @@ from typing import Any, Dict, List, Optional, Type
 from langgraph.graph import StateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt, Command
+from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState, RuntimeContext
+from loopai.schema.events import StreamEvent
 from loopai.agents import BaseAgent
 from loopai.agents.Configer import ConfigerAgent
 from loopai.agents.Judger import JudgerAgent
@@ -50,6 +52,11 @@ class StarterAgent(BaseAgent):
             value = state["automated_query"]
         else:
             value = interrupt('input the human query')
+        writer = get_stream_writer()
+        writer(StreamEvent(
+            current=state['current'],
+            message=f"Exec: Query node"
+        ).json())
         logger.info(f"Exec: Query node")
         return {
             'messages': [{'role': 'user', 'content': value}],
@@ -69,13 +76,14 @@ class StarterAgent(BaseAgent):
         if hasattr(maybe_tool_message, 'tool_call_id'):
             tool_res = json.loads(maybe_tool_message.content)
             state["next_to"] = tool_res["next_to"]
-            last_message.content = '<cmd>根据用户指令执行: ' + tool_res["motivation"] + '</cmd>\n' + last_message.content
+            last_message.content = '<cmd>根据用户指令执行: ' + \
+                tool_res["motivation"] + '</cmd>\n' + last_message.content
         else:
             state["next_to"] = "query_node"
         logger.info(f'Messages: {state["messages"]}')
         logger.info(f"Exec: Feedback node, next_to: {state['next_to']}")
         return state
-    
+
     @staticmethod
     @BaseAgent.set_current
     def route_node(state: LoopAIState) -> LoopAIState:
@@ -105,11 +113,11 @@ class StarterAgent(BaseAgent):
                                     checkpointer=self.checkpointer,
                                     store=self.store)(**kwargs)
         judge_node = JudgerAgent(checkpointer=self.checkpointer,
-                                    store=self.store)(**kwargs)
+                                 store=self.store)(**kwargs)
         analyze_node = AnalyzerAgent(checkpointer=self.checkpointer,
-                                    store=self.store)(**kwargs)
+                                     store=self.store)(**kwargs)
         train_node = TrainerAgent(checkpointer=self.checkpointer,
-                                    store=self.store)(**kwargs)
+                                  store=self.store)(**kwargs)
         # ObtainerAgent will use model_name, base_url, api_key from StarterAgent
         # But it also needs to get these from state if not provided in constructor
         # So we pass them to ensure consistency
@@ -211,7 +219,7 @@ class StarterAgent(BaseAgent):
                         continue
                     self.agent_event.node = key
                     self.agent_event.set_path(key)
-                    self.agent_event.update(
+                    self.agent_event.update_state(
                         self.get_state(invoke_args['config']).values)
                     self.agent_event.clear_stream_message()
             yield res

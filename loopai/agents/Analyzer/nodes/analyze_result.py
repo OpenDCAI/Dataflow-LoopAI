@@ -11,9 +11,35 @@ from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
 logger = get_logger()
+def string_writer(
+    state: LoopAIState,
+    node: str,
+    message: str,
+    *,
+    progress: float | None = None,
+    data: Dict[str, Any] | None = None,
+):
+    entry = {
+        "node": node,
+        "message": message,  
+        "ts": time.time(),
+    }
 
+    if progress is not None:
+        entry["progress"] = float(progress)  
 
+    if data is not None:
+        entry["data"] = data 
 
+    if "_string_writer" not in state:
+        state["_string_writer"] = []
+    state["_string_writer"].append(entry)
+
+    logger.info(
+        f"[UI:{node}] {message}"
+        + (f" | progress={progress:.3f}" if progress is not None else "")
+        + (f" | data={json.dumps(data, ensure_ascii=False)}" if data else "")
+    )
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     使用标准 vLLM(OpenAI 兼容) 客户端
@@ -98,19 +124,23 @@ def build_prompt_for_llm(summary: Dict[str, Any], failure_snippets: List[Dict[st
 
     template = loader("analyze_result_user", "analyze_user")
     return template.format(
-        total=int(total),
-        passed=int(passed),
-        # ★ 同时提供两个 key，避免 prompt 里用哪一个都报错
-        pass_rate_samples=pass_rate_samples,
-        pass_rate_pct=f"{pass_rate_samples * 100:.2f}",
-        pass_rate_percent=f"{pass_rate_samples * 100:.2f}",
-        fail_dist=fail_dist,
-        loc_dist=loc_dist,
-        kw_dist=kw_dist,
-        top_fail=top_fail,
-        fail_block=fail_block
-    )
+    total=int(total),
+    passed=int(passed),
 
+    pass_rate_samples=pass_rate_samples,
+    pass_rate_pct=f"{pass_rate_samples * 100:.2f}",
+    pass_rate_percent=f"{pass_rate_samples * 100:.2f}",
+    fail_dist=fail_dist,
+    loc_dist=loc_dist,
+    kw_dist=kw_dist,
+    top_fail=top_fail,
+    fail_block=fail_block,
+
+    top_err=top_fail,
+    by_stage_json=fail_dist,
+    quick_samples=json.dumps(failure_snippets, ensure_ascii=False),
+    summary_json=json.dumps(summary, ensure_ascii=False),
+     )
 
 def rule_based_brief(summary: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -141,22 +171,95 @@ def analyze_result_node(state: LoopAIState):
     """
     分析评测结果，生成 summary 并写入文件
     """
+    string_writer(
+        state,
+        "JudgerAgent.analyze_result_node",
+        "开始分析评测结果",
+        progress=0.0,
+        data={
+            "summary_path": state.get("analyze_output_summary_path"),
+            "result_path": state.get("analyze_output_result_path"),
+        },
+    )
+
     summary_path = state['analyze_output_summary_path']
     with open(summary_path, "r", encoding="utf-8") as f:
         summary = json.load(f)
+    string_writer(
+        state,
+        "JudgerAgent.analyze_result_node",
+        "已读取评测摘要",
+        progress=0.15,
+        data={
+            "total_samples": summary.get("total_samples"),
+            "passed_samples": summary.get("passed_samples"),
+            "pass_rate_samples": summary.get("pass_rate_samples"),
+            "failure_stage_distribution": summary.get("failure_stage_distribution"),
+        },
+    )
+
 
     result_path = state['analyze_output_result_path']
     with open(result_path, "r", encoding="utf-8") as f:
         results = [json.loads(line) for line in f if line.strip()]
-
-    failures = pick_failure_examples(results, state.get('analyze_sampling_top_k', 5))
+    string_writer(
+        state,
+        "JudgerAgent.analyze_result_node",
+        "已读取评测记录",
+        progress=0.30,
+        data={
+            "records": len(results),
+            "failed_records": sum(1 for r in results if not r.get("passed")),
+        },
+    )
+    top_k = int(state.get("analyze_sampling_top_k", 5))
+    failures = pick_failure_examples(results, top_k)
+    string_writer(
+        state,
+        "JudgerAgent.analyze_result_node",
+        "抽取失败样例完成",
+        progress=0.45,
+        data={
+            "top_k": top_k,
+            "picked": len(failures),
+            "stages": [x.get("stage") for x in failures],
+        },
+    )
 
     llm = init_model(state)
     prompt = build_prompt_for_llm(summary, failures)
+    string_writer(
+        state,
+        "JudgerAgent.analyze_result_node",
+        "调用模型生成分析",
+        progress=0.60,
+        data={
+            "model": state.get("analyze_model_path"),
+            "base_url": state.get("analyze_base_url"),
+            "prompt_chars": len(prompt or ""),
+        },
+    )
     # ChatOpenAI 支持 .batch，返回 BaseMessage，取第一个的 content
     response = llm.batch([prompt])[0].content
+    string_writer(
+        state,
+        "JudgerAgent.analyze_result_node",
+        "模型分析生成完成",
+        progress=0.75,
+        data={
+            "response_chars": len(response or ""),
+        },
+    )
 
     rb = rule_based_brief(summary)
+    string_writer(
+        state,
+        "JudgerAgent.analyze_result_node",
+        "规则摘要生成完成",
+        progress=0.82,
+        data=rb,
+    )
+
 
     out = {
         "meta": {
@@ -170,9 +273,31 @@ def analyze_result_node(state: LoopAIState):
     ts = time.strftime("%Y%m%d_%H%M%S")
     state['analyze_output_report_json_path'] = os.path.join(state['output_dir'], f"report_{ts}.json")
     state['analyze_output_report_text_path'] = os.path.join(state['output_dir'], f"report_{ts}.txt")
+    string_writer(
+        state,
+        "JudgerAgent.analyze_result_node",
+        "写入分析报告",
+        progress=0.92,
+        data={
+    "report_json": state["analyze_output_report_json_path"],
+    "report_txt": state["analyze_output_report_text_path"],
+         },
+    )
+
     Path(state['analyze_output_report_json_path']).write_text(json.dumps(out, ensure_ascii=False, indent=2),
                                                               encoding="utf-8")
     Path(state['analyze_output_report_text_path']).write_text(response, encoding="utf-8")
+    string_writer(
+        state,
+        "JudgerAgent.analyze_result_node",
+        "分析流程完成",
+        progress=1.0,
+        data={
+            "report_json": state["analyze_output_report_json_path"],
+            "report_txt": state["analyze_output_report_text_path"],
+            "dominant_failure": (rb.get("dominant_failure") if isinstance(rb, dict) else None),
+        },
+    )
 
     logger.info(f"已写入：{state['analyze_output_report_json_path']}\n已写入：{state['analyze_output_report_text_path']}")
     logger.info("\n—— LLM 摘要（预览）——\n" + response)
