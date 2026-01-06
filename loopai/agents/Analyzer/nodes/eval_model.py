@@ -32,7 +32,7 @@ def get_template(group: str, name: str) -> str:
     if key not in _TEMPLATE_CACHE:
         _TEMPLATE_CACHE[key] = get_prompt_loader()(group, name)
     return _TEMPLATE_CACHE[key]
-class SafeDict(dict):  # NEW
+class SafeDict(dict):  
     """
     安全字典，用于字符串 format_map 时，缺失 key 自动返回空字符串，避免 KeyError
     """
@@ -51,7 +51,31 @@ def _trunc(s: str | None, n: int) -> str:  # NEW
     """
     s = s or ""
     return s if len(s) <= n else s[:n] + "\n...[truncated]"
+def string_writer(
+    state: LoopAIState,
+    node: str,
+    message: str,
+    *,
+    progress: float | None = None,
+    data: Dict[str, Any] | None = None,
+):
+    entry = {
+        "node": node,
+        "message": message,
+        "ts": time.time(),
+    }
+    if progress is not None:
+        entry["progress"] = float(progress)
+    if data is not None:
+        entry["data"] = data
 
+    if "_string_writer" not in state:
+        state["_string_writer"] = []
+    state["_string_writer"].append(entry)
+
+    logger.info(f"[UI:{node}] {message} "
+                f"{'(progress=' + str(progress) + ')' if progress is not None else ''} "
+                f"{'(data=' + json.dumps(data, ensure_ascii=False) + ')' if data else ''}")
 
 
 def build_evidence_for_record_code(rec: Dict[str, Any]) -> Dict[str, Any]:
@@ -619,6 +643,14 @@ def eval_model_node(state: LoopAIState):
         7. 生成评测摘要报告
     """
     task_type = state['analyze_task_type']  # "code" 或 "sql"
+    string_writer(
+    state,
+    "JudgerAgent.evaluate_node",
+    "常规任务评测样本开始",
+    progress=0.0,
+    data={"task_type": task_type}
+)
+    
     judge = LLMJudge(task=task_type)
 
     # 读取评测结果（JSONL）
@@ -628,13 +660,28 @@ def eval_model_node(state: LoopAIState):
 
     # 仅失败样本做判因
     failed_results = [r for r in result_content if not r.get("passed")]
-
+    total_failed = len(failed_results)
     # 初始化 LLM
     batch_size = int(state.get("analyze_batch_size", 20))
     llm = init_model(state)
+    total_batches = (len(failed_results) + batch_size - 1) 
 
     # 批量处理
     for i in tqdm(range(0, len(failed_results), batch_size)):
+        processed = min(i + batch_size, total_failed)
+        progress = processed / max(total_failed, 1)
+        string_writer(
+    state,
+    "JudgerAgent.generate_node",
+    "常规任务样本合成中",
+    progress=progress,
+    data={
+        "current_batch": i // batch_size + 1,
+        "total_batches": total_batches,
+        "processed_samples": min(i + batch_size, len(failed_results)),
+        "total_failed_samples": len(failed_results),
+    }
+)
         batch = failed_results[i:i + batch_size]
 
         evidences: List[Dict[str, Any]] = []
@@ -644,6 +691,12 @@ def eval_model_node(state: LoopAIState):
             evidences.append(evidence)
             prompts.append(build_judge_prompt_generic(task_type, evidence))
         overall_start = time.time()
+        string_writer(
+    state,
+    "JudgerAgent.generate_node",
+    "正在调用分析模型",
+    data={"batch_size": len(batch)}
+)
 
         # 模型批处理
                 # 模型批处理（带并发上限 + 分块）
@@ -667,6 +720,14 @@ def eval_model_node(state: LoopAIState):
     # ===== quick_brief：仅对失败样本生成短评（失败<=20全量；失败>20抽样20条覆盖错误类型）=====
     if state.get("quick_brief", False) and len(failed_results) > 0:
         limit = int(state.get("quick_brief_limit", 20))
+        string_writer(
+    state,
+    "JudgerAgent.evaluate_node",
+    "开始生成失败样本中文短评",
+    progress=0.70,
+    data={"limit": limit, "failed_samples": len(failed_results)}
+)
+        
 
         def _pick_quick_brief_indices() -> List[int]:
             # 失败<=limit：全量
@@ -748,6 +809,13 @@ def eval_model_node(state: LoopAIState):
     state['analyze_output_result_path'] = str(out_jsonl_path.resolve())
     logger.info(f" 已写入增强版 OJ：{out_jsonl_path}")
     logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if state.get('quick_brief', False) else ""))
+    string_writer(
+    state,
+    "JudgerAgent.evaluate_node",
+    "已写入增强评测结果",
+    progress=0.85,
+    data={"output_path": str(out_jsonl_path)}
+)
 
     try:
         summary_json_path, summary_txt_path = _build_and_write_summary(
@@ -760,7 +828,25 @@ def eval_model_node(state: LoopAIState):
             json.dump(sdata, f, ensure_ascii=False, indent=2)
         state['analyze_output_summary_path'] = summary_json_path
         logger.info(f" 已在 {state['output_dir']} 生成 summary，路径：{summary_json_path} / {summary_txt_path}")
+        string_writer(
+    state,
+    "JudgerAgent.evaluate_node",
+    "已生成评测摘要",
+    progress=0.90,
+    data={
+        "summary_json": summary_json_path,
+        "summary_txt": summary_txt_path,
+        "pass_rate": sdata.get("pass_rate_samples"),
+        "total_samples": sdata.get("total_samples"),
+        "passed_samples": sdata.get("passed_samples"),
+    }
+)
     except Exception as e:
         logger.warning(f"[WARN] 生成 summary 时发生错误：{e}")
-
+    string_writer(
+    state,
+    "JudgerAgent.evaluate_node",
+    "评测流程完成",
+    progress=1.0
+)
     return state
