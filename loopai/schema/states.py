@@ -62,11 +62,11 @@ class LoopAIState(MessagesState):
     obtainer_kaggle_username: str = ""  # Kaggle username for API authentication
     obtainer_kaggle_key: str = ""  # Kaggle API key for authentication
     obtainer_tavily_api_key: str = ""  # Tavily API key for web search
-    obtainer_category: str = "PT"  # data category for post-processing (PT or SFT)
+    obtainer_category: str = ""  # data category for post-processing (PT or SFT)
     obtainer_postprocess_results: Dict[str, Any]  # post-processing results
     obtainer_debug: bool = False  # enable debug mode for obtainer agent (logs all levels and saves to file)
     # mapping subgraph state attributes
-    obtainer_default_mapping_format: str="alpaca"
+    obtainer_default_mapping_format: str=""
     obtainer_intent_type: str = ""  # dataset_request or eval_recommendation
     obtainer_normalized_query: str = ""  # rewritten dataset request if input was eval-based
     obtainer_normalized_reason: str = ""  # reason for normalization
@@ -77,8 +77,11 @@ class LoopAIState(MessagesState):
     obtainer_pending_format: Dict[str, Any] = None  # pending format waiting for user confirmation
     obtainer_confirmed_format: Dict[str, Any] = None  # confirmed format for mapping
     obtainer_confirmation_result: str = ""  # confirmation result: confirmed, modify, restart
-    obtainer_mapping_auto_mode: bool = True  # whether mapping is in auto mode (skip user interaction)
+    obtainer_mapping_auto_mode: bool = False  # whether mapping is in auto mode (skip user interaction)
     obtainer_mapping_results: Dict[str, Any] = None  # mapping execution results
+    # task decomposition state attributes
+    obtainer_task_list: List[Dict[str, Any]] = []  # list of decomposed tasks, each task has "task_name" field
+    obtainer_current_task_index: int = 0  # current task index being executed in task_list
 
     # trainer state attributes
     train_dataset_path: str  # to defined the path of training dataset (json/jsonl format)

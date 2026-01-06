@@ -100,19 +100,23 @@ def _map_to_alpaca(record: Dict[str, Any]) -> Dict[str, Any]:
         # SFT 模式: 从 messages 提取
         instruction = ""
         output = ""
+        input_text = ""  # 默认将 system 填入 Alpaca input
         
         for msg in messages:
             role = msg.get("role", "")
             content = msg.get("content", "")
-            
+
             if role == "user" and not instruction:
                 instruction = content
             elif role == "assistant" and not output:
                 output = content
+            elif role =="system" and not input_text:
+                input_text= content
+            
         
         return {
             "instruction": instruction,
-            "input": "",  # Alpaca 的 input 通常用于额外上下文，中间格式没有对应字段
+            "input": input_text,
             "output": output
         }
     else:
@@ -134,18 +138,10 @@ def _map_to_chatml(record: Dict[str, Any]) -> Dict[str, Any]:
     messages = _extract_messages_from_intermediate(record)
     result_messages = []
     
-    system_prompt = _get_system_prompt(record)
-    has_system_in_messages = any(m.get("role") == "system" for m in messages)
-    
-    if system_prompt and not has_system_in_messages:
-        result_messages.append({
-            "role": "system",
-            "content": system_prompt
-        })
-    
     if messages:
         for msg in messages:
             role = msg.get("role", "user")
+            # 处理 role 转换：tool -> assistant，其他保持原样（system/user/assistant）
             if role == "tool":
                 role = "assistant"
             result_messages.append({
@@ -153,6 +149,7 @@ def _map_to_chatml(record: Dict[str, Any]) -> Dict[str, Any]:
                 "content": msg.get("content", "")
             })
     else:
+        # PT 模式：从 text 获取
         text = _extract_text_from_intermediate(record)
         if text:
             result_messages.append({

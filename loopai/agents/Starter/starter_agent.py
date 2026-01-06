@@ -11,6 +11,7 @@ from loopai.agents.Configer import ConfigerAgent
 from loopai.agents.Judger import JudgerAgent
 from loopai.agents.Analyzer import AnalyzerAgent
 from loopai.agents.Obtainer import ObtainerAgent
+from loopai.agents.Constructor import ConstructorAgent
 from loopai.agents.Trainer import TrainerAgent
 
 from loopai.logger import get_logger
@@ -119,6 +120,15 @@ class StarterAgent(BaseAgent):
             checkpointer=self.checkpointer,
             store=self.store
         )(**kwargs)
+        # ConstructorAgent will use model_name, base_url, api_key from StarterAgent
+        # It processes the downloaded data from ObtainerAgent
+        constructor_node = ConstructorAgent(
+            model_name=self.model_name,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            checkpointer=self.checkpointer,
+            store=self.store
+        )(**kwargs)
         builder = StateGraph(LoopAIState, context_schema=RuntimeContext)
         builder.add_node("query_node", self.query_node)
         builder.add_node("llm_node", self.llm_node)
@@ -126,6 +136,7 @@ class StarterAgent(BaseAgent):
         builder.add_node("route_node", self.route_node)
         builder.add_node("train_node", train_node)
         builder.add_node("obtain_node", obtainer_node)  # Use ObtainerAgent subgraph
+        builder.add_node("constructor_node", constructor_node)  # Use ConstructorAgent subgraph
         builder.add_node("evaluate_node", self.evaluate_node)
         builder.add_node("config_node", config_node)
         builder.add_node("judge_node", judge_node)
@@ -139,7 +150,8 @@ class StarterAgent(BaseAgent):
         builder.add_edge('llm_node', 'feedback_node')
         builder.add_edge('evaluate_node', 'query_node')
         builder.add_edge('train_node', 'query_node')
-        builder.add_edge('obtain_node', 'query_node')
+        builder.add_edge('obtain_node', 'constructor_node')  # Obtainer -> Constructor
+        builder.add_edge('constructor_node', 'query_node')  # Constructor -> Query
         builder.add_edge('config_node', 'query_node')
         builder.add_edge('judge_node', 'route_node')
         builder.add_edge('analyze_node', 'route_node')

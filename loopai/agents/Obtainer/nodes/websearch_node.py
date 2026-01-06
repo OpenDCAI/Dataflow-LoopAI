@@ -99,6 +99,9 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
             collection_name=rag_collection_name,
         )
         
+        # Store RAG manager in state for cleanup (if needed)
+        # We'll close it at the end of this function
+        
         # Initialize Query Generator
         query_generator = QueryGenerator(
             model_name=model_name,
@@ -181,6 +184,15 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
     except Exception as e:
         logger.error(f"WebSearch node error: {e}", exc_info=True)
         state["exception"] = f"WebSearch error: {str(e)}"
+    finally:
+        # Always close RAG manager to release database connections
+        try:
+            if 'rag_manager' in locals():
+                logger.info("[RAG] Closing RAG Manager to release database connections...")
+                rag_manager.close()
+                logger.info("[RAG] RAG Manager closed")
+        except Exception as e:
+            logger.warning(f"[RAG] Error closing RAG Manager: {e}")
     
     logger.info("=== WebSearch Node: Completed ===")
     return state

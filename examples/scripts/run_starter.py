@@ -1,9 +1,11 @@
 # %%
 from omegaconf import OmegaConf
 import os
+from datetime import datetime
 from loopai.agents import StarterAgent
 from loopai.memory import checkpointer, store
 from loopai.agents.Starter.tools.check_motivation import check_motivation
+from loopai.logger import get_logger, add_file_handler
 
 from rich.console import Console
 from rich.live import Live
@@ -94,6 +96,26 @@ merged_states = OmegaConf.merge(cfg.default_states, {
     **obtainer_config,
     **rag_config
 })
+
+# 配置日志文件路径
+# 从 merged_states 获取 output_dir，如果不存在则使用默认值
+try:
+    output_dir = merged_states.get('output_dir', './outputs')
+except (AttributeError, KeyError):
+    output_dir = getattr(merged_states, 'output_dir', './outputs')
+log_dir = os.path.join(output_dir, 'log')
+os.makedirs(log_dir, exist_ok=True)
+
+# 生成日志文件名（带时间戳）
+timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+log_file_path = os.path.join(log_dir, f'starter_{timestamp}.log')
+
+# 获取 logger 并添加文件 handler
+logger = get_logger()
+add_file_handler(logger, log_file_path)
+
+console.print(f"[green]日志文件已启用: {log_file_path}[/green]")
+
 sg.start(default_state=OmegaConf.to_container(merged_states, resolve=True), config=config)
 thread_states = sg.get_state(config)
 
@@ -116,18 +138,18 @@ while thread_states.interrupts:
         # Short prompt (from query_node, etc.)
         query = input(f"Please input ({interrupt_value}): ")
     
-    with Live(console=console, refresh_per_second=4) as live:
-        for chunk in sg(
-            query,
-            config=config
-        ):
-            live.update(Text(sg.agent_event.text(), style="cyan"))
+    # with Live(console=console, refresh_per_second=4) as live:
+    #     for chunk in sg(
+    #         query,
+    #         config=config
+    #     ):
+    #         live.update(Text(sg.agent_event.text(), style="cyan"))
     
-    # # 不使用Live显示，直接运行
-    # for chunk in sg(
-    #     query,
-    #     config=config
-    # ):
+    # 不使用Live显示，直接运行
+    for chunk in sg(
+        query,
+        config=config
+    ):
         pass  # 不显示live输出
     
     thread_states = sg.get_state(config)
