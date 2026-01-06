@@ -97,9 +97,9 @@ def generate_sample(state, num_samples_per_task=1):
             if writer:
                 writer(StreamEvent(
                     current=state['current'],
-                    progress=0.0,
+                    progress=round(cnt/total_samples, 1),
                     message="常规任务样本合成进度",
-                    data={"msg": f"{cnt}/{num_samples_per_task}"}
+                    data={"msg": f"{cnt}/{total_samples}"}
                 ).json())
 
     write_jsonl(test_case_path, samples)
@@ -136,39 +136,39 @@ def generate_sample_sql(state, num_samples_per_task=20):
     response_ptr = 0
 
     cnt = 0
-    with tqdm(total=total_samples, desc="生成进度") as pbar:
-        for batch_idx in range(0, total_tasks, batch_size):
-            batch_task_ids = all_task_ids[batch_idx:batch_idx + batch_size]
-            
-            prompts = []
-            batch_task_id_list = []
-            t = 0
-            for task_id in batch_task_ids:
-                prompt = problems[task_id]['prompt']
-                for i in range(0,num_samples_per_task,1):
-                    prompts.append(prompt)
-                    batch_task_id_list.append(batch_task_ids[t])
-                t = t + 1
-            responses = model.batch(prompts,config={"max_tokens": 32768})
-            for task_id, response in zip(batch_task_id_list, responses):
-                completion = response.content
-                samples.append({
-                    "task_id": task_id,
-                    "completion": completion,
-                    "db_file": "/root/brjverl/dataflow/examples/scripts/database/"+ problems[task_id]['db_id'] + f"/{problems[task_id]['db_id']}.sqlite",
-                    "question": problems[task_id]["question"],
-                    "ground_truth": problems[task_id]["ground_truth"],
-                })
-                cnt = cnt + 1
-                writer = get_stream_writer()
-                if writer:
-                    writer(StreamEvent(
-                        current=state['current'],
-                        progress=0.0,
-                        message="常规任务样本合成进度",
-                        data={"msg": f"{cnt}/{num_samples_per_task}"}
-                    ).json())
-                pbar.update(1)
+    # with tqdm(total=total_samples, desc="生成进度") as pbar:
+    for batch_idx in range(0, total_tasks, batch_size):
+        batch_task_ids = all_task_ids[batch_idx:batch_idx + batch_size]
+        
+        prompts = []
+        batch_task_id_list = []
+        t = 0
+        for task_id in batch_task_ids:
+            prompt = problems[task_id]['prompt']
+            for i in range(0,num_samples_per_task,1):
+                prompts.append(prompt)
+                batch_task_id_list.append(batch_task_ids[t])
+            t = t + 1
+        responses = model.batch(prompts,config={"max_tokens": 32768})
+        for task_id, response in zip(batch_task_id_list, responses):
+            completion = response.content
+            samples.append({
+                "task_id": task_id,
+                "completion": completion,
+                "db_file": "/root/brjverl/dataflow/examples/scripts/database/"+ problems[task_id]['db_id'] + f"/{problems[task_id]['db_id']}.sqlite",
+                "question": problems[task_id]["question"],
+                "ground_truth": problems[task_id]["ground_truth"],
+            })
+            cnt = cnt + 1
+            writer = get_stream_writer()
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=round(cnt/total_samples, 1),
+                    message="SQL任务样本合成进度",
+                    data={"msg": f"{cnt}/{total_samples}"}
+                ).json())
+                #pbar.update(1)
 
     write_jsonl(test_case_path, samples)
 
