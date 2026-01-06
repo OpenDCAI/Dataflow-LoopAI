@@ -83,7 +83,19 @@ class AgentEvent:
         if not self.custom_info:
             self.custom_info = {}
         current_key = info.get('current', 'unknown_key')
-        self.custom_info[current_key] = info
+        if current_key not in self.custom_info:
+            self.custom_info[current_key] = info
+        else:
+            skip_key = ['data']
+            for k in info:
+                if k not in skip_key:
+                    self.custom_info[current_key][k] = info[k]
+                else:
+                    if not self.custom_info[current_key][k]:
+                        self.custom_info[current_key][k] = info[k]
+                    else:
+                        for k_key in info[k]:
+                            self.custom_info[current_key][k][k_key] = info[k][k_key]
         self.updated_custom_info = {key: info}
 
     def text(self, only_updated=False):

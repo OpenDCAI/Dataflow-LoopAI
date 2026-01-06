@@ -54,7 +54,7 @@ class StarterManager:
         self.process = Process(
             target=_worker_entry,
             args=(self.cmd_q, self.state_q, self.sg_init_args),
-            daemon=True
+            daemon=False
         )
         self.process.start()
         starter_process.append(self.process)
