@@ -45,57 +45,82 @@ sg.init_graph()
 # %%
 config = {"configurable": {"thread_id": "1"}}
 
-# Prepare obtainer configuration from config file
-obtainer_config = {}
-if cfg.default_states.get('obtainer_model_path'):
-    obtainer_config['obtainer_model_path'] = cfg.default_states.obtainer_model_path
-if cfg.default_states.get('obtainer_base_url'):
-    obtainer_config['obtainer_base_url'] = cfg.default_states.obtainer_base_url
-if cfg.default_states.get('obtainer_api_key'):
-    obtainer_config['obtainer_api_key'] = cfg.default_states.obtainer_api_key
+# Prepare obtainer configuration from config file (nested structure)
+obtainer_dict = {}
+
+# Read from nested obtainer config if it exists
+if hasattr(cfg.default_states, 'obtainer') and cfg.default_states.obtainer:
+    obtainer_cfg = cfg.default_states.obtainer
+    if hasattr(obtainer_cfg, 'model_path') and obtainer_cfg.model_path:
+        obtainer_dict['model_path'] = obtainer_cfg.model_path
+    if hasattr(obtainer_cfg, 'base_url') and obtainer_cfg.base_url:
+        obtainer_dict['base_url'] = obtainer_cfg.base_url
+    if hasattr(obtainer_cfg, 'api_key') and obtainer_cfg.api_key:
+        obtainer_dict['api_key'] = obtainer_cfg.api_key
+    else:
+        obtainer_dict['api_key'] = api_key
+    
+    # Add other obtainer parameters from config
+    if hasattr(obtainer_cfg, 'temperature'):
+        obtainer_dict['temperature'] = obtainer_cfg.temperature
+    if hasattr(obtainer_cfg, 'search_engine'):
+        obtainer_dict['search_engine'] = obtainer_cfg.search_engine
+    if hasattr(obtainer_cfg, 'max_urls'):
+        obtainer_dict['max_urls'] = obtainer_cfg.max_urls
+    if hasattr(obtainer_cfg, 'max_download_subtasks'):
+        obtainer_dict['max_download_subtasks'] = obtainer_cfg.max_download_subtasks
+    if hasattr(obtainer_cfg, 'category'):
+        obtainer_dict['category'] = str(obtainer_cfg.category).upper()
+    if hasattr(obtainer_cfg, 'proxy'):
+        obtainer_dict['proxy'] = obtainer_cfg.proxy
+    if hasattr(obtainer_cfg, 'default_mapping_format'):
+        obtainer_dict['default_mapping_format'] = obtainer_cfg.default_mapping_format
+    if hasattr(obtainer_cfg, 'max_exploration_depth'):
+        obtainer_dict['max_exploration_depth'] = obtainer_cfg.max_exploration_depth
+    if hasattr(obtainer_cfg, 'max_jina_urls'):
+        obtainer_dict['max_jina_urls'] = obtainer_cfg.max_jina_urls
+    if hasattr(obtainer_cfg, 'max_records_per_page'):
+        obtainer_dict['max_records_per_page'] = obtainer_cfg.max_records_per_page
+    if hasattr(obtainer_cfg, 'min_relevance_score'):
+        obtainer_dict['min_relevance_score'] = obtainer_cfg.min_relevance_score
 else:
-    obtainer_config['obtainer_api_key'] = api_key
+    # Fallback: if no nested structure, use default api_key
+    obtainer_dict['api_key'] = api_key
 
-# Add other obtainer parameters from config
-if 'obtainer_temperature' in cfg.default_states:
-    obtainer_config['obtainer_temperature'] = cfg.default_states.obtainer_temperature
-if 'obtainer_search_engine' in cfg.default_states:
-    obtainer_config['obtainer_search_engine'] = cfg.default_states.obtainer_search_engine
-if 'obtainer_max_urls' in cfg.default_states:
-    obtainer_config['obtainer_max_urls'] = cfg.default_states.obtainer_max_urls
-if 'obtainer_max_download_subtasks' in cfg.default_states:
-    obtainer_config['obtainer_max_download_subtasks'] = cfg.default_states.obtainer_max_download_subtasks
-if 'obtainer_category' in cfg.default_states:
-    obtainer_config['obtainer_category'] = cfg.default_states.obtainer_category.upper()
-if 'obtainer_debug' in cfg.default_states:
-    obtainer_config['obtainer_debug'] = cfg.default_states.obtainer_debug
+# Add Tavily and Kaggle credentials
+obtainer_dict['tavily_api_key'] = tavily_api_key if tavily_api_key else ''
+obtainer_dict['kaggle_username'] = kaggle_username
+obtainer_dict['kaggle_key'] = kaggle_key
 
-obtainer_config['obtainer_tavily_api_key'] = tavily_api_key if tavily_api_key else ''
-obtainer_config['obtainer_kaggle_username'] = kaggle_username
-obtainer_config['obtainer_kaggle_key'] = kaggle_key
-
-rag_config = {}
+# RAG configuration (also nested in obtainer)
 if hasattr(cfg, 'rag'):
     if hasattr(cfg.rag, 'reset'):
-        rag_config['obtainer_reset_rag'] = cfg.rag.reset
+        obtainer_dict['reset_rag'] = cfg.rag.reset
     if hasattr(cfg.rag, 'embed_model'):
         embed_model = cfg.rag.embed_model
         if embed_model:  # Only set if not empty
-            rag_config['obtainer_rag_embed_model'] = embed_model
+            obtainer_dict['rag_embed_model'] = embed_model
     if hasattr(cfg.rag, 'collection_name'):
-        rag_config['obtainer_rag_collection_name'] = cfg.rag.collection_name
+        obtainer_dict['rag_collection_name'] = cfg.rag.collection_name
     if hasattr(cfg.rag, 'api_base_url'):
         if cfg.rag.api_base_url:  # Only set if not empty
-            rag_config['obtainer_rag_api_base_url'] = cfg.rag.api_base_url
+            obtainer_dict['rag_api_base_url'] = cfg.rag.api_base_url
     if rag_api_key:
-        rag_config['obtainer_rag_api_key'] = rag_api_key
+        obtainer_dict['rag_api_key'] = rag_api_key
 
-merged_states = OmegaConf.merge(cfg.default_states, {
+# Prepare merged states with nested obtainer structure
+merged_states_dict = {
     'eval_batch_size': 10,
     'analyze_batch_size': 20,
-    **obtainer_config,
-    **rag_config
-})
+}
+if obtainer_dict:
+    merged_states_dict['obtainer'] = obtainer_dict
+
+# Handle obtainer_debug separately if it exists (not nested in obtainer dict)
+if hasattr(cfg.default_states, 'obtainer_debug'):
+    merged_states_dict['obtainer_debug'] = cfg.default_states.obtainer_debug
+
+merged_states = OmegaConf.merge(cfg.default_states, merged_states_dict)
 
 # 配置日志文件路径
 # 从 merged_states 获取 output_dir，如果不存在则使用默认值
