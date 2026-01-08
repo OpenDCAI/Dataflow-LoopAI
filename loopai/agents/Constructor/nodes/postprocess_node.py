@@ -9,7 +9,7 @@ from loopai.schema.states import LoopAIState
 from loopai.agents import BaseAgent
 from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
-from loopai.agents.Obtainer.utils.data_convertor import DataConvertor, _ensure_hf_cache_env
+from loopai.agents.Constructor.utils.data_convertor import DataConvertor, _ensure_hf_cache_env
 from loopai.common.prompts import PromptLoader
 
 logger = get_logger()
@@ -20,7 +20,7 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
     logger.info("=== Post-process Node: Starting ===")
     
     # Check if there are any successful downloads
-    subtasks = state.get("obtainer", {}).get("subtasks", [])
+    subtasks = state.get("obtainer_subtasks", [])
     successful_downloads = [
         task for task in subtasks 
         if task.get("type") == "download" and task.get("status") == "completed_successfully"
@@ -87,17 +87,17 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
                             break
     
     # Get category (PT or SFT) - default to PT if not specified
-    category = state.get("obtainer", {}).get("category", "PT").upper()
+    category = state.get("obtainer_category", "PT").upper()
     if category not in ["PT", "SFT"]:
         logger.warning(f"Invalid category '{category}', defaulting to PT")
         category = "PT"
     
     # Initialize components
     try:
-        model_name = state.get("obtainer", {}).get("model_path") or state.get("analyze_model_path")
-        base_url = state.get("obtainer", {}).get("base_url") or state.get("analyze_base_url")
-        api_key = state.get("obtainer", {}).get("api_key") or state.get("analyze_api_key")
-        temperature = state.get("obtainer", {}).get("temperature", 0.0)
+        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
+        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
+        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
+        temperature = state.get("obtainer_temperature", 0.0)
         
         if not model_name or not base_url or not api_key:
             logger.error("Missing required configuration for post-process node")
@@ -123,9 +123,12 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             return state
         
         # Get additional configuration from state or environment
-        llm_timeout = state.get("obtainer_llm_timeout", 120.0)  # This might not be in obtainer dict
-        max_retries = state.get("obtainer_max_retries", 3)  # This might not be in obtainer dict
-        max_concurrent_mapping = state.get("obtainer_max_concurrent_mapping", 10)  # This might not be in obtainer dict
+        llm_timeout = state.get("obtainer_llm_timeout", 120.0)
+        max_retries = state.get("obtainer_max_retries", 3)
+        max_concurrent_mapping = state.get("obtainer_max_concurrent_mapping", 10)
+        
+        # Get dataset background for file filtering
+        dataset_background = state.get("obtainer_datasets_background", "")
         
         # Run async workflow
         result = asyncio.run(_postprocess_workflow(
@@ -140,13 +143,14 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             llm_timeout=llm_timeout,
             max_retries=max_retries,
             max_concurrent_mapping=max_concurrent_mapping,
+            dataset_background=dataset_background,
         ))
         
         # Update state with results
         if "exception" in result:
             state["exception"] = result["exception"]
         else:
-            state.setdefault("obtainer", {})["postprocess_results"] = {
+            state["obtainer_postprocess_results"] = {
                 "total_records_processed": result.get("total_records_processed", 0),
                 "processed_sources_count": result.get("processed_sources_count", 0),
                 "output_dir": result.get("output_dir", ""),
@@ -154,7 +158,7 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             # Save intermediate format path for mapping node
             output_dir = result.get("output_dir", "")
             if output_dir and os.path.exists(output_dir):
-                state.setdefault("obtainer", {})["intermediate_data_path"] = output_dir
+                state["obtainer_intermediate_data_path"] = output_dir
                 logger.info(f"Intermediate format data saved at: {output_dir}")
             logger.info(
                 f"Post-process node completed: {result.get('total_records_processed', 0)} records processed."
@@ -200,6 +204,7 @@ async def _postprocess_workflow(
     llm_timeout: float = 120.0,
     max_retries: int = 3,
     max_concurrent_mapping: int = 10,
+    dataset_background: str = "",
 ) -> Dict[str, Any]:
     """Async workflow for post-processing downloaded datasets"""
     try:
@@ -319,6 +324,135 @@ async def _postprocess_workflow(
                 f"File discovery process had {failed_chunks}/{total_chunks} chunks fail, results may be incomplete."
             )
         logger.info(f"LLM identified {len(data_file_list)} data files: {data_file_list}")
+        
+        # Step 1.5: File filtering based on dataset background
+        if dataset_background:
+            logger.info(f"Starting file filtering based on dataset background: {dataset_background[:100]}...")
+            filtered_file_list: List[str] = []
+            failed_filter_files = 0
+            
+            async def filter_single_file(relative_file_path: str) -> Tuple[str, bool, Optional[Exception]]:
+                """Filter a single file by checking if it matches dataset background"""
+                try:
+                    absolute_file_path = os.path.join(download_dir, relative_file_path)
+                    
+                    if not os.path.exists(absolute_file_path):
+                        logger.warning(f"File does not exist: {absolute_file_path}, skipping filter check")
+                        return (relative_file_path, False, None)
+                    
+                    logger.info(f"Filtering file: {absolute_file_path}")
+                    
+                    # Try to load the file for sampling
+                    builder_type = convertor._get_builder_type(absolute_file_path)
+                    if not builder_type:
+                        logger.warning(f"Cannot determine builder type for filtering: {absolute_file_path}, keeping file")
+                        return (relative_file_path, True, None)
+                    
+                    # Try multiple loading strategies
+                    data = None
+                    load_strategies = [
+                        {"name": "load_dataset", "func": convertor._load_with_datasets},
+                        {"name": "fallback", "func": convertor._load_with_fallback},
+                    ]
+                    
+                    for strategy in load_strategies:
+                        try:
+                            data = await strategy['func'](builder_type, absolute_file_path)
+                            if data is not None:
+                                break
+                        except Exception as e:
+                            logger.debug(f"Load strategy '{strategy['name']}' failed for filtering: {e}")
+                            continue
+                    
+                    if data is None:
+                        logger.warning(f"Could not load file for filtering: {absolute_file_path}, keeping file")
+                        return (relative_file_path, True, None)
+                    
+                    # Sample 3 records from the first available split
+                    sampled_records = []
+                    for split_name, data_content in data.items():
+                        if len(data_content) > 0:
+                            # Sample 3 records
+                            sampled = await convertor._sample_records(data_content, num_samples=3)
+                            sampled_records = sampled
+                            break
+                    
+                    if not sampled_records:
+                        logger.warning(f"No records found in file for filtering: {absolute_file_path}, keeping file")
+                        return (relative_file_path, True, None)
+                    
+                    # Call LLM to check if file matches background
+                    is_match = await convertor.invoke_file_filter(
+                        file_path=relative_file_path,
+                        sampled_records=sampled_records,
+                        dataset_background=dataset_background
+                    )
+                    
+                    return (relative_file_path, is_match, None)
+                    
+                except Exception as e:
+                    logger.error(f"Error filtering file {relative_file_path}: {e}")
+                    # On error, keep the file to avoid losing data
+                    return (relative_file_path, True, e)
+            
+            # Use semaphore to limit concurrent filtering tasks
+            filter_semaphore = asyncio.Semaphore(max_concurrent_mapping)
+            
+            async def filter_file_with_semaphore(relative_file_path: str):
+                """Filter file with semaphore control"""
+                async with filter_semaphore:
+                    return await filter_single_file(relative_file_path)
+            
+            # Create tasks for all files
+            filter_tasks = [
+                filter_file_with_semaphore(file_path)
+                for file_path in data_file_list
+            ]
+            
+            # Execute all filtering tasks concurrently
+            logger.info(f"Executing {len(filter_tasks)} file filtering tasks with max {max_concurrent_mapping} concurrent...")
+            filter_results = await asyncio.gather(*filter_tasks, return_exceptions=True)
+            
+            # Process filtering results
+            for result in filter_results:
+                if isinstance(result, Exception):
+                    failed_filter_files += 1
+                    logger.error(f"File filtering task failed: {result}")
+                    # On error, keep the file (but we don't know which file failed)
+                    # This shouldn't happen with proper error handling, but just in case
+                    continue
+                
+                file_path, is_match, error = result
+                if error:
+                    failed_filter_files += 1
+                    # On error, keep the file
+                    filtered_file_list.append(file_path)
+                    logger.warning(f"File filtering had error, keeping file: {file_path}")
+                elif is_match:
+                    filtered_file_list.append(file_path)
+                    logger.info(f"✓ File matches background: {file_path}")
+                else:
+                    logger.info(f"✗ File does not match background, filtering out: {file_path}")
+            
+            if failed_filter_files:
+                logger.warning(f"File filtering had {failed_filter_files} files fail, those files were kept by default.")
+            
+            original_count = len(data_file_list)
+            filtered_count = len(filtered_file_list)
+            logger.info(f"File filtering complete: {original_count} files -> {filtered_count} files (filtered out {original_count - filtered_count} files)")
+            
+            # Update data_file_list with filtered results
+            data_file_list = filtered_file_list
+            
+            if not data_file_list:
+                logger.warning("All files were filtered out, no files to process.")
+                return {
+                    "total_records_processed": 0,
+                    "processed_sources_count": 0,
+                    "output_dir": "",
+                }
+        else:
+            logger.info("No dataset background provided, skipping file filtering step.")
         
         # Step 2 & 3: Data conversion and merging
         output_dir = os.path.join(download_dir, "processed_output")

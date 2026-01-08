@@ -7,6 +7,7 @@ Significantly reduces token consumption compared to per-record LLM calls
 import os
 import json
 import re
+import random
 from typing import Dict, Any, List, Optional, Callable
 
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -77,9 +78,14 @@ def llm_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState
         
         logger.info(f"Read {len(records)} records from intermediate data")
         
-        sample_records = records[:min(3, len(records))]
+        # Fixed sampling: randomly sample 3 records for verification (same samples used for all 3 attempts)
+        num_samples = min(3, len(records))
+        if len(records) <= num_samples:
+            fixed_sample_records = records
+        else:
+            fixed_sample_records = random.sample(records, num_samples)
         
-        logger.info("Step 1: Generating mapping function using LLM...")
+        logger.info("Step 1: Generating mapping function using LLM with triple verification...")
         llm = ChatOpenAI(
             base_url=base_url,
             api_key=api_key,
@@ -87,18 +93,18 @@ def llm_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState
             temperature=temperature
         )
         
-        mapping_func = _generate_mapping_function(
+        mapping_func = _generate_mapping_function_with_verification(
             llm=llm,
-            sample_records=sample_records,
+            sample_records=fixed_sample_records,
             target_schema=schema,
             target_example=example,
             description=description
         )
         
         if mapping_func is None:
-            raise ValueError("Failed to generate mapping function from LLM")
+            raise ValueError("Failed to generate mapping function from LLM after triple verification")
         
-        logger.info("Mapping function generated successfully")
+        logger.info("Mapping function generated and verified successfully")
         
         logger.info("Step 2: Batch processing all records...")
         category = state.get("obtainer_category", "PT")
@@ -149,7 +155,7 @@ def llm_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState
     return state
 
 
-def _generate_mapping_function(
+def _generate_mapping_function_with_verification(
     llm: ChatOpenAI,
     sample_records: List[Dict[str, Any]],
     target_schema: Dict[str, Any],
@@ -157,7 +163,48 @@ def _generate_mapping_function(
     description: str
 ) -> Optional[Callable]:
     """
-    Generate mapping function using LLM
+    Generate mapping function using LLM with triple verification
+    
+    Generates mapping function three times and verifies consistency
+    """
+    mapping_functions = []
+    
+    # Generate mapping function three times
+    for attempt in range(3):
+        logger.info(f"Generating mapping function (attempt {attempt + 1}/3)...")
+        mapping_func = _generate_single_mapping_function(
+            llm=llm,
+            sample_records=sample_records,
+            target_schema=target_schema,
+            target_example=target_example,
+            description=description
+        )
+        
+        if mapping_func is None:
+            logger.error(f"Failed to generate mapping function on attempt {attempt + 1}")
+            raise ValueError(f"Failed to generate mapping function on attempt {attempt + 1}")
+        
+        mapping_functions.append(mapping_func)
+    
+    # Verify consistency: test all three functions on the same sample records
+    logger.info("Verifying mapping function consistency...")
+    if not _verify_mapping_functions(mapping_functions, sample_records):
+        logger.error("Triple verification failed: mapping functions produced inconsistent results")
+        raise ValueError("Mapping function verification failed: three attempts produced inconsistent results")
+    
+    logger.info("Triple verification passed: all three mapping functions are consistent")
+    return mapping_functions[0]
+
+
+def _generate_single_mapping_function(
+    llm: ChatOpenAI,
+    sample_records: List[Dict[str, Any]],
+    target_schema: Dict[str, Any],
+    target_example: Dict[str, Any],
+    description: str
+) -> Optional[Callable]:
+    """
+    Generate a single mapping function using LLM (internal method)
     
     LLM analyzes sample data and target format, generates a Python function
     """
@@ -217,7 +264,7 @@ Please write map_record function to convert input format to target format. Only 
             if not isinstance(test_result, dict):
                 logger.error(f"Mapping function returned non-dict: {type(test_result)}")
                 return None
-            logger.info(f"Function validation successful, test output: {json.dumps(test_result, ensure_ascii=False)[:200]}")
+            logger.debug(f"Function validation successful, test output: {json.dumps(test_result, ensure_ascii=False)[:200]}")
         except Exception as e:
             logger.error(f"Function validation failed: {e}")
             return None
@@ -227,6 +274,74 @@ Please write map_record function to convert input format to target format. Only 
     except Exception as e:
         logger.error(f"Error generating mapping function: {e}", exc_info=True)
         return None
+
+
+def _verify_mapping_functions(
+    mapping_functions: List[Callable],
+    sample_records: List[Dict[str, Any]]
+) -> bool:
+    """
+    Verify that all mapping functions produce consistent results on the same sample records
+    
+    Returns True if all functions produce identical results, False otherwise
+    """
+    if len(mapping_functions) < 2:
+        return True
+    
+    # Test each sample record with all mapping functions
+    for record_idx, sample_record in enumerate(sample_records):
+        results = []
+        
+        for func_idx, mapping_func in enumerate(mapping_functions):
+            try:
+                result = mapping_func(sample_record)
+                # Normalize result for comparison (sort dict keys, normalize JSON)
+                normalized_result = _normalize_mapping_result(result)
+                results.append(normalized_result)
+            except Exception as e:
+                logger.error(f"Error applying mapping function {func_idx + 1} to sample {record_idx + 1}: {e}")
+                return False
+        
+        # Compare all results
+        if len(set(json.dumps(r, sort_keys=True) for r in results)) != 1:
+            logger.warning(f"Sample {record_idx + 1} produced inconsistent results:")
+            for i, result in enumerate(results):
+                logger.warning(f"  Function {i + 1}: {json.dumps(result, ensure_ascii=False, indent=2)[:200]}")
+            return False
+    
+    return True
+
+
+def _normalize_mapping_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize mapping result for comparison
+    
+    - Sort dictionary keys
+    - Normalize nested structures
+    """
+    if not isinstance(result, dict):
+        return result
+    
+    normalized = {}
+    for key in sorted(result.keys()):
+        value = result[key]
+        
+        # Recursively normalize nested dicts
+        if isinstance(value, dict):
+            normalized[key] = _normalize_mapping_result(value)
+        # Sort lists if they contain dicts
+        elif isinstance(value, list):
+            if value and isinstance(value[0], dict):
+                normalized[key] = sorted(
+                    [_normalize_mapping_result(item) for item in value],
+                    key=lambda x: json.dumps(x, sort_keys=True)
+                )
+            else:
+                normalized[key] = value
+        else:
+            normalized[key] = value
+    
+    return normalized
 
 
 def _extract_function_code(text: str) -> Optional[str]:

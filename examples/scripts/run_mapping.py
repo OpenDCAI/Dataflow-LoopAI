@@ -13,7 +13,7 @@ import json
 import os
 from pathlib import Path
 
-from loopai.agents.Obtainer.mapping import MappingSubgraph
+from loopai.agents.Constructor.mapping import MappingSubgraph
 from loopai.schema.states import LoopAIState
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
