@@ -46,11 +46,11 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     """
    
     model = ChatOpenAI(
-        model=state['analyze_model_path'],
-        api_key=state['analyze_api_key'],
-        base_url=state['analyze_base_url'],
-        temperature=state.get('analyze_temperature', 0.0),
-        top_p=state.get('analyze_top_p', 0.95),
+        model=state.get('analyzer', {})['analyze_model_path'],
+        api_key=state.get('analyzer', {})['analyze_api_key'],
+        base_url=state.get('analyzer', {})['analyze_base_url'],
+        temperature=state.get('analyzer', {}).get('analyze_temperature', 0.0),
+        top_p=state.get('analyzer', {}).get('analyze_top_p', 0.95),
     )
     return model
 
@@ -177,12 +177,12 @@ def analyze_result_node(state: LoopAIState):
         "开始分析评测结果",
         progress=0.0,
         data={
-            "summary_path": state.get("analyze_output_summary_path"),
-            "result_path": state.get("analyze_output_result_path"),
+            "summary_path": state.get('analyzer', {}).get("analyze_output_summary_path"),
+            "result_path": state.get('analyzer', {}).get("analyze_output_result_path"),
         },
     )
 
-    summary_path = state['analyze_output_summary_path']
+    summary_path = state.get('analyzer', {}).get("analyze_output_summary_path")
     with open(summary_path, "r", encoding="utf-8") as f:
         summary = json.load(f)
     string_writer(
@@ -199,7 +199,7 @@ def analyze_result_node(state: LoopAIState):
     )
 
 
-    result_path = state['analyze_output_result_path']
+    result_path = state.get('analyzer', {}).get("analyze_output_result_path")
     with open(result_path, "r", encoding="utf-8") as f:
         results = [json.loads(line) for line in f if line.strip()]
     string_writer(
@@ -212,7 +212,7 @@ def analyze_result_node(state: LoopAIState):
             "failed_records": sum(1 for r in results if not r.get("passed")),
         },
     )
-    top_k = int(state.get("analyze_sampling_top_k", 5))
+    top_k = int(state.get('analyzer', {}).get("analyze_sampling_top_k", 5))
     failures = pick_failure_examples(results, top_k)
     string_writer(
         state,
@@ -234,8 +234,8 @@ def analyze_result_node(state: LoopAIState):
         "调用模型生成分析",
         progress=0.60,
         data={
-            "model": state.get("analyze_model_path"),
-            "base_url": state.get("analyze_base_url"),
+            "model": state.get('analyzer', {}).get("analyze_model_path"),
+            "base_url": state.get('analyzer', {}).get("analyze_base_url"),
             "prompt_chars": len(prompt or ""),
         },
     )
@@ -263,42 +263,44 @@ def analyze_result_node(state: LoopAIState):
 
     out = {
         "meta": {
-            "summary_file": str(Path(state['analyze_output_summary_path']).resolve()),
-            "oj_file": str(Path(state['analyze_output_result_path']).resolve()) if state['analyze_output_result_path'] else None
+            "summary_file": str(Path(state.get('analyzer', {}).get("analyze_output_summary_path")).resolve()),
+            "oj_file": str(Path(state.get('analyzer', {}).get("analyze_output_result_path")).resolve()) if state.get('analyzer', {}).get("analyze_output_result_path") else None
         },
         "rule_brief": rb,
         "llm_review": response
     }
 
     ts = time.strftime("%Y%m%d_%H%M%S")
-    state['analyze_output_report_json_path'] = os.path.join(state['output_dir'], f"report_{ts}.json")
-    state['analyze_output_report_text_path'] = os.path.join(state['output_dir'], f"report_{ts}.txt")
+    state.setdefault('analyzer', {})["analyze_output_report_json_path"] = os.path.join(state['output_dir'], f"report_{ts}.json")
+    state.setdefault('analyzer', {})["analyze_output_report_text_path"] = os.path.join(state['output_dir'], f"report_{ts}.txt")
     string_writer(
         state,
         "JudgerAgent.analyze_result_node",
         "写入分析报告",
         progress=0.92,
         data={
-    "report_json": state["analyze_output_report_json_path"],
-    "report_txt": state["analyze_output_report_text_path"],
+    "report_json": state.get('analyzer', {}).get("analyze_output_report_json_path"),
+    "report_txt": state.get('analyzer', {}).get("analyze_output_report_text_path"),
          },
     )
 
-    Path(state['analyze_output_report_json_path']).write_text(json.dumps(out, ensure_ascii=False, indent=2),
+
+
+    Path(state.get('analyzer', {}).get("analyze_output_report_json_path")).write_text(json.dumps(out, ensure_ascii=False, indent=2),
                                                               encoding="utf-8")
-    Path(state['analyze_output_report_text_path']).write_text(response, encoding="utf-8")
+    Path(state.get('analyzer', {}).get("analyze_output_report_text_path")).write_text(response, encoding="utf-8")
     string_writer(
         state,
         "JudgerAgent.analyze_result_node",
         "分析流程完成",
         progress=1.0,
         data={
-            "report_json": state["analyze_output_report_json_path"],
-            "report_txt": state["analyze_output_report_text_path"],
+            "report_json": state.get('analyzer', {}).get("analyze_output_report_json_path"),
+            "report_txt": state.get('analyzer', {}).get("analyze_output_report_text_path"),
             "dominant_failure": (rb.get("dominant_failure") if isinstance(rb, dict) else None),
         },
     )
 
-    logger.info(f"已写入：{state['analyze_output_report_json_path']}\n已写入：{state['analyze_output_report_text_path']}")
+    logger.info(f"已写入：{state.get('analyzer', {}).get('analyze_output_report_json_path')}\n已写入：{state.get('analyzer', {}).get('analyze_output_report_text_path')}")
     logger.info("\n—— LLM 摘要（预览）——\n" + response)
     return state

@@ -49,16 +49,16 @@ def generate_sample(state, num_samples_per_task=1):
     logger.info(f"进入生成样本")
 
     model = init_model(
-        model_path=state['eval_model_path'],
-        base_url=state['eval_base_url'],
-        api_key=state['eval_api_key'],
-        temperature=state['eval_temperature'],
-        top_p=state['eval_top_p']
+        model_path=state.get('judger', {})['eval_model_path'],
+        base_url=state.get('judger', {})['eval_base_url'],
+        api_key=state.get('judger', {})['eval_api_key'],
+        temperature=state.get('judger', {})['eval_temperature'],
+        top_p=state.get('judger', {})['eval_top_p']
     )
-    test_case_path = state['eval_test_case_path']
-    problem_path = state['eval_problem_path']
+    test_case_path = state.get('judger', {})['eval_test_case_path']
+    problem_path = state.get('judger', {})['eval_problem_path']
 
-    batch_size = state['eval_batch_size']
+    batch_size = state.get('judger', {})['eval_batch_size']
 
     problems = read_problems(problem_path)
     all_task_ids = list(problems.keys())
@@ -112,16 +112,16 @@ def generate_sample_sql(state, num_samples_per_task=20):
     #logger.info(f"进入生成样本")
 
     model = init_model(
-        model_path=state['eval_model_path'],
-        base_url=state['eval_base_url'],
-        api_key=state['eval_api_key'],
-        temperature=state['eval_temperature'],
-        top_p=state['eval_top_p']
+        model_path=state.get('judger', {})['eval_model_path'],
+        base_url=state.get('judger', {})['eval_base_url'],
+        api_key=state.get('judger', {})['eval_api_key'],
+        temperature=state.get('judger', {})['eval_temperature'],
+        top_p=state.get('judger', {})['eval_top_p']
     )
-    test_case_path = state['eval_test_case_path']
-    problem_path = state['eval_problem_path']
+    test_case_path = state.get('judger', {})['eval_test_case_path']
+    problem_path = state.get('judger', {})['eval_problem_path']
 
-    batch_size = state['eval_batch_size']
+    batch_size = state.get('judger', {})['eval_batch_size']
     problems = read_problems(problem_path)
     all_task_ids = list(problems.keys())
     total_tasks = len(all_task_ids)

@@ -107,11 +107,11 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     """
 
     model = ChatOpenAI(
-        model=state['analyze_model_path'],
-        api_key=state['analyze_api_key'],
-        base_url=state['analyze_base_url'],
-        temperature=state.get('analyze_temperature', 0.0),
-        top_p=state.get('analyze_top_p', 0.95),
+        model=state.get('analyzer', {})['analyze_model_path'],
+        api_key=state.get('analyzer', {})['analyze_api_key'],
+        base_url=state.get('analyzer', {})['analyze_base_url'],
+        temperature=state.get('analyzer', {}).get('analyze_temperature', 0.0),
+        top_p=state.get('analyzer', {}).get('analyze_top_p', 0.95),
     )
     return model
 
@@ -392,7 +392,7 @@ def draw_conclusion_node(state: LoopAIState):
     progress=0.0
 )
     outdir = state['output_dir']
-    summary_path = state['analyze_output_summary_path']
+    summary_path = state.get('analyzer', {})['analyze_output_summary_path']
 
     # ===== 读取 summary =====
     string_writer(
@@ -421,7 +421,7 @@ def draw_conclusion_node(state: LoopAIState):
         r for r in (oj_records or [])
         if isinstance(r, dict) and not r.get("passed", False)
     ]
-    limit = int(state.get("quick_brief_limit", 20))
+    limit = int(state.get('analyzer', {}).get("quick_brief_limit", 20))
     qb_samples = pick_samples_by_stage(failed, limit=limit)
 
     final_json["quick_brief"] = {
@@ -438,7 +438,7 @@ def draw_conclusion_node(state: LoopAIState):
 
     # ===== 构造数据集元信息 + 样例，供 background 使用 =====
     dataset_name = summary.get("dataset_name") or summary.get("task_name") or Path(summary_path).stem
-    task_type = state.get("analyze_task_type", "code")  # "code" / "sql" / "text2sql" 等
+    task_type = state.get('analyzer', {}).get("analyze_task_type", "code")  # "code" / "sql" / "text2sql" 等
 
     qb = final_json.get("quick_brief") or {}
     samples = qb.get("samples") or []
@@ -508,7 +508,7 @@ def draw_conclusion_node(state: LoopAIState):
     logger.info(f"文本：{final_txt_path}")
 
     # ===== 可选：生成改进建议 =====
-    if state.get('output_suggestion'):
+    if state.get('analyzer', {}).get('output_suggestion'):
         string_writer(
     state,
     "JudgerAgent.draw_conclusion_node",
@@ -526,7 +526,7 @@ def draw_conclusion_node(state: LoopAIState):
         suggest_path = os.path.join(outdir, f"final_report_{run_ts}.suggestions.txt")
         with open(suggest_path, "w", encoding="utf-8") as f:
             f.write(suggestion)
-        state['analyze_output_suggestion_path'] = suggest_path
+        state.setdefault('analyzer', {})['analyze_output_suggestion_path'] = suggest_path
 
         with open(final_txt_path, "a", encoding="utf-8") as f:
             f.write("\n---------------------\n模型生成的改进建议：\n")

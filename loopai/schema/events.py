@@ -114,11 +114,15 @@ class AgentEvent:
             if not self.node_path:
                 return ('', 'yellow')
             return (f"🧭 Node Path: {'->'.join(self.node_path)}", "yellow")
-        
+
         def print_custom_info(obj: dict):
+            msgs = []
             for key in obj:
                 if 'message' in obj[key]:
-                    return (f"🔧 {key}: {obj[key]['message']}", "purple")
+                    msgs.append(f"🔧 {key}: {obj[key]['message']}")
+                if 'progress' in obj[key] and obj[key]['progress'] is not None:
+                    msgs.append(f"🔧 {key}: {obj[key]['progress'] * 100}")
+            return ('\n'.join(msgs), "purple")
 
         def print_title(title: str):
             return (f"{10*'='}{title}={10*'='}", "magenta")

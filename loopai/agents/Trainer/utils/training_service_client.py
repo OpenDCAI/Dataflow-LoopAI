@@ -188,7 +188,7 @@ class TrainingServiceClient:
                 return False, None, f"获取任务状态失败: {error}"
             
             task_status = status_info.get("status")
-            state['trainer_current_training_status'] = task_status
+            state.setdefault('trainer', {})['trainer_current_training_status'] = task_status
             
             # 调用进度回调
             if progress_callback:

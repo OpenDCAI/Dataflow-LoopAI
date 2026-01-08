@@ -369,17 +369,24 @@ class TrainerAgent(BaseAgent):
                 ).json())
             
             # Trainer 运行前需要的字段，如果缺失则触发 Configer 子图来补全配置
-            required_fields = [
-                'train_input_dataset_path',
-                'train_input_task_description',
-                'train_input_config_template_path',
-                'train_output_dir',
-                'train_input_model_name'
-            ]
+            required_fields = {
+                "trainer": [
+                    'train_input_dataset_path',
+                    'train_input_task_description',
+                    'train_input_config_template_path',
+                    'train_output_dir',
+                    'train_input_model_name'
+                ]
+            }
             missing_fields = []
-            for field in required_fields:
-                if field not in state:
-                    missing_fields.append(field)
+            for key in required_fields:
+                for field in required_fields[key]:
+                    if key == 'default':
+                        if field not in state:
+                            missing_fields.append(field)
+                    else:
+                        if field not in state.get(key, {}):
+                            missing_fields.append(field)
                     
             if missing_fields:
                 # 进度：发现缺失字段
@@ -400,7 +407,7 @@ class TrainerAgent(BaseAgent):
                 # 使用 PromptLoader 生成引导自动化填充的 query
                 state['automated_query'] = self.prompt_loader(
                     "automated_query", "trainer_missing_fields_prompt")
-                state['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
+                state.setdefault('configer', {})['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
                 goto_node = runtime.context['exception_navigate']
                 logger.info(f'found missing fields, goto {goto_node}')
                 return Command(

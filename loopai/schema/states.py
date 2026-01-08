@@ -330,6 +330,327 @@ class ObtainerState(BaseModel):
         description="最终数据集 JSONL 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "数据集生成"}
     )
+
+class JudgerState(BaseModel):
+    eval_model_path: str = Field(
+        default="", 
+        title="评估模型路径",
+        description="评估模型路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    eval_base_url: str = Field(
+        default="", 
+        title="评估模型 Base URL",
+        description="评估模型 Base URL",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+    )
+    eval_api_key: str = Field(
+        default="", 
+        title="评估模型 API Key",
+        description="评估模型 API Key",
+        json_schema_extra={"ui_type": "password", "ui_group": "评估模型"}
+    )
+    eval_temperature: float = Field(
+        default=0, 
+        title="评估模型温度",
+        description="评估模型温度",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
+    eval_top_p: float = Field(
+        default=0.95, 
+        title="评估模型 Top P",
+        description="评估模型 Top P",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
+    eval_test_case_path: str = Field(
+        default="", 
+        title="评估模型测试用例路径",
+        description="评估模型测试用例路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    eval_problem_path: str = Field(
+        default="", 
+        title="评估模型问题路径",
+        description="评估模型问题路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    eval_result_path: str = Field(
+        default="", 
+        title="评估模型结果路径",
+        description="评估模型结果路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    eval_batch_size: int = Field(
+        default=20,
+        title="评估模型批量大小",
+        description="评估模型批量大小",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
+
+class AnalyzerState(BaseModel):
+    analyze_task_type: str = Field(
+        default="code", 
+        title="分析任务类型",
+        description="分析任务类型",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型", "allowed_values": ["code", "text2sql"]}
+    )
+    analyze_batch_size: int = Field(
+        default=20,
+        title="分析模型批量大小",
+        description="分析模型批量大小",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    analyze_model_path: str = Field(
+        default="", 
+        title="分析模型路径",
+        description="分析模型路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    analyze_base_url: str = Field(
+        default="", 
+        title="分析模型 Base URL",
+        description="分析模型 Base URL",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
+    )
+    analyze_api_key: str = Field(
+        default="", 
+        title="分析模型 API Key",
+        description="分析模型 API Key",
+        json_schema_extra={"ui_type": "password", "ui_group": "分析模型"}
+    )
+    analyze_temperature: float = Field(
+        default=0, 
+        title="分析模型温度",
+        description="分析模型温度",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    analyze_top_p: float = Field(
+        default=0.95, 
+        title="分析模型 Top P",
+        description="分析模型 Top P",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    output_brief: bool = Field(
+        default=False, 
+        title="是否输出简要分析结果",
+        description="是否输出简要分析结果",
+        json_schema_extra={"ui_type": "checkbox", "ui_group": "分析模型"}
+    )
+    analyze_output_result_path: str = Field(
+        default="", 
+        title="分析模型输出结果路径",
+        description="分析模型输出结果路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    analyze_output_summary_path: str = Field(
+        default="", 
+        title="分析模型输出摘要路径",
+        description="分析模型输出摘要路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    analyze_sampling_top_k: int = Field(
+        default=5, 
+        title="分析模型采样 Top K",
+        description="分析模型采样 Top K",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    analyze_output_report_json_path: str = Field(
+        default="", 
+        title="分析模型输出报告 JSON 路径",
+        description="分析模型输出报告 JSON 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    analyze_output_report_text_path: str = Field(
+        default="", 
+        title="分析模型输出报告文本路径",
+        description="分析模型输出报告文本路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    output_suggestion: bool = Field(
+        default=False, 
+        title="是否输出建议",
+        description="是否输出建议",
+        json_schema_extra={"ui_type": "checkbox", "ui_group": "分析模型"}
+    )
+    analyze_output_suggestion_path: str = Field(
+        default="", 
+        title="分析模型输出建议路径",
+        description="分析模型输出建议路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+
+class TrainerState(BaseModel):
+    train_dataset_path: str = Field(
+        default="", 
+        title="训练数据集路径",
+        description="训练数据集路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    train_task_description: str = Field(
+        default="", 
+        title="训练任务描述",
+        description="训练任务描述",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    train_config_template_path: str = Field(
+        default="", 
+        title="训练配置模板路径",
+        description="训练配置模板路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    train_config_output_path: str = Field(
+        default="", 
+        title="训练配置输出路径",
+        description="训练配置输出路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    train_output_dir: str = Field(
+        default="", 
+        title="训练输出目录",
+        description="训练输出目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    train_model_name: str = Field(
+        default="", 
+        title="训练模型名称",
+        description="训练模型名称",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    train_use_swanlab: bool = Field(
+        default=True, 
+        title="是否使用 SwanLab",
+        description="是否使用 SwanLab",
+        json_schema_extra={"ui_type": "checkbox", "ui_group": "训练模型"}
+    )
+    train_swanlab_project: str = Field(
+        default="", 
+        title="SwanLab 项目名称",
+        description="SwanLab 项目名称",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    data_check_passed: bool = Field(
+        default=False, 
+        title="数据检查是否通过",
+        description="数据检查是否通过",
+        json_schema_extra={"ui_type": "checkbox", "ui_group": "训练模型"}
+    )
+    data_check_result: dict = Field(
+        default={}, 
+        title="数据检查结果",
+        description="数据检查结果",
+        json_schema_extra={"ui_type": "json", "ui_group": "训练模型"}
+    )
+    data_check_report_path: str = Field(
+        default="", 
+        title="数据检查报告路径",
+        description="数据检查报告路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    data_check_error: str = Field(
+        default="", 
+        title="数据检查错误信息",
+        description="数据检查错误信息",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    config_generation_success: bool = Field(
+        default=False, 
+        title="配置生成是否成功",
+        description="配置生成是否成功",
+        json_schema_extra={"ui_type": "checkbox", "ui_group": "训练模型"}
+    )
+    config_explanation_path: str = Field(
+        default="", 
+        title="配置解释路径",
+        description="配置解释路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    config_generation_error: str = Field(
+        default="", 
+        title="配置生成错误信息",
+        description="配置生成错误信息",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    training_success: bool = Field(
+        default=False, 
+        title="训练是否成功",
+        description="训练是否成功",
+        json_schema_extra={"ui_type": "checkbox", "ui_group": "训练模型"}
+    )
+    training_execution_time: float = Field(
+        default=0, 
+        title="训练执行时间",
+        description="训练执行时间",
+        json_schema_extra={"ui_type": "number", "ui_group": "训练模型"}
+    )
+    training_task_id: str = Field(
+        default="", 
+        title="训练任务 ID",
+        description="训练任务 ID",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    training_final_status: dict = Field(
+        default={}, 
+        title="训练最终状态",
+        description="训练最终状态",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    training_log_path: str = Field(
+        default="", 
+        title="训练日志路径",
+        description="训练日志路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    training_report_path: str = Field(
+        default="", 
+        title="训练报告路径",
+        description="训练报告路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    training_error: str = Field(
+        default="", 
+        title="训练错误信息",
+        description="训练错误信息",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    training_service_url: str = Field(
+        default="http://localhost:8000", 
+        title="训练服务器 URL",
+        description="训练服务器 URL",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    current_training_status: str = Field(
+        default="", 
+        title="当前训练状态",
+        description="当前训练状态",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    update_model_path: str = Field(
+        default="", 
+        title="更新模型路径",
+        description="更新模型路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    swanlab_url: str = Field(
+        default="", 
+        title="SwanLab URL",
+        description="SwanLab URL",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+
+class ConfigerState(BaseModel):
+    configer_error: str = Field(
+        default="", 
+        title="配置器错误信息",
+        description="配置器错误信息",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    configer_statement: str = Field(
+        default="", 
+        title="配置器语句",
+        description="配置器语句",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+
 # ==========================================
 # 3. 主 State 定义
 # ==========================================
@@ -346,63 +667,67 @@ class LoopAIState(MessagesState):
     obtainer: Annotated[Dict[str, Any], merge_dict]
 
     # === Configer (保持原样) ===
+    configer: Annotated[Dict[str, Any], merge_dict]
     configer_error: Annotated[str, replace_value]
     configer_statement: str 
 
     # === Judger (保持原样) ===
-    eval_model_path: str 
-    eval_base_url: str 
-    eval_api_key: str 
-    eval_temperature: float = 0
-    eval_top_p: float = 0.95
-    eval_test_case_path: str 
-    eval_problem_path: str 
-    eval_result_path: str 
-    eval_batch_size: int = 20 
+    judger: Annotated[Dict[str, Any], merge_dict]
+    # eval_model_path: str 
+    # eval_base_url: str 
+    # eval_api_key: str 
+    # eval_temperature: float = 0
+    # eval_top_p: float = 0.95
+    # eval_test_case_path: str 
+    # eval_problem_path: str 
+    # eval_result_path: str 
+    # eval_batch_size: int = 20 
 
     # === Analyzer (保持原样) ===
-    analyze_task_type: str = 'code'
-    analyze_batch_size: int = 20 
-    analyze_model_path: str 
-    analyze_base_url: str 
-    analyze_api_key: str 
-    analyze_temperature: float = 0
-    analyze_top_p: float = 0.95
-    output_brief: bool 
-    analyze_output_result_path: str 
-    analyze_output_summary_path: str 
-    analyze_sampling_top_k: int = 5 
-    analyze_output_report_json_path: str 
-    analyze_output_report_text_path: str 
-    output_suggestion: bool 
-    analyze_output_suggestion_path: str 
+    analyzer: Annotated[Dict[str, Any], merge_dict]
+    # analyze_task_type: str = 'code'
+    # analyze_batch_size: int = 20 
+    # analyze_model_path: str 
+    # analyze_base_url: str 
+    # analyze_api_key: str 
+    # analyze_temperature: float = 0
+    # analyze_top_p: float = 0.95
+    # output_brief: bool 
+    # analyze_output_result_path: str 
+    # analyze_output_summary_path: str 
+    # analyze_sampling_top_k: int = 5 
+    # analyze_output_report_json_path: str 
+    # analyze_output_report_text_path: str 
+    # output_suggestion: bool 
+    # analyze_output_suggestion_path: str 
     
     # === Trainer (保持原样) ===
-    train_dataset_path: str 
-    train_task_description: str 
-    train_config_template_path: str 
-    train_config_output_path: str 
-    train_output_dir: str 
-    train_model_name: str 
-    train_use_swanlab: bool = True 
-    train_swanlab_project: str 
-    data_check_passed: bool = False
-    data_check_result: dict = {}
-    data_check_report_path: str = ""
-    data_check_error: str = ""
-    config_generation_success: bool = False
-    config_explanation_path: str = ""
-    config_generation_error: str = ""
-    training_success: bool = False
-    training_execution_time: float = 0.0
-    training_task_id: str = ""
-    training_final_status: dict = {}
-    training_log_path: str = ""
-    training_report_path: str = ""
-    training_error: str = ""
-    training_service_url: str = "http://localhost:8000"
-    current_training_status: str = ""
-    update_model_path: str 
+    trainer: Annotated[Dict[str, Any], merge_dict]
+    # train_dataset_path: str 
+    # train_task_description: str 
+    # train_config_template_path: str 
+    # train_config_output_path: str 
+    # train_output_dir: str 
+    # train_model_name: str 
+    # train_use_swanlab: bool = True 
+    # train_swanlab_project: str 
+    # data_check_passed: bool = False
+    # data_check_result: dict = {}
+    # data_check_report_path: str = ""
+    # data_check_error: str = ""
+    # config_generation_success: bool = False
+    # config_explanation_path: str = ""
+    # config_generation_error: str = ""
+    # training_success: bool = False
+    # training_execution_time: float = 0.0
+    # training_task_id: str = ""
+    # training_final_status: dict = {}
+    # training_log_path: str = ""
+    # training_report_path: str = ""
+    # training_error: str = ""
+    # training_service_url: str = "http://localhost:8000"
+    # current_training_status: str = ""
+    # update_model_path: str
 
     # === Graph Control (图控制属性) ===
     current: str 

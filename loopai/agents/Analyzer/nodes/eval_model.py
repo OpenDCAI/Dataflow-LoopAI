@@ -159,12 +159,12 @@ def init_model(state: LoopAIState) -> BaseChatModel:
         已初始化好的 BaseChatModel 实例
     """
     return OpenAICompatChat(
-        model=state["analyze_model_path"],
-        base_url=state["analyze_base_url"],
-        api_key=state["analyze_api_key"],
-        max_tokens=state.get("analyze_max_tokens", 512),
-        temperature=state.get("analyze_temperature", 0.0),
-        top_p=state.get("analyze_top_p", 0.95),
+        model=state.get('analyzer', {})["analyze_model_path"],
+        base_url=state.get('analyzer', {})["analyze_base_url"],
+        api_key=state.get('analyzer', {})["analyze_api_key"],
+        max_tokens=state.get('analyzer', {}).get("analyze_max_tokens", 512),
+        temperature=state.get('analyzer', {}).get("analyze_temperature", 0.0),
+        top_p=state.get('analyzer', {}).get("analyze_top_p", 0.95),
     )
 
 
@@ -642,7 +642,7 @@ def eval_model_node(state: LoopAIState):
         6. 输出增强版评测记录
         7. 生成评测摘要报告
     """
-    task_type = state['analyze_task_type']  # "code" 或 "sql"
+    task_type = state.get('analyzer', {})['analyze_task_type']  # "code" 或 "sql"
     string_writer(
     state,
     "JudgerAgent.evaluate_node",
@@ -654,7 +654,7 @@ def eval_model_node(state: LoopAIState):
     judge = LLMJudge(task=task_type)
 
     # 读取评测结果（JSONL）
-    with open(state['eval_result_path'], 'r', encoding='utf-8') as f:
+    with open(state.get('judger')['eval_result_path'], 'r', encoding='utf-8') as f:
         lines = [ln for ln in f if ln.strip()]
     result_content = [json.loads(ln) for ln in lines]
 
@@ -662,9 +662,9 @@ def eval_model_node(state: LoopAIState):
     failed_results = [r for r in result_content if not r.get("passed")]
     total_failed = len(failed_results)
     # 初始化 LLM
-    batch_size = int(state.get("analyze_batch_size", 20))
+    batch_size = int(state.get('analyzer', {}).get("analyze_batch_size", 20))
     llm = init_model(state)
-    total_batches = (len(failed_results) + batch_size - 1) 
+    total_batches = (len(failed_results) + batch_size - 1) // batch_size
 
     # 批量处理
     for i in tqdm(range(0, len(failed_results), batch_size)):
@@ -703,8 +703,8 @@ def eval_model_node(state: LoopAIState):
         batch_responses = call_llm_with_control(
             llm,
             prompts,
-            max_concurrency=int(state.get("analyze_max_concurrency", 4)),
-            chunk_size=int(state.get("analyze_chunk_size", 8)),
+            max_concurrency=int(state.get('analyzer', {}).get("analyze_max_concurrency", 4)),
+            chunk_size=int(state.get('analyzer', {}).get("analyze_chunk_size", 8)),
         )
 
         # 合并判因
@@ -718,8 +718,8 @@ def eval_model_node(state: LoopAIState):
                     rec["judge"] = {"stage": "other", "reason": f"LLMaJ 运行异常：{e}", "evidence": {}}
 
     # ===== quick_brief：仅对失败样本生成短评（失败<=20全量；失败>20抽样20条覆盖错误类型）=====
-    if state.get("quick_brief", False) and len(failed_results) > 0:
-        limit = int(state.get("quick_brief_limit", 20))
+    if state.get('analyzer', {}).get("quick_brief", False) and len(failed_results) > 0:
+        limit = int(state.get('analyzer', {}).get("quick_brief_limit", 20))
         string_writer(
     state,
     "JudgerAgent.evaluate_node",
@@ -806,9 +806,9 @@ def eval_model_node(state: LoopAIState):
     with open(out_jsonl_path, "w", encoding="utf-8") as f:
         for r in failed_results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    state['analyze_output_result_path'] = str(out_jsonl_path.resolve())
+    state.setdefault('analyzer', {})['analyze_output_result_path'] = str(out_jsonl_path.resolve())
     logger.info(f" 已写入增强版 OJ：{out_jsonl_path}")
-    logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if state.get('quick_brief', False) else ""))
+    logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if state.get('analyzer', {}).get("quick_brief", False) else ""))
     string_writer(
     state,
     "JudgerAgent.evaluate_node",
@@ -826,7 +826,7 @@ def eval_model_node(state: LoopAIState):
         sdata["results_file"] = str(out_jsonl_path.resolve())
         with open(summary_json_path, "w", encoding="utf-8") as f:
             json.dump(sdata, f, ensure_ascii=False, indent=2)
-        state['analyze_output_summary_path'] = summary_json_path
+        state.setdefault('analyzer', {})['analyze_output_summary_path'] = summary_json_path
         logger.info(f" 已在 {state['output_dir']} 生成 summary，路径：{summary_json_path} / {summary_txt_path}")
         string_writer(
     state,
