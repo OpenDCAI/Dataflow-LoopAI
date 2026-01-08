@@ -64,7 +64,7 @@
             :id="`node::target::node`"
             type="target"
             class="handle-item default"
-            :position="Position.Left"
+            :position="!thisData.reverseHandle ? Position.Left : Position.Right"
             :style="{
                 top: thisData.defaultTargetTop
             }"
@@ -74,11 +74,10 @@
             :id="`node::source::node`"
             type="source"
             class="handle-item default"
-            :position="Position.Right"
+            :position="!thisData.reverseHandle ? Position.Right : Position.Left"
             :style="{
                 top: thisData.defaultSourceHandleTop
             }"
-            Handle
         />
     </div>
 </template>
@@ -126,7 +125,8 @@ const defaultData = {
     defaultSourceHandleTop: '',
     defaultTargetHandleTop: '',
     useSourceHandle: true,
-    useTargetHandle: true
+    useTargetHandle: true,
+    reverseHandle: false
 }
 const thisData = computed(() => {
     return {

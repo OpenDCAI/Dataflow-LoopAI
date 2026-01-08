@@ -138,32 +138,86 @@ export default {
             ],
             nodes: [
                 {
-                    id: '1',
-                    type: 'base-node',
-                    position: { x: 70, y: 160 },
+                    id: 'configer',
+                    type: 'agent-node',
+                    position: { x: 0, y: 0 },
                     data: {
-                        label: 'Node 1',
-                        nodeInfo:
-                            'Node Info: This is node info block for displaying node information.',
-                        iconColor: 'rgba(0, 108, 126, 1)'
+                        label: 'Configer',
+                        status: 'Agent',
+                        statePrefix: 'configer,output',
+                        graphClsPrefix: 'ConfigerAgent',
+                        icon: 'Settings',
+                        nodeInfo: 'Trainer Agent for Training',
+                        iconColor: 'rgba(149, 91, 120, 1)',
+                        background:
+                            'linear-gradient(130deg, rgba(201, 122, 162, 0.8), rgba(252, 252, 252, 0.8))',
+                        borderColor: 'rgba(201, 122, 162, 0.8)'
                     }
                 },
                 {
-                    id: '2',
-                    type: 'base-node',
-                    position: { x: 100, y: 400 },
+                    id: 'trainer',
+                    type: 'agent-node',
+                    position: { x: 350, y: 160 },
                     data: {
-                        label: 'Node 2',
-                        nodeInfo:
-                            'Node Info: This is node info block for displaying node information.',
-                        icon: 'Accept'
+                        label: 'Trainer',
+                        status: 'Agent',
+                        icon: 'Library',
+                        nodeInfo: 'Trainer Agent for Training',
+                        iconColor: 'rgba(207, 150, 12, 1)',
+                        background:
+                            'linear-gradient(130deg, rgba(239, 192, 40, 0.8), rgba(252, 252, 252, 0.8))',
+                        borderColor: 'rgba(239, 192, 40, 0.8)'
                     }
                 },
                 {
-                    id: '3',
-                    type: 'base-node',
-                    position: { x: 400, y: 800 },
-                    data: { label: 'Node 3', icon: 'Cloud' }
+                    id: 'obtainer',
+                    type: 'agent-node',
+                    position: { x: 80, y: 801 },
+                    data: {
+                        label: 'Obtainer',
+                        status: 'Agent',
+                        statePrefix: 'obtainer',
+                        graphClsPrefix: 'ObtainerAgent',
+                        icon: 'GiftboxOpen',
+                        nodeInfo: 'Trainer Agent for Training',
+                        iconColor: 'rgba(135, 127, 163, 1)',
+                        reverseHandle: true
+                    }
+                },
+                {
+                    id: 'judger',
+                    type: 'agent-node',
+                    position: { x: 700, y: 160 },
+                    data: {
+                        label: 'Judger',
+                        status: 'Agent',
+                        statePrefix: 'eval',
+                        graphClsPrefix: 'JudgerAgent',
+                        icon: 'Bug',
+                        nodeInfo: 'Trainer Agent for Training',
+                        iconColor: 'rgba(89, 169, 133, 1)',
+                        background:
+                            'linear-gradient(130deg, rgba(116, 220, 175, 0.8), rgba(252, 252, 252, 0.8))',
+                        borderColor: 'rgba(116, 220, 175, 0.8)'
+                    }
+                },
+                {
+                    id: 'analyzer',
+                    type: 'agent-node',
+                    position: { x: 910, y: 800 },
+                    data: {
+                        label: 'Analyzer',
+                        status: 'Agent',
+                        statePrefix: 'analyze',
+                        graphClsPrefix: 'AnalyzerAgent',
+                        icon: 'AreaChart',
+                        nodeInfo: 'Trainer Agent for Training',
+                        iconColor: 'rgba(139, 145, 177, 1)',
+                        background:
+                            'linear-gradient(130deg, rgba(150, 167, 222, 0.8), rgba(252, 252, 252, 0.8))',
+                        reverseHandle: true,
+                        borderColor: 'rgba(150, 167, 222, 0.8)'
+                    }
                 }
             ],
 
@@ -171,17 +225,37 @@ export default {
                 {
                     id: 'e1->2',
                     type: 'base-edge',
-                    source: '1',
-                    target: '2'
+                    source: 'obtainer',
+                    target: 'trainer'
                 },
                 {
                     id: 'e2->3',
                     type: 'base-edge',
-                    source: '2',
-                    target: '3',
+                    source: 'trainer',
+                    target: 'judger',
                     animated: true,
                     data: {
-                        label: 'world'
+                        label: 'node'
+                    }
+                },
+                {
+                    id: 'e3->4',
+                    type: 'base-edge',
+                    source: 'judger',
+                    target: 'analyzer',
+                    animated: true,
+                    data: {
+                        label: 'node'
+                    }
+                },
+                {
+                    id: 'e4->5',
+                    type: 'base-edge',
+                    source: 'analyzer',
+                    target: 'obtainer',
+                    animated: true,
+                    data: {
+                        label: 'node'
                     }
                 }
             ],

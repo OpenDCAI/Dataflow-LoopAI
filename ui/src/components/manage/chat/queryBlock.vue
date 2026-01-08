@@ -3,7 +3,7 @@
         <div class="bg-wrapper">
             <p class="top-title">{{ local('Chat with LoopAI') }}</p>
             <power-editor
-                :placeholder="local(`Ask me anything (Press Ctrl + Enter)`)"
+                :placeholder="placeholder"
                 :theme="theme"
                 class="power-editor-block"
                 ref="editor"
@@ -82,7 +82,11 @@ export default {
     computed: {
         ...mapState(useAppConfig, ['local']),
         ...mapState(useTheme, ['color']),
-        ...mapState(useLoopAI, ['taskStatus', 'msgStreamModel'])
+        ...mapState(useLoopAI, ['taskStatus', 'msgStreamModel']),
+        placeholder() {
+            if (this.taskStatus.interrupt_value) return this.taskStatus.interrupt_value
+            return this.local(`Ask me anything (Press Ctrl + Enter)`)
+        }
     },
     mounted() {},
     methods: {

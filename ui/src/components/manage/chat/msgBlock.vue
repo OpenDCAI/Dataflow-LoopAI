@@ -15,14 +15,28 @@
                     <img class="agent-logo" :src="img.user" draggable="false" alt="" />
                 </div>
                 <div
-                    v-else
+                    v-if="thisValue.type === 'ai'"
                     class="msg-role-block"
                     :style="{ background: 'rgba(245, 245, 245, 1)' }"
                 >
                     <img class="agent-logo" :src="img.agent" draggable="false" alt="" />
                 </div>
-                <div v-if="!editable" v-html="mdHTML" class="msg-content"></div>
-                <div v-else class="msg-editable-content-block">
+                <div
+                    v-if="thisValue.type === 'tool'"
+                    class="msg-role-block"
+                    :style="{ background: 'rgba(245, 245, 245, 1)' }"
+                >
+                    <img class="agent-logo" :src="img.tool" draggable="false" alt="" />
+                </div>
+                <div
+                    v-if="!editable && thisValue.type !== 'tool'"
+                    v-html="mdHTML"
+                    class="msg-content"
+                ></div>
+                <div
+                    v-if="editable && thisValue.type !== 'tool'"
+                    class="msg-editable-content-block"
+                >
                     <power-editor
                         :placeholder="local('Edit your question...')"
                         :theme="theme"
@@ -52,8 +66,18 @@
                         >
                     </div>
                 </div>
+                <div v-if="!editable && thisValue.type === 'tool'" class="tool-msg-info">
+                    <span
+                        v-for="(item, index) in computedToolContent"
+                        class="tool-msg-item"
+                        :key="index"
+                    >
+                        {{ item.key }}
+                        <p class="tool-msg-value">{{ item.value }}</p>
+                    </span>
+                </div>
             </div>
-            <div class="msg-control-block">
+            <div v-show="thisValue.type !== 'tool'" class="msg-control-block">
                 <div class="msg-control-right-block">
                     <fv-button
                         v-show="thisValue.type === 'human'"
@@ -109,6 +133,7 @@ import 'highlight.js/styles/vs2015.css'
 
 import loopAI from '@/assets/logo/LoopAI_logo.svg'
 import userImg from '@/assets/chat/user.svg'
+import toolImg from '@/assets/chat/tool.svg'
 
 export default {
     props: {
@@ -161,7 +186,8 @@ export default {
             copyIcon: 'Copy',
             img: {
                 agent: loopAI,
-                user: userImg
+                user: userImg,
+                tool: toolImg
             },
             editable: false,
             timer: {
@@ -185,6 +211,7 @@ export default {
         ...mapState(useTheme, ['color', 'gradient']),
         getRoleName() {
             if (this.thisValue.type === 'human') return this.local('You')
+            if (this.thisValue.type === 'ai') return this.local('AI')
             return this.thisValue.type[0].toUpperCase() + this.thisValue.type.slice(1)
         },
         computedContent() {
@@ -194,6 +221,21 @@ export default {
             } catch (e) {}
 
             return ''
+        },
+        computedToolContent() {
+            try {
+                let content = this.thisValue.data.content
+                content = JSON.parse(content)
+                let result = []
+                for (let key in content)
+                    result.push({
+                        key,
+                        value: content[key]
+                    })
+                return result
+            } catch (e) {}
+
+            return []
         }
     },
     mounted() {
@@ -394,8 +436,8 @@ export default {
             overflow: hidden;
 
             .agent-logo {
-                width: 25px;
-                height: 25px;
+                width: 20px;
+                height: 20px;
             }
 
             .model-avatar {
@@ -412,6 +454,7 @@ export default {
             width: 10px;
             flex: 1;
             padding: 0px 15px;
+            font-size: 0.8rem;
             color: rgba(55, 65, 81, 1);
             line-height: 1.6;
 
@@ -565,6 +608,44 @@ export default {
 
                 width: 100%;
                 margin-top: 15px;
+            }
+        }
+
+        .tool-msg-info {
+            @include Vcenter;
+
+            padding-left: 15px;
+            gap: 5px;
+            flex-wrap: wrap;
+            user-select: none;
+            cursor: default;
+
+            .tool-msg-item {
+                @include HbetweenVcenter;
+
+                width: auto;
+                height: 35px;
+                gap: 5px;
+                padding: 5px;
+                background: linear-gradient(128deg, rgba(95, 75, 189, 1), rgba(148, 136, 225, 1));
+                font-size: 12px;
+                color: whitesmoke;
+                font-weight: bold;
+                border-radius: 30px;
+                box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.1);
+
+                .tool-msg-value {
+                    @include Vcenter;
+
+                    width: auto;
+                    height: 100%;
+                    flex: 1;
+                    padding: 0px 5px;
+                    background: rgba(255, 255, 255, 1);
+                    font-size: 12px;
+                    color: rgba(95, 75, 189, 1);
+                    border-radius: 30px;
+                }
             }
         }
     }

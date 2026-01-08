@@ -174,10 +174,10 @@
     "@babel/helper-string-parser" "^7.27.1"
     "@babel/helper-validator-identifier" "^7.27.1"
 
-"@creatorsn/powereditor3@^0.1.9":
-  version "0.1.9"
-  resolved "https://registry.yarnpkg.com/@creatorsn/powereditor3/-/powereditor3-0.1.9.tgz#a539a464e57ece5f5860152ed5f3e59f2ec7cd92"
-  integrity sha512-rLVq9NIYHPqPPrAjh9jRiiPWHxwAGyxrQXk28LhPGzukOLop4W/fUC+1fTqP4f9dZyt2XroQPBOSakfMudfinw==
+"@creatorsn/powereditor3@^0.1.10":
+  version "0.1.10"
+  resolved "https://registry.yarnpkg.com/@creatorsn/powereditor3/-/powereditor3-0.1.10.tgz#045f104aa765cde9ab472feaefbd89bd35164b9b"
+  integrity sha512-eRK9sdoEFHTAofLgw5EmIr8iFwyk8228TZrsWdxFgrVTxzcw2g/ROpKf/B5lJOCq9Mko/jUwjKQsHJkcJhcMJg==
   dependencies:
     "@creatorsn/vfluent3" "^0.3.13"
     "@tiptap/core" "2.3.0"

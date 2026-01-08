@@ -25,6 +25,9 @@
             <template #node-base-node="nodeProps">
                 <baseNode v-bind="nodeProps" @delete-node="deleteNode" />
             </template>
+            <template #node-agent-node="nodeProps">
+                <agentNode v-bind="nodeProps" @delete-node="deleteNode" />
+            </template>
 
             <template #connection-line="connectionLineProps">
                 <baseConnectionLine v-bind="connectionLineProps"></baseConnectionLine>
@@ -43,6 +46,7 @@ import { useGlobal } from '@/hooks/general/useGlobal'
 import { useAppConfig } from '@/stores/appConfig'
 import { Background } from '@vue-flow/background'
 import baseNode from './nodes/baseNode.vue'
+import agentNode from './nodes/agentNode.vue'
 import baseEdge from './edges/baseEdge.vue'
 import baseConnectionLine from './edges/baseConnectionLine.vue'
 

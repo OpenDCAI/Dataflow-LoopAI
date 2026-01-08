@@ -53,7 +53,9 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         waiting_llm: true,
         current: null,
         interrupt_value: "input the human query",
-        state: null
+        state: null,
+        custom_info: null,
+        update_custom_info: null
     })
     const getStatus = async () => {
         await proxy.$api.starter.getAgentStatus().then((res) => {
@@ -119,7 +121,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
             }
         }
         msgEventSource.value.onerror = (error) => {
-            console.error(error)
+            // console.error(error)
             msgEventSource.value.close()
             msgStreamModel.value.loading = false
             msgStreamModel.value.msg = null

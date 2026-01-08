@@ -145,7 +145,7 @@ export default {
             this.lock.update = false
             await this.$api.config
                 .updateConfig({
-                    id: this.id,
+                    id: this.configId,
                     config: JSON.stringify(this.config)
                 })
                 .then((res) => {

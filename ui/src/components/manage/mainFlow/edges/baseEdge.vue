@@ -87,7 +87,7 @@ const props = defineProps({
 const path = computed(() => getBezierPath(props))
 const defaultData = {
     label: '',
-    colors: ['rgba(229, 123, 67, 1)', 'rgba(225, 107, 56, 1)']
+    colors: ['rgba(171, 140, 191, 1)', 'rgba(199, 123, 163, 1)']
 }
 const thisData = computed(() => {
     return {
