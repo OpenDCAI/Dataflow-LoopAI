@@ -16,6 +16,8 @@ from loopai.agents.Obtainer import ObtainerAgent
 from loopai.agents.Constructor import ConstructorAgent
 from loopai.agents.Trainer import TrainerAgent
 
+from loopai.agents.Configer.tools.check_config import check_config
+
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -109,6 +111,7 @@ class StarterAgent(BaseAgent):
     def init_graph(self, **kwargs):
         config_node = ConfigerAgent(model_name=self.model_name,
                                     base_url=self.base_url,
+                                    tools=[check_config],
                                     api_key=self.api_key,
                                     checkpointer=self.checkpointer,
                                     store=self.store)(**kwargs)
@@ -203,7 +206,8 @@ class StarterAgent(BaseAgent):
             if stream_mode == 'messages':
                 msg_chunk = chunk_item[0]
                 meta_data = chunk_item[1]
-                if 'tags' in meta_data and self.llm_tag in meta_data['tags']:
+                # tags like ['Starter-LLM'] or ['Configer-LLM'], currently set as allowed all.
+                if 'tags' in meta_data and (self.llm_tag in meta_data['tags'] or True):
                     self.agent_event.set_stream_message(msg_chunk)
             elif stream_mode == 'custom':
                 if len(namespace_item) > 0:

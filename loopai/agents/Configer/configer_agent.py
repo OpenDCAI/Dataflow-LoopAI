@@ -5,7 +5,7 @@ from langgraph.graph import StateGraph
 from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
-from loopai.schema.states import LoopAIState
+from loopai.schema.states import LoopAIState, JudgerState, ConfigerState, AnalyzerState, TrainerState, ObtainerState
 from loopai.agents import BaseAgent
 from loopai.schema.events import StreamEvent
 
@@ -29,68 +29,96 @@ class ConfigerAgent(BaseAgent):
     def system_prompt_name(self) -> str:
         """System prompt name"""
         return "configer_prompt"
-    
-    def get_custom_llm_node(self):
+
+    def compute_prompt(self):
         """
-        get the llm node
+        compute the prompt for LLM node
+
+        Returns:
+            the prompt string
         """
-        def custom_llm_node(state: LoopAIState):
-            """
-            call LLM
-            """
-            system_prompt = self.prompt_loader(self.system_prompt_type, self.system_prompt_name)
-            responses = self.llm.batch([[{"role": "system", "content": system_prompt}, {"role": "user", "content": state.get('configer', {})['configer_error']}]])
-            state.setdefault('configer', {})['configer_error'] = responses[0].content
-            logger.info(f"LLM response: {responses[0].content}")
-            return state
-        return custom_llm_node
-    
-    @staticmethod
-    @BaseAgent.set_current
-    def graph_statement_node(state: LoopAIState):
-        """
+        system_prompt = self.prompt_loader(
+            self.system_prompt_type, self.system_prompt_name)
         
-        """
-        if 'configer_error' not in state.get('configer', {}):
-            state.setdefault('configer', {})['configer_error'] = 'None'
-        writer = get_stream_writer()
-        writer(StreamEvent(current=state['current'], data={'configer_error': state.get('configer', {})['configer_error']}).json())
-        return state
+        def annotations_to_str(ann: dict) -> dict:
+            return {k: str(v) for k, v in ann.items()}
+        state_dict = annotations_to_str(LoopAIState.__annotations__)
+
+        def get_field_statement(model_cls):
+            schema = model_cls.model_json_schema()
+            properties = schema.get('properties', {})
+            return properties
+
+        fields_statement = {
+            "judger": get_field_statement(JudgerState),
+            "configer": get_field_statement(ConfigerState),
+            "analyzer": get_field_statement(AnalyzerState),
+            "trainer": get_field_statement(TrainerState),
+            "obtainer": get_field_statement(ObtainerState),
+        }
+
+        system_prompt = system_prompt.format(state_dict=json.dumps(state_dict, ensure_ascii=False), fields_statement=json.dumps(fields_statement, ensure_ascii=False))
+        return system_prompt
 
     @staticmethod
     @BaseAgent.set_current
-    def update_config_node(state: LoopAIState):
+    def configer_query_node(state: LoopAIState):
         """
-        update the config node
+        configer query node
         """
-        not_allow_config_keys = ["task_id", "current", "next_to", "automated_query", "exception", "configer_error", "configer_statement", "eval_result_path", "analyze_output_result_path", "analyze_output_summary_path", "analyze_output_report_json_path", "analyze_output_report_text_path", "analyze_output_suggestion_path"]
-        allow_config_keys = [
-            key for key in LoopAIState.__annotations__ if key not in not_allow_config_keys]
-        value = interrupt(
-            f"input config value, format as json with keys: {', '.join(allow_config_keys)}")
-        logger.info(f"input config value: {value}")
-        if type(value) == str:
-            try:
-                value = json.loads(value)
-            except:
-                value = {}
-            logger.info(f"parse config value: {value}")
-        for key in value:
-            if key in allow_config_keys:
-                state[key] = value[key]
+        configer_error = state.get('configer', {}).get('configer_error', None)
+        if configer_error is None or configer_error == '':
+            query = interrupt("Input your requirement for configer.")
+        else:
+            query = f"System shows that I have a configer error: {json.dumps(configer_error, ensure_ascii=False)}"
+        return {
+            'messages': [
+                {"role": "user", "content": query}
+            ],
+            'configer': {'configer_error': None}
+        }
 
-        return state
+    @staticmethod
+    def should_continue(state: LoopAIState) -> LoopAIState:
+        """Get the last ToolMessage and decide the next node, if the tool is not called, go to configer_query_node"""
+        messages = state["messages"]
+        if len(messages) < 3:
+            return "configer_query_node"
+        maybe_tool_message = messages[-2]
+        if hasattr(maybe_tool_message, 'tool_call_id'):
+            tool_res = json.loads(maybe_tool_message.content)
+            if tool_res["confirm"]:
+                return "confirm_node"
+            else:
+                return "configer_query_node"
+        return "configer_query_node"
+
+    @staticmethod
+    @BaseAgent.set_current
+    def confirm_node(state: LoopAIState):
+        """
+        confirm node
+        """
+        messages = state["messages"]
+        if len(messages) < 3:
+            return "configer_query_node"
+        maybe_tool_message = messages[-2]
+        if hasattr(maybe_tool_message, 'tool_call_id'):
+            tool_res = json.loads(maybe_tool_message.content)
+            logger.info('revised:' + json.dumps(tool_res['revised_config']))
+        return tool_res['revised_config']
 
     def init_graph(self, **kwargs):
-        custom_llm_node = self.get_custom_llm_node()
         builder = StateGraph(LoopAIState)
-        builder.add_node("graph_statement_node", self.graph_statement_node)
-        builder.add_node("configer_llm_node", custom_llm_node)
-        builder.add_node("update_config_node", self.update_config_node)
-        builder.set_entry_point("graph_statement_node")
-        builder.add_edge("graph_statement_node", "configer_llm_node")
-        builder.add_edge("configer_llm_node", "update_config_node")
-        builder.set_finish_point("update_config_node")
+        builder.add_node("configer_query_node", self.configer_query_node)
+        builder.add_node("configer_llm_node", self.llm_node)
+        builder.add_node("confirm_node", self.confirm_node)
+        builder.set_entry_point("configer_query_node")
+        builder.add_edge("configer_query_node", "configer_llm_node")
+        builder.add_conditional_edges(
+            "configer_llm_node",
+            self.should_continue)
+        builder.set_finish_point("confirm_node")
 
         self.graph = builder.compile(
             checkpointer=self.checkpointer, store=self.store, **kwargs)

@@ -1,3 +1,6 @@
+from langchain_core.tools import tool
+
+@tool
 def check_motivation(motivation: str) -> dict:
     """
     Determine the next workflow node based on the user's motivation.

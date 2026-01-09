@@ -638,16 +638,10 @@ class TrainerState(BaseModel):
     )
 
 class ConfigerState(BaseModel):
-    configer_error: str = Field(
-        default="", 
+    configer_error: dict = Field(
+        default=None, 
         title="配置器错误信息",
         description="配置器错误信息",
-        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
-    )
-    configer_statement: str = Field(
-        default="", 
-        title="配置器语句",
-        description="配置器语句",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
 
@@ -668,8 +662,6 @@ class LoopAIState(MessagesState):
 
     # === Configer (保持原样) ===
     configer: Annotated[Dict[str, Any], merge_dict]
-    configer_error: Annotated[str, replace_value]
-    configer_statement: str 
 
     # === Judger (保持原样) ===
     judger: Annotated[Dict[str, Any], merge_dict]

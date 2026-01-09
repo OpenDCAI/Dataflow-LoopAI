@@ -8,6 +8,7 @@ from langchain_openai import ChatOpenAI
 from loopai.common.prompts import PromptLoader
 from loopai.schema.events import AgentEvent
 from loopai.logger import get_logger
+from .nodes import ReAct_Node
 
 logger = get_logger()
 
@@ -84,6 +85,15 @@ class BaseAgent(ABC):
             return func(*args, **kwargs)
         return wrapper
     
+    def compute_prompt(self):
+        """
+        compute the prompt for LLM node
+        
+        Returns:
+            the prompt string
+        """
+        return self.prompt_loader(self.system_prompt_type, self.system_prompt_name)
+    
     def create_llm_node(self):
         if self.base_url is None:
             logger.error(f'Undefined base_url in {self.role_name}-Graph')
@@ -98,11 +108,11 @@ class BaseAgent(ABC):
             tags=[self.llm_tag]
         )
 
-        logger.info(f'{self.role_name}-Graph use prompt: {self.prompt_loader(self.system_prompt_type, self.system_prompt_name)}')
-        self.llm_node = create_react_agent(
+        logger.info(f'{self.role_name}-Graph use prompt: {self.compute_prompt()}')
+        self.llm_node = ReAct_Node(
             model=self.llm,
             tools=self.tools,
-            prompt=self.prompt_loader(self.system_prompt_type, self.system_prompt_name)
+            prompt=self.compute_prompt()
         )
     
     @abstractmethod
