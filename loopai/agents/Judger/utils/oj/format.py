@@ -3,16 +3,25 @@ import os
 import shutil
 import tempfile
 from typing import Optional, Callable
+
+from langgraph.config import get_stream_writer
+from loopai.schema.events import StreamEvent
+
+from loopai.schema.states import LoopAIState
+from loopai.agents import BaseAgent
+
 from loopai.logger import get_logger
 logger = get_logger()
 
-def data_format(state, method):
+def data_format(state):
+    judger_state = state.get("judger", {})
     """选择适配器"""
+    method = judger_state['eval_format_type']
     match method:
         case "human-eval":  # human-eval
-            return preprocess_json_file(state.get('judger', {})['eval_problem_path'], state.get('judger', {})['eval_problem_path'], human_eval_format)
+            return preprocess_json_file(state, judger_state['eval_problem_path'], judger_state['eval_problem_format_path'], human_eval_format)
         case _:  # 通配符（类似 switch 的 default）
-            return preprocess_json_file(state.get('judger', {})['eval_problem_path'], state.get('judger', {})['eval_problem_path'], human_eval_format)
+            return preprocess_json_file(state, judger_state['eval_problem_path'], judger_state['eval_problem_format_path'], human_eval_format)
 
 
 def human_eval_format(line):
@@ -70,6 +79,7 @@ def human_eval_format(line):
     return line
 
 def preprocess_json_file(
+    state: LoopAIState,
     input_path: str,
     output_path: str,
     line_processor: Optional[Callable[[dict], Optional[dict]]] = None
@@ -87,8 +97,9 @@ def preprocess_json_file(
     success_lines = 0
     error_lines = 0
     filtered_lines = 0
+    cnt_lines = 0
     temp_file = None  # 临时文件句柄（用于后续清理）
-
+    writer = get_stream_writer()
     try:
         # 判断是否需要用临时文件（输入输出路径相同，或为了安全）
         use_temp_file = (input_path == output_path)
@@ -108,9 +119,12 @@ def preprocess_json_file(
             outfile = open(output_path, 'w', encoding='utf-8')
 
         # 读取并处理文件
+        with open(input_path, 'r', encoding='utf-8') as infile:
+            total_lines = sum(1 for _ in infile)
         with open(input_path, 'r', encoding='utf-8') as infile, outfile:
             for line_num, line in enumerate(infile, start=1):
-                total_lines += 1
+                cnt_lines += 1
+                # total_lines += 1
                 line = line.strip()
                 if not line:
                     continue  # 跳过空行
@@ -139,6 +153,14 @@ def preprocess_json_file(
                     outfile.write('\n')
                     success_lines += 1
 
+                if writer:
+                    writer(StreamEvent(
+                        current=state['current'],
+                        progress=round(cnt_lines/total_lines, 1),
+                        message="任务数据格式化中",
+                        data={"success": success_lines, "filtered": filtered_lines, "error": error_lines, "progress": f"{cnt_lines}/{total_lines}"}
+                    ).json())
+
         # 关键：如果用了临时文件，替换原文件（原子操作，避免文件损坏）
         if use_temp_file and temp_file:
             # 跨平台兼容：Windows需要先删除原文件，Unix可直接替换
@@ -158,17 +180,37 @@ def preprocess_json_file(
 
     except FileNotFoundError:
         logger.error(f"错误：输入文件不存在 → {input_path}")
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message="任务数据格式化出错",
+                data={"msg": f"错误：输入文件不存在 → {input_path}"}
+            ).json())
     except PermissionError:
         logger.error(f"错误：无读写权限 → 输入文件：{input_path} / 输出文件：{output_path}")
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message="任务数据格式化出错",
+                data={"msg": f"错误：无读写权限 → 输入文件：{input_path} / 输出文件：{output_path}"}
+            ).json())
     except Exception as e:
         # 出错时清理临时文件，避免残留
         if use_temp_file and temp_file and os.path.exists(temp_file.name):
             os.remove(temp_file.name)
             logger.error(f"处理失败，已清理临时文件 → {temp_file.name}")
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=1.0,
+                    message="任务数据格式化出错",
+                    data={"msg": f"意外错误：{str(e)}，已清理临时文件 → {temp_file.name}"}
+                ).json())
         logger.error(f"意外错误：{str(e)}")
     finally:
         # 确保临时文件句柄关闭（即使出错）
         if temp_file:
             temp_file.close()
-
 # preprocess_json_file("/root/brjverl/verl/compiler/data/copy.jsonl","/root/brjverl/verl/compiler/data/copy2.jsonl",data_format)

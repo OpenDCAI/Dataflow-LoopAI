@@ -8,8 +8,7 @@ from langgraph.types import interrupt, Command
 from loopai.schema.states import LoopAIState, RuntimeContext
 from loopai.agents import BaseAgent
 from .utils.oj.generate import generate_sample, generate_sample_sql
-from .utils.oj.evaluate import evaluate_sample
-from .utils.oj.evaluate_sql import evaluate_sample_sql
+from .utils.oj.evaluate import evaluate_sample, evaluate_sample_sql
 from .utils.oj.format import data_format
 from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
@@ -68,36 +67,85 @@ class JudgerAgent(BaseAgent):
     @staticmethod
     @BaseAgent.set_current
     def data_format_node(state: LoopAIState) -> LoopAIState:
-        data_format(state, method = "human-eval")
+        problem_format_path = state.get("judger", {}).get("eval_problem_format_path", "")
+        problem_path = state.get("judger", {}).get("eval_problem_path", "")
+        format_type = state.get("judger", {}).get("eval_format_type", "human-eval")
+        writer = get_stream_writer()
+        if(format_type == ""):
+            format_type = "NULL"
+        if(problem_format_path != ""):
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=0.0,
+                    message="任务数据格式化开始",
+                    data={"msg": f"由[{problem_path}]以[{format_type}]格式转存为[{problem_format_path}]"}
+                ).json())
+            data_format(state)
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=1.0,
+                    message="任务数据格式化完成",
+                    data={"msg": f"后续将以[{problem_format_path}]作为问题数据"}
+                ).json())
+            state["judger"]["eval_problem_path"] = state["judger"]["eval_problem_format_path"]
+        else:
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=1.0,
+                    message="任务数据格式化结束",
+                    data={"msg": '未设置[eval_problem_format_path]参数，跳过数据格式化过程'}
+                ).json())
         return state
 
     @staticmethod
     @BaseAgent.set_current
     def generate_node(state: LoopAIState) -> LoopAIState:
         writer = get_stream_writer()
+        problem_path = state.get("judger", {}).get("eval_problem_path", "")
+        test_case_path = state.get("judger", {}).get("eval_test_case_path", "")
+        batch_size = state.get("judger", {}).get("eval_batch_size", 10)
         if writer:
             writer(StreamEvent(
                 current=state['current'],
                 progress=0.0,
                 message="常规任务样本合成开始",
-                data={"msg": ''}
+                data={"msg": f"对[{problem_path}]每个问题生成[{batch_size}]条样例数据"}
             ).json())
-        
         generate_sample(state)
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message="常规任务样本合成完成",
+                data={"msg": f"结果保存为[{test_case_path}]"}
+            ).json())
         return state
 
     @staticmethod
     @BaseAgent.set_current
     def generate_sql_node(state: LoopAIState) -> LoopAIState:
         writer = get_stream_writer()
+        problem_path = state.get("judger", {}).get("eval_problem_path", "")
+        test_case_path = state.get("judger", {}).get("eval_test_case_path", "")
+        batch_size = state.get("judger", {}).get("eval_batch_size", 10)
         if writer:
             writer(StreamEvent(
                 current=state['current'],
                 progress=0.0,
                 message="SQL任务样本合成开始",
-                data={"msg": ''}
+                data={"msg": f"对[{problem_path}]每个问题生成[{batch_size}]条样例数据"}
             ).json())
         generate_sample_sql(state)
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message="SQL任务样本合成完成",
+                data={"msg": f"结果保存为[{test_case_path}]"}
+            ).json())
         return state
 
     @staticmethod
@@ -111,8 +159,14 @@ class JudgerAgent(BaseAgent):
                 message="常规任务评测样本开始",
                 data={"msg": ''}
             ).json())
-        evaluate_sample(K='1,10,100', n_workers=1, timeout=3.0, test_case_path=state.get('judger', {})['eval_test_case_path'], problem_path=state.get('judger', {})['eval_problem_path'], result_path=state.get('judger', {})[
-                        'eval_result_path'])
+        res = evaluate_sample(state)
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message="常规任务评测样本结果",
+                data=res
+            ).json())
         return state
 
     @staticmethod
@@ -126,8 +180,14 @@ class JudgerAgent(BaseAgent):
                 message="SQL任务评测样本开始",
                 data={"msg": ''}
             ).json())
-        evaluate_sample_sql(K='1,10,100', n_workers=1, timeout=3.0, test_case_path=state.get('judger', {})['eval_test_case_path'], problem_path=state.get('judger', {})['eval_problem_path'], result_path=state.get('judger', {})[
-                        'eval_result_path'])
+        res = evaluate_sample_sql(state)
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message="SQL任务评测样本结果",
+                data=res
+            ).json())
         return state
 
     def init_graph(self, **kwargs):

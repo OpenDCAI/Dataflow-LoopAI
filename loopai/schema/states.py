@@ -374,6 +374,18 @@ class JudgerState(BaseModel):
         description="评估模型问题路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
+    eval_problem_format_path: str = Field(
+        default="", 
+        title="评估模型问题格式化路径",
+        description="评估模型问题格式化路径，如果为空将不进入格式化节点，如果和问题路径一样，则格式化后将覆盖原问题文件",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    eval_format_type: str = Field(
+        default="human-eval", 
+        title="评估模型问题格式化类型",
+        description="评估模型问题格式化类型，如果为空将不进入格式化节点，改格式化方式可以用户自由定义",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
     eval_result_path: str = Field(
         default="", 
         title="评估模型结果路径",
@@ -383,7 +395,7 @@ class JudgerState(BaseModel):
     eval_batch_size: int = Field(
         default=20,
         title="评估模型批量大小",
-        description="评估模型批量大小",
+        description="评估模型批量大小，也是问题生成样例数量大小",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
 
