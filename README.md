@@ -416,6 +416,23 @@ AgentEvent.custom_info[state['current']]
 如果节点检测到必要参数缺失，可以触发异常处理流程：
 
 ```python
+required_fields = {
+    "analyzer": [
+        "analyze_model_path", "analyze_base_url", "analyze_api_key", "analyze_temperature", "analyze_top_p", 
+        "output_brief", "analyze_task_type",  "analyze_sampling_top_k", "output_suggestion", "analyze_batch_size"
+    ],
+    "judger": ["eval_result_path"],
+    "default": ["output_dir"]
+} # 在这里可以定义当前Agent下需要的参数, 并在下面的代码中进行检查
+missing_fields = {}
+for key in required_fields:
+    for field in required_fields[key]:
+        if key == 'default':
+            if field not in state:
+                missing_fields.setdefault(key, []).append(field)
+        else:
+            if field not in state.get(key, {}):
+                missing_fields.setdefault(key, []).append(field)
 if missing_fields:
     state['exception'] = 'ConfigerError'
     state['next_to'] = 'config_node'
@@ -428,6 +445,16 @@ if missing_fields:
         goto=goto_node,
         graph=Command.PARENT
     )
+```
+
+如果需要在子图中统一定义, 建议统一命名为`check_required_fields`, 为了获取当前Agent下需要的参数, 可以定义嵌套函数来返回该节点:
+
+```python
+def get_check_required_fields_node(self):
+      @BaseAgent.set_current
+      def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
+          ...
+      return check_required_fields
 ```
 
 字段说明：
