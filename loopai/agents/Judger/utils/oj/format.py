@@ -10,9 +10,9 @@ def data_format(state, method):
     """选择适配器"""
     match method:
         case "human-eval":  # human-eval
-            return preprocess_json_file(state['eval_problem_path'], state['eval_problem_path'], human_eval_format)
+            return preprocess_json_file(state.get('judger', {})['eval_problem_path'], state.get('judger', {})['eval_problem_path'], human_eval_format)
         case _:  # 通配符（类似 switch 的 default）
-            return preprocess_json_file(state['eval_problem_path'], state['eval_problem_path'], human_eval_format)
+            return preprocess_json_file(state.get('judger', {})['eval_problem_path'], state.get('judger', {})['eval_problem_path'], human_eval_format)
 
 
 def human_eval_format(line):

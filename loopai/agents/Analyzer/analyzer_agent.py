@@ -33,17 +33,28 @@ class AnalyzerAgent(BaseAgent):
     def get_check_required_fields_node(self):
         @BaseAgent.set_current
         def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
-            required_fields = ["analyze_model_path", "analyze_base_url", "analyze_api_key", "analyze_temperature", "analyze_top_p", "output_dir",
-                            "output_brief", "analyze_task_type", "eval_result_path", "analyze_sampling_top_k", "output_suggestion", "analyze_batch_size"]
+            required_fields = {
+                "analyzer": [
+                    "analyze_model_path", "analyze_base_url", "analyze_api_key", "analyze_temperature", "analyze_top_p", 
+                    "output_brief", "analyze_task_type",  "analyze_sampling_top_k", "output_suggestion", "analyze_batch_size"
+                ],
+                "judger": ["eval_result_path"],
+                "default": ["output_dir"]
+            }
             missing_fields = []
-            for field in required_fields:
-                if field not in state:
-                    missing_fields.append(field)
+            for key in required_fields:
+                for field in required_fields[key]:
+                    if key == 'default':
+                        if field not in state:
+                            missing_fields.append(field)
+                    else:
+                        if field not in state.get(key, {}):
+                            missing_fields.append(field)
             if missing_fields:
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
                 state['automated_query'] = self.prompt_loader("automated_query", "analyzer_missing_fields_prompt")
-                state['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
+                state.get('configer', {})['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
                 goto_node = runtime.context['exception_navigate']
                 logger.info(f'found missing fields, goto {goto_node}')
                 return Command(

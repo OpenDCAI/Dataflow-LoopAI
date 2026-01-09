@@ -38,18 +38,25 @@ class JudgerAgent(BaseAgent):
     def get_check_required_fields_node(self):
         @BaseAgent.set_current
         def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
-            required_fields = ["eval_model_path", "eval_base_url", "eval_api_key", "eval_temperature",
-                               "eval_top_p", "eval_test_case_path", "eval_problem_path", "eval_result_path", "eval_batch_size"]
+            required_fields = {
+                'judger': ["eval_model_path", "eval_base_url", "eval_api_key", "eval_temperature",
+                            "eval_top_p", "eval_test_case_path", "eval_problem_path", "eval_result_path", "eval_batch_size"]
+            }
             missing_fields = []
-            for field in required_fields:
-                if field not in state:
-                    missing_fields.append(field)
+            for key in required_fields:
+                for field in required_fields[key]:
+                    if key == 'default':
+                        if field not in state:
+                            missing_fields.append(field)
+                    else:
+                        if field not in state.get(key, {}):
+                            missing_fields.append(field)
             if missing_fields:
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
                 state['automated_query'] = self.prompt_loader(
                     "automated_query", "judger_missing_fields_prompt")
-                state['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
+                state.setdefault('configer', {})['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
                 goto_node = runtime.context['exception_navigate']
                 logger.info(f'found missing fields, goto {goto_node}')
                 return Command(
@@ -104,7 +111,7 @@ class JudgerAgent(BaseAgent):
                 message="常规任务评测样本开始",
                 data={"msg": ''}
             ).json())
-        evaluate_sample(K='1,10,100', n_workers=1, timeout=3.0, test_case_path=state['eval_test_case_path'], problem_path=state['eval_problem_path'], result_path=state[
+        evaluate_sample(K='1,10,100', n_workers=1, timeout=3.0, test_case_path=state.get('judger', {})['eval_test_case_path'], problem_path=state.get('judger', {})['eval_problem_path'], result_path=state.get('judger', {})[
                         'eval_result_path'])
         return state
 
@@ -119,7 +126,7 @@ class JudgerAgent(BaseAgent):
                 message="SQL任务评测样本开始",
                 data={"msg": ''}
             ).json())
-        evaluate_sample_sql(K='1,10,100', n_workers=1, timeout=3.0, test_case_path=state['eval_test_case_path'], problem_path=state['eval_problem_path'], result_path=state[
+        evaluate_sample_sql(K='1,10,100', n_workers=1, timeout=3.0, test_case_path=state.get('judger', {})['eval_test_case_path'], problem_path=state.get('judger', {})['eval_problem_path'], result_path=state.get('judger', {})[
                         'eval_result_path'])
         return state
 

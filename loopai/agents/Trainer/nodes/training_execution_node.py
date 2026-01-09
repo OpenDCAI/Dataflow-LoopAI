@@ -23,8 +23,8 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
     
     Args:
         state: LoopAIState 对象，需要包含：
-            - train_config_output_path: YAML配置文件路径
-            - train_task_description: 训练任务描述
+            - train_output_config_path: YAML配置文件路径
+            - train_input_task_description: 训练任务描述
             - training_service_url: 训练服务地址（可选）
             - output_dir: 输出目录
         writer: StreamEvent writer，可选
@@ -39,16 +39,16 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
     
     try:
         # 检查前置条件
-        if not state.get('config_generation_success', False):
+        if not state.get('trainer', {}).get('trainer_config_generation_success', False):
             raise ValueError("配置生成未成功，无法执行训练")
         
-        config_path = state.get('train_config_output_path')
+        config_path = state.get('trainer', {}).get('train_output_config_path')
         if not config_path or not os.path.exists(config_path):
             raise ValueError(f"YAML配置文件不存在: {config_path}")
         
         # 获取参数
-        task_description = state.get('train_task_description', '未指定任务描述')
-        service_url = state.get('training_service_url', 'http://localhost:8000')
+        task_description = state.get('trainer', {}).get('train_input_task_description', '未指定任务描述')
+        service_url = state.get('trainer', {}).get('training_service_url', 'http://localhost:8000')
         
         logger.info(f"YAML配置文件: {config_path}")
         logger.info(f"训练服务地址: {service_url}")
@@ -61,7 +61,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 progress=0.1,
                 message="正在连接训练服务...",
                 data={"service_url": service_url, "config_path": config_path}
-            ))
+            ).json())
         
         # 创建训练服务客户端
         logger.info("连接训练服务...")
@@ -80,7 +80,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 progress=0.2,
                 message="训练服务连接成功，准备提交任务...",
                 data={"service_status": "connected"}
-            ))        
+            ).json())        
         # 启动训练任务
         logger.info("🚀 提交训练任务到远程服务...")
         
@@ -91,7 +91,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 progress=0.3,
                 message="正在提交训练任务到远程服务...",
                 data={"task_description": task_description}
-            ))
+            ).json())
         
         start_time = time.time()
         success, task_id_or_error, error_detail = client.start_training(
@@ -112,7 +112,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 progress=0.4,
                 message=f"训练任务提交成功，任务ID: {task_id}",
                 data={"task_id": task_id, "start_time": start_time}
-            ))
+            ).json())
         
         # 等待训练完成并监控进度
         def progress_callback(tid, status_info, elapsed_time):
@@ -120,8 +120,8 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             logger.info(f"训练进度 - 任务ID: {tid}, 状态: {status}, 已用时: {int(elapsed_time)}秒")
             
             # 更新状态到state中
-            state['current_training_status'] = status
-            state['current_training_elapsed'] = elapsed_time
+            state.setdefault('trainer', {})['trainer_current_training_status'] = status
+            state.setdefault('trainer', {})['current_training_elapsed'] = elapsed_time
             
             # 实时进度报告
             if writer:
@@ -138,7 +138,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                         "elapsed_time": int(elapsed_time),
                         "estimated_progress": f"{int(progress_val * 100)}%"
                     }
-                ))        
+                ).json())        
         logger.info("⏳ 等待训练完成...")
         success, final_status, error = client.wait_for_completion(
             state=state,
@@ -162,14 +162,27 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                     "final_status": final_status.get('status') if final_status else 'unknown',
                     "success": success
                 }
-            ))
-        
-        # 获取训练日志
+            ).json())
+          # 获取训练日志
         logger.info("📄 获取训练日志...")
         log_success, logs, log_error = client.get_task_logs(task_id, lines=1000)
         
+        # 获取SwanLab日志路径
+        logger.info("📊 获取SwanLab日志路径...")
+        swanlab_success, swanlab_path, swanlab_error = client.get_train_output_swanlab_log_path(task_id)
+        
+        if swanlab_success and swanlab_path:
+            logger.info(f"SwanLab日志路径: {swanlab_path}")
+            state.setdefault('trainer', {})['train_output_swanlab_log_path'] = swanlab_path
+        elif swanlab_success:
+            logger.warning(f"SwanLab日志路径未找到: {swanlab_error}")
+            state.setdefault('trainer', {})['train_output_swanlab_log_path'] = None
+        else:
+            logger.error(f"获取SwanLab日志路径失败: {swanlab_error}")
+            state.setdefault('trainer', {})['train_output_swanlab_log_path'] = None
+        
         # 保存训练日志
-        output_dir = state.get('output_dir', './output/trainer')
+        output_dir = state.get('trainer', {}).get('output_dir', './output/trainer')
         os.makedirs(output_dir, exist_ok=True)
         
         log_path = os.path.join(output_dir, f'training_log_{task_id}.txt')
@@ -179,22 +192,26 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 f.write("="*60 + "\n\n")
                 f.write(logs)
             logger.info(f"训练日志已保存到: {log_path}")
-            state['training_log_path'] = log_path        
-        # 进度：生成训练报告
+            state.setdefault('trainer', {})['train_output_training_log_path'] = log_path        # 进度：生成训练报告
         if writer:
             writer(StreamEvent(
                 current=state['current'],
                 progress=0.9,
                 message="正在生成训练报告...",
-                data={"log_retrieved": log_success, "log_lines": len(logs.split('\n')) if logs else 0}
-            ))
-        
-        # 生成训练报告
+                data={
+                    "log_retrieved": log_success, 
+                    "log_lines": len(logs.split('\n')) if logs else 0,
+                    "swanlab_path": state.get('trainer', {}).get('train_output_swanlab_log_path'),
+                    "swanlab_retrieved": swanlab_success
+                }
+            ).json())
+          # 生成训练报告
         report = _generate_remote_training_report(
             task_id=task_id,
             final_status=final_status,
             training_time=training_time,
             task_description=task_description,
+            train_output_swanlab_log_path=state.get('trainer', {}).get('train_output_swanlab_log_path'),
             error=error
         )
         
@@ -202,12 +219,12 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write(report)
         
-        state['training_report_path'] = report_path
+        state.setdefault('trainer', {})['train_output_training_report_path'] = report_path
         
         # 更新状态
-        state['training_task_id'] = task_id
-        state['training_execution_time'] = training_time
-        state['training_final_status'] = final_status
+        state.setdefault('trainer', {})['trainer_training_task_id'] = task_id
+        state.setdefault('trainer', {})['trainer_training_execution_time'] = training_time
+        state.setdefault('trainer', {})['trainer_training_final_status'] = final_status
         
         # 检查最终结果
         if success and final_status and final_status.get('status') == 'completed':
@@ -215,9 +232,8 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             logger.info(f"训练时间: {training_time:.2f} 秒")
             logger.info(f"任务ID: {task_id}")
             
-            state['training_success'] = True
-            
-            # 进度：训练成功完成
+            state.setdefault('trainer', {})['trainer_training_success'] = True
+              # 进度：训练成功完成
             if writer:
                 writer(StreamEvent(
                     current=state['current'],
@@ -228,9 +244,10 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                         "task_id": task_id,
                         "training_time": training_time,
                         "report_path": report_path,
-                        "log_path": state.get('training_log_path')
+                        "log_path": state.get('trainer', {}).get('train_output_training_log_path'),
+                        "train_output_swanlab_log_path": state.get('trainer', {}).get('train_output_swanlab_log_path')
                     }
-                ))
+                ).json())
             
         else:
             final_status_str = final_status.get('status', 'unknown') if final_status else 'unknown'
@@ -238,8 +255,8 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             if error:
                 logger.error(f"错误信息: {error}")
             
-            state['training_success'] = False
-            state['training_error'] = error or f"训练未成功完成，最终状态: {final_status_str}"
+            state.setdefault('trainer', {})['trainer_training_success'] = False
+            state.setdefault('trainer', {})['train_output_training_error'] = error or f"训练未成功完成，最终状态: {final_status_str}"
             
             # 进度：训练失败
             if writer:
@@ -253,13 +270,13 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                         "error": error,
                         "training_time": training_time
                     }
-                ))
+                ).json())
         
         logger.info(f"训练报告已保存到: {report_path}")        
     except Exception as e:
         logger.error(f"训练节点执行失败: {str(e)}")
-        state['training_success'] = False
-        state['training_error'] = str(e)
+        state.setdefault('trainer', {})['trainer_training_success'] = False
+        state.setdefault('trainer', {})['train_output_training_error'] = str(e)
         
         # 进度：执行异常
         if writer:
@@ -272,7 +289,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                     "error_type": "execution_exception",
                     "error_message": str(e)
                 }
-            ))
+            ).json())
     
     logger.info("训练节点执行完成")
     return state
@@ -280,7 +297,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
 
 def _generate_remote_training_report(task_id: str, final_status: dict, 
                                    training_time: float, task_description: str, 
-                                   error: str = None) -> str:
+                                   train_output_swanlab_log_path: str = None, error: str = None) -> str:
     """
     生成远程训练报告
     
@@ -289,11 +306,11 @@ def _generate_remote_training_report(task_id: str, final_status: dict,
         final_status: 最终状态信息
         training_time: 训练用时
         task_description: 任务描述
+        train_output_swanlab_log_path: SwanLab日志路径
         error: 错误信息
     
     Returns:
-        训练报告文本
-    """
+        训练报告文本    """
     
     report = []
     report.append("="*60)
@@ -306,6 +323,12 @@ def _generate_remote_training_report(task_id: str, final_status: dict,
     report.append(f"  任务ID: {task_id}")
     report.append(f"  任务描述: {task_description}")
     report.append(f"  执行时间: {training_time:.2f} 秒")
+    
+    if train_output_swanlab_log_path:
+        report.append(f"  SwanLab日志路径: {train_output_swanlab_log_path}")
+    else:
+        report.append("  SwanLab日志路径: 未找到")
+    
     report.append("")
     
     # 状态信息
@@ -325,13 +348,16 @@ def _generate_remote_training_report(task_id: str, final_status: dict,
             report.append(f"  错误信息: {final_status['error_message']}")
         
         report.append("")
-    
-    # 结果总结
+      # 结果总结
     if final_status and final_status.get('status') == 'completed':
         report.append("✅ 训练执行成功")
         report.append("- 训练任务已成功完成")
         report.append("- 模型已保存到训练服务指定目录")
         report.append("- 可通过训练服务API获取详细日志和结果")
+        if train_output_swanlab_log_path:
+            report.append(f"- SwanLab训练监控日志: {train_output_swanlab_log_path}")
+        else:
+            report.append("- SwanLab训练监控日志: 未找到或未生成")
     elif error:
         report.append("❌ 训练执行失败")
         report.append(f"- 错误原因: {error}")
@@ -341,12 +367,14 @@ def _generate_remote_training_report(task_id: str, final_status: dict,
         report.append("⚠️  训练状态未知")
         report.append("- 无法确定训练最终状态")
         report.append("- 请手动检查训练服务状态")
-    
     report.append("")
     report.append("注意事项:")
     report.append("- 训练结果保存在远程训练服务中")
     report.append("- 如需下载模型，请使用训练服务提供的接口")
     report.append("- 训练日志和监控数据可通过服务API获取")
+    if train_output_swanlab_log_path:
+        report.append("- SwanLab实验监控数据可在指定路径查看")
+        report.append("- 可通过SwanLab界面查看训练曲线和指标")
     
     return "\n".join(report)
 
@@ -359,28 +387,29 @@ def get_training_status(state: LoopAIState) -> dict:
         state: 状态对象
     
     Returns:
-        训练状态字典
+    训练状态字典
     """
     
     status = {
-        "data_check_passed": state.get('data_check_passed', False),
-        "config_generation_success": state.get('config_generation_success', False),
-        "training_success": state.get('training_success', False),
-        "training_time": state.get('training_execution_time', 0),
-        "swanlab_url": state.get('swanlab_url'),
-        "training_log_path": state.get('training_log_path'),
-        "output_dir": state.get('train_output_dir'),
+        "trainer_data_check_passed": state.get('trainer', {}).get('trainer_data_check_passed', False),
+        "trainer_config_generation_success": state.get('trainer', {}).get('trainer_config_generation_success', False),
+        "trainer_training_success": state.get('trainer', {}).get('trainer_training_success', False),
+        "training_time": state.get('trainer', {}).get('trainer_training_execution_time', 0),
+        "swanlab_url": state.get('trainer', {}).get('swanlab_url', ''),  # 保持向后兼容
+        "train_output_swanlab_log_path": state.get('trainer', {}).get('train_output_swanlab_log_path'),  # 新增SwanLab日志路径
+        "train_output_training_log_path": state.get('trainer', {}).get('train_output_training_log_path'),
+        "output_dir": state.get('trainer', {}).get('train_output_dir'),
         "errors": []
     }
     
     # 收集错误信息
-    if state.get('data_check_error'):
-        status["errors"].append(f"数据检查: {state['data_check_error']}")
+    if state.get('trainer', {}).get('trainer_data_check_error'):
+        status["errors"].append(f"数据检查: {state.get('trainer', {}).get('trainer_data_check_error', '')}")
     
-    if state.get('config_generation_error'):
-        status["errors"].append(f"配置生成: {state['config_generation_error']}")
+    if state.get('trainer', {}).get('trainer_config_generation_error'):
+        status["errors"].append(f"配置生成: {state.get('trainer', {}).get('trainer_config_generation_error', '')}")
     
-    if state.get('training_error'):
-        status["errors"].append(f"训练执行: {state['training_error']}")
+    if state.get('trainer', {}).get('train_output_training_error'):
+        status["errors"].append(f"训练执行: {state.get('trainer', {}).get('train_output_training_error', '')}")
     
     return status

@@ -39,8 +39,8 @@ class ConfigerAgent(BaseAgent):
             call LLM
             """
             system_prompt = self.prompt_loader(self.system_prompt_type, self.system_prompt_name)
-            responses = self.llm.batch([[{"role": "system", "content": system_prompt}, {"role": "user", "content": state['configer_error']}]])
-            state['configer_error'] = responses[0].content
+            responses = self.llm.batch([[{"role": "system", "content": system_prompt}, {"role": "user", "content": state.get('configer', {})['configer_error']}]])
+            state.setdefault('configer', {})['configer_error'] = responses[0].content
             logger.info(f"LLM response: {responses[0].content}")
             return state
         return custom_llm_node
@@ -51,10 +51,10 @@ class ConfigerAgent(BaseAgent):
         """
         
         """
-        if 'configer_error' not in state:
-            state['configer_error'] = 'None'
+        if 'configer_error' not in state.get('configer', {}):
+            state.setdefault('configer', {})['configer_error'] = 'None'
         writer = get_stream_writer()
-        writer(StreamEvent(current=state['current'], data={'configer_error': state['configer_error']}).json())
+        writer(StreamEvent(current=state['current'], data={'configer_error': state.get('configer', {})['configer_error']}).json())
         return state
 
     @staticmethod

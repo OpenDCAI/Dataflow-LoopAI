@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from loopai.agents.Obtainer.nodes.postprocess_node import postprocess_node
+from loopai.agents.Constructor.nodes.postprocess_node import postprocess_node
 from loopai.schema.states import LoopAIState
 from langchain_core.messages import HumanMessage
 
