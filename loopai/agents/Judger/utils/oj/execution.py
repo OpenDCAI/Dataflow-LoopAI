@@ -46,6 +46,7 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[
 
         """进入口"""
         entry_point = problem['entry_point']
+        
         """拼接测试用例为测试用例代码"""
         test_code = "def check(candidate):\n"
         for test_item in problem["test_list"]:
