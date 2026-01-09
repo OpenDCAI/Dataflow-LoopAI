@@ -73,7 +73,6 @@ initial_state = {
     'mined_data': '',
     'output_dir': output_dir,  # This should be the parent of downloads directory
     'configer_error': '',
-    'configer_statement': '',
     'eval_model_path': '',
     'eval_base_url': '',
     'eval_api_key': '',

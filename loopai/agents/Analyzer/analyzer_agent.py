@@ -41,20 +41,20 @@ class AnalyzerAgent(BaseAgent):
                 "judger": ["eval_result_path"],
                 "default": ["output_dir"]
             }
-            missing_fields = []
+            missing_fields = {}
             for key in required_fields:
                 for field in required_fields[key]:
                     if key == 'default':
                         if field not in state:
-                            missing_fields.append(field)
+                            missing_fields.setdefault(key, []).append(field)
                     else:
                         if field not in state.get(key, {}):
-                            missing_fields.append(field)
+                            missing_fields.setdefault(key, []).append(field)
             if missing_fields:
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
                 state['automated_query'] = self.prompt_loader("automated_query", "analyzer_missing_fields_prompt")
-                state.get('configer', {})['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
+                state.get('configer', {})['configer_error'] = missing_fields
                 goto_node = runtime.context['exception_navigate']
                 logger.info(f'found missing fields, goto {goto_node}')
                 return Command(
