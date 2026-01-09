@@ -411,7 +411,7 @@ AgentEvent.custom_info[state['current']]
 
 ## ❗ 异常处理机制
 
-### 🔎 参数异常示例
+### 🔎 参数异常和对话式调参
 
 如果节点检测到必要参数缺失，可以触发异常处理流程：
 
@@ -419,9 +419,9 @@ AgentEvent.custom_info[state['current']]
 if missing_fields:
     state['exception'] = 'ConfigerError'
     state['next_to'] = 'config_node'
-    state['automated_query'] = self.prompt_loader("automated_query", "analyzer_missing_fields_prompt")
-    state['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
-    goto_node = runtime.context['exception_navigate']
+    state['automated_query'] = self.prompt_loader("automated_query", "analyzer_missing_fields_prompt") # 使用相应的自动查询Prompt, 以便在跳出ConfigerAgent后向Agent进行通报
+    state.setdefault('configer', {})['configer_error'] = missing_fields
+    goto_node = runtime.context['exception_navigate'] # 在context中定义了StarterAgent中异常处理要跳转来进行处理的节点(默认为route_node)
     logger.info(f'found missing fields, goto {goto_node}')
     return Command(
         update=state,
@@ -434,8 +434,8 @@ if missing_fields:
 
 * **`exception`**：异常类型
 * **`next_to`**：需要跳转到的异常处理节点，如 `config_node`
-* **`automated_query`**：自动生成的查询，用于提示 StarterAgent 用户需补全信息
-* **`configer_error`**：传递给 ConfigerAgent 的错误提示
+* **`automated_query`**：自动生成的查询，用于在完成参数不全后提示 StarterAgent 用户已经补全了哪些参数, 并自动向Agent进行通报
+* **`configer.configer_error`**：传递给 ConfigerAgent 的缺失参数字段
 * **`goto_node`**：异常处理跳转节点，如外部配置的 `exception_navigate`
 
 如果异常无法通过 Configer 修复，但仍希望继续流程，可以将 `next_to` 设置为 `query_node`，并定义相应的 `automated_query`。StarterAgent 会根据该提示引导用户进行必要的手动操作。
