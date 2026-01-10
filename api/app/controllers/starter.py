@@ -55,25 +55,25 @@ async def init_manager():
     kaggle_username = config['starter'].get('kaggle_username', '') or ''
     kaggle_key = config['starter'].get('kaggle_key', '') or ''
 
-    config['default_states']['obtainer_api_key'] = api_key
-    config['default_states']['obtainer_category'] = config['default_states']['obtainer_category'].upper()
-    config['default_states']['obtainer_tavily_api_key'] = tavily_api_key if tavily_api_key else ''
-    config['default_states']['obtainer_kaggle_username'] = kaggle_username
-    config['default_states']['obtainer_kaggle_key'] = kaggle_key
+    config['default_states']['obtainer']['api_key'] = api_key
+    config['default_states']['obtainer']['category'] = config['default_states']['obtainer']['category'].upper()
+    config['default_states']['obtainer']['tavily_api_key'] = tavily_api_key if tavily_api_key else ''
+    config['default_states']['obtainer']['kaggle_username'] = kaggle_username
+    config['default_states']['obtainer']['kaggle_key'] = kaggle_key
 
     if 'reset' in config['rag']:
-        config['default_states']['obtainer_reset_rag'] = config['rag']['reset']
+        config['default_states']['obtainer']['reset_rag'] = config['rag']['reset']
     if 'embed_model' in config['rag']:
         embed_model = config['rag']['embed_model']
         if embed_model:  # Only set if not empty
-            config['default_states']['obtainer_rag_embed_model'] = embed_model
+            config['default_states']['obtainer']['rag_embed_model'] = embed_model
     if 'collection_name' in config['rag']:
-        config['default_states']['obtainer_rag_collection_name'] = config['rag']['collection_name']
+        config['default_states']['obtainer']['rag_collection_name'] = config['rag']['collection_name']
     if 'api_base_url' in config['rag']:
         if config['rag']['api_base_url']:  # Only set if not empty
-            config['default_states']['obtainer_rag_api_base_url'] = config['rag']['api_base_url']
+            config['default_states']['obtainer']['rag_api_base_url'] = config['rag']['api_base_url']
     if rag_api_key:
-        config['default_states']['obtainer_rag_api_key'] = rag_api_key
+        config['default_states']['obtainer']['rag_api_key'] = rag_api_key
 
     manager = StarterManager(sg_init_args={
         'tools': [check_motivation],
@@ -153,7 +153,7 @@ async def get_message_call():
         if "state" not in data:
             yield response_body(code=401, message="No messages available").stream()
             continue
-        if "messages" not in data["state"] or not data["state"]["messages"]:
+        if not data["state"] or "messages" not in data.get("state", {}) or not data["state"]["messages"]:
             yield response_body(code=401, message="No messages available").stream()
             continue
         messages = []

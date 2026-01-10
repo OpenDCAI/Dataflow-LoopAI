@@ -17,10 +17,14 @@ def extract_state(sg, config, running=True, event_streaming=False) -> dict:
     if state is not None and 'current' in state:
         current = state['current']
     stream_message = agent_event.stream_message
+    waiting_llm = False
+    if agent_event.custom_info:
+        stream_message_state = agent_event.custom_info.get('llm_node', {}).get('data', {}).get('stream_message_state', 'finished')
+        waiting_llm = False if stream_message_state == 'finished' else True
     return {
         "running": running,
         "event_streaming": event_streaming, # the agent is yielding event_streaming messages
-        "waiting_llm": stream_message is not None, # the agent is waiting for the LLM response
+        "waiting_llm": waiting_llm, # the agent is waiting for the LLM response
         "current": current,
         "interrupt_value": interrupt_value,
         "state": state,
