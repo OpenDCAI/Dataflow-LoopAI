@@ -12,6 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
+from langchain_core.messages import message_to_dict
 
 from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
@@ -58,11 +59,14 @@ def ReAct_Node(model: ChatOpenAI, tools: list[tool], prompt: str, messages_key: 
     ):
         writer = get_stream_writer()
         writer(StreamEvent(current=state.get('current', 'llm_node'), data={
-            'stream_message_state': 'start'
+            'stream_message_state': 'start',
+            'history': [message_to_dict(msg) for msg in state[messages_key]]
         }).json())
         response = model.invoke([system_prompt] + state[messages_key], config)
         writer(StreamEvent(current=state.get('current', 'llm_node'), data={
-            'stream_message_state': 'finished'
+            'stream_message_state': 'finished',
+            'history': [message_to_dict(msg) for msg in state[messages_key]],
+            'current_message': message_to_dict(response)
         }).json())
         # 我们返回一个列表，因为这将被添加到现有列表中。
         return {messages_key: [response]}

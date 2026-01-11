@@ -159,12 +159,12 @@ async def get_message_call():
         messages = []
         if "stream_message" in data and data["stream_message"]:
             messages.append(decode_msg(data["stream_message"]))
-        is_finished = data["stream_message"] is None
-        if data["event_streaming"] and is_finished:
+        msg_state = data["event_streaming"]
+        if msg_state == 'not_ready':
             yield response_body(code=401, message="wait for message").stream()
         else:
-            yield response_body(message="Agent messages", status='loading' if not is_finished else 'success', data=messages).stream()
-        if not data["event_streaming"] and is_finished:
+            yield response_body(message="Agent messages", status='loading' if msg_state == 'start' else 'success', data=messages).stream()
+        if msg_state == 'finished':
             return
 
 @router.get("/agent/message/stream", operation_id='getAgentMessageStream', summary="Get the agent message stream")

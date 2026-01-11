@@ -4,7 +4,7 @@ from multiprocessing import Queue
 from loopai.agents import StarterAgent
 
 
-def extract_state(sg, config, running=True, event_streaming=False) -> dict:
+def extract_state(sg, config, running=True) -> dict:
     thread_states = sg.get_state(config)
     agent_event = sg.agent_event
     state = agent_event.state
@@ -17,14 +17,14 @@ def extract_state(sg, config, running=True, event_streaming=False) -> dict:
     if state is not None and 'current' in state:
         current = state['current']
     stream_message = agent_event.stream_message
-    waiting_llm = False
+    event_streaming = 'not_ready'
     if agent_event.custom_info:
-        stream_message_state = agent_event.custom_info.get('llm_node', {}).get('data', {}).get('stream_message_state', 'finished')
-        waiting_llm = False if stream_message_state == 'finished' else True
+        stream_message_state = agent_event.custom_info.get('llm_node', {}).get('data', {}).get('stream_message_state', 'not_ready')
+        event_streaming = stream_message_state
     return {
         "running": running,
         "event_streaming": event_streaming, # the agent is yielding event_streaming messages
-        "waiting_llm": waiting_llm, # the agent is waiting for the LLM response
+        "waiting_llm": stream_message is not None, # the agent is waiting for the LLM response, in starter_agent, when the update event is trigger, the stream_message is set as None. This attribute is used to check if the agent is ready for next input.
         "current": current,
         "interrupt_value": interrupt_value,
         "state": state,
@@ -60,7 +60,7 @@ def agent_worker(cmd_q: Queue, state_q: Queue, sg_init_args: dict):
 
             while thread_states.interrupts:
                 # 输出状态
-                state_q.put(extract_state(sg, config, True, False))
+                state_q.put(extract_state(sg, config, True))
                 sub_cmd = cmd_q.get()
                 if sub_cmd["type"] == "INPUT":
                     query = sub_cmd["text"]
@@ -72,12 +72,12 @@ def agent_worker(cmd_q: Queue, state_q: Queue, sg_init_args: dict):
                     query,
                     config=config
                 ):
-                    state_q.put(extract_state(sg, config, True, True))
+                    state_q.put(extract_state(sg, config, True))
                 
                 thread_states = sg.get_state(config)
 
-            state_q.put(extract_state(sg, config, False, False))
+            state_q.put(extract_state(sg, config, False))
 
         elif cmd["type"] == "STOP":
-            state_q.put(extract_state(sg, config, False, False))
+            state_q.put(extract_state(sg, config, False))
             return
