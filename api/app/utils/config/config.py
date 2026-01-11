@@ -3,7 +3,7 @@ import json
 from tortoise.expressions import Q
 from ...models.db_models import StarterConfig
 from omegaconf import OmegaConf
-from loopai.schema.states import JudgerState, AnalyzerState, TrainerState, ObtainerState, ConfigerState
+from loopai.schema.states import get_state_config_schema
 
 async def check_config_from_db(base_dir):
     # 判断sqliter中是否有config记录，如果一条也没有，读取./examples/starter.yaml转化为json然后存到数据库
@@ -46,23 +46,6 @@ async def get_system_config(base_dir):
         'config': config_data,
     }
     return res
-
-def get_state_config_schema():
-    """获取Starter配置字段说明"""
-    def get_field_statement(model_cls):
-            schema = model_cls.model_json_schema()
-            properties = schema.get('properties', {})
-            return properties
-
-    fields_statement = {
-        "judger": get_field_statement(JudgerState),
-        "configer": get_field_statement(ConfigerState),
-        "analyzer": get_field_statement(AnalyzerState),
-        "trainer": get_field_statement(TrainerState),
-        "obtainer": get_field_statement(ObtainerState),
-    }
-
-    return fields_statement
 
 async def get_state_config(base_dir):
     """获取Starter状态配置"""

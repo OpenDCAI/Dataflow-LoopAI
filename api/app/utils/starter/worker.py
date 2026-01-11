@@ -45,8 +45,6 @@ def agent_worker(cmd_q: Queue, state_q: Queue, sg_init_args: dict):
 
     config = {"configurable": {"thread_id": "default"}}
 
-    running = False
-
     while True:
         try:
             cmd = cmd_q.get(timeout=0.1)

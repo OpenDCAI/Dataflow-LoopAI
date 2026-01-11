@@ -657,6 +657,23 @@ class ConfigerState(BaseModel):
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
 
+
+def get_state_config_schema():
+    """获取Starter配置字段说明"""
+    def get_field_statement(model_cls):
+            schema = model_cls.model_json_schema()
+            properties = schema.get('properties', {})
+            return properties
+
+    fields_statement = {
+        "judger": get_field_statement(JudgerState),
+        "configer": get_field_statement(ConfigerState),
+        "analyzer": get_field_statement(AnalyzerState),
+        "trainer": get_field_statement(TrainerState),
+        "obtainer": get_field_statement(ObtainerState),
+    }
+
+    return fields_statement
 # ==========================================
 # 3. 主 State 定义
 # ==========================================
