@@ -77,9 +77,9 @@ class StarterAgent(BaseAgent):
         maybe_tool_message = messages[-2]
         if hasattr(maybe_tool_message, 'tool_call_id'):
             tool_res = json.loads(maybe_tool_message.content)
-            state["next_to"] = tool_res["next_to"]
+            state["next_to"] = tool_res.get("next_to", "query_node")
             last_message.content = '<cmd>根据用户指令执行: ' + \
-                tool_res["motivation"] + '</cmd>\n' + last_message.content
+                tool_res.get("motivation", "chat") + '</cmd>\n' + last_message.content
         else:
             state["next_to"] = "query_node"
         logger.info(f'Messages: {state["messages"]}')

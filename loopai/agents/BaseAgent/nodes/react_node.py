@@ -40,12 +40,26 @@ def ReAct_Node(model: ChatOpenAI, tools: list[tool], prompt: str, messages_key: 
     def tool_node(state):
         outputs = []
         for tool_call in state[messages_key][-1].tool_calls:
-            tool_result = tools_by_name[tool_call["name"]].invoke(
+            tool_name = tool_call["name"]
+            if tool_name not in tools_by_name:
+                error_result = {
+                    "status": 'tool_not_found',
+                    "message": f"Try to use tool failed. Error: Tool {tool_name} not found"
+                }
+                outputs.append(
+                    ToolMessage(
+                        content=json.dumps(error_result),
+                        name=tool_name,
+                        tool_call_id=tool_call["id"],
+                    )
+                )
+                continue
+            tool_result = tools_by_name[tool_name].invoke(
                 tool_call["args"])
             outputs.append(
                 ToolMessage(
                     content=json.dumps(tool_result),
-                    name=tool_call["name"],
+                    name=tool_name,
                     tool_call_id=tool_call["id"],
                 )
             )

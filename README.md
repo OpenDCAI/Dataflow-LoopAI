@@ -256,6 +256,10 @@ self.prompt_loader = PromptLoader(prompt_template_dir)
 
 ---
 
+### Tool Calls
+
+由于我们重写了ReAct节点, 我们观察到, 尽管Sub-Agent采用不同LLM_Node时可能限定定义了不同的工具, 但是Sub-Agent仍然可能受到上下文影响调用本不属于它可使用的工具。因此, 如果你需要自定义工具, 切记返回的为对象`dict`, 避免造成StarterAgent及其它Sub-Agent在校验时无法解析结果而报错。
+
 ## 🧭 Agent 的系统 Prompt 定义
 
 每个继承 `BaseAgent` 的自定义 Agent，需要通过以下两个抽象属性指定自身的系统 Prompt：

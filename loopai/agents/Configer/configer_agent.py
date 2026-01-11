@@ -76,7 +76,7 @@ class ConfigerAgent(BaseAgent):
         maybe_tool_message = messages[-2]
         if hasattr(maybe_tool_message, 'tool_call_id'):
             tool_res = json.loads(maybe_tool_message.content)
-            if tool_res["confirm"]:
+            if tool_res.get('confirm', False):
                 return "confirm_node"
             else:
                 return "configer_query_node"
