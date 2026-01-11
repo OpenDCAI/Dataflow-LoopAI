@@ -6,6 +6,7 @@ from omegaconf import OmegaConf
 from tortoise.expressions import Q
 from ..models.body import response_body, TaskItem
 from ..models.db_models import Task
+from ..utils.config.config import format_value
 
 router = APIRouter(tags=["task"])
 
@@ -13,21 +14,23 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(os.path.dirname(CURRENT_DIR))
 
 def config_format(config: dict):
-    for series_key in config:
-        for key in config[series_key]:
-            type_name = config[series_key][key].get('type', 'str')
-            if type_name == 'int':
-                try:
-                    config[series_key][key] = int(config[series_key][key]['value'])
-                except:
-                    config[series_key][key] = float(config[series_key][key]['value'])
-            elif type_name == 'bool':
-                config[series_key][key] = bool(config[series_key][key]['value'])
-            elif type_name == 'float':
-                config[series_key][key] = float(config[series_key][key]['value'])
-            else:
-                config[series_key][key] = str(config[series_key][key]['value'])
-    return config
+    system_config = config.get('system', {})
+    states_config = config.get('states', {})
+    result = {}
+    for series_key in system_config:
+        for key in system_config[series_key]:
+            format_item = format_value(system_config[series_key][key])
+            result.setdefault(series_key, {})[key] = format_item["value"]
+    for series_key in states_config:
+        if series_key == 'default':
+            for key in states_config[series_key]:
+                format_item = format_value(states_config[series_key][key])
+                result.setdefault('default_states', {})[key] = format_item["value"]
+        else:
+            for key in states_config[series_key]:
+                format_item = format_value(states_config[series_key][key])
+                result.setdefault('default_states', {}).setdefault(series_key, {})[key] = format_item["value"]
+    return result
 
 @router.post("/task", operation_id='createTask', summary='创建任务项')
 async def create_task(taskItem: TaskItem):
