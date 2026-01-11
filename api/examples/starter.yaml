@@ -15,6 +15,7 @@ rag:
   api_key_path: "./rag_api_key.txt"  # RAG API key file path (if empty, will use obtainer's api_key)
 
 default_states:
+  task_id: "default"
   prompt_template_dir: "./loopai/common/prompts"
   output_dir: "./outputs"
 

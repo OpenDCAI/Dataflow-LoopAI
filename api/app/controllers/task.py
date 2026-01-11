@@ -93,8 +93,6 @@ async def update_task(taskItem: TaskItem):
             return response_body(code=400, status='error', message='config格式错误')()
         config = config_format(config)
         task.config = json.dumps(config)
-    if taskItem.state:
-        task.state = taskItem.state
     await task.save()
     return response_body(data={
         'id': task.id,
