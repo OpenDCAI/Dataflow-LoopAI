@@ -4,7 +4,7 @@
             <div class="lp-task-header">
                 <div class="left-block">
                     <fv-img class="logo" :src="img.task" alt="task"></fv-img>
-                    <p class="title">Task</p>
+                    <p class="title">{{ local('Tasks') }}</p>
                 </div>
                 <fv-button
                     border-radius="8"
@@ -227,125 +227,19 @@ export default {
             let searchText = this.searchText.toLowerCase()
             return item.name.toLowerCase().includes(searchText)
         },
-        addTaskNode(data) {
-            data.enableDelete = true
-            const flow = useVueFlow(this.flowId)
-            const { screenToFlowCoordinate } = useVueFlow(this.flowId)
-            const position = screenToFlowCoordinate({
-                x: data.location.x,
-                y: data.location.y + parseInt(5 * Math.random())
-            })
-            const newNode = {
-                id: data.nodeId,
-                type: 'operator-node',
-                position: position,
-                data: {
-                    flowId: this.flowId,
-                    ...data
-                }
-            }
-            flow.addNodes(newNode)
-        },
         async selectTask(item) {
             console.log(item)
-            if (!this.thisLoading) return
             this.thisTask = item
-            const flow = useVueFlow(this.flowId)
-            flow.$reset()
-            flow.setViewport({
-                x: 0,
-                y: 0,
-                zoom: 1
-            })
-            await this.$nextTick()
-            if (!item.config) return
-            this.thisLoading = false
-            const { input_dataset, operators } = item.config
-            const basicPos = {
-                x: 1300,
-                y: 160
-            }
-            let dataset = this.datasets.find((item) => item.id === input_dataset.id)
-            if (!dataset) {
-                this.thisLoading = true
-                this.$barWarning(this.local('Input dataset not found'), {
-                    status: 'warning'
-                })
-            } else {
-                dataset = Object.assign({}, dataset)
-                dataset.location = input_dataset.location
-                this.$emit('confirm-dataset', dataset)
-            }
-            let formatOperators = []
-            let promiseList = []
-            // 在这里的设计是为了保险起见还是重新获取所有operator的预定义参数, 然后结合当前task获取的参数进行合并, 然而当前事实上其实还是直接用了当前task获取的参数, 后续若有需求再考虑是否需要修改
-            operators.forEach((item, idx) => {
-                promiseList.push(
-                    this.$api.operators.get_operator_detail_by_name(item.name).then((res) => {
-                        if (res.code === 200) {
-                            let operator = this.flatFormatedOperators.find(
-                                (it) => it.name === item.name
-                            )
-                            operator = Object.assign({}, operator)
-                            operator = Object.assign(operator, res.data)
-                            operator.location = item.location
-                            operator._cache_parameter = {
-                                init: [],
-                                run: []
-                            }
-                            operator._cache_parameter.init = item.params.init
-                            operator._cache_parameter.run = item.params.run
-                            operator.task_idx = idx + 1
-                            formatOperators.push(operator)
-                        }
-                    })
-                )
-            })
-            await Promise.all(promiseList)
-            formatOperators.sort((a, b) => a.task_idx - b.task_idx)
-            formatOperators.forEach((item, idx) => {
-                if (Array.isArray(item.location)) {
-                    item.location = {
-                        x: item.location[0],
-                        y: item.location[1]
-                    }
-                }
-                if (item.location.x === 0 || item.location.y === 0)
-                    item.location = {
-                        x: idx === 0 ? basicPos.x : formatOperators[idx - 1].location.x + 350,
-                        y: basicPos.y
-                    }
-                item.nodeId = this.$Guid()
-                this.addTaskNode(item)
-            })
-            let existsDatasetNode = flow.findNode('db-node')
-            formatOperators.forEach((item, idx) => {
-                if (idx === 0 && !existsDatasetNode) return
-                let last_id = idx === 0 ? 'db-node' : formatOperators[idx - 1].nodeId
-                flow.addEdges({
-                    id: this.$Guid(),
-                    type: 'base-edge',
-                    source: last_id,
-                    target: item.nodeId,
-                    sourceHandle: 'node::source::node',
-                    targetHandle: 'node::target::node',
-                    animated: false,
-                    data: {
-                        label: 'Node',
-                        edgeType: 'node'
-                    }
-                })
-            })
-            this.thisLoading = true
         },
         delTask(item) {
             if (!item) return
             this.$infoBox(this.local('Are you sure to delete this task?'), {
                 status: 'error',
                 confirm: () => {
-                    this.$api.tasks.delete_task(item.id).then((res) => {
+                    this.$api.task.delTask(item.id).then((res) => {
                         if (res.code === 200) {
                             this.getTaskList()
+                            this.thisTask = null
                         } else
                             this.$barWarning(res.msg || this.local('Delete task failed'), {
                                 status: 'warning'

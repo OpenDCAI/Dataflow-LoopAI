@@ -139,7 +139,9 @@ export default {
                 })
                 .then((res) => {
                     if (res.code === 200) {
-                        this.$barWarning(this.local('Add pipeline success'))
+                        this.$barWarning(this.local('Add Task success'), {
+                            status: 'correct'
+                        })
                         this.thisValue = false
                         this.addName = ''
                         this.getTasks()

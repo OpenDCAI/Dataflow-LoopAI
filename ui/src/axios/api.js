@@ -112,17 +112,17 @@ export class config {
   }
  
   /**
-  * @summary 获取Starter配置字段说明
+  * @summary 获取State的配置Schema
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async getConfigSchema(cancelSource,uploadProgress,downloadProgress){
+  static async getStateSchema(cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
-        url:'/config/config/state/schema',
+        url:'/config/state_schema',
         data:{},
         params:{},
         headers:{
@@ -231,13 +231,13 @@ config.updateConfig.fullPath=`${axios.defaults.baseURL}/config/config`
 */
 config.updateConfig.path=`/config/config`
 /**
-* @description getConfigSchema url链接，包含baseURL
+* @description getStateSchema url链接，包含baseURL
 */
-config.getConfigSchema.fullPath=`${axios.defaults.baseURL}/config/config/state/schema`
+config.getStateSchema.fullPath=`${axios.defaults.baseURL}/config/state_schema`
 /**
-* @description getConfigSchema url链接，不包含baseURL
+* @description getStateSchema url链接，不包含baseURL
 */
-config.getConfigSchema.path=`/config/config/state/schema`
+config.getStateSchema.path=`/config/state_schema`
 /**
 * @description listDir url链接，包含baseURL
 */
@@ -251,18 +251,19 @@ export class starter {
  
   /**
   * @summary Start the agent
+  * @param {String} [task_id] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async startAgent(cancelSource,uploadProgress,downloadProgress){
+  static async startAgent(task_id,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'post',
         url:'/starter/agent/start',
         data:{},
-        params:{},
+        params:{task_id},
         headers:{
           "Content-Type":""
         },

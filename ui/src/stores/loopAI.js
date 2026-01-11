@@ -60,6 +60,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     if (res.data[key] !== undefined)
                         taskStatus.value[key] = res.data[key]
                 }
+                syncMessages()
                 checkIfMsgStreamOnGoing()
             } else {
                 taskStatus.value.started = false
@@ -77,15 +78,8 @@ export const useLoopAI = defineStore('useLoopAI', () => {
     // sometimes when the llm call the tools, the msg stream will receive the finished status, but it actually still not finished.
     // we should check if the msg stream is on going.
     const checkIfMsgStreamOnGoing = async () => {
-        if (taskStatus.value.event_streaming === 'start' && !msgStreamModel.value.loading) {
-            try {
-                taskMessages.value = taskStatus.value.custom_info.llm_node.data.history;
-            }
-            catch (e) {
-                await getMessages()
-            }
+        if (taskStatus.value.event_streaming === 'start' && !msgStreamModel.value.loading)
             await getMsgStream()
-        }
     }
     const taskMessages = ref([])
     const msgStreamModel = ref({
@@ -94,13 +88,52 @@ export const useLoopAI = defineStore('useLoopAI', () => {
     })
     const msgEventSource = ref(null)
     const getMessages = async () => {
-        await proxy.$api.starter.getAgentMessages().then((res) => {
-            if (res.code === 200) {
-                taskMessages.value = res.data || []
-            } else {
+        const getMsg = async () => {
+            await proxy.$api.starter.getAgentMessages().then((res) => {
+                if (res.code === 200) {
+                    taskMessages.value = res.data || []
+                } else {
+                    taskMessages.value = []
+                }
+            })
+        }
+        if (taskStatus.value.waiting_llm)
+            try {
+                taskMessages.value = taskStatus.value.custom_info.llm_node.data.history;
+            }
+            catch (e) {
+                await getMsg()
+            }
+        else {
+            await getMsg()
+        }
+
+    }
+    const syncMessages = () => {
+        const getMsg = () => {
+            try {
+                let _messages = [];
+                taskStatus.value.state.messages.forEach((item, index) => {
+                    _messages.push({
+                        type: item.type,
+                        data: item
+                    })
+                })
+                taskMessages.value = _messages
+            }
+            catch (e) {
                 taskMessages.value = []
             }
-        })
+        }
+        if (taskStatus.value.waiting_llm)
+            try {
+                taskMessages.value = taskStatus.value.custom_info.llm_node.data.history;
+            }
+            catch (e) {
+                getMsg()
+            }
+        else
+            getMsg()
     }
     const getMsgStream = async () => {
         if (msgEventSource.value) {
@@ -117,7 +150,6 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                 } else if (resData.status === 'success') {
                     msgStreamModel.value.loading = false
                     msgStreamModel.value.msg = null
-                    await getMessages()
                     await getStatus()
                 }
             }
@@ -137,6 +169,17 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         }
     }
 
+    const stateSchema = ref(null)
+    const getStateSchema = async () => {
+        await proxy.$api.config.getStateSchema().then((res) => {
+            if (res.code === 200) {
+                stateSchema.value = res.data || {}
+            } else {
+                stateSchema.value = {}
+            }
+        })
+    }
+
     return {
         configId,
         config,
@@ -149,5 +192,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         msgStreamModel,
         getMessages,
         getMsgStream,
+        stateSchema,
+        getStateSchema,
     }
 })

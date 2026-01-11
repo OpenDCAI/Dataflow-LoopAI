@@ -46,7 +46,7 @@ import { useGlobal } from '@/hooks/general/useGlobal'
 import { useAppConfig } from '@/stores/appConfig'
 import { Background } from '@vue-flow/background'
 import baseNode from './nodes/baseNode.vue'
-import agentNode from './nodes/agentNode.vue'
+import agentNode from './nodes/agentNode/index.vue'
 import baseEdge from './edges/baseEdge.vue'
 import baseConnectionLine from './edges/baseConnectionLine.vue'
 

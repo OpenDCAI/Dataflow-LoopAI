@@ -72,7 +72,7 @@
                         class="tool-msg-item"
                         :key="index"
                     >
-                        {{ item.key }}
+                        <p class="tool-msg-key">{{ item.key }}</p>
                         <p class="tool-msg-value">{{ item.value }}</p>
                     </span>
                 </div>
@@ -389,7 +389,7 @@ export default {
         max-width: 900px;
         height: auto;
         flex-shrink: 0;
-        padding: 10px 15px;
+        padding: 5px 15px;
         border-radius: 8px;
 
         .msg-control-left-block {
@@ -423,7 +423,7 @@ export default {
         max-width: 900px;
         height: auto;
         flex-shrink: 0;
-        padding: 15px;
+        padding: 5px 15px;
         display: flex;
 
         .msg-role-block {
@@ -479,7 +479,7 @@ export default {
                 background-color: rgba(36, 36, 36, 1);
                 border-radius: 8px;
                 box-sizing: border-box;
-                line-height: 2;
+                line-height: 1;
                 overflow-x: overlay;
 
                 code {
@@ -504,7 +504,7 @@ export default {
                 padding: 4px 6px;
                 background-color: rgba(#616161, 0.1);
                 font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
-                font-size: 13.8px;
+                font-size: 0.8rem;
                 color: rgba(235, 87, 87, 1);
                 border-radius: 3px;
             }
@@ -624,27 +624,35 @@ export default {
                 @include HbetweenVcenter;
 
                 width: auto;
-                height: 35px;
+                height: auto;
                 gap: 5px;
                 padding: 5px;
                 background: linear-gradient(128deg, rgba(95, 75, 189, 1), rgba(148, 136, 225, 1));
                 font-size: 12px;
                 color: whitesmoke;
                 font-weight: bold;
-                border-radius: 30px;
+                border-radius: 999px;
                 box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.1);
+
+                .tool-msg-key {
+                    @include Vcenter;
+
+                    height: 100%;
+                }
 
                 .tool-msg-value {
                     @include Vcenter;
 
                     width: auto;
-                    height: 100%;
+                    min-height: 35px;
                     flex: 1;
-                    padding: 0px 5px;
+                    height: auto;
+                    flex-shrink: 0;
+                    padding: 5px 10px;
                     background: rgba(255, 255, 255, 1);
                     font-size: 12px;
                     color: rgba(95, 75, 189, 1);
-                    border-radius: 30px;
+                    border-radius: 999px;
                 }
             }
         }

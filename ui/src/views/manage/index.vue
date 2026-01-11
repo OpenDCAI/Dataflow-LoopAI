@@ -8,6 +8,7 @@
                 v-model:expand="isExpand"
                 :foreground="color"
                 :expandWidth="250"
+                background="rgba(243, 243, 243, 1)"
                 :flyout-display="1368"
                 :mobile-display="1024"
                 class="navigation-view"
@@ -141,7 +142,6 @@ export default {
 .manage-container {
     @include app;
 
-    background: rgba(250, 250, 250, 1);
     display: flex;
     flex-direction: column;
 

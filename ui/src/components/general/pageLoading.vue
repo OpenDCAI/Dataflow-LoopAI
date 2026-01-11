@@ -1,12 +1,20 @@
 <template>
-    <div v-show="modelValue" class="lp-page-loading">
-        <fv-progress-ring
-            loading="true"
-            background="rgba(245, 245, 245, 0.8)"
-            :color="color"
-        ></fv-progress-ring>
-        <div class="lp-page-loading-title">{{ title }}</div>
-    </div>
+    <transition name="fade-in">
+        <div
+            v-show="modelValue"
+            class="lp-page-loading"
+            :style="{ zIndex: zIndex, backdropFilter: acrylic ? 'blur(10px)' : '' }"
+        >
+            <slot>
+                <fv-progress-ring
+                    loading="true"
+                    background="rgba(245, 245, 245, 0.8)"
+                    :color="color"
+                ></fv-progress-ring>
+                <div class="lp-page-loading-title">{{ title }}</div>
+            </slot>
+        </div>
+    </transition>
 </template>
 
 <script>
@@ -22,6 +30,14 @@ export default {
         title: {
             type: String,
             default: ''
+        },
+        acrylic: {
+            type: Boolean,
+            default: false
+        },
+        zIndex: {
+            type: Number,
+            default: 9999
         }
     },
     data() {
@@ -62,5 +78,13 @@ export default {
         color: #333;
         user-select: none;
     }
+}
+.fade-in-enter-active,
+.fade-in-leave-active {
+    transition: all 0.1s ease-out;
+}
+.fade-in-enter-from,
+.fade-in-leave-to {
+    opacity: 0;
 }
 </style>

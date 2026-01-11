@@ -12,7 +12,7 @@
                 <div class="dir-selector-item-main">
                     <fv-breadcrumb
                         v-model="thisFilePath"
-                        :readOnly="false"
+                        :readOnly="readOnly"
                         :border-radius="6"
                         style="width: 100%; flex-shrink: 0"
                         @item-click="handleDirClick"
@@ -101,6 +101,9 @@ export default {
         },
         filePath: {
             default: ''
+        },
+        readOnly: {
+            default: false
         }
     },
     data() {
@@ -197,6 +200,7 @@ export default {
             return item.name.slice(this.nameMatched(item).length)
         },
         handlePathMove(event) {
+            if (this.readOnly) return
             if (event.key === 'ArrowUp') {
                 this.$refs.list_view.move(event, -1)
             } else if (event.key === 'ArrowDown') {
@@ -204,12 +208,14 @@ export default {
             }
         },
         changeSelection(event) {
+            if (this.readOnly) return
             this.thisFilePath = event.prefix + event.name
             this.$nextTick(() => {
                 clearTimeout(this.timer.debounce)
             })
         },
         chooseItem({ item }) {
+            if (this.readOnly) return
             if (item.is_dir) {
                 this.thisFilePath = item.prefix + item.name + '/'
                 this.getFiles(this.thisFilePath)
@@ -219,6 +225,7 @@ export default {
             this.thisValue = false
         },
         handleDirClick(item) {
+            if (this.readOnly) return
             this.getFiles(item.fullPath)
             this.thisFilePath = item.fullPath
         },

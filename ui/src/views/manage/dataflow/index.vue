@@ -1,6 +1,23 @@
 <template>
     <div class="lp-default-container" :class="[{ 'show-pipeline': show.pipeline }]">
-        <task-nav v-model="show.taskNav" class="lp-task-container"></task-nav>
+        <page-loading :model-value="!currentTask || !currentTask.task_id" :z-index="3" acrylic>
+            <h1>{{ local('Start with a new Task') }}</h1>
+            <fv-button
+                theme="dark"
+                icon="OpenPaneMirrored"
+                :background="gradient"
+                border-radius="12"
+                font-size="16"
+                style="width: 150px; height: 45px; margin-top: 25px"
+                @click="show.taskNav = true"
+                >{{ local('Open Tasks') }}</fv-button
+            >
+        </page-loading>
+        <task-nav
+            v-model="show.taskNav"
+            class="lp-task-container"
+            v-model:task="currentTask"
+        ></task-nav>
         <div class="lp-flow-container">
             <mainFlow :id="flowId" v-model:nodes="nodes" v-model:edges="edges"></mainFlow>
             <div class="control-menu-block">
@@ -44,13 +61,18 @@
                                 foreground="rgba(255, 255, 255, 1)"
                                 border-color="rgba(255, 255, 255, 0.3)"
                                 border-radius="30"
+                                :disabled="(!currentTask || !currentTask.task_id) && !isRunning"
                                 :reveal-background-color="[
                                     'rgba(255, 255, 255, 0.5)',
                                     'rgba(103, 105, 251, 0.6)'
                                 ]"
-                                @click="execute"
+                                @click="handleExecute"
                             >
-                                <i class="ms-Icon ms-Icon--Play" style="margin-right: 5px"></i>
+                                <i
+                                    class="ms-Icon"
+                                    :class="[`ms-Icon--${isRunning ? 'CheckboxFill' : 'Play'}`]"
+                                    style="margin-right: 5px"
+                                ></i>
                                 <fv-progress-ring
                                     v-show="!lock.loading"
                                     loading="true"
@@ -60,7 +82,7 @@
                                     :color="'white'"
                                     style="margin-right: 5px"
                                 ></fv-progress-ring>
-                                <p>{{ this.local('Run') }}</p>
+                                <p>{{ isRunning ? this.local('Stop') : this.local('Run') }}</p>
                             </fv-button>
                             <i
                                 class="ms-Icon ms-Icon--FullCircleMask status-coin"
@@ -112,6 +134,7 @@ export default {
         return {
             flowId: 'lp-main-flow',
             value: null,
+            currentTask: null,
             options: [
                 {
                     name: () => this.local('Dataset'),
@@ -187,7 +210,7 @@ export default {
                 {
                     id: 'judger',
                     type: 'agent-node',
-                    position: { x: 700, y: 160 },
+                    position: { x: 700, y: 161 },
                     data: {
                         label: 'Judger',
                         status: 'Agent',
@@ -273,21 +296,28 @@ export default {
     },
     watch: {
         'taskStatus.running'(val) {
-            if (val) this.getMessages()
+            if (val) this.getStatus()
+        },
+        'currentTask.task_id'() {
+            this.stop()
         }
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
         ...mapState(useTheme, ['color', 'gradient']),
-        ...mapState(useLoopAI, ['taskStatus', 'taskMessages', 'msgStreamModel'])
+        ...mapState(useLoopAI, ['taskStatus', 'taskMessages', 'msgStreamModel']),
+        isRunning() {
+            return this.taskStatus.running
+        }
     },
     mounted() {
         this.setViewport()
         this.getStatus()
         this.healthCheckInit()
+        this.getStateSchema()
     },
     methods: {
-        ...mapActions(useLoopAI, ['getStatus', 'getMessages', 'getMsgStream']),
+        ...mapActions(useLoopAI, ['getStatus', 'getMsgStream', 'getStateSchema']),
         setViewport() {
             const flow = useVueFlow(this.flowId)
             flow.setViewport({
@@ -303,11 +333,25 @@ export default {
             }, 5000)
         },
         handleSaveClick() {},
+        handleExecute() {
+            if (this.isRunning) this.stop()
+            else this.execute()
+        },
+        stop() {
+            this.$api.starter.stopAgent().then((res) => {
+                if (res.code === 200) {
+                    this.$barWarning('Stop signal sent', {
+                        status: 'correct'
+                    })
+                }
+            })
+        },
         execute() {
+            if (!this.currentTask || !this.currentTask.task_id) return
             if (!this.lock.loading) return
             this.lock.loading = false
             this.$api.starter
-                .startAgent()
+                .startAgent(this.currentTask.task_id)
                 .then(async (res) => {
                     if (res.code === 200) {
                         await this.getStatus()
@@ -315,14 +359,14 @@ export default {
                         this.lock.loading = true
                     } else {
                         this.lock.loading = true
-                        this.$barWarning(res.msg, {
+                        this.$barWarning(res.message, {
                             status: 'warning'
                         })
                     }
                 })
                 .catch((error) => {
                     this.lock.loading = true
-                    proxy.$barWarning(error.message, {
+                    this.$barWarning(error.message, {
                         status: 'error'
                     })
                 })
@@ -340,7 +384,7 @@ export default {
     width: 100%;
     height: 100%;
     padding: 15px;
-    background-color: rgba(241, 241, 241, 1);
+    background-color: rgba(243, 243, 243, 1);
     display: flex;
 
     .lp-task-container {

@@ -43,7 +43,7 @@ export default {
     },
     methods: {
         showMe(msg) {
-            return !msg.data.tool_calls || msg.data.tool_calls.length === 0
+            return !msg.data.tool_calls || msg.data.tool_calls.length === 0 || (msg.data.tool_calls.length > 0 && msg.data.content)
         }
     }
 }

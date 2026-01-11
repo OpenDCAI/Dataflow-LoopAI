@@ -64,7 +64,6 @@ export default {
     },
     data() {
         return {
-            holdon: false,
             thisFullScreenEditor: this.fullScreenEditor,
             lock: {
                 submit: true
@@ -86,11 +85,16 @@ export default {
         placeholder() {
             if (this.taskStatus.interrupt_value) return this.taskStatus.interrupt_value
             return this.local(`Ask me anything (Press Ctrl + Enter)`)
+        },
+        holdon() {
+            return !this.taskStatus.running || this.taskStatus.waiting_llm || !this.lock.submit
         }
     },
-    mounted() {},
+    mounted() {
+        this.eventInit()
+    },
     methods: {
-        ...mapActions(useLoopAI, ['getStatus', 'getMessages', 'getMsgStream']),
+        ...mapActions(useLoopAI, ['getStatus', 'getMsgStream']),
         imgInterceptor({ deleteNode }) {
             this.$nextTick(() => {
                 deleteNode()
@@ -98,6 +102,15 @@ export default {
             this.$barWarning(this.local('Sorry, image is not supported in this chat.'), {
                 status: 'warning'
             })
+        },
+        eventInit() {
+            this.$refs.editor.$el.removeEventListener('keydown', this.handleSubmitEnterEvent)
+            this.$refs.editor.$el.addEventListener('keydown', this.handleSubmitEnterEvent)
+        },
+        handleSubmitEnterEvent(event) {
+            if (event.ctrlKey && event.key === 'Enter') {
+                this.submitQuery()
+            }
         },
         submitQuery() {
             if (this.msgStreamModel.loading) return
@@ -111,7 +124,6 @@ export default {
                 if (res.code === 200) {
                     this.$refs.editor.editor().commands.setContent('')
                     this.getStatus()
-                    this.getMessages()
                     this.getMsgStream()
                     this.lock.submit = true
                 } else {

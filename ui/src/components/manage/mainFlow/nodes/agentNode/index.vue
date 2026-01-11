@@ -27,16 +27,14 @@
                 class="node-row-item col"
             >
                 <span class="info-title">{{ item.key }}</span>
-                <fv-text-box
+                <value-preview
                     v-model="item.value"
-                    :placeholder="appConfig.local('Please input') + ` ${item.key}`"
-                    font-size="12"
-                    border-radius="8"
-                    :reveal-border="true"
-                    style="width: 100%; height: 35px"
+                    :modelKey="item.key"
+                    :stateKey="thisData.stateKey"
+                    :foreground="thisData.iconColor"
                     @mousedown.stop
                     @click.stop
-                ></fv-text-box>
+                ></value-preview>
             </div>
         </div>
         <div v-if="customInfoFiltered.length > 0" class="node-row-item">
@@ -108,6 +106,7 @@ import { useAppConfig } from '@/stores/appConfig'
 import { useLoopAI } from '@/stores/loopAI'
 
 import baseNode from '@/components/manage/mainFlow/nodes/baseNode.vue'
+import valuePreview from './valuePreview.vue'
 
 const { $api } = useGlobal()
 
@@ -167,9 +166,12 @@ const loopAIStateFiltered = computed(() => {
     if (!state) return filter_list
     if (!state[thisData.value.stateKey]) return filter_list
     for (let key in state[thisData.value.stateKey]) {
+        let val = state[thisData.value.stateKey][key]
+        if (val === null) val = null
+        if (val === undefined) val = null
         filter_list.push({
             key,
-            value: state[thisData.value.stateKey][key] || 'null'
+            value: val
         })
     }
     return filter_list
