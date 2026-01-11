@@ -110,6 +110,107 @@ export class config {
       })
     })
   }
+ 
+  /**
+  * @summary 获取Starter配置字段说明
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async getConfigSchema(cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/config/config/state/schema',
+        data:{},
+        params:{},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
+  * @summary 列出目录下的文件, 且判定是否为文件夹
+  * @param {String} [path] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async listDir(path,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/config/list_dir',
+        data:{},
+        params:{path},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
 }
 
 // class config static method properties bind
@@ -129,6 +230,22 @@ config.updateConfig.fullPath=`${axios.defaults.baseURL}/config/config`
 * @description updateConfig url链接，不包含baseURL
 */
 config.updateConfig.path=`/config/config`
+/**
+* @description getConfigSchema url链接，包含baseURL
+*/
+config.getConfigSchema.fullPath=`${axios.defaults.baseURL}/config/config/state/schema`
+/**
+* @description getConfigSchema url链接，不包含baseURL
+*/
+config.getConfigSchema.path=`/config/config/state/schema`
+/**
+* @description listDir url链接，包含baseURL
+*/
+config.listDir.fullPath=`${axios.defaults.baseURL}/config/list_dir`
+/**
+* @description listDir url链接，不包含baseURL
+*/
+config.listDir.path=`/config/list_dir`
 
 export class starter {
  
@@ -786,57 +903,7 @@ task.delTask.fullPath=`${axios.defaults.baseURL}/task/task/{id}`
 */
 task.delTask.path=`/task/task/{id}`
 
-export class common {
- 
-  /**
-  * @summary Root
-  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
-  * @param {Function} [uploadProgress] 上传回调函数
-  * @param {Function} [downloadProgress] 下载回调函数
-  */
-  static async root__get(cancelSource,uploadProgress,downloadProgress){
-    return await new Promise((resolve,reject)=>{
-      let responseType = "json";
-      let options = {
-        method:'get',
-        url:'/',
-        data:{},
-        params:{},
-        headers:{
-          "Content-Type":""
-        },
-        onUploadProgress:uploadProgress,
-        onDownloadProgress:downloadProgress
-      }
-      // support wechat mini program
-      if (cancelSource!=undefined){
-        options.cancelToken = cancelSource.token
-      }
-      if (responseType != "json"){
-        options.responseType = responseType;
-      }
-      axios(options)
-      .then(res=>{
-        if (res.config.responseType=="blob"){
-          resolve(new Blob([res.data],{
-            type: res.headers["content-type"].split(";")[0]
-          }))
-        }else{
-          resolve(res.data);
-          return res.data
-        }
-      }).catch(err=>{
-        if (err.response){
-          if (err.response.data)
-            reject(err.response.data)
-          else
-            reject(err.response);
-        }else{
-          reject(err)
-        }
-      })
-    })
-  }
+export class train {
  
   /**
   * @summary Start Training
@@ -845,12 +912,12 @@ export class common {
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async start_training_train_post(trainrequest,cancelSource,uploadProgress,downloadProgress){
+  static async start_training_train__post(trainrequest,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'post',
-        url:'/train',
+        url:'/train/',
         data:trainrequest,
         params:{},
         headers:{
@@ -947,12 +1014,12 @@ export class common {
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async get_task_status_status__task_id__get(pathtask_id,cancelSource,uploadProgress,downloadProgress){
+  static async get_task_status_train_status__task_id__get(pathtask_id,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
-        url:'/status/'+pathtask_id+'',
+        url:'/train/status/'+pathtask_id+'',
         data:{},
         params:{},
         headers:{
@@ -999,12 +1066,12 @@ export class common {
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async get_task_logs_logs__task_id__get(pathtask_id,max_lines,cancelSource,uploadProgress,downloadProgress){
+  static async get_task_logs_train_logs__task_id__get(pathtask_id,max_lines,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
-        url:'/logs/'+pathtask_id+'',
+        url:'/train/logs/'+pathtask_id+'',
         data:{},
         params:{max_lines},
         headers:{
@@ -1049,12 +1116,12 @@ export class common {
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async get_all_tasks_tasks_get(cancelSource,uploadProgress,downloadProgress){
+  static async get_all_tasks_train_tasks_get(cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
-        url:'/tasks',
+        url:'/train/tasks',
         data:{},
         params:{},
         headers:{
@@ -1100,12 +1167,12 @@ export class common {
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async cancel_task_tasks__task_id__delete(pathtask_id,cancelSource,uploadProgress,downloadProgress){
+  static async cancel_task_train_tasks__task_id__delete(pathtask_id,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'delete',
-        url:'/tasks/'+pathtask_id+'',
+        url:'/train/tasks/'+pathtask_id+'',
         data:{},
         params:{},
         headers:{
@@ -1151,12 +1218,12 @@ export class common {
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async get_train_output_swanlab_log_path_swanlab_logs__task_id__get(pathtask_id,cancelSource,uploadProgress,downloadProgress){
+  static async get_train_output_swanlab_log_path_train_swanlab_logs__task_id__get(pathtask_id,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
-        url:'/swanlab-logs/'+pathtask_id+'',
+        url:'/train/swanlab-logs/'+pathtask_id+'',
         data:{},
         params:{},
         headers:{
@@ -1201,12 +1268,131 @@ export class common {
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async get_all_swanlab_logs_swanlab_logs_get(cancelSource,uploadProgress,downloadProgress){
+  static async get_all_swanlab_logs_train_swanlab_logs_get(cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
-        url:'/swanlab-logs',
+        url:'/train/swanlab-logs',
+        data:{},
+        params:{},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+}
+
+// class train static method properties bind
+/**
+* @description start_training_train__post url链接，包含baseURL
+*/
+train.start_training_train__post.fullPath=`${axios.defaults.baseURL}/train/`
+/**
+* @description start_training_train__post url链接，不包含baseURL
+*/
+train.start_training_train__post.path=`/train/`
+/**
+* @description start_training_upload_train_upload_post url链接，包含baseURL
+*/
+train.start_training_upload_train_upload_post.fullPath=`${axios.defaults.baseURL}/train/upload`
+/**
+* @description start_training_upload_train_upload_post url链接，不包含baseURL
+*/
+train.start_training_upload_train_upload_post.path=`/train/upload`
+/**
+* @description get_task_status_train_status__task_id__get url链接，包含baseURL
+*/
+train.get_task_status_train_status__task_id__get.fullPath=`${axios.defaults.baseURL}/train/status/{task_id}`
+/**
+* @description get_task_status_train_status__task_id__get url链接，不包含baseURL
+*/
+train.get_task_status_train_status__task_id__get.path=`/train/status/{task_id}`
+/**
+* @description get_task_logs_train_logs__task_id__get url链接，包含baseURL
+*/
+train.get_task_logs_train_logs__task_id__get.fullPath=`${axios.defaults.baseURL}/train/logs/{task_id}`
+/**
+* @description get_task_logs_train_logs__task_id__get url链接，不包含baseURL
+*/
+train.get_task_logs_train_logs__task_id__get.path=`/train/logs/{task_id}`
+/**
+* @description get_all_tasks_train_tasks_get url链接，包含baseURL
+*/
+train.get_all_tasks_train_tasks_get.fullPath=`${axios.defaults.baseURL}/train/tasks`
+/**
+* @description get_all_tasks_train_tasks_get url链接，不包含baseURL
+*/
+train.get_all_tasks_train_tasks_get.path=`/train/tasks`
+/**
+* @description cancel_task_train_tasks__task_id__delete url链接，包含baseURL
+*/
+train.cancel_task_train_tasks__task_id__delete.fullPath=`${axios.defaults.baseURL}/train/tasks/{task_id}`
+/**
+* @description cancel_task_train_tasks__task_id__delete url链接，不包含baseURL
+*/
+train.cancel_task_train_tasks__task_id__delete.path=`/train/tasks/{task_id}`
+/**
+* @description get_train_output_swanlab_log_path_train_swanlab_logs__task_id__get url链接，包含baseURL
+*/
+train.get_train_output_swanlab_log_path_train_swanlab_logs__task_id__get.fullPath=`${axios.defaults.baseURL}/train/swanlab-logs/{task_id}`
+/**
+* @description get_train_output_swanlab_log_path_train_swanlab_logs__task_id__get url链接，不包含baseURL
+*/
+train.get_train_output_swanlab_log_path_train_swanlab_logs__task_id__get.path=`/train/swanlab-logs/{task_id}`
+/**
+* @description get_all_swanlab_logs_train_swanlab_logs_get url链接，包含baseURL
+*/
+train.get_all_swanlab_logs_train_swanlab_logs_get.fullPath=`${axios.defaults.baseURL}/train/swanlab-logs`
+/**
+* @description get_all_swanlab_logs_train_swanlab_logs_get url链接，不包含baseURL
+*/
+train.get_all_swanlab_logs_train_swanlab_logs_get.path=`/train/swanlab-logs`
+
+export class common {
+ 
+  /**
+  * @summary Root
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async root__get(cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/',
         data:{},
         params:{},
         headers:{
@@ -1305,70 +1491,6 @@ common.root__get.fullPath=`${axios.defaults.baseURL}/`
 * @description root__get url链接，不包含baseURL
 */
 common.root__get.path=`/`
-/**
-* @description start_training_train_post url链接，包含baseURL
-*/
-common.start_training_train_post.fullPath=`${axios.defaults.baseURL}/train`
-/**
-* @description start_training_train_post url链接，不包含baseURL
-*/
-common.start_training_train_post.path=`/train`
-/**
-* @description start_training_upload_train_upload_post url链接，包含baseURL
-*/
-common.start_training_upload_train_upload_post.fullPath=`${axios.defaults.baseURL}/train/upload`
-/**
-* @description start_training_upload_train_upload_post url链接，不包含baseURL
-*/
-common.start_training_upload_train_upload_post.path=`/train/upload`
-/**
-* @description get_task_status_status__task_id__get url链接，包含baseURL
-*/
-common.get_task_status_status__task_id__get.fullPath=`${axios.defaults.baseURL}/status/{task_id}`
-/**
-* @description get_task_status_status__task_id__get url链接，不包含baseURL
-*/
-common.get_task_status_status__task_id__get.path=`/status/{task_id}`
-/**
-* @description get_task_logs_logs__task_id__get url链接，包含baseURL
-*/
-common.get_task_logs_logs__task_id__get.fullPath=`${axios.defaults.baseURL}/logs/{task_id}`
-/**
-* @description get_task_logs_logs__task_id__get url链接，不包含baseURL
-*/
-common.get_task_logs_logs__task_id__get.path=`/logs/{task_id}`
-/**
-* @description get_all_tasks_tasks_get url链接，包含baseURL
-*/
-common.get_all_tasks_tasks_get.fullPath=`${axios.defaults.baseURL}/tasks`
-/**
-* @description get_all_tasks_tasks_get url链接，不包含baseURL
-*/
-common.get_all_tasks_tasks_get.path=`/tasks`
-/**
-* @description cancel_task_tasks__task_id__delete url链接，包含baseURL
-*/
-common.cancel_task_tasks__task_id__delete.fullPath=`${axios.defaults.baseURL}/tasks/{task_id}`
-/**
-* @description cancel_task_tasks__task_id__delete url链接，不包含baseURL
-*/
-common.cancel_task_tasks__task_id__delete.path=`/tasks/{task_id}`
-/**
-* @description get_train_output_swanlab_log_path_swanlab_logs__task_id__get url链接，包含baseURL
-*/
-common.get_train_output_swanlab_log_path_swanlab_logs__task_id__get.fullPath=`${axios.defaults.baseURL}/swanlab-logs/{task_id}`
-/**
-* @description get_train_output_swanlab_log_path_swanlab_logs__task_id__get url链接，不包含baseURL
-*/
-common.get_train_output_swanlab_log_path_swanlab_logs__task_id__get.path=`/swanlab-logs/{task_id}`
-/**
-* @description get_all_swanlab_logs_swanlab_logs_get url链接，包含baseURL
-*/
-common.get_all_swanlab_logs_swanlab_logs_get.fullPath=`${axios.defaults.baseURL}/swanlab-logs`
-/**
-* @description get_all_swanlab_logs_swanlab_logs_get url链接，不包含baseURL
-*/
-common.get_all_swanlab_logs_swanlab_logs_get.path=`/swanlab-logs`
 /**
 * @description health_check_health_get url链接，包含baseURL
 */

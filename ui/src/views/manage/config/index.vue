@@ -39,7 +39,10 @@
                 >
                     <template v-slot:default>
                         <hr />
-                        <div v-if="config.starter" v-for="(val, key) in config.starter">
+                        <div
+                            v-if="config.system.starter"
+                            v-for="(val, key) in config.system.starter"
+                        >
                             <div class="serving-item-row column">
                                 <p class="serving-item-light-title">{{ local(key) }}</p>
                                 <value-input
@@ -62,7 +65,7 @@
                 >
                     <template v-slot:default>
                         <hr />
-                        <div v-if="config.rag" v-for="(val, key) in config.rag">
+                        <div v-if="config.system.rag" v-for="(val, key) in config.system.rag">
                             <div class="serving-item-row column">
                                 <p class="serving-item-light-title">{{ local(key) }}</p>
                                 <value-input
@@ -75,32 +78,32 @@
                         </div>
                     </template>
                 </fv-Collapse>
-                <fv-Collapse
-                    :model-value="true"
-                    class="serving-item"
-                    icon="DialShape3"
-                    :title="local('Default States')"
-                    :content="local('Default States Config.')"
-                    :max-height="'auto'"
-                >
-                    <template v-slot:default>
-                        <hr />
-                        <div
-                            v-if="config.default_states"
-                            v-for="(val, key) in config.default_states"
-                        >
-                            <div class="serving-item-row column">
-                                <p class="serving-item-light-title">{{ local(key) }}</p>
-                                <value-input
-                                    :model-value="val"
-                                    :name="key"
-                                    :lock="lock.update"
-                                ></value-input>
-                            </div>
+                <p>{{ local('States') }}</p>
+                <div v-for="(state_val, state_key) in config.states">
+                    <fv-Collapse
+                        :model-value="true"
+                        class="serving-item"
+                        icon="DialShape3"
+                        :title="state_key"
+                        :content="local('State Config')"
+                        :max-height="'auto'"
+                    >
+                        <template v-slot:default>
                             <hr />
-                        </div>
-                    </template>
-                </fv-Collapse>
+                            <div v-for="(val, key) in state_val">
+                                <div class="serving-item-row column">
+                                    <p class="serving-item-light-title">{{ local(key) }}</p>
+                                    <value-input
+                                        :model-value="val"
+                                        :name="key"
+                                        :lock="lock.update"
+                                    ></value-input>
+                                </div>
+                                <hr />
+                            </div>
+                        </template>
+                    </fv-Collapse>
+                </div>
             </div>
         </div>
     </div>
@@ -127,6 +130,9 @@ export default {
             },
             lock: {
                 update: true
+            },
+            show: {
+                dir: true
             }
         }
     },
@@ -162,13 +168,23 @@ export default {
             return this.formatValues[type](item.value)
         },
         reset() {
-            for (let key in this.config) {
-                if (this.config[key]) {
-                    for (let param_key in this.config[key]) {
-                        this.config[key][param_key].value =
-                            this.config[key][param_key].default_value === null
+            for (let key in this.config.system) {
+                if (this.config.system[key]) {
+                    for (let param_key in this.config.system[key]) {
+                        this.config.system[key][param_key].value =
+                            this.config.system[key][param_key].default_value === null
                                 ? ''
-                                : this.config[key][param_key].default_value
+                                : this.config.system[key][param_key].default_value
+                    }
+                }
+            }
+            for (let key in this.config.states) {
+                if (this.config.states[key]) {
+                    for (let param_key in this.config.states[key]) {
+                        this.config.states[key][param_key].value =
+                            this.config.states[key][param_key].default_value === null
+                                ? ''
+                                : this.config.states[key][param_key].default_value
                     }
                 }
             }

@@ -139,7 +139,7 @@ const defaultData = {
     label: 'Operator',
     status: 'Operator',
     nodeInfo: '',
-    statePrefix: 'train',
+    stateKey: 'trainer',
     graphClsPrefix: 'TrainerAgent',
     background: 'linear-gradient(130deg, rgba(161, 145, 206, 0.8), rgba(252, 252, 252, 0.8))',
     titleColor: '',
@@ -165,20 +165,12 @@ const loopAIStateFiltered = computed(() => {
     let state = loopAI.taskStatus.state
     let filter_list = []
     if (!state) return filter_list
-    let matchedPrefix = thisData.value.statePrefix.split(',')
-    for (let key in state) {
-        let match = false
-        for (let prefix of matchedPrefix)
-            if (key.startsWith(prefix)) {
-                match = true
-                break
-            }
-        if (match) {
-            filter_list.push({
-                key,
-                value: state[key]
-            })
-        }
+    if (!state[thisData.value.stateKey]) return filter_list
+    for (let key in state[thisData.value.stateKey]) {
+        filter_list.push({
+            key,
+            value: state[thisData.value.stateKey][key] || 'null'
+        })
     }
     return filter_list
 })

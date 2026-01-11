@@ -9,23 +9,17 @@ export const useLoopAI = defineStore('useLoopAI', () => {
     const proxy = instance.proxy
 
     const configId = ref(null)
-    const config = ref({})
+    const config = ref({
+        system: {},
+        states: {}
+    })
     const getConfigs = async () => {
         await proxy.$api.config.getConfig().then((res) => {
             if (res.data) {
                 configId.value = res.data.id
-                let _config = res.data.config
-                for (let key in _config) {
-                    if (_config[key]) {
-                        for (let param_key in _config[key]) {
-                            _config[key][param_key].value =
-                                _config[key][param_key].value === null
-                                    ? ''
-                                    : _config[key][param_key].value
-                        }
-                    }
-                }
-                config.value = _config
+                let { system, states } = res.data
+                config.value.system = system
+                config.value.states = states
             }
         })
     }
@@ -51,6 +45,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         started: false,
         running: false,
         waiting_llm: true,
+        event_streaming: 'not_ready',
         current: null,
         interrupt_value: "input the human query",
         state: null,
@@ -65,6 +60,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     if (res.data[key] !== undefined)
                         taskStatus.value[key] = res.data[key]
                 }
+                checkIfMsgStreamOnGoing()
             } else {
                 taskStatus.value.started = false
                 taskStatus.value.running = false
@@ -77,6 +73,19 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                 status: 'error'
             })
         })
+    }
+    // sometimes when the llm call the tools, the msg stream will receive the finished status, but it actually still not finished.
+    // we should check if the msg stream is on going.
+    const checkIfMsgStreamOnGoing = async () => {
+        if (taskStatus.value.event_streaming === 'start' && !msgStreamModel.value.loading) {
+            try {
+                taskMessages.value = taskStatus.value.custom_info.llm_node.data.history;
+            }
+            catch (e) {
+                await getMessages()
+            }
+            await getMsgStream()
+        }
     }
     const taskMessages = ref([])
     const msgStreamModel = ref({

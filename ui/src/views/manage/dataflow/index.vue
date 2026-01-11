@@ -144,7 +144,7 @@ export default {
                     data: {
                         label: 'Configer',
                         status: 'Agent',
-                        statePrefix: 'configer,output',
+                        stateKey: 'configer',
                         graphClsPrefix: 'ConfigerAgent',
                         icon: 'Settings',
                         nodeInfo: 'Trainer Agent for Training',
@@ -176,7 +176,7 @@ export default {
                     data: {
                         label: 'Obtainer',
                         status: 'Agent',
-                        statePrefix: 'obtainer',
+                        stateKey: 'obtainer',
                         graphClsPrefix: 'ObtainerAgent',
                         icon: 'GiftboxOpen',
                         nodeInfo: 'Trainer Agent for Training',
@@ -191,7 +191,7 @@ export default {
                     data: {
                         label: 'Judger',
                         status: 'Agent',
-                        statePrefix: 'eval',
+                        stateKey: 'judger',
                         graphClsPrefix: 'JudgerAgent',
                         icon: 'Bug',
                         nodeInfo: 'Trainer Agent for Training',
@@ -208,7 +208,7 @@ export default {
                     data: {
                         label: 'Analyzer',
                         status: 'Agent',
-                        statePrefix: 'analyze',
+                        stateKey: 'analyzer',
                         graphClsPrefix: 'AnalyzerAgent',
                         icon: 'AreaChart',
                         nodeInfo: 'Trainer Agent for Training',
