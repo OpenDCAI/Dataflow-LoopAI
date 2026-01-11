@@ -84,7 +84,7 @@ def main():
             "--port", "8000"
         ]
         
-        print(f"🔧 Running command: {' '.join(cmd)}")
+        print(f"🔧 Running FastAPI")
         
         # 设置环境变量，将当前项目目录和LLaMA Factory目录都加入PYTHONPATH
         env = os.environ.copy()

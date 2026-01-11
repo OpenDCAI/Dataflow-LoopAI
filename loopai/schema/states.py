@@ -80,7 +80,7 @@ class ObtainerState(BaseModel):
         title="采样温度",
         description="模型采样温度 (0.0 - 1.0)",
         ge=0.0, le=1.0,  # Pydantic 校验范围
-        json_schema_extra={"ui_type": "slider", "step": 0.1, "ui_group": "Agent配置"}
+        json_schema_extra={"ui_type": "slider", "step": 0.1, "max": 1, "ui_group": "Agent配置"}
     )
     
     # --- Search Engine & Crawling (搜索与爬取) ---
@@ -354,13 +354,13 @@ class JudgerState(BaseModel):
         default=0, 
         title="评估模型温度",
         description="评估模型温度",
-        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
     eval_top_p: float = Field(
         default=0.95, 
         title="评估模型 Top P",
         description="评估模型 Top P",
-        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
     eval_test_case_path: str = Field(
         default="", 
@@ -404,7 +404,7 @@ class AnalyzerState(BaseModel):
         default="code", 
         title="分析任务类型",
         description="分析任务类型",
-        json_schema_extra={"ui_type": "text", "ui_group": "分析模型", "allowed_values": ["code", "text2sql"]}
+        json_schema_extra={"ui_type": "list", "ui_group": "分析模型", "allowed_values": ["code", "text2sql"]}
     )
     analyze_batch_size: int = Field(
         default=20,
@@ -434,19 +434,19 @@ class AnalyzerState(BaseModel):
         default=0, 
         title="分析模型温度",
         description="分析模型温度",
-        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+        json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "分析模型"}
     )
     analyze_top_p: float = Field(
         default=0.95, 
         title="分析模型 Top P",
         description="分析模型 Top P",
-        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+        json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "分析模型"}
     )
     output_brief: bool = Field(
         default=False, 
         title="是否输出简要分析结果",
         description="是否输出简要分析结果",
-        json_schema_extra={"ui_type": "checkbox", "ui_group": "分析模型"}
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
     )
     analyze_output_result_path: str = Field(
         default="", 
@@ -482,7 +482,7 @@ class AnalyzerState(BaseModel):
         default=False, 
         title="是否输出建议",
         description="是否输出建议",
-        json_schema_extra={"ui_type": "checkbox", "ui_group": "分析模型"}
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
     )
     analyze_output_suggestion_path: str = Field(
         default="", 
@@ -532,7 +532,7 @@ class TrainerState(BaseModel):
         default=True, 
         title="是否使用 SwanLab",
         description="是否使用 SwanLab",
-        json_schema_extra={"ui_type": "checkbox", "ui_group": "训练模型"}
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
     train_swanlab_project: str = Field(
         default="", 
@@ -544,7 +544,7 @@ class TrainerState(BaseModel):
         default=False, 
         title="数据检查是否通过",
         description="数据检查是否通过",
-        json_schema_extra={"ui_type": "checkbox", "ui_group": "训练模型"}
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
     data_check_result: dict = Field(
         default={}, 
@@ -568,7 +568,7 @@ class TrainerState(BaseModel):
         default=False, 
         title="配置生成是否成功",
         description="配置生成是否成功",
-        json_schema_extra={"ui_type": "checkbox", "ui_group": "训练模型"}
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
     config_explanation_path: str = Field(
         default="", 
@@ -586,7 +586,7 @@ class TrainerState(BaseModel):
         default=False, 
         title="训练是否成功",
         description="训练是否成功",
-        json_schema_extra={"ui_type": "checkbox", "ui_group": "训练模型"}
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
     training_execution_time: float = Field(
         default=0, 
@@ -657,6 +657,23 @@ class ConfigerState(BaseModel):
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
 
+
+def get_state_config_schema():
+    """获取Starter配置字段说明"""
+    def get_field_statement(model_cls):
+            schema = model_cls.model_json_schema()
+            properties = schema.get('properties', {})
+            return properties
+
+    fields_statement = {
+        "judger": get_field_statement(JudgerState),
+        "configer": get_field_statement(ConfigerState),
+        "analyzer": get_field_statement(AnalyzerState),
+        "trainer": get_field_statement(TrainerState),
+        "obtainer": get_field_statement(ObtainerState),
+    }
+
+    return fields_statement
 # ==========================================
 # 3. 主 State 定义
 # ==========================================

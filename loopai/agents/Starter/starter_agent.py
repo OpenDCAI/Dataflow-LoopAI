@@ -77,9 +77,9 @@ class StarterAgent(BaseAgent):
         maybe_tool_message = messages[-2]
         if hasattr(maybe_tool_message, 'tool_call_id'):
             tool_res = json.loads(maybe_tool_message.content)
-            state["next_to"] = tool_res["next_to"]
+            state["next_to"] = tool_res.get("next_to", "query_node")
             last_message.content = '<cmd>根据用户指令执行: ' + \
-                tool_res["motivation"] + '</cmd>\n' + last_message.content
+                tool_res.get("motivation", "chat") + '</cmd>\n' + last_message.content
         else:
             state["next_to"] = "query_node"
         logger.info(f'Messages: {state["messages"]}')
@@ -203,18 +203,29 @@ class StarterAgent(BaseAgent):
         ):
             namespace_item, stream_mode, chunk_item = res
             self.agent_event.stream_mode = stream_mode
+            # Receiving messages event, update stream_message
             if stream_mode == 'messages':
                 msg_chunk = chunk_item[0]
                 meta_data = chunk_item[1]
                 # tags like ['Starter-LLM'] or ['Configer-LLM'], currently set as allowed all.
                 if 'tags' in meta_data and (self.llm_tag in meta_data['tags'] or True):
                     self.agent_event.set_stream_message(msg_chunk)
+            # Receiving custom event, update custom_info
             elif stream_mode == 'custom':
                 if len(namespace_item) > 0:
                     key = namespace_item[0]
+
+                    # if detect llm_node custom event and stream_message_state is finished, clear stream_message
+                    # you should realize that there is a delay between update event and custom event
+                    # so we need to clear the stream_message of the last turn, and you can fetch them in the llm_node.data.history
+                    if 'stream_message_state' in chunk_item.get('data', {}):
+                        stream_message_state = chunk_item.get('data', {}).get('stream_message_state', 'not_ready')
+                        if stream_message_state == 'start':
+                            self.agent_event.clear_stream_message()
                 else:
                     key = '__starter__'
                 self.agent_event.set_custom_info(key, chunk_item)
+            # Receiving updates event, update state, and clear stream_message
             elif stream_mode == 'updates':
                 if len(namespace_item) > 0:
                     continue

@@ -54,7 +54,7 @@ class AnalyzerAgent(BaseAgent):
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
                 state['automated_query'] = self.prompt_loader("automated_query", "analyzer_missing_fields_prompt")
-                state.get('configer', {})['configer_error'] = missing_fields
+                state.setdefault('configer', {})['configer_error'] = missing_fields
                 goto_node = runtime.context['exception_navigate']
                 logger.info(f'found missing fields, goto {goto_node}')
                 return Command(

@@ -9,13 +9,13 @@ starter_process = []
 
 class StarterManager:
     def __init__(self, sg_init_args: dict):
-        self.cmd_q = Queue()
-        self.state_q = Queue()
+        self.cmd_q = Queue() # 正式的消息队列, 利用_flush_cache_loop定时从cmd_cache中取出消息并放入cmd_q
+        self.state_q = Queue() # 状态队列, 利用_state_cache_updater定时从state_q中取出状态并更新到self.states
 
         self.process: Optional[Process] = None
         self.sg_init_args = sg_init_args
-        self.cmd_cache = Queue()
-        self.states = {}
+        self.cmd_cache = Queue() # 外部传入消息队列
+        self.states = {} # 包含running, event_streaming, waiting_llm, current, interrupt_value, state, custom_info, updated_custom_info, stream_message
         threading.Thread(target=self._state_cache_updater, daemon=True).start()
         threading.Thread(target=self._flush_cache_loop, daemon=True).start()
     
@@ -77,6 +77,7 @@ class StarterManager:
             if self.process.is_alive():
                 self.process.terminate()
             self.process = None
+        self.states['running'] = False
 
     def restart(self, query: str, default_state: dict):
         self.stop()

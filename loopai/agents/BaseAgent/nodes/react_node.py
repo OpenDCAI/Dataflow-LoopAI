@@ -12,6 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END
+from langchain_core.messages import message_to_dict
 
 from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
@@ -39,12 +40,26 @@ def ReAct_Node(model: ChatOpenAI, tools: list[tool], prompt: str, messages_key: 
     def tool_node(state):
         outputs = []
         for tool_call in state[messages_key][-1].tool_calls:
-            tool_result = tools_by_name[tool_call["name"]].invoke(
+            tool_name = tool_call["name"]
+            if tool_name not in tools_by_name:
+                error_result = {
+                    "status": 'tool_not_found',
+                    "message": f"Try to use tool failed. Error: Tool {tool_name} not found"
+                }
+                outputs.append(
+                    ToolMessage(
+                        content=json.dumps(error_result),
+                        name=tool_name,
+                        tool_call_id=tool_call["id"],
+                    )
+                )
+                continue
+            tool_result = tools_by_name[tool_name].invoke(
                 tool_call["args"])
             outputs.append(
                 ToolMessage(
                     content=json.dumps(tool_result),
-                    name=tool_call["name"],
+                    name=tool_name,
                     tool_call_id=tool_call["id"],
                 )
             )
@@ -57,12 +72,15 @@ def ReAct_Node(model: ChatOpenAI, tools: list[tool], prompt: str, messages_key: 
         config: RunnableConfig,
     ):
         writer = get_stream_writer()
-        writer(StreamEvent(current=state.get('current', 'llm_node'), data={
-            'stream_message_state': 'start'
+        writer(StreamEvent(current='llm_node', data={
+            'stream_message_state': 'start',
+            'history': [message_to_dict(msg) for msg in state[messages_key]]
         }).json())
         response = model.invoke([system_prompt] + state[messages_key], config)
-        writer(StreamEvent(current=state.get('current', 'llm_node'), data={
-            'stream_message_state': 'finished'
+        writer(StreamEvent(current='llm_node', data={
+            'stream_message_state': 'finished',
+            'history': [message_to_dict(msg) for msg in state[messages_key]] + [message_to_dict(response)],
+            'current_message': message_to_dict(response)
         }).json())
         # 我们返回一个列表，因为这将被添加到现有列表中。
         return {messages_key: [response]}

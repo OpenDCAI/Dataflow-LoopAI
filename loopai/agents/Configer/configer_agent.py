@@ -5,7 +5,7 @@ from langgraph.graph import StateGraph
 from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
-from loopai.schema.states import LoopAIState, JudgerState, ConfigerState, AnalyzerState, TrainerState, ObtainerState
+from loopai.schema.states import LoopAIState, get_state_config_schema
 from loopai.agents import BaseAgent
 from loopai.schema.events import StreamEvent
 
@@ -44,18 +44,7 @@ class ConfigerAgent(BaseAgent):
             return {k: str(v) for k, v in ann.items()}
         state_dict = annotations_to_str(LoopAIState.__annotations__)
 
-        def get_field_statement(model_cls):
-            schema = model_cls.model_json_schema()
-            properties = schema.get('properties', {})
-            return properties
-
-        fields_statement = {
-            "judger": get_field_statement(JudgerState),
-            "configer": get_field_statement(ConfigerState),
-            "analyzer": get_field_statement(AnalyzerState),
-            "trainer": get_field_statement(TrainerState),
-            "obtainer": get_field_statement(ObtainerState),
-        }
+        fields_statement = get_state_config_schema()
 
         system_prompt = system_prompt.format(state_dict=json.dumps(state_dict, ensure_ascii=False), fields_statement=json.dumps(fields_statement, ensure_ascii=False))
         return system_prompt
@@ -87,7 +76,7 @@ class ConfigerAgent(BaseAgent):
         maybe_tool_message = messages[-2]
         if hasattr(maybe_tool_message, 'tool_call_id'):
             tool_res = json.loads(maybe_tool_message.content)
-            if tool_res["confirm"]:
+            if tool_res.get('confirm', False):
                 return "confirm_node"
             else:
                 return "configer_query_node"

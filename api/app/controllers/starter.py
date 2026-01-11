@@ -7,8 +7,9 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import message_to_dict
 from tortoise.expressions import Q
 from ..models.body import response_body, ConfigModel
-from ..models.db_models import StarterConfig
+from ..models.db_models import StarterConfig, TaskModel
 from ..utils.starter import StarterManager
+from ..utils.task.task import update_task_state, get_task_state
 from loopai.memory import checkpointer, store
 from loopai.agents.Starter.tools.check_motivation import check_motivation
 
@@ -19,21 +20,32 @@ LoopAI_DIR = os.path.dirname(BASE_DIR)
 router = APIRouter(tags=["starter"])
 
 
-async def load_config():
-    config = await StarterConfig.filter(Q(name='starter')).first()
-    if not config:
-        return None
-    return json.loads(config.config)
+async def load_config(task_id=None):
+    if task_id is None:
+        configItem = await StarterConfig.filter(Q(name='starter')).first()
+        if not configItem:
+            return None
+        config = configItem.config
+    else:
+        taskItem = await TaskModel.get_or_none(task_id=task_id)
+        if not taskItem:
+            return None
+        config = taskItem.config
+    return json.loads(config)
 
 manager = None
 default_states = {}
+_task_id = None
 
 
-async def init_manager():
+async def init_manager(task_id):
     global manager
     global default_states
+    global _task_id
 
-    config = await load_config()
+    _task_id = task_id
+
+    config = await load_config(task_id)
     if not config:
         return
 
@@ -55,25 +67,25 @@ async def init_manager():
     kaggle_username = config['starter'].get('kaggle_username', '') or ''
     kaggle_key = config['starter'].get('kaggle_key', '') or ''
 
-    config['default_states']['obtainer_api_key'] = api_key
-    config['default_states']['obtainer_category'] = config['default_states']['obtainer_category'].upper()
-    config['default_states']['obtainer_tavily_api_key'] = tavily_api_key if tavily_api_key else ''
-    config['default_states']['obtainer_kaggle_username'] = kaggle_username
-    config['default_states']['obtainer_kaggle_key'] = kaggle_key
+    config['default_states']['obtainer']['api_key'] = api_key
+    config['default_states']['obtainer']['category'] = config['default_states']['obtainer']['category'].upper()
+    config['default_states']['obtainer']['tavily_api_key'] = tavily_api_key if tavily_api_key else ''
+    config['default_states']['obtainer']['kaggle_username'] = kaggle_username
+    config['default_states']['obtainer']['kaggle_key'] = kaggle_key
 
     if 'reset' in config['rag']:
-        config['default_states']['obtainer_reset_rag'] = config['rag']['reset']
+        config['default_states']['obtainer']['reset_rag'] = config['rag']['reset']
     if 'embed_model' in config['rag']:
         embed_model = config['rag']['embed_model']
         if embed_model:  # Only set if not empty
-            config['default_states']['obtainer_rag_embed_model'] = embed_model
+            config['default_states']['obtainer']['rag_embed_model'] = embed_model
     if 'collection_name' in config['rag']:
-        config['default_states']['obtainer_rag_collection_name'] = config['rag']['collection_name']
+        config['default_states']['obtainer']['rag_collection_name'] = config['rag']['collection_name']
     if 'api_base_url' in config['rag']:
         if config['rag']['api_base_url']:  # Only set if not empty
-            config['default_states']['obtainer_rag_api_base_url'] = config['rag']['api_base_url']
+            config['default_states']['obtainer']['rag_api_base_url'] = config['rag']['api_base_url']
     if rag_api_key:
-        config['default_states']['obtainer_rag_api_key'] = rag_api_key
+        config['default_states']['obtainer']['rag_api_key'] = rag_api_key
 
     manager = StarterManager(sg_init_args={
         'tools': [check_motivation],
@@ -88,10 +100,11 @@ async def init_manager():
 
 
 @router.post("/agent/start", operation_id='startAgent', summary="Start the agent")
-async def start_agent():
+async def start_agent(task_id: str):
     if not manager:
-        await init_manager()
-    manager.start(default_state=default_states)
+        await init_manager(task_id)
+    state = await get_task_state(task_id, default_states)
+    manager.start(default_state=state)
     return response_body(message="Agent started")
 
 
@@ -104,19 +117,22 @@ async def agent_input(text: str):
 
 
 @router.post("/agent/stop", operation_id='stopAgent', summary="Stop the agent")
-def stop_agent():
-    if not manager:
-        return response_body(code=400, message="Starter manager not initialized")
-    manager.stop()
-    return response_body(message="Agent stopped")
-
-
-@router.get("/agent/status", operation_id='getAgentStatus', summary="Get the agent status")
-def get_status():
+async def stop_agent():
     if not manager:
         return response_body(code=400, message="Starter manager not initialized")
     data = manager.poll_state()
-    return response_body(message="Agent status", data=data)
+    save_status = await update_task_state(_task_id, data.get('state', {}))
+    manager.stop()
+    return response_body(message="Agent stopped, the state is saved: {}".format(save_status))
+
+
+@router.get("/agent/status", operation_id='getAgentStatus', summary="Get the agent status")
+async def get_status():
+    if not manager:
+        return response_body(code=400, message="Starter manager not initialized")
+    data = manager.poll_state()
+    save_status = await update_task_state(_task_id, data.get('state', {}))
+    return response_body(message="Agent state saved: {}".format(save_status), data=data)
 
 
 @router.get("/agent/messages", operation_id='getAgentMessages', summary="Get the agent messages")
@@ -153,19 +169,20 @@ async def get_message_call():
         if "state" not in data:
             yield response_body(code=401, message="No messages available").stream()
             continue
-        if "messages" not in data["state"] or not data["state"]["messages"]:
+        if not data["state"] or "messages" not in data.get("state", {}) or not data["state"]["messages"]:
             yield response_body(code=401, message="No messages available").stream()
             continue
         messages = []
         if "stream_message" in data and data["stream_message"]:
             messages.append(decode_msg(data["stream_message"]))
-        is_finished = data["stream_message"] is None
-        if data["event_streaming"] and is_finished:
+        msg_state = data["event_streaming"]
+        if msg_state == 'not_ready':
             yield response_body(code=401, message="wait for message").stream()
         else:
-            yield response_body(message="Agent messages", status='loading' if not is_finished else 'success', data=messages).stream()
-        if not data["event_streaming"] and is_finished:
+            yield response_body(message="Agent messages", status='loading' if msg_state == 'start' else 'success', data=messages).stream()
+        if msg_state == 'finished':
             return
+
 
 @router.get("/agent/message/stream", operation_id='getAgentMessageStream', summary="Get the agent message stream")
 def get_message():

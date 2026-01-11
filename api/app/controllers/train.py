@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 
 from ..models.task_models import TrainRequest, TrainResponse, TaskStatusResponse, LogResponse, TaskStatus, SwanLabLogResponse, AllSwanLabLogsResponse
-from ..utils.tasks import TaskManager, generate_task_id, save_yaml_config, read_log_file, validate_yaml_content
+from ..utils.train import TaskManager, generate_task_id, save_yaml_config, read_log_file, validate_yaml_content
 
 router = APIRouter(tags=["train"])
 
