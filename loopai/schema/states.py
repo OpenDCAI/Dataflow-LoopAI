@@ -11,6 +11,7 @@ def replace_value(current, new):
     """保留原有的替换逻辑：如果不为None则替换"""
     return new if new is not None else current
 
+
 def merge_dict(current: Dict[str, Any], new: Union[Dict[str, Any], BaseModel]) -> Dict[str, Any]:
     """
     【修改】深合并逻辑：
@@ -20,11 +21,11 @@ def merge_dict(current: Dict[str, Any], new: Union[Dict[str, Any], BaseModel]) -
     """
     if current is None:
         current = {}
-    
+
     # 1. Pydantic 处理：转为字典，过滤未设置的值
     if isinstance(new, BaseModel):
         new = new.model_dump(exclude_unset=True)
-    
+
     if new is None:
         return current
 
@@ -35,8 +36,8 @@ def merge_dict(current: Dict[str, Any], new: Union[Dict[str, Any], BaseModel]) -
     for key, value in new.items():
         # 如果 key 存在于当前状态，且【两者都是字典】，则递归合并
         if (
-            key in merged 
-            and isinstance(merged[key], dict) 
+            key in merged
+            and isinstance(merged[key], dict)
             and isinstance(value, dict)
         ):
             merged[key] = merge_dict(merged[key], value)
@@ -58,342 +59,350 @@ class ObtainerState(BaseModel):
     """
     # --- Agent Config (Agent配置) ---
     model_path: Optional[str] = Field(
-        default=None, 
+        default=None,
         title="模型路径",
         description="大模型路径或名称 (e.g. gpt-4, /local/model)",
         json_schema_extra={"ui_type": "text", "ui_group": "Agent配置"}
     )
     base_url: Optional[str] = Field(
-        default=None, 
+        default=None,
         title="API Base URL",
         description="模型 API 的 Base URL",
         json_schema_extra={"ui_type": "text", "ui_group": "Agent配置"}
     )
     api_key: Optional[str] = Field(
-        default=None, 
+        default=None,
         title="API Key",
         description="模型 API Key",
         json_schema_extra={"ui_type": "password", "ui_group": "Agent配置"}
     )
     temperature: float = Field(
-        default=0.7, 
+        default=0.7,
         title="采样温度",
         description="模型采样温度 (0.0 - 1.0)",
         ge=0.0, le=1.0,  # Pydantic 校验范围
-        json_schema_extra={"ui_type": "slider", "step": 0.1, "max": 1, "ui_group": "Agent配置"}
+        json_schema_extra={"ui_type": "slider",
+                           "step": 0.1, "max": 1, "ui_group": "Agent配置"}
     )
-    
+
     # --- Search Engine & Crawling (搜索与爬取) ---
     search_engine: str = Field(
-        default="tavily", 
+        default="tavily",
         title="搜索引擎",
         description="使用的搜索引擎",
         json_schema_extra={
-            "ui_type": "select", 
+            "ui_type": "select",
             "options": ["tavily", "google", "bing", "duckduckgo"],
             "ui_group": "搜索设置"
         }
     )
     tavily_api_key: str = Field(
-        default="", 
+        default="",
         title="Tavily Key",
         description="Tavily 搜索引擎的 API Key",
         json_schema_extra={"ui_type": "password", "ui_group": "搜索设置"}
     )
     max_urls: int = Field(
-        default=10, 
+        default=10,
         title="最大URL数",
         description="单次搜索最大处理 URL 数量",
         json_schema_extra={"ui_type": "number", "ui_group": "搜索设置"}
     )
     max_depth: int = Field(
-        default=2, 
+        default=2,
         title="爬取深度",
         description="爬虫最大深度",
         json_schema_extra={"ui_type": "number", "ui_group": "搜索设置"}
     )
     concurrent_limit: int = Field(
-        default=5, 
+        default=5,
         title="并发限制",
         description="并发请求限制",
         json_schema_extra={"ui_type": "number", "ui_group": "搜索设置"}
     )
     topk_urls: int = Field(
-        default=3, 
+        default=3,
         title="Top-K URL",
         description="保留最相关的 URL 数量",
         json_schema_extra={"ui_type": "number", "ui_group": "搜索设置"}
     )
     url_timeout: int = Field(
-        default=30, 
+        default=30,
         title="超时时间",
         description="URL 请求超时时间(秒)",
         json_schema_extra={"ui_type": "number", "ui_group": "搜索设置"}
     )
     recursion_limit: int = Field(
-        default=5, 
+        default=5,
         title="重试次数",
         description="递归/重试限制次数",
         json_schema_extra={"ui_type": "number", "ui_group": "搜索设置"}
     )
-    
+
     # --- Task Logic (任务逻辑 - 通常由系统生成，前端设为只读或JSON视图) ---
     intent_type: str = Field(
-        default="", 
+        default="",
         title="意图类型",
         description="用户意图分类结果",
-        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "任务状态"}
+        json_schema_extra={"ui_type": "text",
+                           "readOnly": True, "ui_group": "任务状态"}
     )
     normalized_query: str = Field(
-        default="", 
+        default="",
         title="标准化查询",
         description="标准化后的查询语句",
-        json_schema_extra={"ui_type": "textarea", "readOnly": True, "ui_group": "任务状态"}
+        json_schema_extra={"ui_type": "textarea",
+                           "readOnly": True, "ui_group": "任务状态"}
     )
     normalized_reason: str = Field(
-        default="", 
+        default="",
         title="处理理由",
         description="标准化处理的理由",
-        json_schema_extra={"ui_type": "textarea", "readOnly": True, "ui_group": "任务状态"}
+        json_schema_extra={"ui_type": "textarea",
+                           "readOnly": True, "ui_group": "任务状态"}
     )
     task_list: List[Dict[str, Any]] = Field(
-        default_factory=list, 
+        default_factory=list,
         title="任务列表",
         description="生成的任务列表",
         json_schema_extra={"ui_type": "json_viewer", "ui_group": "任务状态"}
     )
     current_task_index: int = Field(
-        default=0, 
+        default=0,
         title="当前任务索引",
         description="当前执行的任务索引",
-        json_schema_extra={"ui_type": "number", "readOnly": True, "ui_group": "任务状态"}
+        json_schema_extra={"ui_type": "number",
+                           "readOnly": True, "ui_group": "任务状态"}
     )
     subtasks: List[Dict[str, Any]] = Field(
-        default_factory=list, 
+        default_factory=list,
         title="子任务列表",
         description="当前任务拆分的子任务列表",
         json_schema_extra={"ui_type": "json_viewer", "ui_group": "任务状态"}
     )
     max_download_subtasks: Optional[int] = Field(
-        default=None, 
+        default=None,
         title="最大下载子任务",
         description="最大下载子任务数限制",
         json_schema_extra={"ui_type": "number", "ui_group": "任务设置"}
     )
-    
+
     # --- Data Context (数据上下文) ---
     datasets_background: str = Field(
-        default="", 
+        default="",
         title="数据集背景",
         description="数据集背景描述",
         json_schema_extra={"ui_type": "textarea", "ui_group": "数据上下文"}
     )
     category: str = Field(
-        default="", 
+        default="",
         title="数据类别",
         description="数据类别",
         json_schema_extra={"ui_type": "text", "ui_group": "数据上下文"}
     )
     research_summary: str = Field(
-        default="", 
+        default="",
         title="调研总结",
         description="调研总结",
         json_schema_extra={"ui_type": "textarea", "ui_group": "数据上下文"}
     )
     urls_visited: List[str] = Field(
-        default_factory=list, 
+        default_factory=list,
         title="已访问URL",
         description="已访问过的 URL 列表",
         json_schema_extra={"ui_type": "tags_input", "ui_group": "数据上下文"}
     )
     download_results: Dict[str, Any] = Field(
-        default_factory=dict, 
+        default_factory=dict,
         title="下载结果",
         description="下载的原始结果",
         json_schema_extra={"ui_type": "json_viewer", "ui_group": "数据上下文"}
     )
     postprocess_results: Dict[str, Any] = Field(
-        default_factory=dict, 
+        default_factory=dict,
         title="后处理结果",
         description="后处理后的结果",
         json_schema_extra={"ui_type": "json_viewer", "ui_group": "数据上下文"}
     )
     intermediate_data_path: str = Field(
-        default="", 
+        default="",
         title="中间数据路径",
         description="中间数据存储路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "数据上下文"}
     )
-    
+
     # --- RAG Configuration (RAG配置) ---
     reset_rag: bool = Field(
-        default=True, 
+        default=True,
         title="重置 RAG",
         description="是否重置 RAG 数据库",
         json_schema_extra={"ui_type": "switch", "ui_group": "RAG配置"}
     )
     rag_embed_model: str = Field(
-        default="", 
+        default="",
         title="Embedding 模型",
         description="RAG 嵌入模型名称",
         json_schema_extra={"ui_type": "text", "ui_group": "RAG配置"}
     )
     rag_collection_name: str = Field(
-        default="rag_collection", 
+        default="rag_collection",
         title="集合名称",
         description="向量数据库集合名称",
         json_schema_extra={"ui_type": "text", "ui_group": "RAG配置"}
     )
     rag_api_base_url: str = Field(
-        default="", 
+        default="",
         title="RAG API Base",
         description="RAG 服务 Base URL",
         json_schema_extra={"ui_type": "text", "ui_group": "RAG配置"}
     )
     rag_api_key: str = Field(
-        default="", 
+        default="",
         title="RAG API Key",
         description="RAG 服务 API Key",
         json_schema_extra={"ui_type": "password", "ui_group": "RAG配置"}
     )
-    
+
     # --- External Auth (外部认证) ---
     kaggle_username: str = Field(
-        default="", 
+        default="",
         title="Kaggle 用户名",
         description="Kaggle 用户名",
         json_schema_extra={"ui_type": "text", "ui_group": "外部认证"}
     )
     kaggle_key: str = Field(
-        default="", 
+        default="",
         title="Kaggle Key",
         description="Kaggle API Key",
         json_schema_extra={"ui_type": "password", "ui_group": "外部认证"}
     )
-    
+
     # --- Mapping Subgraph (映射子图参数) ---
     default_mapping_format: str = Field(
-        default="", 
+        default="",
         title="映射 Schema",
         description="默认的数据映射格式/Schema",
-        json_schema_extra={"ui_type": "code_editor", "language": "json", "ui_group": "数据映射"}
+        json_schema_extra={"ui_type": "code_editor",
+                           "language": "json", "ui_group": "数据映射"}
     )
-    
+
     # --- Sub-node: Webpage Collect (网页收集节点参数) ---
     webpage_collect_summary: str = Field(
-        default="", 
+        default="",
         title="收集总结",
         description="网页收集阶段的总结",
         json_schema_extra={"ui_type": "textarea", "ui_group": "网页收集"}
     )
     webpage_collect_urls_visited: List[str] = Field(
-        default_factory=list, 
+        default_factory=list,
         title="收集阶段URL",
         description="网页收集阶段访问的 URL",
         json_schema_extra={"ui_type": "tags_input", "ui_group": "网页收集"}
     )
     webpage_collect_data_count: int = Field(
-        default=0, 
+        default=0,
         title="收集数量",
         description="网页收集的数据条数",
         json_schema_extra={"ui_type": "number", "ui_group": "网页收集"}
     )
     webpage_collect_jsonl_path: str = Field(
-        default="", 
+        default="",
         title="JSONL 路径",
         description="网页收集结果 JSONL 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "网页收集"}
     )
     webpage_collect_db_path: str = Field(
-        default="", 
+        default="",
         title="DB 路径",
         description="网页收集结果 DB 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "网页收集"}
     )
-    
+
     # --- Sub-node: Webpage Dataset (数据集节点参数) ---
     webpage_dataset_summary: str = Field(
-        default="", 
+        default="",
         title="数据集总结",
         description="数据集生成阶段的总结",
         json_schema_extra={"ui_type": "textarea", "ui_group": "数据集生成"}
     )
     webpage_dataset_count: int = Field(
-        default=0, 
+        default=0,
         title="数据集数量",
         description="最终生成的数据集条数",
         json_schema_extra={"ui_type": "number", "ui_group": "数据集生成"}
     )
     webpage_dataset_jsonl_path: str = Field(
-        default="", 
+        default="",
         title="最终 JSONL 路径",
         description="最终数据集 JSONL 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "数据集生成"}
     )
 
+
 class JudgerState(BaseModel):
     eval_model_path: str = Field(
-        default="", 
+        default="",
         title="评估模型路径",
         description="评估模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     eval_task_type: str = Field(
-        default="code", 
+        default="code",
         title="评估任务类型",
         description="评估任务类型",
-        json_schema_extra={"ui_type": "text", "ui_group": "评估模型", "allowed_values":["code","text2sql"]}
+        json_schema_extra={"ui_type": "list", "ui_group": "评估模型",
+                           "allowed_values": ["code", "text2sql"]}
     )
     eval_base_url: str = Field(
-        default="", 
+        default="",
         title="评估模型 Base URL",
         description="评估模型 Base URL",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
     eval_api_key: str = Field(
-        default="EMPTY", 
+        default="EMPTY",
         title="评估模型 API Key",
         description="评估模型 API Key",
         json_schema_extra={"ui_type": "password", "ui_group": "评估模型"}
     )
     eval_temperature: float = Field(
-        default=0, 
+        default=0,
         title="评估模型温度",
         description="评估模型温度",
-        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
     eval_top_p: float = Field(
-        default=0.95, 
+        default=0.95,
         title="评估模型 Top P",
         description="评估模型 Top P",
-        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
     eval_test_case_path: str = Field(
-        default="", 
+        default="",
         title="评估模型测试用例路径",
         description="评估模型测试用例路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     eval_problem_path: str = Field(
-        default="", 
+        default="",
         title="评估模型问题路径",
         description="评估模型问题路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     eval_problem_format_path: str = Field(
-        default="", 
+        default="",
         title="评估模型问题格式化路径",
         description="评估模型问题格式化路径，如果为空将不进入格式化节点，如果和问题路径一样，则格式化后将覆盖原问题文件",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     eval_format_type: str = Field(
-        default="human-eval", 
+        default="human-eval",
         title="评估模型问题格式化类型",
         description="评估模型问题格式化类型，如果为空将不进入格式化节点，改格式化方式可以用户自由定义",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
     eval_result_path: str = Field(
-        default="", 
+        default="",
         title="评估模型结果路径",
         description="评估模型结果路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
@@ -405,12 +414,14 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
 
+
 class AnalyzerState(BaseModel):
     analyze_task_type: str = Field(
-        default="code", 
+        default="code",
         title="分析任务类型",
         description="分析任务类型",
-        json_schema_extra={"ui_type": "list", "ui_group": "分析模型", "allowed_values": ["code", "text2sql"]}
+        json_schema_extra={"ui_type": "list", "ui_group": "分析模型",
+                           "allowed_values": ["code", "text2sql"]}
     )
     analyze_batch_size: int = Field(
         default=20,
@@ -419,245 +430,247 @@ class AnalyzerState(BaseModel):
         json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
     )
     analyze_model_path: str = Field(
-        default="", 
+        default="",
         title="分析模型路径",
         description="分析模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
     analyze_base_url: str = Field(
-        default="", 
+        default="",
         title="分析模型 Base URL",
         description="分析模型 Base URL",
         json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
     )
     analyze_api_key: str = Field(
-        default="", 
+        default="",
         title="分析模型 API Key",
         description="分析模型 API Key",
         json_schema_extra={"ui_type": "password", "ui_group": "分析模型"}
     )
     analyze_temperature: float = Field(
-        default=0, 
+        default=0,
         title="分析模型温度",
         description="分析模型温度",
         json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "分析模型"}
     )
     analyze_top_p: float = Field(
-        default=0.95, 
+        default=0.95,
         title="分析模型 Top P",
         description="分析模型 Top P",
         json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "分析模型"}
     )
     output_brief: bool = Field(
-        default=False, 
+        default=False,
         title="是否输出简要分析结果",
         description="是否输出简要分析结果",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
     )
     analyze_output_result_path: str = Field(
-        default="", 
+        default="",
         title="分析模型输出结果路径",
         description="分析模型输出结果路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
     analyze_output_summary_path: str = Field(
-        default="", 
+        default="",
         title="分析模型输出摘要路径",
         description="分析模型输出摘要路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
     analyze_sampling_top_k: int = Field(
-        default=5, 
+        default=5,
         title="分析模型采样 Top K",
         description="分析模型采样 Top K",
         json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
     )
     analyze_output_report_json_path: str = Field(
-        default="", 
+        default="",
         title="分析模型输出报告 JSON 路径",
         description="分析模型输出报告 JSON 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
     analyze_output_report_text_path: str = Field(
-        default="", 
+        default="",
         title="分析模型输出报告文本路径",
         description="分析模型输出报告文本路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
     output_suggestion: bool = Field(
-        default=False, 
+        default=False,
         title="是否输出建议",
         description="是否输出建议",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
     )
     analyze_output_suggestion_path: str = Field(
-        default="", 
+        default="",
         title="分析模型输出建议路径",
         description="分析模型输出建议路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
 
+
 class TrainerState(BaseModel):
     train_dataset_path: str = Field(
-        default="", 
+        default="",
         title="训练数据集路径",
         description="训练数据集路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     train_task_description: str = Field(
-        default="", 
+        default="",
         title="训练任务描述",
         description="训练任务描述",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     train_config_template_path: str = Field(
-        default="", 
+        default="",
         title="训练配置模板路径",
         description="训练配置模板路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     train_config_output_path: str = Field(
-        default="", 
+        default="",
         title="训练配置输出路径",
         description="训练配置输出路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     train_output_dir: str = Field(
-        default="", 
+        default="",
         title="训练输出目录",
         description="训练输出目录",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     train_model_name: str = Field(
-        default="", 
+        default="",
         title="训练模型名称",
         description="训练模型名称",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     train_use_swanlab: bool = Field(
-        default=True, 
+        default=True,
         title="是否使用 SwanLab",
         description="是否使用 SwanLab",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
     train_swanlab_project: str = Field(
-        default="", 
+        default="",
         title="SwanLab 项目名称",
         description="SwanLab 项目名称",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     data_check_passed: bool = Field(
-        default=False, 
+        default=False,
         title="数据检查是否通过",
         description="数据检查是否通过",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
     data_check_result: dict = Field(
-        default={}, 
+        default={},
         title="数据检查结果",
         description="数据检查结果",
         json_schema_extra={"ui_type": "json", "ui_group": "训练模型"}
     )
     data_check_report_path: str = Field(
-        default="", 
+        default="",
         title="数据检查报告路径",
         description="数据检查报告路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     data_check_error: str = Field(
-        default="", 
+        default="",
         title="数据检查错误信息",
         description="数据检查错误信息",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     config_generation_success: bool = Field(
-        default=False, 
+        default=False,
         title="配置生成是否成功",
         description="配置生成是否成功",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
     config_explanation_path: str = Field(
-        default="", 
+        default="",
         title="配置解释路径",
         description="配置解释路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     config_generation_error: str = Field(
-        default="", 
+        default="",
         title="配置生成错误信息",
         description="配置生成错误信息",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     training_success: bool = Field(
-        default=False, 
+        default=False,
         title="训练是否成功",
         description="训练是否成功",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
     training_execution_time: float = Field(
-        default=0, 
+        default=0,
         title="训练执行时间",
         description="训练执行时间",
         json_schema_extra={"ui_type": "number", "ui_group": "训练模型"}
     )
     training_task_id: str = Field(
-        default="", 
+        default="",
         title="训练任务 ID",
         description="训练任务 ID",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     training_final_status: dict = Field(
-        default={}, 
+        default={},
         title="训练最终状态",
         description="训练最终状态",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     training_log_path: str = Field(
-        default="", 
+        default="",
         title="训练日志路径",
         description="训练日志路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     training_report_path: str = Field(
-        default="", 
+        default="",
         title="训练报告路径",
         description="训练报告路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     training_error: str = Field(
-        default="", 
+        default="",
         title="训练错误信息",
         description="训练错误信息",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     training_service_url: str = Field(
-        default="http://localhost:8000", 
+        default="http://localhost:8000",
         title="训练服务器 URL",
         description="训练服务器 URL",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     current_training_status: str = Field(
-        default="", 
+        default="",
         title="当前训练状态",
         description="当前训练状态",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     update_model_path: str = Field(
-        default="", 
+        default="",
         title="更新模型路径",
         description="更新模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     swanlab_url: str = Field(
-        default="", 
+        default="",
         title="SwanLab URL",
         description="SwanLab URL",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
 
+
 class ConfigerState(BaseModel):
     configer_error: dict = Field(
-        default=None, 
+        default=None,
         title="配置器错误信息",
         description="配置器错误信息",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
@@ -667,9 +680,9 @@ class ConfigerState(BaseModel):
 def get_state_config_schema():
     """获取Starter配置字段说明"""
     def get_field_statement(model_cls):
-            schema = model_cls.model_json_schema()
-            properties = schema.get('properties', {})
-            return properties
+        schema = model_cls.model_json_schema()
+        properties = schema.get('properties', {})
+        return properties
 
     fields_statement = {
         "judger": get_field_statement(JudgerState),
@@ -680,16 +693,30 @@ def get_state_config_schema():
     }
 
     return fields_statement
+
+
+def get_missing_fields(required_fields, state: dict):
+    missing_fields = {}
+    for key in required_fields:
+        for field in required_fields[key]:
+            if key == 'default':
+                if field not in state or not state.get(field):
+                    missing_fields.setdefault(key, []).append(field)
+            else:
+                if field not in state.get(key, {}) or not state.get(key, {}).get(field):
+                    missing_fields.setdefault(key, []).append(field)
+    return missing_fields
 # ==========================================
 # 3. 主 State 定义
 # ==========================================
 
+
 class LoopAIState(MessagesState):
     # === Global Attributes (全局属性) ===
     task_id: str
-    mined_data: str 
+    mined_data: str
     output_dir: str  # 全局输出目录
-    
+
     # === Obtainer Module (新增的模块化部分) ===
     # 使用 merge_dict 处理更新
     # 这里的 Dict[str, Any] 实际上就是 ObtainerState 转换后的字典
@@ -700,44 +727,44 @@ class LoopAIState(MessagesState):
 
     # === Judger (保持原样) ===
     judger: Annotated[Dict[str, Any], merge_dict]
-    # eval_model_path: str 
-    # eval_base_url: str 
-    # eval_api_key: str 
+    # eval_model_path: str
+    # eval_base_url: str
+    # eval_api_key: str
     # eval_temperature: float = 0
     # eval_top_p: float = 0.95
-    # eval_test_case_path: str 
-    # eval_problem_path: str 
-    # eval_result_path: str 
-    # eval_batch_size: int = 20 
+    # eval_test_case_path: str
+    # eval_problem_path: str
+    # eval_result_path: str
+    # eval_batch_size: int = 20
 
     # === Analyzer (保持原样) ===
     analyzer: Annotated[Dict[str, Any], merge_dict]
     # analyze_task_type: str = 'code'
-    # analyze_batch_size: int = 20 
-    # analyze_model_path: str 
-    # analyze_base_url: str 
-    # analyze_api_key: str 
+    # analyze_batch_size: int = 20
+    # analyze_model_path: str
+    # analyze_base_url: str
+    # analyze_api_key: str
     # analyze_temperature: float = 0
     # analyze_top_p: float = 0.95
-    # output_brief: bool 
-    # analyze_output_result_path: str 
-    # analyze_output_summary_path: str 
-    # analyze_sampling_top_k: int = 5 
-    # analyze_output_report_json_path: str 
-    # analyze_output_report_text_path: str 
-    # output_suggestion: bool 
-    # analyze_output_suggestion_path: str 
-    
+    # output_brief: bool
+    # analyze_output_result_path: str
+    # analyze_output_summary_path: str
+    # analyze_sampling_top_k: int = 5
+    # analyze_output_report_json_path: str
+    # analyze_output_report_text_path: str
+    # output_suggestion: bool
+    # analyze_output_suggestion_path: str
+
     # === Trainer (保持原样) ===
     trainer: Annotated[Dict[str, Any], merge_dict]
-    # train_dataset_path: str 
-    # train_task_description: str 
-    # train_config_template_path: str 
-    # train_config_output_path: str 
-    # train_output_dir: str 
-    # train_model_name: str 
-    # train_use_swanlab: bool = True 
-    # train_swanlab_project: str 
+    # train_dataset_path: str
+    # train_task_description: str
+    # train_config_template_path: str
+    # train_config_output_path: str
+    # train_output_dir: str
+    # train_model_name: str
+    # train_use_swanlab: bool = True
+    # train_swanlab_project: str
     # data_check_passed: bool = False
     # data_check_result: dict = {}
     # data_check_report_path: str = ""
@@ -757,13 +784,14 @@ class LoopAIState(MessagesState):
     # update_model_path: str
 
     # === Graph Control (图控制属性) ===
-    current: str 
-    next_to: Annotated[str, replace_value] 
-    
+    current: str
+    next_to: Annotated[str, replace_value]
+
     # automated_query 既是全局控制信号，也可能被 obtainer 生成
-    automated_query: Annotated[str, replace_value] 
-    
-    exception: Annotated[str, replace_value] 
+    automated_query: Annotated[str, replace_value]
+
+    exception: Annotated[str, replace_value]
+
 
 class RuntimeContext(TypedDict):
     exception_navigate: str

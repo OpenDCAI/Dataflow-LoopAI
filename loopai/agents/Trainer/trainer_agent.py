@@ -17,7 +17,7 @@ from langgraph.runtime import Runtime
 from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState
-from loopai.schema.states import RuntimeContext
+from loopai.schema.states import RuntimeContext, get_missing_fields
 from loopai.schema.events import StreamEvent
 from loopai.agents import BaseAgent
 from .nodes import data_check_node, config_generation_node, training_execution_node
@@ -378,15 +378,7 @@ class TrainerAgent(BaseAgent):
                     'train_input_model_name'
                 ]
             }
-            missing_fields = {}
-            for key in required_fields:
-                for field in required_fields[key]:
-                    if key == 'default':
-                        if field not in state:
-                            missing_fields.setdefault(key, []).append(field)
-                    else:
-                        if field not in state.get(key, {}):
-                            missing_fields.setdefault(key, []).append(field)
+            missing_fields = get_missing_fields(required_fields, state)
                     
             if missing_fields:
                 # 进度：发现缺失字段
