@@ -5,13 +5,52 @@
 WebCrawler Agent 的执行流程包含四个主要节点：
 
 1. **start_node**: 初始化配置并验证必需参数
-2. **crawl_node**: 执行网页爬取任务
-3. **webcrawler_dataset_node**: 从爬取内容中提取并生成训练数据集（SFT/PT 格式）
-4. **end_node**: 生成摘要并返回结果
+2. **crawl_node**: 执行网页爬取任务，提取网页内容和代码块
+3. **webcrawler_dataset_node**: 从爬取内容中生成训练数据集（SFT/PT 格式），并对生成了SFT的网页生成摘要和相关性评分
+4. **end_node**: 返回结果
 
 ```
 start_node → crawl_node → webcrawler_dataset_node → end_node
 ```
+
+**处理逻辑**：
+- `crawl_node` 阶段：爬取网页并提取内容，不生成摘要
+- `webcrawler_dataset_node` 阶段：
+  1. 直接从网页 Markdown 内容生成 SFT/PT 数据集
+  2. 对成功生成了 SFT 记录的网页，生成摘要和相关性评分（0-10分）
+
+## 代码结构
+
+WebCrawler Agent 的代码组织如下：
+
+```
+loopai/agents/WebCrawler/
+├── nodes/
+│   ├── start_node.py              # 初始化节点
+│   ├── crawl_node.py              # 爬取节点
+│   ├── webcrawler_dataset_node.py # 数据集生成节点（工作流编排）
+│   └── end_node.py                # 结束节点
+└── utils/
+    ├── crawl_orchestrator.py      # 爬取流程编排器
+    ├── content_analyzer.py        # 内容分析器
+    ├── dataset_generator.py        # 数据集生成工具（SFT/PT生成、摘要生成）
+    ├── data_structures.py         # 数据结构定义
+    └── log_manager.py              # 日志管理器
+```
+
+**模块说明**：
+- **nodes/**: 包含 LangGraph 节点实现，负责工作流编排和状态管理
+- **utils/**: 包含可复用的工具函数和类
+  - `dataset_generator.py`: 提供数据集生成的核心功能（SFT/PT 记录生成、网页摘要生成等）
+  - `crawl_orchestrator.py`: 管理爬取流程和并发控制
+  - `content_analyzer.py`: 分析网页内容并提取代码块
+  - `data_structures.py`: 定义数据结构（如 `CrawledContent`）
+  - `log_manager.py`: 统一日志管理
+
+**设计原则**：
+- 节点文件专注于工作流编排和状态管理
+- 业务逻辑封装在 `utils` 模块中，便于复用和测试
+- 数据集生成相关功能集中在 `dataset_generator.py` 中
 
 ## 依赖的 State
 
@@ -101,6 +140,9 @@ WebCrawler Agent 执行完成后，会在 State 中添加以下字段：
 - `webcrawler_dataset_pt_count` (int): 生成的 PT 格式记录数量
 - `webcrawler_dataset_sft_path` (str): SFT 格式 JSONL 文件保存路径
 - `webcrawler_dataset_pt_path` (str): PT 格式 JSONL 文件保存路径
+- `webcrawler_dataset_sft_mapped_path` (str): 映射后的 SFT 数据集文件路径（通过 Obtainer.mapping）
+- `webcrawler_dataset_pt_mapped_path` (str): 映射后的 PT 数据集文件路径（通过 Obtainer.mapping）
+- `webcrawler_dataset_mapping_results` (Dict): 数据集映射结果详情
 
 ### 消息更新
 - `webcrawler_messages` (List[Message]): 在消息列表末尾添加一个 `AIMessage`，包含任务执行摘要
@@ -194,6 +236,10 @@ if 'webcrawler_dataset_summary' in result:
         print(f"SFT 文件路径: {result['webcrawler_dataset_sft_path']}")
     if result.get('webcrawler_dataset_pt_path'):
         print(f"PT 文件路径: {result['webcrawler_dataset_pt_path']}")
+    if result.get('webcrawler_dataset_sft_mapped_path'):
+        print(f"映射后的 SFT 文件路径: {result['webcrawler_dataset_sft_mapped_path']}")
+    if result.get('webcrawler_dataset_pt_mapped_path'):
+        print(f"映射后的 PT 文件路径: {result['webcrawler_dataset_pt_mapped_path']}")
 ```
 
 ### 在 Starter Agent 中使用
@@ -232,28 +278,26 @@ builder.add_node("webcrawler_node", webcrawler_node)
         {
             "url": "https://example.com/page1",
             "title": "页面标题",
-            "content": "页面内容...",
-            "ai_summary": "AI 生成的摘要",
+            "content": "页面内容（Markdown格式）...",
+            "code_blocks": [
+                {
+                    "language": "python",
+                    "code": "代码内容...",
+                    "length": 100
+                }
+            ],
+            "ai_summary": null,  # 爬取阶段不生成摘要，将在数据集生成阶段为生成了SFT的网页生成
             "metadata": {
                 "extraction_method": "playwright",
-                "content_length": 5000
+                "content_length": 5000,
+                "code_blocks_count": 3
             }
         },
         ...
     ],
     "overall_summary": {
-        "overview": "整体概述",
-        "key_findings": ["发现1", "发现2", ...],
-        "sources": [
-            {
-                "title": "来源标题",
-                "url": "来源URL",
-                "summary": "简短总结",
-                "relevance_score": 8
-            },
-            ...
-        ],
-        "recommendations": ["建议1", "建议2", ...]
+        "message": "摘要生成已移至数据集生成阶段",
+        "total_pages": 50
     },
     "statistics": {
         "pages_analyzed": 50,
@@ -289,10 +333,17 @@ builder.add_node("webcrawler_node", webcrawler_node)
   - 适用于没有代码块或 SFT 生成失败的网页内容
   - 结构：`{"text": "...", "meta": {...}}`
 
+- `webpage_summaries_{timestamp}.jsonl`: 网页摘要和相关性评分文件（新增）
+  - 格式：包含生成了 SFT 记录的网页摘要和相关性评分
+  - 每条记录包含：`{"url": "...", "title": "...", "summary": "...", "relevance_score": 8}`
+  - 相关性评分范围：0-10 分，表示与用户查询的相关程度
+
 **数据集生成逻辑**：
-1. 如果网页包含代码块，优先尝试生成 SFT 格式（question-code pairs）
-2. 如果 SFT 生成失败或网页没有代码块，则生成 PT 格式（markdown 文本内容）
-3. 所有记录都会根据 `webcrawler_min_relevance_score` 进行相关性过滤
+1. **直接生成数据**：从网页 Markdown 内容直接生成 SFT/PT 数据集
+   - 如果网页包含代码块，优先尝试生成 SFT 格式（question-code pairs）
+   - 如果 SFT 生成失败或网页没有代码块，则生成 PT 格式（markdown 文本内容）
+2. **生成摘要和评分**：对成功生成了 SFT 记录的网页，生成摘要和相关性评分（0-10分）
+3. **相关性过滤**：所有记录都会根据 `webcrawler_min_relevance_score` 进行相关性过滤
 
 ### 数据集格式说明
 
@@ -347,3 +398,19 @@ builder.add_node("webcrawler_node", webcrawler_node)
   "relevance_score": 0.75
 }
 ```
+
+#### 网页摘要格式示例
+
+```json
+{
+  "url": "https://example.com/page1",
+  "title": "Python异步编程指南",
+  "summary": "该网页详细介绍了Python异步编程的核心概念和实践方法，包括asyncio库的使用、协程的创建和管理、以及异步HTTP请求的实现。内容涵盖了从基础到高级的完整教程，适合不同水平的开发者学习。",
+  "relevance_score": 8
+}
+```
+
+**注意**：
+- 只有成功生成了 SFT 记录的网页才会出现在摘要文件中
+- `relevance_score` 范围是 0-10，表示与用户查询的相关程度
+- 摘要文件可以帮助识别哪些网页贡献了高质量的 SFT 训练数据

@@ -43,8 +43,8 @@ MODEL_CONFIG = {
     'webcrawler_temperature': 0.7,
     
     # === 爬取策略 ===
-    'webcrawler_num_queries': int(os.getenv('WEBCRAWLER_NUM_QUERIES', '3')),  
-    'webcrawler_max_pages': int(os.getenv('WEBCRAWLER_MAX_PAGES', '50')), 
+    'webcrawler_num_queries': int(os.getenv('WEBCRAWLER_NUM_QUERIES', '10')),  
+    'webcrawler_max_pages': int(os.getenv('WEBCRAWLER_MAX_PAGES', '5')), 
     'webcrawler_crawl_depth': int(os.getenv('WEBCRAWLER_DEPTH', '2')),  # 深度为2
     'webcrawler_max_links_per_page': int(os.getenv('WEBCRAWLER_MAX_LINKS', '10')),  
     'webcrawler_concurrent_pages': int(os.getenv('WEBCRAWLER_CONCURRENT', '3')),  
@@ -82,34 +82,27 @@ MODEL_CONFIG = {
 output_dir = os.getenv('OUTPUT_DIR', str(Path(__file__).parent.parent.parent / 'output' / 'webcrawler_dataset_test'))
 os.makedirs(output_dir, exist_ok=True)
 
-# 简化的测试查询 - 专注于代码示例
-test_query = os.getenv('TEST_QUERY', """
-**任务背景**代码自动评测任务测试了text2sql领域的BIg Bench for LaRge-scale Database Grounded Text-to-SQL数据集，主要针对代码的语法和结构进行评估。评测结果显示，整体通过率较低，反映出代码在SQL语法和模式定义方面存在较多问题。此外，所有样本的代码复杂度和长度均较高，这进一步增加了评测的难度。
+# 从 report.txt 读取任务描述
+report_file = Path(__file__).parent / 'report.txt'
+report_content = ""
+if report_file.exists():
+    with open(report_file, 'r', encoding='utf-8') as f:
+        report_content = f.read().strip()
+else:
+    print(f"[警告] 未找到 report.txt 文件: {report_file}")
 
-**评测结果**
-样本正确率：127/400（31.75%）
-Pass@k(任务口径)： Pass@1=80.00%, Pass@10=80.00%
-主要错因(stage)分布：
-  - sql_syntax: 109
-  - other: 61
-  - sql_schema: 55
-  - sql_perf: 41
-  - sql_type: 7
-标签 Top： SQL:90, other:61, VariableError:44, SyntaxError:36, ExecutionFailure:33, SQL错误:24, variable:24, error:23
-SQL 语句长度分布（按字符数粗分）： >60:400
-SQL 词元数量分布（粗粒度）： >8:400
-I/O断言解析成功：0/400
-
-**评测总结**
-1. 增加样本覆盖：确保数据集中包含各种类型的SQL语句，特别是那些涉及复杂查询和性能优化的案例，以提高模型的泛化能力。
-2. 设计边界/异常用例：增加边界条件和异常情况的样本，如极端数据量、复杂嵌套查询等，以测试模型在极端情况下的表现。
-3. 优化题型分布：调整数据集中不同题型的比例，确保SQL语法和性能优化相关的题目比例适当增加，以反映实际应用场景的需求。
-4. 改进断言设计：设计更严格的断言来验证SQL语句的正确性和性能，确保模型生成的SQL语句不仅语法正确，而且执行效率高。
-5. 引入难度分层：根据SQL语句的复杂度和性能要求，对数据集进行难度分层，逐步提升模型处理复杂SQL语句的能力。
-
+# 构建测试查询：report 内容 + 通用任务目标
+task_objective = """
 **任务目标**
-你需要基于以上背景及评测结果，自动从互联网检索并提取能够提升模型SQL生成能力的高质量示例代码、评测样例、最佳实践、以及与SQL语法、模式定义、异常处理和性能优化相关的可执行代码片段。你的核心任务是：找到对提升SQL代码生成与评测通过率有直接帮助的代码网页。
-""")
+你需要基于以上报告里的背景及评测结果，自动从互联网检索能够提升模型性能的高质量训练数据和相关信息。请根据报告中提到的错误类型、改进建议等信息，智能识别需要补充的数据类型和特征，然后检索并提取相关的示例、最佳实践、教程文档、问题解答等高质量内容。你的核心任务是：找到对提升模型在评测中的表现有直接帮助的数据源和内容网页。
+"""
+
+test_query = os.getenv('TEST_QUERY', None)
+if test_query is None:
+    if report_content:
+        test_query = report_content + "\n\n" + task_objective
+    else:
+        test_query = task_objective
 
 print("=" * 80)
 print("WebCrawler Dataset Node - 数据集转换测试")
