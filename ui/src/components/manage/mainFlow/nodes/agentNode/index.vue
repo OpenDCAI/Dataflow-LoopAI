@@ -138,8 +138,9 @@ const defaultData = {
     label: 'Operator',
     status: 'Operator',
     nodeInfo: '',
-    stateKey: 'trainer',
-    graphClsPrefix: 'TrainerAgent',
+    stateKey: 'trainer', // 用于匹配loopAI中的Sub-Agent的State
+    graphClsPrefix: 'TrainerAgent', // 用于匹配custom_info的key
+    include_nodes: [], // 用于侦测当前运行节点
     background: 'linear-gradient(130deg, rgba(161, 145, 206, 0.8), rgba(252, 252, 252, 0.8))',
     titleColor: '',
     statusColor: 'rgba(90, 90, 90, 1)',
@@ -224,7 +225,9 @@ const customInfoFiltered = computed(() => {
 
 const runningMe = computed(() => {
     try {
-        return loopAI.taskStatus.state.current.startsWith(thisData.value.graphClsPrefix)
+        return loopAI.taskStatus.running_tasks.some((task) => {
+            return thisData.value.include_nodes.includes(task)
+        })
     } catch (e) {
         return false
     }

@@ -1,5 +1,5 @@
 <template>
-    <div class="editor-margin-wrapper">
+    <div class="editor-margin-wrapper" :class="[{ 'running-shadow': runningLLM }]">
         <div class="bg-wrapper">
             <p class="top-title">{{ local('Chat with LoopAI') }}</p>
             <power-editor
@@ -88,6 +88,13 @@ export default {
         },
         holdon() {
             return !this.taskStatus.running || this.taskStatus.waiting_llm || !this.lock.submit
+        },
+        runningLLM() {
+            try {
+                return this.taskStatus.running_tasks.includes('llm_node')
+            } catch (e) {
+                return false
+            }
         }
     },
     mounted() {
@@ -150,6 +157,56 @@ export default {
     align-items: flex-start;
     justify-content: space-between;
     box-sizing: border-box;
+
+    &.running-shadow {
+        &:before,
+        &:after {
+            content: '';
+            position: absolute;
+            top: 0px;
+            left: 0px;
+            width: calc(100%);
+            height: calc(100%);
+            background: linear-gradient(
+                45deg,
+                rgba(226, 121, 162, 1),
+                rgba(146, 156, 218, 1),
+                rgba(129, 208, 246, 1),
+                rgba(239, 192, 48, 1),
+                rgba(246, 100, 100, 1),
+                rgba(226, 121, 162, 1),
+                rgba(146, 156, 218, 1),
+                rgba(129, 208, 246, 1),
+                rgba(239, 192, 48, 1),
+                rgba(246, 100, 100, 1)
+            );
+            background-size: 400%;
+            border-radius: 20px;
+            z-index: -1;
+            animation: shadow 20s linear infinite;
+        }
+
+        &:after {
+            top: -8px;
+            left: -8px;
+            width: calc(100% + 16px);
+            height: calc(100% + 16px);
+            filter: blur(24px);
+            opacity: 0.9;
+        }
+    }
+
+    @keyframes shadow {
+        0% {
+            background-position: 0 0;
+        }
+        50.01% {
+            background-position: 200% 0;
+        }
+        100% {
+            background-position: 0 0;
+        }
+    }
 
     .power-editor-block {
         width: 100%;
