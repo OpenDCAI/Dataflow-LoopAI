@@ -623,14 +623,14 @@ def run_general_text_fallback_eval(state: LoopAIState):
     writer = get_stream_writer()
     if writer:
        writer(StreamEvent(
-        current=state.get("current") or "JudgerAgent",
+        current=state.get("current") or "AnalyzerAgent",
         progress=1.0,
         message="通用文本质量兜底评估完成（BLEU + Lexical）",
         data=result
        ).json())
 
-
-    state["general_text_eval"] = result
+    state.setdefault("analyzer", {})
+    state["analyzer"]["general_text_eval"] = result
     return state
 def eval_model_node(state: LoopAIState):
     """
@@ -671,7 +671,7 @@ def eval_model_node(state: LoopAIState):
     writer = get_stream_writer()
     if writer:
        writer(StreamEvent(
-        current=state.get("current") or "JudgerAgent",
+        current=state.get("current") or "AnalyzerAgent",
         progress=0.0,
         message="常规任务评测样本开始",
         data={"task_type": task_type}
@@ -680,7 +680,7 @@ def eval_model_node(state: LoopAIState):
     judge = LLMJudge(task=task_type)
 
     # 读取评测结果（JSONL）
-    eval_cfg = state.get("eval") or {}
+    eval_cfg = state.get("judger") or {}
     eval_result_path = eval_cfg.get("eval_result_path")
     if not eval_result_path:
         raise ValueError("eval.eval_result_path not provided")
@@ -695,7 +695,7 @@ def eval_model_node(state: LoopAIState):
     # 初始化 LLM
     batch_size = int(cfg.get("analyze_batch_size", 20))
     llm = init_model(state)
-    total_batches = (len(failed_results) + batch_size - 1) 
+    total_batches = (len(failed_results) + batch_size - 1) // batch_size
 
     # 批量处理
     for i in tqdm(range(0, len(failed_results), batch_size)):
@@ -703,7 +703,7 @@ def eval_model_node(state: LoopAIState):
         progress = processed / max(total_failed, 1)
         if writer:
            writer(StreamEvent(
-        current=state.get("current") or "JudgerAgent",
+        current=state.get("current") or "AnalyzerAgent",
         progress=progress,
         message="常规任务样本合成中",
         data={
@@ -724,7 +724,7 @@ def eval_model_node(state: LoopAIState):
         overall_start = time.time()
         if writer:
            writer(StreamEvent(
-        current=state.get("current") or "JudgerAgent",
+        current=state.get("current") or "AnalyzerAgent",
         progress=None,
         message="正在调用分析模型",
         data={"batch_size": len(batch)}
@@ -751,10 +751,10 @@ def eval_model_node(state: LoopAIState):
 
     # ===== quick_brief：仅对失败样本生成短评（失败<=20全量；失败>20抽样20条覆盖错误类型）=====
     if cfg.get("quick_brief", False) and len(failed_results) > 0:
-        limit = int(state.get("quick_brief_limit", 20))
+        limit = int(cfg.get("quick_brief_limit", 20))
         if writer:
            writer(StreamEvent(
-        current=state.get("current") or "JudgerAgent",
+        current=state.get("current") or "AnalyzerAgent",
         progress=0.70,
         message="开始生成失败样本中文短评",
         data={"limit": limit, "failed_samples": len(failed_results)}
@@ -831,19 +831,20 @@ def eval_model_node(state: LoopAIState):
 
     logger.info(f" 判因完成：共 {len(failed_results)} 条")
     ts = time.strftime("%Y%m%d_%H%M%S")
-    out_dir = Path(state['output_dir'])
+    out_dir = Path(cfg.get("output_dir") or state.get("output_dir"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    out_jsonl_path = Path(state['output_dir']) / f"oj_records_enriched_{ts}.jsonl"
+    out_jsonl_path = out_dir / f"oj_records_enriched_{ts}.jsonl"
     with open(out_jsonl_path, "w", encoding="utf-8") as f:
         for r in failed_results:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    state['analyze_output_result_path'] = str(out_jsonl_path.resolve())
+    state.setdefault("analyzer", {})
+    state["analyzer"]["analyze_output_result_path"] = str(out_jsonl_path.resolve())
     logger.info(f" 已写入增强版 OJ：{out_jsonl_path}")
     logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if cfg.get('quick_brief', False) else ""))
     if writer:
        writer(StreamEvent(
-        current=state.get("current") or "JudgerAgent",
+        current=state.get("current") or "AnalyzerAgent",
         progress=0.85,
         message="已写入增强评测结果",
         data={"output_path": str(out_jsonl_path)}
@@ -857,11 +858,11 @@ def eval_model_node(state: LoopAIState):
         sdata["results_file"] = str(out_jsonl_path.resolve())
         with open(summary_json_path, "w", encoding="utf-8") as f:
             json.dump(sdata, f, ensure_ascii=False, indent=2)
-        state['analyze_output_summary_path'] = summary_json_path
+        state["analyzer"]["analyze_output_summary_path"] = summary_json_path
         logger.info(f" 已在 {state['output_dir']} 生成 summary，路径：{summary_json_path} / {summary_txt_path}")
         if writer:
            writer(StreamEvent(
-        current=state.get("current") or "JudgerAgent",
+        current=state.get("current") or "AnalyzerAgent",
         progress=0.90,
         message="已生成评测摘要",
         data={ 
@@ -876,7 +877,7 @@ def eval_model_node(state: LoopAIState):
         logger.warning(f"[WARN] 生成 summary 时发生错误：{e}")
     if writer:
        writer(StreamEvent(
-        current=state.get("current") or "JudgerAgent",
+        current=state.get("current") or "AnalyzerAgent",
         progress=1.0,
         message="评测流程完成",
         data=None

@@ -161,12 +161,12 @@ def analyze_result_node(state: LoopAIState):
         "开始分析评测结果",
         progress=0.0,
         data={
-            "summary_path": state.get('analyzer', {}).get("analyze_output_summary_path"),
-            "result_path": state.get('analyzer', {}).get("analyze_output_result_path"),
+            "summary_path": _analyzer(state).get("analyze_output_summary_path"),
+            "result_path": _analyzer(state).get("analyze_output_result_path"),
         },
     )
 
-    summary_path = state.get('analyzer', {}).get("analyze_output_summary_path")
+    summary_path = _analyzer(state).get("analyze_output_summary_path")
     with open(summary_path, "r", encoding="utf-8") as f:
         summary = json.load(f)
     _emit(
@@ -181,7 +181,7 @@ def analyze_result_node(state: LoopAIState):
     )
 
 
-    result_path = state.get('analyzer', {}).get("analyze_output_result_path")
+    result_path = _analyzer(state).get("analyze_output_result_path")
     with open(result_path, "r", encoding="utf-8") as f:
         results = [json.loads(line) for line in f if line.strip()]
     _emit(
@@ -236,38 +236,41 @@ def analyze_result_node(state: LoopAIState):
 
     out = {
         "meta": {
-            "summary_file": str(Path(state.get('analyzer', {}).get("analyze_output_summary_path")).resolve()),
-            "oj_file": str(Path(state.get('analyzer', {}).get("analyze_output_result_path")).resolve()) if state.get('analyzer', {}).get("analyze_output_result_path") else None
+            "summary_file": str(Path(summary_path).resolve()),
+            "oj_file": str(Path(result_path).resolve()) if result_path else None
         },
         "rule_brief": rb,
         "llm_review": response
     }
 
     ts = time.strftime("%Y%m%d_%H%M%S")
-    state['analyze_output_report_json_path'] = os.path.join(state['output_dir'], f"report_{ts}.json")
-    state['analyze_output_report_text_path'] = os.path.join(state['output_dir'], f"report_{ts}.txt")
+    analyzer = _analyzer(state)
+    analyzer["analyze_output_report_json_path"] = os.path.join(state["output_dir"], f"report_{ts}.json")
+    analyzer["analyze_output_report_text_path"] = os.path.join(state["output_dir"], f"report_{ts}.txt")
     _emit(
-        "写入分析报告",
-        progress=0.92,
-        data={
-    "report_json": state.get('analyzer', {}).get("analyze_output_report_json_path"),
-    "report_txt": state.get('analyzer', {}).get("analyze_output_report_text_path"),
-         },
+    "写入分析报告",
+    progress=0.92,
+    data={
+        "report_json": analyzer["analyze_output_report_json_path"],
+        "report_txt": analyzer["analyze_output_report_text_path"],
+    },
     )
 
 
 
-    Path(state.get('analyzer', {}).get("analyze_output_report_json_path")).write_text(json.dumps(out, ensure_ascii=False, indent=2),
-                                                              encoding="utf-8")
-    Path(state['analyze_output_report_text_path']).write_text(response, encoding="utf-8")
+    Path(analyzer["analyze_output_report_json_path"]).write_text(
+    json.dumps(out, ensure_ascii=False, indent=2),
+    encoding="utf-8"
+    )
+    Path(analyzer["analyze_output_report_text_path"]).write_text(response, encoding="utf-8")
     _emit(
-        "分析流程完成",
-        progress=1.0,
-        data={
-            "report_json": state.get('analyzer', {}).get("analyze_output_report_json_path"),
-            "report_txt": state.get('analyzer', {}).get("analyze_output_report_text_path"),
-            "dominant_failure": (rb.get("dominant_failure") if isinstance(rb, dict) else None),
-        },
+    "分析流程完成",
+    progress=1.0,
+    data={
+        "report_json": analyzer["analyze_output_report_json_path"],
+        "report_txt": analyzer["analyze_output_report_text_path"],
+        "dominant_failure": (rb.get("dominant_failure") if isinstance(rb, dict) else None),
+    },
     )
 
     logger.info(f"已写入：{state.get('analyzer', {}).get('analyze_output_report_json_path')}\n已写入：{state.get('analyzer', {}).get('analyze_output_report_text_path')}")

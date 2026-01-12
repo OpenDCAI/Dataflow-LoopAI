@@ -380,7 +380,7 @@ def draw_conclusion_node(state: LoopAIState):
     _emit("开始生成最终报告", progress=0.0)
 
     outdir = state['output_dir']
-    summary_path = state['analyze_output_summary_path']
+    summary_path = _analyzer(state).get('analyze_output_summary_path')
 
     # ===== 读取 summary =====
     _emit("读取评测摘要", data={"summary_path": summary_path})
