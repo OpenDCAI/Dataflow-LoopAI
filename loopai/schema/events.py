@@ -82,9 +82,20 @@ class AgentEvent:
         """
         if not self.custom_info:
             self.custom_info = {}
-        if key not in self.custom_info:
-            self.custom_info[key] = []
-        self.custom_info[key].append(info)
+        current_key = info.get('current', 'unknown_key')
+        if current_key not in self.custom_info:
+            self.custom_info[current_key] = info
+        else:
+            skip_key = ['data']
+            for k in info:
+                if k not in skip_key:
+                    self.custom_info[current_key][k] = info[k]
+                else:
+                    if not self.custom_info[current_key][k]:
+                        self.custom_info[current_key][k] = info[k]
+                    else:
+                        for k_key in info[k]:
+                            self.custom_info[current_key][k][k_key] = info[k][k_key]
         self.updated_custom_info = {key: info}
 
     def text(self, only_updated=False):
@@ -103,11 +114,15 @@ class AgentEvent:
             if not self.node_path:
                 return ('', 'yellow')
             return (f"🧭 Node Path: {'->'.join(self.node_path)}", "yellow")
-        
+
         def print_custom_info(obj: dict):
+            msgs = []
             for key in obj:
-                if obj[key]['message']:
-                    return (f"🔧 {key}: {obj[key]['message']}", "purple")
+                if 'message' in obj[key]:
+                    msgs.append(f"🔧 {key}: {obj[key]['message']}")
+                if 'progress' in obj[key] and obj[key]['progress'] is not None:
+                    msgs.append(f"🔧 {key}: {obj[key]['progress'] * 100}")
+            return ('\n'.join(msgs), "purple")
 
         def print_title(title: str):
             return (f"{10*'='}{title}={10*'='}", "magenta")

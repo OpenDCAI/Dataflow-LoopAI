@@ -20,16 +20,19 @@ config = {"configurable": {"thread_id": "1"}}
 # %%
 graph = sg()
 
-graph.invoke({
-    'eval_model_path': '/home/lpc/models/glm-4-9b-chat/',
+graph.invoke({"judger":{
+    'eval_model_path': '/root/brjverl/models/Qwen2.5-Coder-7B-Instruct/',
     'eval_base_url': 'http://127.0.0.1:8911/v1',
-    'eval_api_key': api_key,
-    'eval_temperature': 0,
+    'eval_api_key': "EMPTY",
+    'eval_temperature': 0.7,
     'eval_top_p': 0.95,
-    'eval_test_case_path': '/home/lpc/repos/Dataflow-LoopAI/output/test.json',
-    'eval_problem_path': '/home/lpc/repos/Dataflow-LoopAI/data/human-eval-v2-20210705.jsonl',
-    'eval_result_path': '/home/lpc/repos/Dataflow-LoopAI/output/result.json',
+    'eval_task_type': 'code',
+    'eval_test_case_path': '/root/brjverl/dataflow/examples/scripts/sample/test_format.jsonl',
+    'eval_problem_path': '/root/brjverl/dataflow/examples/scripts/data/test_no_format.jsonl',
+    'eval_problem_format_path': '/root/brjverl/dataflow/examples/scripts/data/test_format.jsonl',
+    'eval_format_type': 'human-eval',
+    'eval_result_path': '/root/brjverl/dataflow/examples/scripts/result/test_format.jsonl',
     'eval_batch_size': 10,
-}, config=config)
+}}, config=config)
 
 # %%

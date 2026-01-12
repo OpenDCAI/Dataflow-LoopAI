@@ -322,4 +322,109 @@ class RAGManager:
             "vectorstore_initialized": self.vectorstore is not None,
             "persist_directory": self.persist_directory,
         }
+    
+    def clear_collection(self):
+        """Clear all documents from the collection without deleting the database"""
+        try:
+            if self.vectorstore is None:
+                logger.warning("[RAG] Cannot clear collection: vectorstore is not initialized")
+                return
+            
+            logger.info("[RAG] Clearing all documents from collection...")
+            # Get all document IDs from the collection
+            try:
+                # Get all documents to retrieve their IDs
+                all_docs = self.vectorstore.get()
+                if all_docs and 'ids' in all_docs and len(all_docs['ids']) > 0:
+                    # Delete all documents by their IDs
+                    self.vectorstore.delete(ids=all_docs['ids'])
+                    logger.info(f"[RAG] Deleted {len(all_docs['ids'])} documents from collection")
+                else:
+                    logger.info("[RAG] Collection is already empty")
+                
+                # Reset counters after successful deletion
+                self.document_count = 0
+                self._seen_hashes.clear()
+                self._documents_since_persist = 0
+                logger.info("[RAG] Collection cleared successfully")
+                
+            except Exception as e:
+                logger.warning(f"[RAG] Error deleting documents, trying to delete and recreate collection: {e}")
+                # Fallback: try to delete and recreate the collection
+                try:
+                    if hasattr(self.vectorstore, '_client') and self.vectorstore._client is not None:
+                        # Delete the collection
+                        self.vectorstore._client.delete_collection(name=self.collection_name)
+                        logger.info(f"[RAG] Deleted collection: {self.collection_name}")
+                    
+                    # Recreate the vectorstore after deleting collection
+                    self.vectorstore = Chroma(
+                        collection_name=self.collection_name,
+                        embedding_function=self.embeddings,
+                        persist_directory=self.persist_directory
+                    )
+                    # Reset counters
+                    self.document_count = 0
+                    self._seen_hashes.clear()
+                    self._documents_since_persist = 0
+                    logger.info("[RAG] Collection recreated and cleared successfully")
+                except Exception as e2:
+                    logger.error(f"[RAG] Error deleting and recreating collection: {e2}")
+                    raise
+        except Exception as e:
+            logger.error(f"[RAG] Error clearing collection: {e}")
+            raise
+    
+    def close(self):
+        """Close RAG Manager and release resources"""
+        try:
+            if self.vectorstore is not None:
+                # Force persist before closing
+                try:
+                    # Use synchronous persist since we're in close()
+                    self.vectorstore.persist()
+                except Exception as e:
+                    logger.warning(f"[RAG] Error during final persist: {e}")
+                
+                # Try to close the Chroma client if it has a close method
+                try:
+                    if hasattr(self.vectorstore, '_client') and self.vectorstore._client is not None:
+                        if hasattr(self.vectorstore._client, 'close'):
+                            self.vectorstore._client.close()
+                        elif hasattr(self.vectorstore._client, '__exit__'):
+                            # If it's a context manager, try to exit
+                            self.vectorstore._client.__exit__(None, None, None)
+                except Exception as e:
+                    logger.debug(f"[RAG] Error closing Chroma client: {e}")
+                
+                # Clear the vectorstore reference
+                self.vectorstore = None
+                logger.info("[RAG] RAG Manager closed successfully")
+        except Exception as e:
+            logger.warning(f"[RAG] Error closing RAG Manager: {e}")
+    
+    async def aclose(self):
+        """Async close RAG Manager and release resources"""
+        try:
+            if self.vectorstore is not None:
+                # Force persist before closing
+                async with self._write_lock:
+                    await self._persist_with_retry()
+                
+                # Try to close the Chroma client if it has a close method
+                try:
+                    if hasattr(self.vectorstore, '_client') and self.vectorstore._client is not None:
+                        if hasattr(self.vectorstore._client, 'close'):
+                            await asyncio.to_thread(self.vectorstore._client.close)
+                        elif hasattr(self.vectorstore._client, '__aexit__'):
+                            # If it's an async context manager, try to exit
+                            await self.vectorstore._client.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.debug(f"[RAG] Error closing Chroma client: {e}")
+                
+                # Clear the vectorstore reference
+                self.vectorstore = None
+                logger.info("[RAG] RAG Manager closed successfully")
+        except Exception as e:
+            logger.warning(f"[RAG] Error closing RAG Manager: {e}")
 

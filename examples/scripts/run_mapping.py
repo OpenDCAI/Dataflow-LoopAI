@@ -13,7 +13,7 @@ import json
 import os
 from pathlib import Path
 
-from loopai.agents.Obtainer.mapping import MappingSubgraph
+from loopai.agents.Constructor.mapping import MappingSubgraph
 from loopai.schema.states import LoopAIState
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -76,7 +76,6 @@ initial_state = {
     'mined_data': '',
     'output_dir': output_dir,
     'configer_error': '',
-    'configer_statement': '',
     'eval_model_path': '',
     'eval_base_url': '',
     'eval_api_key': '',

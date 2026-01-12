@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from loopai.agents.Obtainer.nodes.postprocess_node import postprocess_node
+from loopai.agents.Constructor.nodes.postprocess_node import postprocess_node
 from loopai.schema.states import LoopAIState
 from langchain_core.messages import HumanMessage
 
@@ -73,7 +73,6 @@ initial_state = {
     'mined_data': '',
     'output_dir': output_dir,  # This should be the parent of downloads directory
     'configer_error': '',
-    'configer_statement': '',
     'eval_model_path': '',
     'eval_base_url': '',
     'eval_api_key': '',

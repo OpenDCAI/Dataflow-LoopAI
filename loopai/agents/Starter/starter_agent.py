@@ -13,7 +13,10 @@ from loopai.agents.Configer import ConfigerAgent
 from loopai.agents.Judger import JudgerAgent
 from loopai.agents.Analyzer import AnalyzerAgent
 from loopai.agents.Obtainer import ObtainerAgent
+from loopai.agents.Constructor import ConstructorAgent
 from loopai.agents.Trainer import TrainerAgent
+
+from loopai.agents.Configer.tools.check_config import check_config
 
 from loopai.logger import get_logger
 
@@ -74,9 +77,9 @@ class StarterAgent(BaseAgent):
         maybe_tool_message = messages[-2]
         if hasattr(maybe_tool_message, 'tool_call_id'):
             tool_res = json.loads(maybe_tool_message.content)
-            state["next_to"] = tool_res["next_to"]
+            state["next_to"] = tool_res.get("next_to", "query_node")
             last_message.content = '<cmd>根据用户指令执行: ' + \
-                tool_res["motivation"] + '</cmd>\n' + last_message.content
+                tool_res.get("motivation", "chat") + '</cmd>\n' + last_message.content
         else:
             state["next_to"] = "query_node"
         logger.info(f'Messages: {state["messages"]}')
@@ -108,6 +111,7 @@ class StarterAgent(BaseAgent):
     def init_graph(self, **kwargs):
         config_node = ConfigerAgent(model_name=self.model_name,
                                     base_url=self.base_url,
+                                    tools=[check_config],
                                     api_key=self.api_key,
                                     checkpointer=self.checkpointer,
                                     store=self.store)(**kwargs)
@@ -127,14 +131,23 @@ class StarterAgent(BaseAgent):
             checkpointer=self.checkpointer,
             store=self.store
         )(**kwargs)
+        # ConstructorAgent will use model_name, base_url, api_key from StarterAgent
+        # It processes the downloaded data from ObtainerAgent
+        constructor_node = ConstructorAgent(
+            model_name=self.model_name,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            checkpointer=self.checkpointer,
+            store=self.store
+        )(**kwargs)
         builder = StateGraph(LoopAIState, context_schema=RuntimeContext)
         builder.add_node("query_node", self.query_node)
         builder.add_node("llm_node", self.llm_node)
         builder.add_node("feedback_node", self.feedback_node)
         builder.add_node("route_node", self.route_node)
         builder.add_node("train_node", train_node)
-        # Use ObtainerAgent subgraph
-        builder.add_node("obtain_node", obtainer_node)
+        builder.add_node("obtain_node", obtainer_node)  # Use ObtainerAgent subgraph
+        builder.add_node("constructor_node", constructor_node)  # Use ConstructorAgent subgraph
         builder.add_node("evaluate_node", self.evaluate_node)
         builder.add_node("config_node", config_node)
         builder.add_node("judge_node", judge_node)
@@ -148,7 +161,8 @@ class StarterAgent(BaseAgent):
         builder.add_edge('llm_node', 'feedback_node')
         builder.add_edge('evaluate_node', 'query_node')
         builder.add_edge('train_node', 'query_node')
-        builder.add_edge('obtain_node', 'query_node')
+        builder.add_edge('obtain_node', 'constructor_node')  # Obtainer -> Constructor
+        builder.add_edge('constructor_node', 'query_node')  # Constructor -> Query
         builder.add_edge('config_node', 'query_node')
         builder.add_edge('judge_node', 'route_node')
         builder.add_edge('analyze_node', 'route_node')
@@ -189,17 +203,29 @@ class StarterAgent(BaseAgent):
         ):
             namespace_item, stream_mode, chunk_item = res
             self.agent_event.stream_mode = stream_mode
+            # Receiving messages event, update stream_message
             if stream_mode == 'messages':
                 msg_chunk = chunk_item[0]
                 meta_data = chunk_item[1]
-                if 'tags' in meta_data and self.llm_tag in meta_data['tags']:
+                # tags like ['Starter-LLM'] or ['Configer-LLM'], currently set as allowed all.
+                if 'tags' in meta_data and (self.llm_tag in meta_data['tags'] or True):
                     self.agent_event.set_stream_message(msg_chunk)
+            # Receiving custom event, update custom_info
             elif stream_mode == 'custom':
                 if len(namespace_item) > 0:
                     key = namespace_item[0]
+
+                    # if detect llm_node custom event and stream_message_state is finished, clear stream_message
+                    # you should realize that there is a delay between update event and custom event
+                    # so we need to clear the stream_message of the last turn, and you can fetch them in the llm_node.data.history
+                    if 'stream_message_state' in chunk_item.get('data', {}):
+                        stream_message_state = chunk_item.get('data', {}).get('stream_message_state', 'not_ready')
+                        if stream_message_state == 'start':
+                            self.agent_event.clear_stream_message()
                 else:
                     key = '__starter__'
                 self.agent_event.set_custom_info(key, chunk_item)
+            # Receiving updates event, update state, and clear stream_message
             elif stream_mode == 'updates':
                 if len(namespace_item) > 0:
                     continue
