@@ -360,13 +360,13 @@ class JudgerState(BaseModel):
         default=0, 
         title="评估模型温度",
         description="评估模型温度",
-        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
     eval_top_p: float = Field(
         default=0.95, 
         title="评估模型 Top P",
         description="评估模型 Top P",
-        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
     eval_test_case_path: str = Field(
         default="", 
@@ -680,6 +680,18 @@ def get_state_config_schema():
     }
 
     return fields_statement
+
+def get_missing_fields(required_fields, state: dict):
+    missing_fields = {}
+    for key in required_fields:
+        for field in required_fields[key]:
+            if key == 'default':
+                if field not in state or not state.get(field):
+                    missing_fields.setdefault(key, []).append(field)
+            else:
+                if field not in state.get(key, {}) or not state.get(key, {}).get(field):
+                    missing_fields.setdefault(key, []).append(field)
+    return missing_fields
 # ==========================================
 # 3. 主 State 定义
 # ==========================================

@@ -5,7 +5,7 @@ from langgraph.graph import StateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt, Command
 
-from loopai.schema.states import LoopAIState, RuntimeContext
+from loopai.schema.states import LoopAIState, RuntimeContext, get_missing_fields
 from loopai.agents import BaseAgent
 from .utils.oj.generate import generate_sample, generate_sample_sql
 from .utils.oj.evaluate import evaluate_sample, evaluate_sample_sql
@@ -42,7 +42,7 @@ class JudgerAgent(BaseAgent):
                 'judger':["eval_model_path", "eval_base_url", "eval_api_key", "eval_temperature",
                                "eval_top_p", "eval_test_case_path", "eval_problem_path", "eval_result_path", "eval_batch_size", "eval_task_type"]
             }
-            missing_fields = {}
+            missing_fields = get_missing_fields(required_fields, state)
 
             '''数据有效检查'''
             check_result = check_file(state)
@@ -51,14 +51,6 @@ class JudgerAgent(BaseAgent):
                 if not is_true:
                     missing_fields.setdefault("judger", []).append(key)
                     
-            for key in required_fields:
-                for field in required_fields[key]:
-                    if key == 'default':
-                        if field not in state:
-                            missing_fields.setdefault(key, []).append(field)
-                    else:
-                        if field not in state.get(key, {}):
-                            missing_fields.setdefault(key, []).append(field)
             if missing_fields:
                 print(missing_fields)
                 state['exception'] = 'ConfigerError'
