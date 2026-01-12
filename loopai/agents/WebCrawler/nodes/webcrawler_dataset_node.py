@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from langgraph.config import get_stream_writer
 
-from loopai.agents.Obtainer.mapping.script_mapping_node import script_mapping_node
+from loopai.agents.Constructor.mapping.script_mapping_node import script_mapping_node
 from loopai.agents.WebCrawler.utils.dataset_generator import (
     generate_sft_records,
     generate_pt_records,
@@ -38,6 +38,9 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
     if state.get("exception"):
         logger.error(f"Skipping due to previous exception: {state['exception']}")
         return state
+    
+    # 获取 webcrawler 配置
+    webcrawler = state.get("webcrawler", {}) or {}
     
     # Get user query from state
     user_query = ""
@@ -74,11 +77,12 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
     
     # Initialize components
     try:
-        # Get configuration from state or use defaults
-        model_name = state.get("webcrawler_model") or state.get("analyze_model_path")
-        base_url = state.get("webcrawler_deepseek_api_base") or state.get("analyze_base_url")
-        api_key = state.get("webcrawler_deepseek_api_key") or state.get("analyze_api_key")
-        temperature = state.get("webcrawler_temperature", 0.7)
+        # Get configuration from webcrawler dict, with fallback to analyzer config
+        analyzer = state.get("analyzer", {}) or {}
+        model_name = webcrawler.get("model") or analyzer.get("analyze_model_path")
+        base_url = webcrawler.get("deepseek_api_base") or analyzer.get("analyze_base_url")
+        api_key = webcrawler.get("deepseek_api_key") or analyzer.get("analyze_api_key")
+        temperature = webcrawler.get("temperature", 0.7)
         
         if not model_name or not base_url or not api_key:
             logger.error("Missing required configuration for webcrawler dataset node")
@@ -93,8 +97,8 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
         dataset_dir = os.path.join(output_dir, "webcrawler_dataset")
         os.makedirs(dataset_dir, exist_ok=True)
         
-        # Get WebCrawler output data
-        webcrawler_result = state.get("webcrawler_output_result", {})
+        # Get WebCrawler output data from webcrawler dict
+        webcrawler_result = webcrawler.get("output_result", {})
         crawled_data = webcrawler_result.get("crawled_data", [])
         
         if not crawled_data:
@@ -105,7 +109,7 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
         logger.info(f"Found {len(crawled_data)} crawled pages to process")
         
         # Run async workflow
-        debug_mode = state.get("webcrawler_debug", False)
+        debug_mode = webcrawler.get("debug", False)
         result = asyncio.run(_webcrawler_dataset_workflow(
             user_query=user_query,
             model_name=model_name,
@@ -115,35 +119,35 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
             prompt_loader=prompt_loader,
             output_dir=dataset_dir,
             crawled_data=crawled_data,
-            max_records_per_page=state.get("webcrawler_max_records_per_page", 100),
-            min_relevance_score=state.get("webcrawler_min_relevance_score", 0.6),
-            dataset_concurrent_limit=state.get("webcrawler_dataset_concurrent_limit", 50),
-            max_content_length=state.get("webcrawler_max_content_length", 50000),
+            max_records_per_page=webcrawler.get("max_records_per_page", 100),
+            min_relevance_score=webcrawler.get("min_relevance_score", 0.6),
+            dataset_concurrent_limit=webcrawler.get("dataset_concurrent_limit", 50),
+            max_content_length=webcrawler.get("max_content_length", 50000),
             debug_mode=debug_mode,
         ))
         
-        # Update state with intermediate-format results
+        # Update state with intermediate-format results (store in webcrawler dict)
         if "exception" in result:
             state["exception"] = result["exception"]
         else:
-            state["webcrawler_dataset_summary"] = result.get("summary", "")
-            state["webcrawler_dataset_sft_count"] = result.get("sft_count", 0)
-            state["webcrawler_dataset_pt_count"] = result.get("pt_count", 0)
-            state["webcrawler_dataset_sft_path"] = result.get("sft_jsonl_path", "")
-            state["webcrawler_dataset_pt_path"] = result.get("pt_jsonl_path", "")
+            webcrawler["dataset_summary"] = result.get("summary", "")
+            webcrawler["dataset_sft_count"] = result.get("sft_count", 0)
+            webcrawler["dataset_pt_count"] = result.get("pt_count", 0)
+            webcrawler["dataset_sft_path"] = result.get("sft_jsonl_path", "")
+            webcrawler["dataset_pt_path"] = result.get("pt_jsonl_path", "")
             logger.info(
                 f"WebCrawler Dataset completed: {result.get('sft_count', 0)} SFT records, "
                 f"{result.get('pt_count', 0)} PT records generated"
             )
 
-            # === Use Obtainer mapping (script_mapping_node) to convert intermediate SFT/PT to final dataset formats ===
+            # === Use Constructor mapping (script_mapping_node) to convert intermediate SFT/PT to final dataset formats ===
             try:
                 mapping_results = {}
 
                 # SFT -> dataset (default format: jsonl_sft)
                 sft_path = result.get("sft_jsonl_path") or ""
                 if sft_path:
-                    sft_format = state.get("webcrawler_sft_mapping_format", "jsonl_sft")
+                    sft_format = webcrawler.get("sft_mapping_format", "jsonl_sft")
                     logger.info(
                         f"Running script_mapping_node for WebCrawler SFT data: "
                         f"path={sft_path}, format={sft_format}"
@@ -163,14 +167,14 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
                     if state.get("obtainer_mapping_results"):
                         sft_mapping = dict(state["obtainer_mapping_results"])
                         mapping_results["sft"] = sft_mapping
-                        state["webcrawler_dataset_sft_mapped_path"] = sft_mapping.get(
+                        webcrawler["dataset_sft_mapped_path"] = sft_mapping.get(
                             "output_file", ""
                         )
 
                 # PT -> dataset (default format: jsonl_pt)
                 pt_path = result.get("pt_jsonl_path") or ""
                 if pt_path:
-                    pt_format = state.get("webcrawler_pt_mapping_format", "jsonl_pt")
+                    pt_format = webcrawler.get("pt_mapping_format", "jsonl_pt")
                     logger.info(
                         f"Running script_mapping_node for WebCrawler PT data: "
                         f"path={pt_path}, format={pt_format}"
@@ -190,15 +194,15 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
                     if state.get("obtainer_mapping_results"):
                         pt_mapping = dict(state["obtainer_mapping_results"])
                         mapping_results["pt"] = pt_mapping
-                        state["webcrawler_dataset_pt_mapped_path"] = pt_mapping.get(
+                        webcrawler["dataset_pt_mapped_path"] = pt_mapping.get(
                             "output_file", ""
                         )
 
                 if mapping_results:
-                    state["webcrawler_dataset_mapping_results"] = mapping_results
+                    webcrawler["dataset_mapping_results"] = mapping_results
 
             except Exception as map_err:
-                logger.error(f"Error when mapping WebCrawler dataset via Obtainer: {map_err}", exc_info=True)
+                logger.error(f"Error when mapping WebCrawler dataset via Constructor: {map_err}", exc_info=True)
         
         # Send custom stream event if debug mode is enabled
         if debug_mode:

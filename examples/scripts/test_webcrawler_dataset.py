@@ -34,48 +34,49 @@ if tavily_api_key_file.exists():
 else:
     tavily_api_key = os.getenv('TAVILY_API_KEY', '')
 
-# Model configuration
-MODEL_CONFIG = {
-    'webcrawler_deepseek_api_key': deepseek_api_key,
-    'webcrawler_tavily_api_key': tavily_api_key,
-    'webcrawler_deepseek_api_base': os.getenv('WEBCRAWLER_API_BASE', 'https://api.deepseek.com'),
-    'webcrawler_model': os.getenv('WEBCRAWLER_MODEL', 'deepseek-chat'),
-    'webcrawler_temperature': 0.7,
+# WebCrawler 配置 (使用新的嵌套结构 - 对应 WebCrawlerState)
+WEBCRAWLER_CONFIG = {
+    # === API 配置 ===
+    'deepseek_api_key': deepseek_api_key,
+    'tavily_api_key': tavily_api_key,
+    'deepseek_api_base': os.getenv('WEBCRAWLER_API_BASE', 'https://api.deepseek.com'),
+    
+    # === 模型配置 ===
+    'model': os.getenv('WEBCRAWLER_MODEL', 'deepseek-chat'),
+    'temperature': 0.7,
+    
+    # === 查询设置 ===
+    'num_queries': int(os.getenv('WEBCRAWLER_NUM_QUERIES', '10')),
     
     # === 爬取策略 ===
-    'webcrawler_num_queries': int(os.getenv('WEBCRAWLER_NUM_QUERIES', '10')),  
-    'webcrawler_max_pages': int(os.getenv('WEBCRAWLER_MAX_PAGES', '5')), 
-    'webcrawler_crawl_depth': int(os.getenv('WEBCRAWLER_DEPTH', '2')),  # 深度为2
-    'webcrawler_max_links_per_page': int(os.getenv('WEBCRAWLER_MAX_LINKS', '10')),  
-    'webcrawler_concurrent_pages': int(os.getenv('WEBCRAWLER_CONCURRENT', '3')),  
+    'max_pages': int(os.getenv('WEBCRAWLER_MAX_PAGES', '5')), 
+    'crawl_depth': int(os.getenv('WEBCRAWLER_DEPTH', '2')),
+    'max_links_per_page': int(os.getenv('WEBCRAWLER_MAX_LINKS', '10')),
+    'concurrent_pages': int(os.getenv('WEBCRAWLER_CONCURRENT', '3')),
     
     # === 内容过滤 ===
-    'webcrawler_min_text_length': int(os.getenv('WEBCRAWLER_MIN_TEXT_LENGTH', '3000')), 
-    'webcrawler_min_code_length': int(os.getenv('WEBCRAWLER_MIN_CODE_LENGTH', '30')),
-    'webcrawler_min_relevance_score': int(os.getenv('WEBCRAWLER_MIN_RELEVANCE', '7')),  
-    
-    # === 数据集生成配置 ===
-    'webcrawler_max_records_per_page': int(os.getenv('WEBCRAWLER_MAX_RECORDS', '5')),  # 每页最多5条记录
-    'webcrawler_min_relevance_score': float(os.getenv('WEBCRAWLER_DATASET_MIN_RELEVANCE', '0.5')),  # 最低相关性0.5
-    'webcrawler_dataset_concurrent_limit': int(os.getenv('WEBCRAWLER_DATASET_CONCURRENT', '3')),  # 并发3个
-    'webcrawler_max_content_length': int(os.getenv('WEBCRAWLER_MAX_CONTENT_LENGTH', '50000')),  # 每页最大内容长度
+    'min_text_length': int(os.getenv('WEBCRAWLER_MIN_TEXT_LENGTH', '3000')), 
+    'min_code_length': int(os.getenv('WEBCRAWLER_MIN_CODE_LENGTH', '30')),
+    'min_relevance_score': float(os.getenv('WEBCRAWLER_MIN_RELEVANCE', '0.5')),
     
     # === 运行时配置 ===
-    'webcrawler_request_delay': float(os.getenv('WEBCRAWLER_REQUEST_DELAY', '1.0')),  
-    'webcrawler_timeout': int(os.getenv('WEBCRAWLER_TIMEOUT', '20')),
-    'webcrawler_max_retries': int(os.getenv('WEBCRAWLER_MAX_RETRIES', '2')),
-    
-    # === 调试配置 ===
-    'webcrawler_debug': True,  # 开启调试模式
+    'request_delay': float(os.getenv('WEBCRAWLER_REQUEST_DELAY', '1.0')),
+    'timeout': int(os.getenv('WEBCRAWLER_TIMEOUT', '20')),
+    'max_retries': int(os.getenv('WEBCRAWLER_MAX_RETRIES', '2')),
     
     # === 输出配置 ===
-    'webcrawler_output_format': os.getenv('WEBCRAWLER_OUTPUT_FORMAT', 'jsonl'),
-    'webcrawler_save_html': False,
-
-    # === 映射后数据集目标格式（对应 Obtainer.mapping.script_mapping_node.FORMAT_MAPPERS）===
-    # 可选值示例: alpaca, chatml, jsonl_pt, jsonl_sft, openai_fine_tune, llama2_chat
-    'webcrawler_sft_mapping_format': os.getenv('WEBCRAWLER_SFT_FORMAT', 'alpaca'),
-    'webcrawler_pt_mapping_format': os.getenv('WEBCRAWLER_PT_FORMAT', 'alpaca'),
+    'output_format': os.getenv('WEBCRAWLER_OUTPUT_FORMAT', 'jsonl'),
+    'save_html': False,
+    
+    # === 数据集生成配置 ===
+    'max_records_per_page': int(os.getenv('WEBCRAWLER_MAX_RECORDS', '5')),
+    'dataset_concurrent_limit': int(os.getenv('WEBCRAWLER_DATASET_CONCURRENT', '3')),
+    'max_content_length': int(os.getenv('WEBCRAWLER_MAX_CONTENT_LENGTH', '50000')),
+    'debug': True,  # 开启调试模式
+    
+    # === 数据集映射配置 ===
+    'sft_mapping_format': os.getenv('WEBCRAWLER_SFT_FORMAT', 'alpaca'),
+    'pt_mapping_format': os.getenv('WEBCRAWLER_PT_FORMAT', 'alpaca'),
 }
 
 # Output directory
@@ -107,16 +108,16 @@ if test_query is None:
 print("=" * 80)
 print("WebCrawler Dataset Node - 数据集转换测试")
 print("=" * 80)
-print(f"Model: {MODEL_CONFIG['webcrawler_model']}")
-print(f"API Base: {MODEL_CONFIG['webcrawler_deepseek_api_base']}")
-print(f"Max Pages: {MODEL_CONFIG['webcrawler_max_pages']}")
-print(f"Crawl Depth: {MODEL_CONFIG['webcrawler_crawl_depth']}")
-print(f"Max Records Per Page: {MODEL_CONFIG['webcrawler_max_records_per_page']}")
-print(f"Max Content Length: {MODEL_CONFIG['webcrawler_max_content_length']}")
-print(f"Min Relevance Score: {MODEL_CONFIG['webcrawler_min_relevance_score']}")
+print(f"Model: {WEBCRAWLER_CONFIG['model']}")
+print(f"API Base: {WEBCRAWLER_CONFIG['deepseek_api_base']}")
+print(f"Max Pages: {WEBCRAWLER_CONFIG['max_pages']}")
+print(f"Crawl Depth: {WEBCRAWLER_CONFIG['crawl_depth']}")
+print(f"Max Records Per Page: {WEBCRAWLER_CONFIG['max_records_per_page']}")
+print(f"Max Content Length: {WEBCRAWLER_CONFIG['max_content_length']}")
+print(f"Min Relevance Score: {WEBCRAWLER_CONFIG['min_relevance_score']}")
 print(f"Test Query: {test_query}")
 print(f"Output Dir: {output_dir}")
-print(f"Debug Mode: {MODEL_CONFIG['webcrawler_debug']}")
+print(f"Debug Mode: {WEBCRAWLER_CONFIG['debug']}")
 print("=" * 80)
 
 # Check API keys
@@ -152,7 +153,8 @@ initial_state = {
     'next_to': '',
     'automated_query': '',
     'messages': [HumanMessage(content=test_query)],
-    **MODEL_CONFIG
+    # WebCrawler 配置放在 webcrawler 字典中（对应 WebCrawlerState）
+    'webcrawler': WEBCRAWLER_CONFIG,
 }
 
 print("\n开始执行 WebCrawler 任务...")
@@ -166,14 +168,17 @@ try:
     print("执行结果")
     print("=" * 80)
     
+    # 获取 webcrawler 结果字典
+    webcrawler_result = result.get('webcrawler', {}) or {}
+    
     # Print crawl results
-    if result.get('webcrawler_output_result'):
-        crawl_result = result['webcrawler_output_result']
+    if webcrawler_result.get('output_result'):
+        crawl_result = webcrawler_result['output_result']
         print("\n[1. 爬取阶段结果]")
         print("-" * 80)
         print(f"  Run ID: {crawl_result.get('run_id', 'N/A')}")
         print(f"  爬取页面数: {crawl_result.get('total_pages', 0)}")
-        print(f"  输出目录: {result.get('webcrawler_output_dir', 'N/A')}")
+        print(f"  输出目录: {webcrawler_result.get('output_dir', 'N/A')}")
         
         if crawl_result.get('error'):
             print(f"  错误: {crawl_result.get('error')}")
@@ -181,10 +186,10 @@ try:
     # Print dataset generation results
     print("\n[2. 数据集生成结果]")
     print("-" * 80)
-    sft_count = result.get('webcrawler_dataset_sft_count', 0)
-    pt_count = result.get('webcrawler_dataset_pt_count', 0)
-    sft_path = result.get('webcrawler_dataset_sft_path', '')
-    pt_path = result.get('webcrawler_dataset_pt_path', '')
+    sft_count = webcrawler_result.get('dataset_sft_count', 0)
+    pt_count = webcrawler_result.get('dataset_pt_count', 0)
+    sft_path = webcrawler_result.get('dataset_sft_path', '')
+    pt_path = webcrawler_result.get('dataset_pt_path', '')
     
     print(f"  SFT 记录数: {sft_count}")
     print(f"  PT 记录数: {pt_count}")
@@ -230,13 +235,13 @@ try:
     
     if not sft_path and not pt_path:
         print("  [未生成任何数据集]")
-        if result.get('webcrawler_dataset_summary'):
-            print(f"  说明: {result['webcrawler_dataset_summary']}")
+        if webcrawler_result.get('dataset_summary'):
+            print(f"  说明: {webcrawler_result['dataset_summary']}")
     
-    # Print mapped dataset paths (after Obtainer.mapping.script_mapping_node)
-    mapped_sft_path = result.get('webcrawler_dataset_sft_mapped_path', '')
-    mapped_pt_path = result.get('webcrawler_dataset_pt_mapped_path', '')
-    mapping_results = result.get('webcrawler_dataset_mapping_results', {})
+    # Print mapped dataset paths (after Constructor.mapping.script_mapping_node)
+    mapped_sft_path = webcrawler_result.get('dataset_sft_mapped_path', '')
+    mapped_pt_path = webcrawler_result.get('dataset_pt_mapped_path', '')
+    mapping_results = webcrawler_result.get('dataset_mapping_results', {})
 
     print("\n[总结]")
     if sft_count > 0 or pt_count > 0:
@@ -302,8 +307,8 @@ try:
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump({
             'query': test_query,
-            'config': {k: v for k, v in MODEL_CONFIG.items() if 'api_key' not in k},
-            'crawl_result': result.get('webcrawler_output_result', {}),
+            'config': {k: v for k, v in WEBCRAWLER_CONFIG.items() if 'api_key' not in k},
+            'crawl_result': webcrawler_result.get('output_result', {}),
             'dataset_sft_count': sft_count,
             'dataset_pt_count': pt_count,
             'dataset_sft_path': sft_path,

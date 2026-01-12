@@ -16,6 +16,9 @@ def end_node(state: LoopAIState) -> LoopAIState:
     
     writer = get_stream_writer()
     
+    # 获取 webcrawler 配置
+    webcrawler = state.get("webcrawler", {}) or {}
+    
     # 输出结束开始事件
     writer(StreamEvent(
         current="end_node",
@@ -28,7 +31,7 @@ def end_node(state: LoopAIState) -> LoopAIState:
     if state.get("exception"):
         summary_parts.append(f"执行过程中出现错误: {state.get('exception')}")
     else:
-        result = state.get("webcrawler_output_result", {})
+        result = webcrawler.get("output_result", {})
         total_pages = result.get("total_pages", 0)
         
         if total_pages > 0:
@@ -48,7 +51,7 @@ def end_node(state: LoopAIState) -> LoopAIState:
                 recommendations = overall_summary["recommendations"][:2]
                 summary_parts.append(f"建议: {', '.join(recommendations)}")
             
-            output_dir = state.get("webcrawler_output_dir", "")
+            output_dir = webcrawler.get("output_dir", "")
             if output_dir:
                 summary_parts.append(f"输出目录: {output_dir}")
         else:
@@ -69,14 +72,14 @@ def end_node(state: LoopAIState) -> LoopAIState:
     state["next_to"] = "query_node"
     
     # 输出任务完成事件
-    result = state.get("webcrawler_output_result", {})
+    result = webcrawler.get("output_result", {})
     writer(StreamEvent(
         current="end_node",
         message=f"WebCrawler 任务完成 - 共爬取 {result.get('total_pages', 0)} 个网页",
         data={
             "summary": summary_text,
             "total_pages": result.get("total_pages", 0),
-            "output_dir": state.get("webcrawler_output_dir", ""),
+            "output_dir": webcrawler.get("output_dir", ""),
             "has_error": bool(state.get("exception"))
         }
     ).json())

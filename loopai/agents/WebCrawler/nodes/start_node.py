@@ -7,6 +7,23 @@ from loopai.logger import get_logger
 logger = get_logger()
 
 
+def _get_webcrawler_config(state: LoopAIState, key: str, default=None):
+    """
+    从 state['webcrawler'] 字典中获取配置值
+    """
+    webcrawler = state.get("webcrawler", {}) or {}
+    return webcrawler.get(key, default)
+
+
+def _set_webcrawler_config(state: LoopAIState, key: str, value):
+    """
+    设置 state['webcrawler'] 字典中的配置值
+    """
+    if "webcrawler" not in state or state["webcrawler"] is None:
+        state["webcrawler"] = {}
+    state["webcrawler"][key] = value
+
+
 def start_node(state: LoopAIState, agent) -> LoopAIState:
     """
     Start node for webcrawler agent
@@ -14,10 +31,16 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
     """
     logger.info("WebCrawlerAgent: Starting task")
     
+    # 确保 webcrawler 字典存在
+    if "webcrawler" not in state or state["webcrawler"] is None:
+        state["webcrawler"] = {}
+    
+    webcrawler = state["webcrawler"]
+    
     # 调试：打印实际收到的 state
     logger.info(f"[DEBUG] start_node 收到的 state 包含的键: {list(state.keys())[:20]}")
-    logger.info(f"[DEBUG] webcrawler_deepseek_api_key 是否存在: {'webcrawler_deepseek_api_key' in state}")
-    logger.info(f"[DEBUG] webcrawler_deepseek_api_key 的值: {state.get('webcrawler_deepseek_api_key', '(不存在)')[:20] if state.get('webcrawler_deepseek_api_key') else '(空或不存在)'}")
+    logger.info(f"[DEBUG] webcrawler 配置: {list(webcrawler.keys()) if webcrawler else '(空)'}")
+    logger.info(f"[DEBUG] deepseek_api_key 是否存在: {'deepseek_api_key' in webcrawler}")
     
     writer = get_stream_writer()
     
@@ -27,68 +50,82 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
         message="WebCrawler 开始初始化配置"
     ).json())
     
-    # 确保必要配置存在（只在真正缺失时从环境变量读取，不覆盖已有配置）
-    # 注意：run_webcrawler.py 已经设置了这些值，这里只是 fallback
-    pass  # API keys 应该已经在 initial_state 里设置好了
+    # === API 配置默认值 ===
+    if not webcrawler.get("deepseek_api_base"):
+        webcrawler["deepseek_api_base"] = "https://api.deepseek.com/v1"
     
-    if not state.get("webcrawler_deepseek_api_base"):
-        state["webcrawler_deepseek_api_base"] = "https://api.deepseek.com/v1"
+    # === 模型配置默认值 ===
+    if not webcrawler.get("model"):
+        webcrawler["model"] = "deepseek-chat"
     
-    if not state.get("webcrawler_model"):
-        state["webcrawler_model"] = "deepseek-chat"
+    if not webcrawler.get("temperature"):
+        webcrawler["temperature"] = 0.7
     
-    # === 生成查询配置 ===
-    if not state.get("webcrawler_num_queries"):
-        state["webcrawler_num_queries"] = 5
+    # === 查询设置默认值 ===
+    if not webcrawler.get("num_queries"):
+        webcrawler["num_queries"] = 5
     
-    # === 爬取策略 ===
-    if not state.get("webcrawler_max_pages"):
-        state["webcrawler_max_pages"] = 10000
+    # === 爬取策略默认值 ===
+    if not webcrawler.get("max_pages"):
+        webcrawler["max_pages"] = 10000
     
-    if not state.get("webcrawler_crawl_depth"):
-        state["webcrawler_crawl_depth"] = 3
+    if not webcrawler.get("crawl_depth"):
+        webcrawler["crawl_depth"] = 3
     
-    if not state.get("webcrawler_max_links_per_page"):
-        state["webcrawler_max_links_per_page"] = 5
+    if not webcrawler.get("max_links_per_page"):
+        webcrawler["max_links_per_page"] = 5
     
-    if not state.get("webcrawler_concurrent_pages"):
-        state["webcrawler_concurrent_pages"] = 3
+    if not webcrawler.get("concurrent_pages"):
+        webcrawler["concurrent_pages"] = 3
     
-    # === 内容过滤 ===
-    if not state.get("webcrawler_min_text_length"):
-        state["webcrawler_min_text_length"] = 500
+    # === 内容过滤默认值 ===
+    if not webcrawler.get("min_text_length"):
+        webcrawler["min_text_length"] = 500
     
-    if not state.get("webcrawler_min_code_length"):
-        state["webcrawler_min_code_length"] = 50
+    if not webcrawler.get("min_code_length"):
+        webcrawler["min_code_length"] = 50
     
-    if not state.get("webcrawler_min_relevance_score"):
-        state["webcrawler_min_relevance_score"] = 6
+    if webcrawler.get("min_relevance_score") is None:
+        webcrawler["min_relevance_score"] = 6
     
-    if not state.get("webcrawler_url_patterns"):
-        state["webcrawler_url_patterns"] = None
+    if not webcrawler.get("url_patterns"):
+        webcrawler["url_patterns"] = None
     
-    # === 运行时配置 ===
-    if not state.get("webcrawler_request_delay"):
-        state["webcrawler_request_delay"] = 2.0
+    # === 运行时配置默认值 ===
+    if not webcrawler.get("request_delay"):
+        webcrawler["request_delay"] = 2.0
     
-    if not state.get("webcrawler_timeout"):
-        state["webcrawler_timeout"] = 30
+    if not webcrawler.get("timeout"):
+        webcrawler["timeout"] = 30
     
-    if not state.get("webcrawler_max_retries"):
-        state["webcrawler_max_retries"] = 3
+    if not webcrawler.get("max_retries"):
+        webcrawler["max_retries"] = 3
     
-    # === 输出配置 ===
+    # === 输出配置默认值 ===
     if not state.get("output_dir"):
         state["output_dir"] = "./output"
     
-    if not state.get("webcrawler_output_format"):
-        state["webcrawler_output_format"] = "jsonl"
+    if not webcrawler.get("output_format"):
+        webcrawler["output_format"] = "jsonl"
     
-    if not state.get("webcrawler_save_html"):
-        state["webcrawler_save_html"] = False
+    if webcrawler.get("save_html") is None:
+        webcrawler["save_html"] = False
+    
+    # === 数据集生成配置默认值 ===
+    if not webcrawler.get("max_records_per_page"):
+        webcrawler["max_records_per_page"] = 10
+    
+    if not webcrawler.get("dataset_concurrent_limit"):
+        webcrawler["dataset_concurrent_limit"] = 5
+    
+    if not webcrawler.get("max_content_length"):
+        webcrawler["max_content_length"] = 50000
+    
+    if webcrawler.get("debug") is None:
+        webcrawler["debug"] = False
     
     # 验证必要的API密钥
-    if not state.get("webcrawler_deepseek_api_key"):
+    if not webcrawler.get("deepseek_api_key"):
         logger.error("Missing DEEPSEEK_API_KEY")
         state["exception"] = "Missing required configuration: DEEPSEEK_API_KEY"
         writer(StreamEvent(
@@ -98,7 +135,7 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
         ).json())
         return state
     
-    if not state.get("webcrawler_tavily_api_key"):
+    if not webcrawler.get("tavily_api_key"):
         logger.error("Missing TAVILY_API_KEY")
         state["exception"] = "Missing required configuration: TAVILY_API_KEY"
         writer(StreamEvent(
@@ -109,26 +146,25 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
         return state
     
     # 设置Tavily API Key到环境变量
-    if state.get("webcrawler_tavily_api_key"):
-        os.environ["TAVILY_API_KEY"] = state["webcrawler_tavily_api_key"]
+    os.environ["TAVILY_API_KEY"] = webcrawler["tavily_api_key"]
     
-    logger.info(f"WebCrawlerAgent: Configuration initialized - model: {state.get('webcrawler_model')}, "
-               f"max_pages: {state.get('webcrawler_max_pages')}, depth: {state.get('webcrawler_crawl_depth')}, "
-               f"concurrent: {state.get('webcrawler_concurrent_pages')}")
+    logger.info(f"WebCrawlerAgent: Configuration initialized - model: {webcrawler.get('model')}, "
+               f"max_pages: {webcrawler.get('max_pages')}, depth: {webcrawler.get('crawl_depth')}, "
+               f"concurrent: {webcrawler.get('concurrent_pages')}")
     
     # 输出配置完成事件
     writer(StreamEvent(
         current="start_node",
-        message=f"配置初始化完成 - 模型: {state.get('webcrawler_model')}, 最大页面数: {state.get('webcrawler_max_pages')}, 爬取深度: {state.get('webcrawler_crawl_depth')}",
+        message=f"配置初始化完成 - 模型: {webcrawler.get('model')}, 最大页面数: {webcrawler.get('max_pages')}, 爬取深度: {webcrawler.get('crawl_depth')}",
         data={
-            "model": state.get("webcrawler_model"),
-            "max_pages": state.get("webcrawler_max_pages"),
-            "crawl_depth": state.get("webcrawler_crawl_depth"),
-            "max_links_per_page": state.get("webcrawler_max_links_per_page"),
-            "concurrent_pages": state.get("webcrawler_concurrent_pages"),
-            "min_text_length": state.get("webcrawler_min_text_length"),
-            "min_relevance_score": state.get("webcrawler_min_relevance_score"),
-            "api_base": state.get("webcrawler_deepseek_api_base")
+            "model": webcrawler.get("model"),
+            "max_pages": webcrawler.get("max_pages"),
+            "crawl_depth": webcrawler.get("crawl_depth"),
+            "max_links_per_page": webcrawler.get("max_links_per_page"),
+            "concurrent_pages": webcrawler.get("concurrent_pages"),
+            "min_text_length": webcrawler.get("min_text_length"),
+            "min_relevance_score": webcrawler.get("min_relevance_score"),
+            "api_base": webcrawler.get("deepseek_api_base")
         }
     ).json())
     

@@ -33,6 +33,9 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
         ).json())
         return state
     
+    # 获取 webcrawler 配置
+    webcrawler = state.get("webcrawler", {}) or {}
+    
     # 获取任务描述
     task = ""
     if state.get("messages") and len(state["messages"]) > 0:
@@ -58,44 +61,44 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
     # 创建爬取编排器
     try:
         orchestrator = CrawlOrchestrator(
-            deepseek_api_key=state.get("webcrawler_deepseek_api_key", ""),
-            tavily_api_key=state.get("webcrawler_tavily_api_key", ""),
-            deepseek_api_base=state.get("webcrawler_deepseek_api_base", "https://api.deepseek.com/v1"),
-            model=state.get("webcrawler_model", "deepseek-chat"),
-            max_pages=state.get("webcrawler_max_pages", 10000),
+            deepseek_api_key=webcrawler.get("deepseek_api_key", ""),
+            tavily_api_key=webcrawler.get("tavily_api_key", ""),
+            deepseek_api_base=webcrawler.get("deepseek_api_base", "https://api.deepseek.com/v1"),
+            model=webcrawler.get("model", "deepseek-chat"),
+            max_pages=webcrawler.get("max_pages", 10000),
             output_dir=os.path.join(state.get("output_dir", "./output"), "webcrawler_output"),
             stream_callback=writer,  # 传递 writer 作为回调
             # 爬取策略参数
-            num_queries=state.get("webcrawler_num_queries", 5),
-            crawl_depth=state.get("webcrawler_crawl_depth", 3),
-            max_links_per_page=state.get("webcrawler_max_links_per_page", 5),
-            concurrent_pages=state.get("webcrawler_concurrent_pages", 3),
+            num_queries=webcrawler.get("num_queries", 5),
+            crawl_depth=webcrawler.get("crawl_depth", 3),
+            max_links_per_page=webcrawler.get("max_links_per_page", 5),
+            concurrent_pages=webcrawler.get("concurrent_pages", 3),
             # 内容过滤参数
-            min_text_length=state.get("webcrawler_min_text_length", 500),
-            min_code_length=state.get("webcrawler_min_code_length", 50),
-            min_relevance_score=state.get("webcrawler_min_relevance_score", 6),
-            url_patterns=state.get("webcrawler_url_patterns", None),
+            min_text_length=webcrawler.get("min_text_length", 500),
+            min_code_length=webcrawler.get("min_code_length", 50),
+            min_relevance_score=webcrawler.get("min_relevance_score", 6),
+            url_patterns=webcrawler.get("url_patterns", None),
             # 运行时配置参数
-            request_delay=state.get("webcrawler_request_delay", 2.0),
-            timeout=state.get("webcrawler_timeout", 30),
-            max_retries=state.get("webcrawler_max_retries", 3),
+            request_delay=webcrawler.get("request_delay", 2.0),
+            timeout=webcrawler.get("timeout", 30),
+            max_retries=webcrawler.get("max_retries", 3),
             # 输出配置参数
-            output_format=state.get("webcrawler_output_format", "jsonl"),
-            save_html=state.get("webcrawler_save_html", False)
+            output_format=webcrawler.get("output_format", "jsonl"),
+            save_html=webcrawler.get("save_html", False)
         )
         
         # 执行爬取任务
         logger.info(f"Starting crawl task: {task[:100]}...")
         result = asyncio.run(orchestrator.run(task))
         
-        # 保存结果到state
-        state["webcrawler_output_result"] = result
-        state["webcrawler_output_run_id"] = result.get("run_id")
-        state["webcrawler_output_dir"] = str(orchestrator.run_dir)
+        # 保存结果到 state['webcrawler']
+        webcrawler["output_result"] = result
+        webcrawler["output_run_id"] = result.get("run_id")
+        webcrawler["output_dir"] = str(orchestrator.run_dir)
         
         logger.info(f"WebCrawlerAgent: Crawl completed successfully - "
                    f"pages: {result.get('total_pages', 0)}, "
-                   f"output: {state['webcrawler_output_dir']}")
+                   f"output: {webcrawler['output_dir']}")
         
         # 输出爬取完成事件
         writer(StreamEvent(
@@ -103,7 +106,7 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
             message=f"爬取任务完成 - 成功爬取 {result.get('total_pages', 0)} 个网页",
             data={
                 "total_pages": result.get('total_pages', 0),
-                "output_dir": state['webcrawler_output_dir'],
+                "output_dir": webcrawler['output_dir'],
                 "run_id": result.get("run_id")
             }
         ).json())
@@ -113,7 +116,7 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
         import traceback
         logger.error(traceback.format_exc())
         state["exception"] = str(e)
-        state["webcrawler_output_result"] = {"error": str(e)}
+        webcrawler["output_result"] = {"error": str(e)}
         
         # 输出爬取失败事件
         writer(StreamEvent(
