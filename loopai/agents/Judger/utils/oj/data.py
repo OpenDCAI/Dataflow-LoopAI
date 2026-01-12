@@ -90,10 +90,14 @@ def is_valid_jsonl_file_path(file_path: str, allow_empty: bool = False) -> bool:
         #print("错误：文件路径不能为空或非字符串类型")
         return False
 
-    # 判断文件后缀是否为.json或.jsonl
+    # 判断文件后缀是否为.jsonl（忽略大小写，兼容.JSONL、.JsonL等格式）
     file_suffix = os.path.splitext(file_path)[1].lower()
-    valid_suffixes = ('.json', '.jsonl')
-    return file_suffix in valid_suffixes
+    if file_suffix != '.jsonl':
+        #print(f"错误：文件路径 '{file_path}' 不是jsonl文件（后缀需为.jsonl）")
+        return False
+    
+    #print(f"成功：文件路径 '{file_path}' 是合法的jsonl文件路径")
+    return True
 
 def check_file(state):
     problem_format_path = state.get("judger", {}).get("eval_problem_format_path", "")
