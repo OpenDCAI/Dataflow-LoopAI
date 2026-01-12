@@ -1,6 +1,6 @@
 # WebCrawler Agent 使用指南
 
-WebCrawler Agent 是 Dataflow-LoopAI 框架中负责网页爬取和数据集生成的智能代理。它能够自动化完成从查询理解到网页爬取、内容提取、数据集生成的完整流程，支持生成 SFT（监督微调）和 PT（预训练）格式的训练数据。
+WebCrawler Agent 是 Dataflow-LoopAI 框架中负责网页爬取和数据集生成的智能代理。它能够自动化完成从查询理解到网页爬取、内容提取、数据集生成的完整流程。
 
 ## 🏗️ 架构设计
 
@@ -76,7 +76,7 @@ WebCrawler Agent 采用多阶段顺序执行架构：
 
 ### 3. 数据集生成节点 (Dataset Generation Node)
 
-**功能：** 从爬取内容中生成训练数据集（SFT/PT 格式），并对生成了 SFT 的网页生成摘要和相关性评分
+**功能：** 从爬取内容中生成训练数据集（SFT/PT 格式），对生成了 SFT 的网页生成摘要和相关性评分，并将中间格式数据映射为目标格式
 
 **主要特性：**
 
@@ -98,8 +98,7 @@ WebCrawler Agent 采用多阶段顺序执行架构：
 
 - **格式映射：** 自动将中间格式数据映射为目标格式
   - 使用 Constructor 的 `script_mapping_node` 进行格式转换
-  - SFT 数据默认映射为 `jsonl_sft` 格式
-  - PT 数据默认映射为 `jsonl_pt` 格式
+  - 可选择Alpaca格式、ChatML格式、JSONL预训练格式、OpenAI微调格式、Llama2对话格式
 
 - **并发处理：** 支持并发生成数据集记录
   - 默认并发限制：5 个任务
