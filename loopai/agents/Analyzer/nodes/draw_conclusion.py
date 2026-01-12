@@ -15,6 +15,10 @@ from loopai.common.prompts.prompt_loader import PromptLoader
 logger = get_logger()
 from collections import defaultdict
 from typing import List, Dict, Any
+def _analyzer(state: LoopAIState) -> dict:
+    if "analyzer" not in state:
+        raise KeyError("state 中缺少 analyzer 配置，请在 graph.invoke 中传入 analyzer")
+    return state["analyzer"]
 def string_writer(
     state: LoopAIState,
     node: str,
@@ -106,12 +110,21 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
         初始化后的模型实例
     """
 
+    cfg = _analyzer(state)
     model = ChatOpenAI(
+<<<<<<< HEAD
         model=state.get('analyzer', {})['analyze_model_path'],
         api_key=state.get('analyzer', {})['analyze_api_key'],
         base_url=state.get('analyzer', {})['analyze_base_url'],
         temperature=state.get('analyzer', {}).get('analyze_temperature', 0.0),
         top_p=state.get('analyzer', {}).get('analyze_top_p', 0.95),
+=======
+        model=cfg['analyze_model_path'],
+        api_key=cfg['analyze_api_key'],
+        base_url=cfg['analyze_base_url'],
+        temperature=cfg.get('analyze_temperature', 0.0),
+        top_p=cfg.get('analyze_top_p', 0.95),
+>>>>>>> 993d6b5 (加入文本兜底)
     )
     return model
 
@@ -438,8 +451,13 @@ def draw_conclusion_node(state: LoopAIState):
 
     # ===== 构造数据集元信息 + 样例，供 background 使用 =====
     dataset_name = summary.get("dataset_name") or summary.get("task_name") or Path(summary_path).stem
+<<<<<<< HEAD
     task_type = state.get('analyzer', {}).get("analyze_task_type", "code")  # "code" / "sql" / "text2sql" 等
 
+=======
+    cfg = _analyzer(state)
+    task_type = cfg.get("analyze_task_type", "code")
+>>>>>>> 993d6b5 (加入文本兜底)
     qb = final_json.get("quick_brief") or {}
     samples = qb.get("samples") or []
 
@@ -508,7 +526,11 @@ def draw_conclusion_node(state: LoopAIState):
     logger.info(f"文本：{final_txt_path}")
 
     # ===== 可选：生成改进建议 =====
+<<<<<<< HEAD
     if state.get('analyzer', {}).get('output_suggestion'):
+=======
+    if _analyzer(state).get('output_suggestion', False):
+>>>>>>> 993d6b5 (加入文本兜底)
         string_writer(
     state,
     "JudgerAgent.draw_conclusion_node",

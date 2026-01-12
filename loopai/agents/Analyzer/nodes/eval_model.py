@@ -20,7 +20,34 @@ from types import SimpleNamespace
 # ===== PromptLoader 单例 & 模板缓存 =====
 _PROMPT_LOADER: PromptLoader | None = None
 _TEMPLATE_CACHE: dict[tuple[str, str], str] = {}
+import sys
+from pathlib import Path
+import importlib.util
 
+def _force_real_general_text_package():
+    base = (
+        Path(__file__).resolve()
+        .parent / "DataFlow" / "dataflow" / "operators" / "general_text"
+    )
+
+    if not base.exists():
+        raise RuntimeError(f"general_text path not found: {base}")
+
+    def _register(pkg_name: str, path: Path):
+        spec = importlib.util.spec_from_file_location(
+            pkg_name,
+            path / "__init__.py",
+            submodule_search_locations=[str(path)]
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[pkg_name] = module
+        spec.loader.exec_module(module)
+
+    _register("dataflow.operators.general_text", base)
+
+    eval_dir = base / "eval"
+    if eval_dir.exists():
+        _register("dataflow.operators.general_text.eval", eval_dir)
 def get_prompt_loader() -> PromptLoader:
     global _PROMPT_LOADER
     if _PROMPT_LOADER is None:
@@ -148,7 +175,8 @@ def build_evidence_for_record_sql(rec: Dict[str, Any]) -> Dict[str, Any]:
         "query": pred_sql or rec.get("query", ""),
     }
 
-
+def _analyzer(state: LoopAIState) -> dict:
+    return state.get("analyzer") or {}
 
 def init_model(state: LoopAIState) -> BaseChatModel:
     """
@@ -158,15 +186,24 @@ def init_model(state: LoopAIState) -> BaseChatModel:
     Returns:
         已初始化好的 BaseChatModel 实例
     """
+    cfg = _analyzer(state)  
     return OpenAICompatChat(
+<<<<<<< HEAD
         model=state.get('analyzer', {})["analyze_model_path"],
         base_url=state.get('analyzer', {})["analyze_base_url"],
         api_key=state.get('analyzer', {})["analyze_api_key"],
         max_tokens=state.get('analyzer', {}).get("analyze_max_tokens", 512),
         temperature=state.get('analyzer', {}).get("analyze_temperature", 0.0),
         top_p=state.get('analyzer', {}).get("analyze_top_p", 0.95),
+=======
+        model=cfg["analyze_model_path"],        
+        base_url=cfg["analyze_base_url"],      
+        api_key=cfg["analyze_api_key"],        
+        max_tokens=cfg.get("analyze_max_tokens", 512),   
+        temperature=cfg.get("analyze_temperature", 0.0), 
+        top_p=cfg.get("analyze_top_p", 0.95),           
+>>>>>>> 993d6b5 (加入文本兜底)
     )
-
 
 def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
     """
@@ -609,7 +646,82 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
 
     logger.info(f" 已生成 summary：{summary_json} ，文本简报：{summary_txt}")
     return str(summary_json), str(summary_txt)
+def run_general_text_fallback_eval(state: LoopAIState):
+    """
+    使用 DataFlow 的通用文本质量算子进行兜底评估
+    """
+    _force_real_general_text_package()
 
+    import pandas as pd
+    from dataflow.operators.general_text.eval.bleu_sample_evaluator import BleuSampleEvaluator
+    from dataflow.operators.general_text.eval.lexical_diversity_sample_evaluator import LexicalDiversitySampleEvaluator
+
+    cfg = _analyzer(state)
+    prompt = cfg.get("question") or ""
+    response = cfg.get("completion") or ""
+    reference = cfg.get("reference") 
+
+    # === DataFrame ===
+    if reference:
+        df_bleu = pd.DataFrame([{"ref": reference, "hyp": response}])
+    else:
+        df_bleu = None
+    df_lex = pd.DataFrame([{"text": response}])
+
+    bleu_eval = BleuSampleEvaluator()
+    lex_eval = LexicalDiversitySampleEvaluator()
+
+    # === BLEU ===
+    bleu_score = None
+    bleu_raw = None
+    if df_bleu is not None:
+        bleu_raw = bleu_eval.eval(df_bleu, input_key="hyp", reference_key="ref")[0]
+        bleu_score = float(bleu_raw)
+
+    # === Lexical Diversity ===
+    lex_raw = lex_eval.eval(df_lex, input_key="text")[0]  
+    lex_vals = []
+    if isinstance(lex_raw, dict):
+        for k in ("LexicalDiversityMTLDScore", "LexicalDiversityHD-DScore"):
+            v = lex_raw.get(k)
+            if isinstance(v, (int, float)):
+                lex_vals.append(float(v))
+
+    if lex_vals:
+        lex_score = sum(lex_vals) / len(lex_vals)
+    else:
+        toks = [t for t in response.split() if t.strip()]
+        lex_score = (len(set(toks)) / len(toks)) if toks else 0.0
+
+    parts = []
+    weights = []
+
+    if bleu_score is not None:
+        parts.append(bleu_score)
+        weights.append(0.6)
+    parts.append(lex_score)
+    weights.append(0.4 if bleu_score is not None else 1.0)
+
+    overall = sum(p * w for p, w in zip(parts, weights)) / (sum(weights) or 1.0)
+
+    result = {
+        "bleu": bleu_raw,  
+        "lexical_diversity": lex_raw,
+        "lexical_fallback_ttr": None if lex_vals else round(lex_score, 6),
+        "overall": round(float(overall), 4),
+        "used_reference": bool(reference),
+    }
+
+    string_writer(
+        state=state,
+        node="JudgerAgent.general_text_eval",
+        message="通用文本质量兜底评估完成（BLEU + Lexical）",
+        progress=1.0,
+        data=result,
+    )
+
+    state["general_text_eval"] = result
+    return state
 def eval_model_node(state: LoopAIState):
     """
     模型评测分析节点函数
@@ -642,7 +754,14 @@ def eval_model_node(state: LoopAIState):
         6. 输出增强版评测记录
         7. 生成评测摘要报告
     """
+<<<<<<< HEAD
     task_type = state.get('analyzer', {})['analyze_task_type']  # "code" 或 "sql"
+=======
+    cfg = _analyzer(state)
+    task_type = cfg.get("analyze_task_type", "code")  # "code" 或 "sql"
+    if task_type not in ("code", "sql"):
+        return run_general_text_fallback_eval(state)
+>>>>>>> 993d6b5 (加入文本兜底)
     string_writer(
     state,
     "JudgerAgent.evaluate_node",
@@ -654,7 +773,16 @@ def eval_model_node(state: LoopAIState):
     judge = LLMJudge(task=task_type)
 
     # 读取评测结果（JSONL）
+<<<<<<< HEAD
     with open(state.get('judger')['eval_result_path'], 'r', encoding='utf-8') as f:
+=======
+    eval_cfg = state.get("eval") or {}
+    eval_result_path = eval_cfg.get("eval_result_path")
+    if not eval_result_path:
+        raise ValueError("eval.eval_result_path not provided")
+
+    with open(eval_result_path, 'r', encoding='utf-8') as f:
+>>>>>>> 993d6b5 (加入文本兜底)
         lines = [ln for ln in f if ln.strip()]
     result_content = [json.loads(ln) for ln in lines]
 
@@ -662,7 +790,11 @@ def eval_model_node(state: LoopAIState):
     failed_results = [r for r in result_content if not r.get("passed")]
     total_failed = len(failed_results)
     # 初始化 LLM
+<<<<<<< HEAD
     batch_size = int(state.get('analyzer', {}).get("analyze_batch_size", 20))
+=======
+    batch_size = int(cfg.get("analyze_batch_size", 20))
+>>>>>>> 993d6b5 (加入文本兜底)
     llm = init_model(state)
     total_batches = (len(failed_results) + batch_size - 1) // batch_size
 
@@ -703,8 +835,13 @@ def eval_model_node(state: LoopAIState):
         batch_responses = call_llm_with_control(
             llm,
             prompts,
+<<<<<<< HEAD
             max_concurrency=int(state.get('analyzer', {}).get("analyze_max_concurrency", 4)),
             chunk_size=int(state.get('analyzer', {}).get("analyze_chunk_size", 8)),
+=======
+            max_concurrency=int(cfg.get("analyze_max_concurrency", 4)), 
+            chunk_size=int(cfg.get("analyze_chunk_size", 8)),          
+>>>>>>> 993d6b5 (加入文本兜底)
         )
 
         # 合并判因
@@ -718,8 +855,13 @@ def eval_model_node(state: LoopAIState):
                     rec["judge"] = {"stage": "other", "reason": f"LLMaJ 运行异常：{e}", "evidence": {}}
 
     # ===== quick_brief：仅对失败样本生成短评（失败<=20全量；失败>20抽样20条覆盖错误类型）=====
+<<<<<<< HEAD
     if state.get('analyzer', {}).get("quick_brief", False) and len(failed_results) > 0:
         limit = int(state.get('analyzer', {}).get("quick_brief_limit", 20))
+=======
+    if cfg.get("quick_brief", False) and len(failed_results) > 0:
+        limit = int(state.get("quick_brief_limit", 20))
+>>>>>>> 993d6b5 (加入文本兜底)
         string_writer(
     state,
     "JudgerAgent.evaluate_node",
@@ -808,7 +950,11 @@ def eval_model_node(state: LoopAIState):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     state.setdefault('analyzer', {})['analyze_output_result_path'] = str(out_jsonl_path.resolve())
     logger.info(f" 已写入增强版 OJ：{out_jsonl_path}")
+<<<<<<< HEAD
     logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if state.get('analyzer', {}).get("quick_brief", False) else ""))
+=======
+    logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if cfg.get('quick_brief', False) else ""))
+>>>>>>> 993d6b5 (加入文本兜底)
     string_writer(
     state,
     "JudgerAgent.evaluate_node",
