@@ -1,6 +1,7 @@
 <template>
-    <div class="row-item">
+    <div class="value-preview-row-item">
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
+        <p v-if="computedUIType === 'default'" class="none-value">{{ thisValue }}</p>
         <fv-text-box
             v-if="computedUIType === 'text'"
             v-model="thisValue"
@@ -13,7 +14,7 @@
             :focus-border-color="foreground"
             :is-box-shadow="true"
             underline
-            style="height: 30px; margin-bottom: 3px;"
+            style="height: 30px; margin-bottom: 3px"
         ></fv-text-box>
         <fv-toggle-switch
             v-if="computedUIType === 'bool'"
@@ -32,7 +33,7 @@
             :placeholder="modelKey"
             :options="formatAllowedValues"
         ></fv-combobox>
-        <div v-if="computedUIType === 'slider'" class="row-item">
+        <div v-if="computedUIType === 'slider'" class="value-preview-row-item">
             <fv-slider
                 v-model="slideValueModel"
                 :showLabel="true"
@@ -60,7 +61,7 @@
                 style="width: 80px"
             ></fv-text-box>
         </div>
-        <div v-if="computedUIType === 'dir'" class="row-item">
+        <div v-if="computedUIType === 'dir'" class="value-preview-row-item">
             <fv-breadcrumb
                 v-model="dirModel"
                 :border-radius="6"
@@ -165,7 +166,7 @@ export default {
             return this.stateSchema[this.stateKey][this.modelKey] || null
         },
         computedUIType() {
-            if (!this.schemaModel) return 'text'
+            if (!this.schemaModel) return 'default'
             if (this.schemaModel.ui_type === 'list' && this.schemaModel.allowed_values)
                 return 'list'
             if (this.thisValue === null || this.thisValue === undefined) return 'none'
@@ -219,12 +220,12 @@ export default {
 </script>
 
 <style lang="scss">
-.row-item {
-    width: min(300px, 100%);
+.value-preview-row-item {
+    width: 100%;
     gap: 5px;
     display: flex;
     align-items: center;
-    overflow: hidden;
+    overflow: visible;
 
     .none-value {
         @include HcenterVcenter;

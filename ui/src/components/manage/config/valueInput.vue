@@ -1,5 +1,5 @@
 <template>
-    <div class="row-item">
+    <div class="value-input-row-item">
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
         <fv-text-box
             v-if="computedUIType === 'text'"
@@ -31,7 +31,7 @@
             :placeholder="modelValue.title"
             :options="formatAllowedValues"
         ></fv-combobox>
-        <div v-if="computedUIType === 'slider'" class="row-item">
+        <div v-if="computedUIType === 'slider'" class="value-input-row-item">
             <fv-slider
                 v-model="slideValueModel"
                 :showLabel="true"
@@ -59,7 +59,7 @@
                 style="width: 80px"
             ></fv-text-box>
         </div>
-        <div v-if="computedUIType === 'dir'" class="row-item">
+        <div v-if="computedUIType === 'dir'" class="value-input-row-item">
             <fv-breadcrumb
                 v-model="dirModel"
                 :border-radius="6"
@@ -195,11 +195,12 @@ export default {
 </script>
 
 <style lang="scss">
-.row-item {
+.value-input-row-item {
     width: 300px;
     gap: 5px;
     display: flex;
     align-items: center;
+    overflow: visible;
 
     .none-value {
         @include HcenterVcenter;

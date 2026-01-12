@@ -241,6 +241,31 @@ export default {
                         reverseHandle: true,
                         borderColor: 'rgba(150, 167, 222, 0.8)'
                     }
+                },
+                {
+                    id: 'starter',
+                    type: 'agent-node',
+                    position: { x: 500, y: 650 },
+                    data: {
+                        label: 'Starter',
+                        status: 'Agent',
+                        stateKey: 'default',
+                        defaultStateKey: [
+                            'current',
+                            'next_to',
+                            'exception',
+                            'output_dir',
+                            'automated_query'
+                        ],
+                        graphClsPrefix: 'StarterAgent',
+                        icon: 'Robot',
+                        nodeInfo: 'Starter Agent for Supervision',
+                        iconColor: 'rgba(139, 165, 191, 1)',
+                        background:
+                            'linear-gradient(130deg, rgba(129, 208, 246, 0.8), rgba(252, 252, 252, 0.8))',
+                        reverseHandle: true,
+                        borderColor: 'rgba(129, 208, 246, 0.8)'
+                    }
                 }
             ],
 

@@ -1,5 +1,5 @@
 <template>
-    <base-node v-bind="props" :data="thisData">
+    <base-node v-bind="props" :data="thisData" :running="runningMe">
         <div class="fv-loading-block">
             <fv-progress-ring
                 v-if="loading"
@@ -22,7 +22,7 @@
         <div class="node-group-item scroll-list" @wheel.stop>
             <div
                 v-if="loopAIState"
-                v-for="(item, index) in loopAIStateFiltered"
+                v-for="(item, index) in stateFiltered"
                 :key="`run_${index}`"
                 class="node-row-item col"
             >
@@ -176,6 +176,26 @@ const loopAIStateFiltered = computed(() => {
     }
     return filter_list
 })
+const loopAIDefaultStateFiltered = computed(() => {
+    let state = loopAI.taskStatus.state
+    let filter_list = []
+    if (!state) return filter_list
+    if (!thisData.value.defaultStateKey) return filter_list
+    for (let key of thisData.value.defaultStateKey) {
+        let val = state[key]
+        if (val === null) val = null
+        if (val === undefined) val = null
+        filter_list.push({
+            key,
+            value: val
+        })
+    }
+    return filter_list
+})
+const stateFiltered = computed(() => {
+    if (thisData.value.stateKey == 'default') return loopAIDefaultStateFiltered.value
+    return loopAIStateFiltered.value
+})
 
 const customInfo = computed(() => {
     return loopAI.taskStatus.custom_info
@@ -200,6 +220,14 @@ const customInfoFiltered = computed(() => {
         }
     }
     return filter_list
+})
+
+const runningMe = computed(() => {
+    try {
+        return loopAI.taskStatus.state.current.startsWith(thisData.value.graphClsPrefix)
+    } catch (e) {
+        return false
+    }
 })
 
 const loading = ref(false)
