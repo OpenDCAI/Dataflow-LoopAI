@@ -26,6 +26,7 @@ graph.invoke({"judger":{
     'eval_api_key': "EMPTY",
     'eval_temperature': 0.7,
     'eval_top_p': 0.95,
+    'eval_task_type': 'code',
     'eval_test_case_path': '/root/brjverl/dataflow/examples/scripts/sample/test_format.jsonl',
     'eval_problem_path': '/root/brjverl/dataflow/examples/scripts/data/test_no_format.jsonl',
     'eval_problem_format_path': '/root/brjverl/dataflow/examples/scripts/data/test_format.jsonl',

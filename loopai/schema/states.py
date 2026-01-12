@@ -338,6 +338,12 @@ class JudgerState(BaseModel):
         description="评估模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
+    eval_task_type: str = Field(
+        default="code", 
+        title="评估任务类型",
+        description="评估任务类型",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型", "allowed_values":["code","text2sql"]}
+    )
     eval_base_url: str = Field(
         default="", 
         title="评估模型 Base URL",
@@ -345,7 +351,7 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
     eval_api_key: str = Field(
-        default="", 
+        default="EMPTY", 
         title="评估模型 API Key",
         description="评估模型 API Key",
         json_schema_extra={"ui_type": "password", "ui_group": "评估模型"}
@@ -354,13 +360,13 @@ class JudgerState(BaseModel):
         default=0, 
         title="评估模型温度",
         description="评估模型温度",
-        json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
     eval_top_p: float = Field(
         default=0.95, 
         title="评估模型 Top P",
         description="评估模型 Top P",
-        json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
     eval_test_case_path: str = Field(
         default="", 
@@ -384,7 +390,7 @@ class JudgerState(BaseModel):
         default="human-eval", 
         title="评估模型问题格式化类型",
         description="评估模型问题格式化类型，如果为空将不进入格式化节点，改格式化方式可以用户自由定义",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
     eval_result_path: str = Field(
         default="", 
@@ -393,7 +399,7 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     eval_batch_size: int = Field(
-        default=20,
+        default=10,
         title="评估模型批量大小",
         description="评估模型批量大小，也是问题生成样例数量大小",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
