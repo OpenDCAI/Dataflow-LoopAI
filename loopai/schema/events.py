@@ -11,6 +11,7 @@ class AgentEvent:
     stream_mode: Optional[str] = None
     node: Optional[str] = None
     node_path: Optional[list] = None
+    running_tasks: Optional[list] = None
     state: Optional[Any] = None
     updated_state: Optional[Any] = None
     custom_info: Optional[dict] = None
@@ -97,6 +98,18 @@ class AgentEvent:
                         for k_key in info[k]:
                             self.custom_info[current_key][k][k_key] = info[k][k_key]
         self.updated_custom_info = {key: info}
+    
+    def set_running_tasks(self, tasks):
+        """
+        Set the running tasks.
+
+        Args:
+            tasks (list): The running subgraph tasks to be set.
+        """
+        result = []
+        for task in tasks:
+            result.append(task.name)
+        self.running_tasks = result
 
     def text(self, only_updated=False):
         """
@@ -114,6 +127,11 @@ class AgentEvent:
             if not self.node_path:
                 return ('', 'yellow')
             return (f"🧭 Node Path: {'->'.join(self.node_path)}", "yellow")
+        
+        def print_list(items: list):
+            if not items:
+                return ('', 'yellow')
+            return (f"🧭 Running Tasks: {','.join(items)}", "blue")
 
         def print_custom_info(obj: dict):
             msgs = []
@@ -144,11 +162,13 @@ class AgentEvent:
             return (f"● {role.upper()}: {content}", color)
 
         for f in fields(self):
-            if f.name not in ['state', 'updated_state', 'stream_message', 'node_path', 'custom_info', 'updated_custom_info']:
+            if f.name not in ['state', 'updated_state', 'running_tasks', 'stream_message', 'node_path', 'custom_info', 'updated_custom_info']:
                 value = getattr(self, f.name)
                 lines.append(print_normal(f.name, value))
             elif f.name == 'node_path':
                 lines.append(print_path())
+            elif f.name == 'running_tasks':
+                lines.append(print_list(self.running_tasks))
             elif f.name == 'updated_custom_info':
                 lines.append(print_custom_info(self.updated_custom_info))
             elif f.name == display_state:

@@ -26,6 +26,7 @@ def extract_state(sg, config, running=True) -> dict:
         "event_streaming": event_streaming, # the agent is yielding event_streaming messages
         "waiting_llm": stream_message is not None, # the agent is waiting for the LLM response, in starter_agent, when the update event is trigger, the stream_message is set as None. This attribute is used to check if the agent is ready for next input.
         "current": current,
+        "running_tasks": agent_event.running_tasks,
         "interrupt_value": interrupt_value,
         "state": state,
         "custom_info": agent_event.custom_info,

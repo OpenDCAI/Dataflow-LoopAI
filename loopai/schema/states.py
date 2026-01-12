@@ -700,10 +700,10 @@ def get_missing_fields(required_fields, state: dict):
     for key in required_fields:
         for field in required_fields[key]:
             if key == 'default':
-                if field not in state or not state.get(field):
+                if field not in state or state.get(field) is None:
                     missing_fields.setdefault(key, []).append(field)
             else:
-                if field not in state.get(key, {}) or not state.get(key, {}).get(field):
+                if field not in state.get(key, {}) or state.get(key, {}).get(field) is None:
                     missing_fields.setdefault(key, []).append(field)
     return missing_fields
 # ==========================================
