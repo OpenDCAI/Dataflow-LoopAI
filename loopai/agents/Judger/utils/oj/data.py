@@ -89,7 +89,7 @@ def is_valid_jsonl_file_path(file_path: str, allow_empty: bool = False) -> bool:
     if not isinstance(file_path, str) or len(file_path.strip()) == 0:
         #print("错误：文件路径不能为空或非字符串类型")
         return False
-    
+
     # 判断文件后缀是否为.jsonl（忽略大小写，兼容.JSONL、.JsonL等格式）
     file_suffix = os.path.splitext(file_path)[1].lower()
     if file_suffix != '.jsonl':

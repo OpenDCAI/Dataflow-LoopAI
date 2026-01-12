@@ -73,9 +73,9 @@ class JudgerAgent(BaseAgent):
         problem_path = state.get("judger", {}).get("eval_problem_path", "")
         format_type = state.get("judger", {}).get("eval_format_type", "human-eval")
         writer = get_stream_writer()
-        if(format_type == ""):
-            format_type = "NULL"
-        if(problem_format_path != ""):
+        if(format_type == "" or format_type is None):
+            format_type = "None"
+        if(problem_format_path != "" and problem_format_path is not None):
             if writer:
                 writer(StreamEvent(
                     current=state['current'],

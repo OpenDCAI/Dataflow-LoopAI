@@ -17,6 +17,8 @@ def data_format(state):
     judger_state = state.get("judger", {})
     """选择适配器"""
     method = judger_state['eval_format_type']
+    if(method is None):
+        method = "human-eval"
     match method:
         case "human-eval":  # human-eval
             return preprocess_json_file(state, judger_state['eval_problem_path'], judger_state['eval_problem_format_path'], human_eval_format)
