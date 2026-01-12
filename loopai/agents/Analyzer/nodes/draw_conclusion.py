@@ -11,7 +11,8 @@ from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
 from loopai.common.prompts.prompt_loader import PromptLoader
-
+from langgraph.config import get_stream_writer
+from loopai.schema.events import StreamEvent
 logger = get_logger()
 from collections import defaultdict
 from typing import List, Dict, Any
@@ -19,31 +20,6 @@ def _analyzer(state: LoopAIState) -> dict:
     if "analyzer" not in state:
         raise KeyError("state 中缺少 analyzer 配置，请在 graph.invoke 中传入 analyzer")
     return state["analyzer"]
-def string_writer(
-    state: LoopAIState,
-    node: str,
-    message: str,
-    *,
-    progress: float | None = None,
-    data: Dict[str, Any] | None = None,
-):
-    entry = {
-        "node": node,
-        "message": message,
-        "ts": time.time(),
-    }
-    if progress is not None:
-        entry["progress"] = float(progress)
-    if data is not None:
-        entry["data"] = data
-
-    if "_events" not in state:
-        state["_events"] = []
-    state["_events"].append(entry)
-
-    logger.info(f"[UI:{node}] {message} " +
-                (f"| progress={progress:.3f} " if progress is not None else "") +
-                (f"| data={data}" if data else ""))
 
 def pick_samples_by_stage(
     records: List[Dict[str, Any]],
@@ -389,34 +365,31 @@ def draw_conclusion_node(state: LoopAIState):
     """
     绘制结论，生成 summary / final_report，并可选生成背景介绍与改进建议
     """
+    writer = get_stream_writer()
+
+    def _emit(message, *, progress=None, data=None):
+        if writer:
+            writer(StreamEvent(
+                current="JudgerAgent.draw_conclusion_node",
+                message=message,
+                progress=progress,
+                data=data
+            ).json())
+
     final_json_path = None
-    string_writer(
-    state,
-    "JudgerAgent.draw_conclusion_node",
-    "开始生成最终报告",
-    progress=0.0
-)
+    _emit("开始生成最终报告", progress=0.0)
+
     outdir = state['output_dir']
     summary_path = state['analyze_output_summary_path']
 
     # ===== 读取 summary =====
-    string_writer(
-    state,
-    "JudgerAgent.draw_conclusion_node",
-    "读取评测摘要",
-    data={"summary_path": summary_path}
-)
+    _emit("读取评测摘要", data={"summary_path": summary_path})
     with open(summary_path, "r", encoding="utf-8") as f:
         summary = json.load(f)
     summary["_file_path"] = summary_path
 
     # ===== 读取 OJ 记录 =====
-    string_writer(
-    state,
-    "JudgerAgent.draw_conclusion_node",
-    "读取评测记录",
-    data={"results_file": summary.get("results_file")}
-)
+    _emit("读取评测记录", data={"results_file": summary.get("results_file")})
     oj_records, _ = try_read_oj_records(summary.get("results_file"))
     run_ts, final_json = make_final_json(summary, oj_records)
 
@@ -471,12 +444,7 @@ def draw_conclusion_node(state: LoopAIState):
     llm = init_model(state)
 
     # ===== 生成背景介绍 =====
-    string_writer(
-    state,
-    "JudgerAgent.draw_conclusion_node",
-    "生成背景介绍",
-    progress=0.3
-)
+    _emit("生成背景介绍", progress=0.3)
     logger.info("🤖 正在生成背景介绍……")
     try:
         bg_prompt = build_background_prompt(final_json)
@@ -488,23 +456,13 @@ def draw_conclusion_node(state: LoopAIState):
 
     # ===== 写入 JSON 报告 =====
     final_json_path = os.path.join(outdir, f"final_report_{run_ts}.json")
-    string_writer(
-    state,
-    "JudgerAgent.draw_conclusion_node",
-    "写入最终 JSON 报告",
-    data={"path": final_json_path}
-)
+    _emit("写入最终 JSON 报告", data={"path": final_json_path})
     with open(final_json_path, "w", encoding="utf-8") as f:
         f.write(json.dumps(final_json, ensure_ascii=False, indent=2))
 
     # ===== 写入文本报告（包含背景介绍）=====
     final_txt_path = os.path.join(outdir, f"final_report_{run_ts}.txt")
-    string_writer(
-    state,
-    "JudgerAgent.draw_conclusion_node",
-    "写入文本报告",
-    data={"path": final_txt_path}
-)
+    _emit("写入文本报告", data={"path": final_txt_path})
     with open(final_txt_path, "w", encoding="utf-8") as f:
         f.write(make_human_text(final_json, background=background_text))
 
@@ -514,12 +472,7 @@ def draw_conclusion_node(state: LoopAIState):
 
     # ===== 可选：生成改进建议 =====
     if _analyzer(state).get('output_suggestion', False):
-        string_writer(
-    state,
-    "JudgerAgent.draw_conclusion_node",
-    "生成改进建议",
-    progress=0.6
-)
+        _emit("生成改进建议", progress=0.6)
         logger.info("🤖 正在调用本地模型生成改进建议……")
         prompt = build_suggestion_prompt(final_json)
         try:
@@ -538,22 +491,12 @@ def draw_conclusion_node(state: LoopAIState):
             f.write((suggestion or "").strip() + "\n")
 
         logger.info("模型建议生成完成并已写入报告：")
-        string_writer(
-    state,
-    "JudgerAgent.draw_conclusion_node",
-    "改进建议已写入",
-    data={
-        "suggestion_path": suggest_path,
-        "final_report": final_txt_path,
-    }
-)
+        _emit("改进建议已写入", data={
+            "suggestion_path": suggest_path,
+            "final_report": final_txt_path,
+        })
         logger.info(f"→ {suggest_path}")
         logger.info(f"→ {final_txt_path}")
-    string_writer(
-    state,
-    "JudgerAgent.draw_conclusion_node",
-    "最终报告生成完成",
-    progress=1.0
-)
 
+    _emit("最终报告生成完成", progress=1.0)
     return state

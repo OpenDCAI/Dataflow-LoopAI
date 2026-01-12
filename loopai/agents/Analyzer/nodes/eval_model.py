@@ -16,7 +16,8 @@ from loopai.logger import get_logger
 from loopai.agents.Analyzer.utils.openai_compat_llm import OpenAICompatChat
 logger = get_logger()
 from types import SimpleNamespace  
-
+from langgraph.config import get_stream_writer
+from loopai.schema.events import StreamEvent
 # ===== PromptLoader 单例 & 模板缓存 =====
 _PROMPT_LOADER: PromptLoader | None = None
 _TEMPLATE_CACHE: dict[tuple[str, str], str] = {}
@@ -78,31 +79,6 @@ def _trunc(s: str | None, n: int) -> str:  # NEW
     """
     s = s or ""
     return s if len(s) <= n else s[:n] + "\n...[truncated]"
-def string_writer(
-    state: LoopAIState,
-    node: str,
-    message: str,
-    *,
-    progress: float | None = None,
-    data: Dict[str, Any] | None = None,
-):
-    entry = {
-        "node": node,
-        "message": message,
-        "ts": time.time(),
-    }
-    if progress is not None:
-        entry["progress"] = float(progress)
-    if data is not None:
-        entry["data"] = data
-
-    if "_string_writer" not in state:
-        state["_string_writer"] = []
-    state["_string_writer"].append(entry)
-
-    logger.info(f"[UI:{node}] {message} "
-                f"{'(progress=' + str(progress) + ')' if progress is not None else ''} "
-                f"{'(data=' + json.dumps(data, ensure_ascii=False) + ')' if data else ''}")
 
 
 def build_evidence_for_record_code(rec: Dict[str, Any]) -> Dict[str, Any]:
@@ -270,64 +246,6 @@ def call_llm_with_control(
         )
         all_results.extend(sub_results)
     return all_results
-def _pick_quick_brief_records(
-    failed_results: List[Dict[str, Any]],
-    limit: int = 20,
-    prefer_key: str = "stage",  # "stage" 或 "tag"
-) -> List[int]:
-    """
-    从失败样本里挑选用于 quick_brief 的样本下标（返回 index 列表）。
-    - 尽量覆盖不同错误类型（按 stage 或 tag 分组）
-    - 轮询抽样，优先覆盖小类
-    """
-    groups: Dict[str, List[int]] = defaultdict(list)
-
-    def _group_key(rec: Dict[str, Any]) -> str:
-        j = rec.get("judge") or {}
-        if prefer_key == "tag":
-            tags = j.get("tags") or []
-            if isinstance(tags, list) and tags:
-                return str(tags[0])
-        return str(j.get("stage") or "other")
-
-    for idx, rec in enumerate(failed_results):
-        groups[_group_key(rec)].append(idx)
-
-    if not groups:
-        return []
-
-    def _stable_sort_key(i: int):
-        r = failed_results[i]
-        return (str(r.get("task_id") or ""), int(r.get("sample_index") or -1), i)
-
-    for k in list(groups.keys()):
-        groups[k].sort(key=_stable_sort_key)
-
-    group_keys = sorted(groups.keys(), key=lambda k: (len(groups[k]), k))
-    ptrs = {k: 0 for k in group_keys}
-
-    picked: List[int] = []
-    while len(picked) < limit:
-        progressed = False
-        for k in group_keys:
-            p = ptrs[k]
-            if p < len(groups[k]):
-                picked.append(groups[k][p])
-                ptrs[k] += 1
-                progressed = True
-                if len(picked) >= limit:
-                    break
-        if not progressed:
-            break
-
-    seen = set()
-    out = []
-    for i in picked:
-        if i not in seen:
-            out.append(i)
-            seen.add(i)
-    return out
-    
 def summarize_brief(
     task_id: str,
     prompt_head: str,
@@ -702,14 +620,15 @@ def run_general_text_fallback_eval(state: LoopAIState):
         "overall": round(float(overall), 4),
         "used_reference": bool(reference),
     }
-
-    string_writer(
-        state=state,
-        node="JudgerAgent.general_text_eval",
-        message="通用文本质量兜底评估完成（BLEU + Lexical）",
+    writer = get_stream_writer()
+    if writer:
+       writer(StreamEvent(
+        current=state.get("current") or "JudgerAgent",
         progress=1.0,
-        data=result,
-    )
+        message="通用文本质量兜底评估完成（BLEU + Lexical）",
+        data=result
+       ).json())
+
 
     state["general_text_eval"] = result
     return state
@@ -749,13 +668,14 @@ def eval_model_node(state: LoopAIState):
     task_type = cfg.get("analyze_task_type", "code")  # "code" 或 "sql"
     if task_type not in ("code", "sql"):
         return run_general_text_fallback_eval(state)
-    string_writer(
-    state,
-    "JudgerAgent.evaluate_node",
-    "常规任务评测样本开始",
-    progress=0.0,
-    data={"task_type": task_type}
-)
+    writer = get_stream_writer()
+    if writer:
+       writer(StreamEvent(
+        current=state.get("current") or "JudgerAgent",
+        progress=0.0,
+        message="常规任务评测样本开始",
+        data={"task_type": task_type}
+       ).json())
     
     judge = LLMJudge(task=task_type)
 
@@ -781,18 +701,18 @@ def eval_model_node(state: LoopAIState):
     for i in tqdm(range(0, len(failed_results), batch_size)):
         processed = min(i + batch_size, total_failed)
         progress = processed / max(total_failed, 1)
-        string_writer(
-    state,
-    "JudgerAgent.generate_node",
-    "常规任务样本合成中",
-    progress=progress,
-    data={
-        "current_batch": i // batch_size + 1,
-        "total_batches": total_batches,
-        "processed_samples": min(i + batch_size, len(failed_results)),
-        "total_failed_samples": len(failed_results),
-    }
-)
+        if writer:
+           writer(StreamEvent(
+        current=state.get("current") or "JudgerAgent",
+        progress=progress,
+        message="常规任务样本合成中",
+        data={
+            "current_batch": i // batch_size + 1,
+            "total_batches": total_batches,
+            "processed_samples": min(i + batch_size, len(failed_results)),
+            "total_failed_samples": len(failed_results),
+            }
+           ).json())
         batch = failed_results[i:i + batch_size]
 
         evidences: List[Dict[str, Any]] = []
@@ -802,12 +722,13 @@ def eval_model_node(state: LoopAIState):
             evidences.append(evidence)
             prompts.append(build_judge_prompt_generic(task_type, evidence))
         overall_start = time.time()
-        string_writer(
-    state,
-    "JudgerAgent.generate_node",
-    "正在调用分析模型",
-    data={"batch_size": len(batch)}
-)
+        if writer:
+           writer(StreamEvent(
+        current=state.get("current") or "JudgerAgent",
+        progress=None,
+        message="正在调用分析模型",
+        data={"batch_size": len(batch)}
+           ).json())
 
         # 模型批处理
                 # 模型批处理（带并发上限 + 分块）
@@ -831,13 +752,13 @@ def eval_model_node(state: LoopAIState):
     # ===== quick_brief：仅对失败样本生成短评（失败<=20全量；失败>20抽样20条覆盖错误类型）=====
     if cfg.get("quick_brief", False) and len(failed_results) > 0:
         limit = int(state.get("quick_brief_limit", 20))
-        string_writer(
-    state,
-    "JudgerAgent.evaluate_node",
-    "开始生成失败样本中文短评",
-    progress=0.70,
-    data={"limit": limit, "failed_samples": len(failed_results)}
-)
+        if writer:
+           writer(StreamEvent(
+        current=state.get("current") or "JudgerAgent",
+        progress=0.70,
+        message="开始生成失败样本中文短评",
+        data={"limit": limit, "failed_samples": len(failed_results)}
+           ).json())
         
 
         def _pick_quick_brief_indices() -> List[int]:
@@ -920,14 +841,13 @@ def eval_model_node(state: LoopAIState):
     state['analyze_output_result_path'] = str(out_jsonl_path.resolve())
     logger.info(f" 已写入增强版 OJ：{out_jsonl_path}")
     logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if cfg.get('quick_brief', False) else ""))
-    string_writer(
-    state,
-    "JudgerAgent.evaluate_node",
-    "已写入增强评测结果",
-    progress=0.85,
-    data={"output_path": str(out_jsonl_path)}
-)
-
+    if writer:
+       writer(StreamEvent(
+        current=state.get("current") or "JudgerAgent",
+        progress=0.85,
+        message="已写入增强评测结果",
+        data={"output_path": str(out_jsonl_path)}
+       ).json())
     try:
         summary_json_path, summary_txt_path = _build_and_write_summary(
             result_content, Path(state['output_dir']), ts, task_type=task_type
@@ -939,25 +859,26 @@ def eval_model_node(state: LoopAIState):
             json.dump(sdata, f, ensure_ascii=False, indent=2)
         state['analyze_output_summary_path'] = summary_json_path
         logger.info(f" 已在 {state['output_dir']} 生成 summary，路径：{summary_json_path} / {summary_txt_path}")
-        string_writer(
-    state,
-    "JudgerAgent.evaluate_node",
-    "已生成评测摘要",
-    progress=0.90,
-    data={
-        "summary_json": summary_json_path,
-        "summary_txt": summary_txt_path,
-        "pass_rate": sdata.get("pass_rate_samples"),
-        "total_samples": sdata.get("total_samples"),
-        "passed_samples": sdata.get("passed_samples"),
-    }
-)
+        if writer:
+           writer(StreamEvent(
+        current=state.get("current") or "JudgerAgent",
+        progress=0.90,
+        message="已生成评测摘要",
+        data={ 
+            "summary_json": summary_json_path,
+            "summary_txt": summary_txt_path,
+            "pass_rate": sdata.get("pass_rate_samples"),
+            "total_samples": sdata.get("total_samples"),
+            "passed_samples": sdata.get("passed_samples"),
+            }
+        ).json())
     except Exception as e:
         logger.warning(f"[WARN] 生成 summary 时发生错误：{e}")
-    string_writer(
-    state,
-    "JudgerAgent.evaluate_node",
-    "评测流程完成",
-    progress=1.0
-)
+    if writer:
+       writer(StreamEvent(
+        current=state.get("current") or "JudgerAgent",
+        progress=1.0,
+        message="评测流程完成",
+        data=None
+       ).json())
     return state
