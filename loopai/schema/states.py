@@ -24,7 +24,7 @@ class LoopAIState(MessagesState):
     eval_result_path: str  # No need to be set, computed during runtime to defined the path of result of model to be evaluated
     eval_batch_size: int = 20  # to defined the batch size of model to be evaluated
     # analyzer state attributes
-    analyze_task_type: str = 'code'
+    analyze_task_type: str = 'code' # allowed_values = ["code", "sql"] Any other value will be treated as general text and routed to general_text_fallback.
     analyze_batch_size: int = 20  # to defined the batch size of model to be analyzed
     analyze_model_path: str  # to defined the path of model to be analyzed and post-trained
     analyze_base_url: str  # to defined the base url of model to be analyzed and post-trained

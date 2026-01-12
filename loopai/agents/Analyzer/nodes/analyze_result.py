@@ -11,6 +11,10 @@ from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
 logger = get_logger()
+def _analyzer(state: LoopAIState) -> dict:
+    if "analyzer" not in state:
+        raise KeyError("state 中缺少 analyzer 配置，请在 graph.invoke 中传入 analyzer")
+    return state["analyzer"]
 def string_writer(
     state: LoopAIState,
     node: str,
@@ -45,12 +49,13 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     使用标准 vLLM(OpenAI 兼容) 客户端
     """
    
+    cfg = _analyzer(state)
     model = ChatOpenAI(
-        model=state['analyze_model_path'],
-        api_key=state['analyze_api_key'],
-        base_url=state['analyze_base_url'],
-        temperature=state.get('analyze_temperature', 0.0),
-        top_p=state.get('analyze_top_p', 0.95),
+        model=cfg['analyze_model_path'],
+        api_key=cfg['analyze_api_key'],
+        base_url=cfg['analyze_base_url'],
+        temperature=cfg.get('analyze_temperature', 0.0),
+        top_p=cfg.get('analyze_top_p', 0.95),
     )
     return model
 
@@ -212,7 +217,7 @@ def analyze_result_node(state: LoopAIState):
             "failed_records": sum(1 for r in results if not r.get("passed")),
         },
     )
-    top_k = int(state.get("analyze_sampling_top_k", 5))
+    top_k = int(_analyzer(state).get("analyze_sampling_top_k", 5))
     failures = pick_failure_examples(results, top_k)
     string_writer(
         state,
@@ -228,16 +233,17 @@ def analyze_result_node(state: LoopAIState):
 
     llm = init_model(state)
     prompt = build_prompt_for_llm(summary, failures)
+    cfg = _analyzer(state)
     string_writer(
         state,
         "JudgerAgent.analyze_result_node",
         "调用模型生成分析",
         progress=0.60,
         data={
-            "model": state.get("analyze_model_path"),
-            "base_url": state.get("analyze_base_url"),
-            "prompt_chars": len(prompt or ""),
-        },
+        "model": cfg.get("analyze_model_path"),
+        "base_url": cfg.get("analyze_base_url"),
+        "prompt_chars": len(prompt or ""),
+       },
     )
     # ChatOpenAI 支持 .batch，返回 BaseMessage，取第一个的 content
     response = llm.batch([prompt])[0].content
