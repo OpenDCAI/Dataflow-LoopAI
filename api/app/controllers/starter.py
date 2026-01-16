@@ -57,7 +57,7 @@ async def init_manager(task_id):
     if 'tavily_api_key_path' in config['starter'] and os.path.exists(config['starter']['tavily_api_key_path']):
         with open(config['starter']['tavily_api_key_path'], 'r') as f:
             tavily_api_key = f.read().strip()
-            os.environ['TAVILY_API_KEY'] = tavily_api_key
+
 
     rag_api_key = None
     if 'rag' in config and 'api_key_path' in config['rag'] and os.path.exists(config['rag']['api_key_path']):

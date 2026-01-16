@@ -5,11 +5,9 @@ import json
 import os
 from pathlib import Path
 from omegaconf import OmegaConf
-
 from loopai.agents.Obtainer.nodes.webpage_collect_node import webpage_collect_node
 from loopai.schema.states import LoopAIState
 from langchain_core.messages import HumanMessage
-
 # Get script directory
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
@@ -37,7 +35,7 @@ if not tavily_api_key_path.is_absolute():
 if tavily_api_key_path.exists():
     with open(tavily_api_key_path, 'r') as f:
         tavily_api_key = f.read().strip()
-        os.environ['TAVILY_API_KEY'] = tavily_api_key
+
 elif os.getenv('TAVILY_API_KEY'):
     tavily_api_key = os.getenv('TAVILY_API_KEY')
 
