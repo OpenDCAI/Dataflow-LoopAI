@@ -666,6 +666,12 @@ class TrainerState(BaseModel):
         description="SwanLab URL",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
+    train_output_swanlab_log_path: str = Field(
+        default="",
+        title="SwanLab 日志路径",
+        description="SwanLab 日志路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
 
 
 class ConfigerState(BaseModel):
@@ -700,10 +706,10 @@ def get_missing_fields(required_fields, state: dict):
     for key in required_fields:
         for field in required_fields[key]:
             if key == 'default':
-                if field not in state or not state.get(field):
+                if field not in state or state.get(field) is None:
                     missing_fields.setdefault(key, []).append(field)
             else:
-                if field not in state.get(key, {}) or not state.get(key, {}).get(field):
+                if field not in state.get(key, {}) or state.get(key, {}).get(field) is None:
                     missing_fields.setdefault(key, []).append(field)
     return missing_fields
 # ==========================================
@@ -782,6 +788,8 @@ class LoopAIState(MessagesState):
     # training_service_url: str = "http://localhost:8000"
     # current_training_status: str = ""
     # update_model_path: str
+    # swanlab_url: str
+    # train_output_swanlab_log_path: str
 
     # === Graph Control (图控制属性) ===
     current: str
