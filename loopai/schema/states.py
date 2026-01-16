@@ -413,6 +413,12 @@ class JudgerState(BaseModel):
         description="评估模型批量大小，也是问题生成样例数量大小",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
+    eval_case_num: int = Field(
+        default=10,
+        title="评估模型样例生成数量",
+        description="评估模型每个问题的样例生成数量",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
 
 
 class AnalyzerState(BaseModel):
