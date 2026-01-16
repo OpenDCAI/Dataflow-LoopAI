@@ -33,6 +33,7 @@ graph.invoke({"judger":{
     'eval_format_type': 'human-eval',
     'eval_result_path': '/root/brjverl/dataflow/examples/scripts/result/test_format.jsonl',
     'eval_batch_size': 10,
+    'eval_case_num': 10
 }}, config=config)
 
 # %%
