@@ -40,7 +40,7 @@ class JudgerAgent(BaseAgent):
         def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
             required_fields = {
                 'judger':["eval_model_path", "eval_base_url", "eval_api_key", "eval_temperature",
-                               "eval_top_p", "eval_test_case_path", "eval_problem_path", "eval_result_path", "eval_batch_size", "eval_task_type"]
+                               "eval_top_p", "eval_test_case_path", "eval_problem_path", "eval_result_path", "eval_batch_size", "eval_case_num", "eval_task_type"]
             }
             missing_fields = get_missing_fields(required_fields, state)
 
@@ -116,7 +116,7 @@ class JudgerAgent(BaseAgent):
                     writer(StreamEvent(
                         current=state['current'],
                         progress=0.0,
-                        message="常规任务样本合成开始",
+                        message="code任务样本合成开始",
                         data={"msg": f"对[{problem_path}]每个问题生成[{batch_size}]条样例数据"}
                     ).json())
                 generate_sample(state)
@@ -124,7 +124,7 @@ class JudgerAgent(BaseAgent):
                     writer(StreamEvent(
                         current=state['current'],
                         progress=1.0,
-                        message="常规任务样本合成完成",
+                        message="code任务样本合成完成",
                         data={"msg": f"结果保存为[{test_case_path}]"}
                     ).json())
                 return state
@@ -133,7 +133,7 @@ class JudgerAgent(BaseAgent):
                     writer(StreamEvent(
                         current=state['current'],
                         progress=0.0,
-                        message="SQL任务样本合成开始",
+                        message="text2sql任务样本合成开始",
                         data={"msg": f"对[{problem_path}]每个问题生成[{batch_size}]条样例数据"}
                     ).json())
                 generate_sample_sql(state)
@@ -141,7 +141,7 @@ class JudgerAgent(BaseAgent):
                     writer(StreamEvent(
                         current=state['current'],
                         progress=1.0,
-                        message="SQL任务样本合成完成",
+                        message="text2sql任务样本合成完成",
                         data={"msg": f"结果保存为[{test_case_path}]"}
                     ).json())
                 return state
@@ -157,7 +157,7 @@ class JudgerAgent(BaseAgent):
                     writer(StreamEvent(
                         current=state['current'],
                         progress=0.0,
-                        message="常规任务评测样本开始",
+                        message="code任务评测样本开始",
                         data={"msg": ''}
                     ).json())
                 res = evaluate_sample(state)
@@ -165,7 +165,7 @@ class JudgerAgent(BaseAgent):
                     writer(StreamEvent(
                         current=state['current'],
                         progress=1.0,
-                        message="常规任务评测样本结果",
+                        message="code任务评测样本结果",
                         data=res
                     ).json())
                 return state
@@ -174,7 +174,7 @@ class JudgerAgent(BaseAgent):
                     writer(StreamEvent(
                         current=state['current'],
                         progress=0.0,
-                        message="SQL任务评测样本开始",
+                        message="text2sql任务评测样本开始",
                         data={"msg": ''}
                     ).json())
                 res = evaluate_sample_sql(state)
@@ -182,7 +182,7 @@ class JudgerAgent(BaseAgent):
                     writer(StreamEvent(
                         current=state['current'],
                         progress=1.0,
-                        message="SQL任务评测样本结果",
+                        message="text2sql任务评测样本结束",
                         data=res
                     ).json())
                 return state
