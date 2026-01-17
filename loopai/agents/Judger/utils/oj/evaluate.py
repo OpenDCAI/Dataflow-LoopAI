@@ -9,6 +9,10 @@ import tqdm
 from .data import write_jsonl, stream_jsonl, read_problems
 from .execution_sql import compare_sql_wrapper
 from .execution import check_correctness
+
+from langgraph.config import get_stream_writer
+from loopai.schema.events import StreamEvent
+
 from loopai.logger import get_logger
 logger = get_logger()
 def estimate_pass_at_k(
@@ -73,16 +77,21 @@ def evaluate_sample_sql(state):
     n_workers=1
     timeout=3.0
 
+    state_task_id = state.get("task_id")
     judger_state = state.get("judger", {})
-    test_case_path = judger_state.get("eval_test_case_path", "")
-    problem_path = judger_state.get('eval_problem_path', "")
-    result_path = judger_state.get('eval_result_path', "")
+    output_dir = judger_state['output_dir']
+    problem_path = judger_state['eval_problem_path']
+    problem_file_name = os.path.splitext(os.path.basename(problem_path))[0]
+    test_case_path = f"{output_dir}{state_task_id}/{problem_file_name}_sample.jsonl"
+    result_path = f"{output_dir}{state_task_id}/{problem_file_name}_result.jsonl"
+    case_num = judger_state.get('eval_case_num', 10)
 
     k = list(map(int, K.split(",")))
     n_workers = n_workers
     timeout = timeout
 
     problems = read_problems(problem_path)
+    total_samples = len(problems) * case_num
 
     """
     Check the generated samples against test suites.
@@ -93,7 +102,7 @@ def evaluate_sample_sql(state):
         completion_id = Counter()
         n_samples = 0
         results = defaultdict(list)
-
+        writer = get_stream_writer()
         logger.info("Reading samples...")
         for sample in tqdm.tqdm(stream_jsonl(test_case_path)):
             task_id = sample["task_id"]
@@ -106,7 +115,13 @@ def evaluate_sample_sql(state):
             futures.append(future)
             completion_id[task_id] += 1
             n_samples += 1
-
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=round(n_samples/total_samples, 1),
+                    message="text2sql任务样本评测进度",
+                    data={"progress_detail": f"{n_samples}/{total_samples}"}
+                ).json())
         assert len(completion_id) == len(problems), "Some problems are not attempted."
 
         logger.info("Running test suites...")
@@ -142,18 +157,22 @@ def evaluate_sample(state):
     K = '1,10,100'
     n_workers=1
     timeout=3.0
-
+    
+    state_task_id = state.get("task_id")
     judger_state = state.get("judger", {})
-    test_case_path = judger_state.get("eval_test_case_path", "")
-    problem_path = judger_state.get('eval_problem_path', "")
-    result_path = judger_state.get('eval_result_path', "")
+    output_dir = judger_state['output_dir']
+    problem_path = judger_state['eval_problem_path']
+    problem_file_name = os.path.splitext(os.path.basename(problem_path))[0]
+    test_case_path = f"{output_dir}{state_task_id}/{problem_file_name}_sample.jsonl"
+    result_path = f"{output_dir}{state_task_id}/{problem_file_name}_result.jsonl"
+    case_num = judger_state.get('eval_case_num', 10)
 
     k = list(map(int, K.split(",")))
     n_workers = n_workers
     timeout = timeout
 
     problems = read_problems(problem_path)
-
+    total_samples = len(problems) * case_num
     """
     Check the generated samples against test suites.
     """
@@ -163,7 +182,7 @@ def evaluate_sample(state):
         completion_id = Counter()
         n_samples = 0
         results = defaultdict(list)
-
+        writer = get_stream_writer()
         logger.info("Reading samples...")
         for sample in tqdm.tqdm(stream_jsonl(test_case_path)):
             task_id = sample["task_id"]
@@ -173,7 +192,14 @@ def evaluate_sample(state):
             futures.append(future)
             completion_id[task_id] += 1
             n_samples += 1
-
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=round(n_samples/total_samples, 1),
+                    message="text2sql任务样本评测进度",
+                    data={"progress_detail": f"{n_samples}/{total_samples}"}
+                ).json())
+                
         assert len(completion_id) == len(problems), "Some problems are not attempted."
 
         logger.info("Running test suites...")

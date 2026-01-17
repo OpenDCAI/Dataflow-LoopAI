@@ -17,13 +17,18 @@ def data_format(state):
     judger_state = state.get("judger", {})
     """选择适配器"""
     method = judger_state['eval_format_type']
+    state_task_id = state.get("task_id")
+    output_dir = judger_state['output_dir']
+    problem_path = judger_state['eval_problem_path']
+    problem_file_name = os.path.splitext(os.path.basename(problem_path))[0]
+    format_path = f"{output_dir}{state_task_id}/{problem_file_name}_format.jsonl"
     if(method is None):
         method = "human-eval"
     match method:
         case "human-eval":  # human-eval
-            return preprocess_json_file(state, judger_state['eval_problem_path'], judger_state['eval_problem_format_path'], human_eval_format)
+            return preprocess_json_file(state, problem_path, format_path, human_eval_format)
         case _:  # 通配符（类似 switch 的 default）
-            return preprocess_json_file(state, judger_state['eval_problem_path'], judger_state['eval_problem_format_path'], human_eval_format)
+            return preprocess_json_file(state, problem_path, format_path, human_eval_format)
 
 
 def human_eval_format(line):
