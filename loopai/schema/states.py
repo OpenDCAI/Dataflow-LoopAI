@@ -377,35 +377,17 @@ class JudgerState(BaseModel):
         description="评估模型 Top P",
         json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
-    eval_test_case_path: str = Field(
-        default="",
-        title="评估模型测试用例路径",
-        description="评估模型测试用例路径",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    )
     eval_problem_path: str = Field(
         default="",
         title="评估模型问题路径",
         description="评估模型问题路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
-    eval_problem_format_path: str = Field(
-        default="",
-        title="评估模型问题格式化路径",
-        description="评估模型问题格式化路径，如果为空将不进入格式化节点，如果和问题路径一样，则格式化后将覆盖原问题文件",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    )
     eval_format_type: str = Field(
         default="human-eval",
         title="评估模型问题格式化类型",
-        description="评估模型问题格式化类型，如果为空将不进入格式化节点，改格式化方式可以用户自由定义",
+        description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"，格式化后的文件将存至output_dir定义的目录下",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
-    )
-    eval_result_path: str = Field(
-        default="",
-        title="评估模型结果路径",
-        description="评估模型结果路径",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     eval_batch_size: int = Field(
         default=10,
@@ -418,6 +400,18 @@ class JudgerState(BaseModel):
         title="评估模型样例生成数量",
         description="评估模型每个问题的样例生成数量",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
+    eval_text2sql_dir: str = Field(
+        default="",
+        title="评估模型text2sql数据库目录",
+        description="评估模型text2sql数据库目录，仅text2sql任务下生效，并且数据文件中需要以字段db_id标注出相应的数据库文件夹至路径目录下",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    output_dir: str = Field(
+        default="",
+        title="评估模型输出文件目录",
+        description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
 
 
