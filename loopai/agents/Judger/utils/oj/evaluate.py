@@ -77,11 +77,14 @@ def evaluate_sample_sql(state):
     n_workers=1
     timeout=3.0
 
+    state_task_id = state.get("task_id")
     judger_state = state.get("judger", {})
-    test_case_path = judger_state.get("eval_test_case_path", "")
-    problem_path = judger_state.get('eval_problem_path', "")
-    result_path = judger_state.get('eval_result_path', "")
-    case_num = judger_state.get('eval_case_num', "")
+    output_dir = judger_state['output_dir']
+    problem_path = judger_state['eval_problem_path']
+    problem_file_name = os.path.splitext(os.path.basename(problem_path))[0]
+    test_case_path = f"{output_dir}{state_task_id}/{problem_file_name}_sample.jsonl"
+    result_path = f"{output_dir}{state_task_id}/{problem_file_name}_result.jsonl"
+    case_num = judger_state.get('eval_case_num', 10)
 
     k = list(map(int, K.split(",")))
     n_workers = n_workers
@@ -154,12 +157,15 @@ def evaluate_sample(state):
     K = '1,10,100'
     n_workers=1
     timeout=3.0
-
+    
+    state_task_id = state.get("task_id")
     judger_state = state.get("judger", {})
-    test_case_path = judger_state.get("eval_test_case_path", "")
-    problem_path = judger_state.get('eval_problem_path', "")
-    result_path = judger_state.get('eval_result_path', "")
-    case_num = judger_state.get('eval_case_num', "")
+    output_dir = judger_state['output_dir']
+    problem_path = judger_state['eval_problem_path']
+    problem_file_name = os.path.splitext(os.path.basename(problem_path))[0]
+    test_case_path = f"{output_dir}{state_task_id}/{problem_file_name}_sample.jsonl"
+    result_path = f"{output_dir}{state_task_id}/{problem_file_name}_result.jsonl"
+    case_num = judger_state.get('eval_case_num', 10)
 
     k = list(map(int, K.split(",")))
     n_workers = n_workers
