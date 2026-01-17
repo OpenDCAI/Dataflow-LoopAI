@@ -1,6 +1,7 @@
 from tqdm import tqdm
 from langchain_openai import ChatOpenAI
 import json
+import os
 from .data import read_problems, write_jsonl
 
 from langgraph.config import get_stream_writer
@@ -28,14 +29,10 @@ def init_model(model_path: str, base_url: str, api_key: str, temperature: float 
 def generate_sample(state):
     """
     样本生成函数
-    关键Args:
-        - model_path: 模型路径
-        - base_url: 对应eval_base_url
-        - test_case_path: 样例结果保存路径
-        - problem_path: 问题集文件路径
-        - num_samples_per_task: 每个生成的样本数
     """
-    logger.info(f"进入生成样本")
+    #logger.info(f"进入生成样本")
+    state_task_id =  state.get("task_id")
+
     judger_state = state.get("judger", {})
     model = init_model(
         model_path=judger_state['eval_model_path'],
@@ -44,8 +41,12 @@ def generate_sample(state):
         temperature=judger_state['eval_temperature'],
         top_p=judger_state['eval_top_p']
     )
-    test_case_path = judger_state['eval_test_case_path']
+
+    output_dir = judger_state['output_dir']
     problem_path = judger_state['eval_problem_path']
+    problem_file_name = os.path.splitext(os.path.basename(problem_path))[0]
+    test_case_path = f"{output_dir}{state_task_id}/{problem_file_name}_sample.jsonl"
+
     batch_size = judger_state['eval_batch_size']
     num_samples_per_task = judger_state['eval_case_num']
     
@@ -103,9 +104,9 @@ def generate_sample(state):
     return {"sample_num":len(samples),"sample_save_path":test_case_path}
 
 def generate_sample_sql(state):
-    #logger.info(f"进入生成样本")
     judger_state = state.get("judger", {})
-
+    state_task_id = state.get("task_id")
+    logger.info(f"进入生成样本{state_task_id}")
     model = init_model(
         model_path=judger_state['eval_model_path'],
         base_url=judger_state['eval_base_url'],
@@ -113,10 +114,15 @@ def generate_sample_sql(state):
         temperature=judger_state['eval_temperature'],
         top_p=judger_state['eval_top_p']
     )
-    test_case_path = judger_state['eval_test_case_path']
+    output_dir = judger_state['output_dir']
     problem_path = judger_state['eval_problem_path']
+    problem_file_name = os.path.splitext(os.path.basename(problem_path))[0]
+    test_case_path = f"{output_dir}{state_task_id}/{problem_file_name}_sample.jsonl"
+
     num_samples_per_task = judger_state['eval_case_num']
     batch_size = judger_state['eval_batch_size']
+    text2sql_dir = judger_state['eval_text2sql_dir']
+
     problems = read_problems(problem_path)
     all_task_ids = list(problems.keys())
     total_tasks = len(all_task_ids)
@@ -153,7 +159,7 @@ def generate_sample_sql(state):
                 samples.append({
                     "task_id": task_id,
                     "completion": completion,
-                    "db_file": "/root/brjverl/dataflow/examples/scripts/database/"+ problems[task_id]['db_id'] + f"/{problems[task_id]['db_id']}.sqlite",
+                    "db_file": text2sql_dir + problems[task_id]['db_id'] + f"/{problems[task_id]['db_id']}.sqlite",
                     "question": problems[task_id]["question"],
                     "ground_truth": problems[task_id]["ground_truth"],
                 })
