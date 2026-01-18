@@ -407,6 +407,18 @@ class JudgerState(BaseModel):
         description="评估模型text2sql数据库目录，仅text2sql任务下生效，并且数据文件中需要以字段db_id标注出相应的数据库文件夹至路径目录下",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
+    eval_env_configs: str = Field(
+        default='{"CUDA_VISIBLE_DEVICES": "0","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
+        title="评估模型vllm启动环境参数",
+        description="评估模型vllm启动环境参数，需要完整字符串配置，为空则认为已启动vllm将会跳过启动vllm的过程",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+    )
+    eval_vllm_command: str = Field(
+        default="python -m vllm.entrypoints.openai.api_server --model /root/brjverl/models/Qwen2.5-Coder-7B-Instruct/ --port 8911 --tensor-parallel-size 1 --trust-remote-code --gpu-memory-utilization 0.9 --enable-auto-tool-choice --tool-call-parser hermes",
+        title="vllm服务启动命令",
+        description="vllm服务启动命令，需要完整命令，为空则认为已启动vllm将会跳过启动vllm的过程",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+    )
     output_dir: str = Field(
         default="",
         title="评估模型输出文件目录",
