@@ -1,4 +1,4 @@
-# Juger Agent说明文档
+# Judger Agent说明文档
 Judger 是 Dataflow-LoopAI 中用于 **模型样例生成和样例编译评测** 的评测型 Agent。  
 该模块基于符合格式要求的Jsonl数据文件，在不重新运行模型的前提下，对问题集生成所需的样例，并自动评测。期间会产出样例文件(Jsonl文件)和评测结果文件(Jsonl)
 
