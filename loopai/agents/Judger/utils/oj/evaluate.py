@@ -196,7 +196,7 @@ def evaluate_sample(state):
                 writer(StreamEvent(
                     current=state['current'],
                     progress=round(n_samples/total_samples, 1),
-                    message="text2sql任务样本评测进度",
+                    message="code任务样本评测进度",
                     data={"progress_detail": f"{n_samples}/{total_samples}"}
                 ).json())
                 
