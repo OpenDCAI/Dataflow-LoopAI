@@ -12,6 +12,8 @@ from .utils.oj.generate import generate_sample, generate_sample_sql
 from .utils.oj.evaluate import evaluate_sample, evaluate_sample_sql
 from .utils.oj.format import data_format
 from .utils.oj.data import check_file
+from .utils.oj.vllm_starter import start_vllm_openai_api_server
+
 from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
 
@@ -69,7 +71,40 @@ class JudgerAgent(BaseAgent):
                     graph=Command.PARENT
                 )           
         return check_required_fields
-
+    
+    @staticmethod
+    @BaseAgent.set_current
+    def vllm_start_node(state: LoopAIState) -> LoopAIState:
+        env_configs = state.get("judger", {}).get("eval_env_configs", None)
+        vllm_command = state.get("judger", {}).get("eval_vllm_command", None)
+        writer = get_stream_writer()
+        if(env_configs != "" and env_configs is not None and vllm_command != "" and vllm_command is not None ):
+            logger.info("进入")
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=0.0,
+                    message="vllm启动",
+                    data={"msg": f""}
+                ).json())
+            start_vllm_openai_api_server(env_configs, vllm_command)
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=1.0,
+                    message="vllm已启动",
+                    data={"msg": f""}
+                ).json())
+        else:
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=1.0,
+                    message="vllm开启结束",
+                    data={"msg": f"因参数[env_configs]或[vllm_command]未设置而跳过该过程"}
+                ).json())
+        return state
+    
     @staticmethod
     @BaseAgent.set_current
     def data_format_node(state: LoopAIState) -> LoopAIState:
@@ -172,10 +207,12 @@ class JudgerAgent(BaseAgent):
     def init_graph(self, **kwargs):
         builder = StateGraph(LoopAIState)
         builder.add_node("check_required_fields", self.get_check_required_fields_node())
+        builder.add_node("vllm_start", self.vllm_start_node)
         builder.add_node("data_format", self.data_format_node)
         builder.add_node("generate", self.generate_node)
         builder.add_node("evaluate", self.evaluate_node)
-        builder.add_edge("check_required_fields", "data_format")
+        builder.add_edge("check_required_fields", "vllm_start")
+        builder.add_edge("vllm_start", "data_format")
         builder.add_edge("data_format", "generate")
         builder.add_edge("generate", "evaluate")
         builder.set_entry_point("check_required_fields")

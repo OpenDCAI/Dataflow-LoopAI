@@ -33,7 +33,9 @@ graph.invoke({
         'eval_text2sql_dir': '/root/brjverl/dataflow/examples/scripts/database/',
         'output_dir': '/root/brjverl/dataflow/examples/scripts/output/',
         'eval_batch_size': 10,
-        'eval_case_num': 1
+        'eval_case_num': 1,
+        'eval_vllm_command': 'python -m vllm.entrypoints.openai.api_server --model /root/brjverl/models/Qwen2.5-Coder-7B-Instruct/ --port 8911 --tensor-parallel-size 1 --trust-remote-code --gpu-memory-utilization 0.9 --enable-auto-tool-choice --tool-call-parser hermes',
+        'eval_env_configs':'{"CUDA_VISIBLE_DEVICES": "0","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}'
     },
     "task_id": 10000,
 }, config=config)
