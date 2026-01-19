@@ -2,6 +2,7 @@ from tqdm import tqdm
 from langchain_openai import ChatOpenAI
 import json
 import os
+from pathlib import Path
 from .data import read_problems, write_jsonl
 
 from langgraph.config import get_stream_writer
@@ -42,10 +43,10 @@ def generate_sample(state):
         top_p=judger_state['eval_top_p']
     )
 
-    output_dir = judger_state['output_dir']
+    output_dir = Path(judger_state['output_dir'])
     problem_path = judger_state['eval_problem_path']
-    problem_file_name = os.path.splitext(os.path.basename(problem_path))[0]
-    test_case_path = f"{output_dir}{state_task_id}/{problem_file_name}_sample.jsonl"
+    problem_file_name = str(Path(problem_path).stem)
+    test_case_path = str(output_dir / str(state_task_id) / (problem_file_name + "_sample.jsonl"))
 
     batch_size = judger_state['eval_batch_size']
     num_samples_per_task = judger_state['eval_case_num']
@@ -114,14 +115,14 @@ def generate_sample_sql(state):
         temperature=judger_state['eval_temperature'],
         top_p=judger_state['eval_top_p']
     )
-    output_dir = judger_state['output_dir']
+    output_dir = Path(judger_state['output_dir'])
     problem_path = judger_state['eval_problem_path']
-    problem_file_name = os.path.splitext(os.path.basename(problem_path))[0]
-    test_case_path = f"{output_dir}{state_task_id}/{problem_file_name}_sample.jsonl"
+    problem_file_name = str(Path(problem_path).stem)
+    test_case_path = str(output_dir / str(state_task_id) / (problem_file_name + "_sample.jsonl"))
 
     num_samples_per_task = judger_state['eval_case_num']
     batch_size = judger_state['eval_batch_size']
-    text2sql_dir = judger_state['eval_text2sql_dir']
+    text2sql_dir = Path(judger_state['eval_text2sql_dir'])
 
     problems = read_problems(problem_path)
     all_task_ids = list(problems.keys())
@@ -159,7 +160,7 @@ def generate_sample_sql(state):
                 samples.append({
                     "task_id": task_id,
                     "completion": completion,
-                    "db_file": text2sql_dir + problems[task_id]['db_id'] + f"/{problems[task_id]['db_id']}.sqlite",
+                    "db_file": str(text2sql_dir / problems[task_id]['db_id'] / f"{problems[task_id]['db_id']}.sqlite"),
                     "question": problems[task_id]["question"],
                     "ground_truth": problems[task_id]["ground_truth"],
                 })
