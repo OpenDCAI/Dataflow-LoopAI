@@ -57,89 +57,27 @@ def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         # 连接超时、被拒绝、端口未监听，均返回False
         return False
 
-def is_process_running(process_pattern: str) -> bool:
-    """
-    检测指定模式的进程是否仍在运行（校验旧进程是否彻底终止）
-    :param process_pattern: 进程匹配字符串
-    :return: 进程存在返回True，否则返回False
-    """
-    try:
-        # 使用pgrep检测进程是否存在（返回0表示存在，非0表示不存在）
-        result = subprocess.run(
-            ["pgrep", "-f", process_pattern],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        return result.returncode == 0
-    except FileNotFoundError:
-        raise Exception("系统中未找到pgrep命令，该功能仅支持Linux/macOS环境")
-
 def start_vllm_openai_api_server(
-    env_configs,
-    vllm_command,
+    env_configs, vllm_port, vllm_tensor_parallel_size, vllm_gpu_memory_utilization, vllm_model,
     poll_interval: float = 2.0,
-    max_timeout: float = 300.0,
-    process_kill_wait: float = 10.0  # 旧进程终止等待超时时间
+    max_timeout: float = 300.0
 ) -> subprocess.Popen:
     """
     启动vllm openai兼容api服务（彻底重新启动）
     :env_configs: 评估模型vllm启动环境参数
-    :vllm_command: vllm服务启动命令
+    :vllm_port: vllm启动参数——port
+    :vllm_tensor_parallel_size: vllm启动参数——tensor_parallel_size
+    :vllm_gpu_memory_utilization: vllm启动参数——gpu_memory_utilization
     :param poll_interval: 端口轮询检测间隔（秒）
     :param max_timeout: 最大等待超时时间（秒）
     :param process_kill_wait: 旧进程终止等待超时时间（秒）
     :return: vllm子进程对象
     """
+    vllm_command = f"python -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {vllm_port} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes"
     env_configs = json.loads(env_configs)
     process_pattern = "vllm.entrypoints.openai.api_server"
     port = parse_port_from_command_str(vllm_command)
     host = "localhost"
-
-    # 终止已存在的vllm api server进程（增强版，确保彻底终止）
-    logger.info("开始终止旧的vllm进程...")
-    try:
-        # 发送普通终止信号（pkill）
-        subprocess.run(
-            ["pkill", "-f", process_pattern],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-
-        # 循环校验进程是否仍在运行，直到终止或超时
-        start_kill_time = time.time()
-        while True:
-            if not is_process_running(process_pattern):
-                logger.info("旧的vllm进程已彻底终止")
-                break
-
-            if time.time() - start_kill_time > process_kill_wait:
-                # 普通终止失败，发送强制终止信号（pkill -9）
-                logger.warning("普通终止失败，发送强制终止信号...")
-                subprocess.run(
-                    ["pkill", "-9", "-f", process_pattern],
-                    check=False,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-
-            # 等待一段时间后重试校验
-            time.sleep(1.0)
-
-            # 超出等待时间，抛出异常
-            if time.time() - start_kill_time > process_kill_wait:
-                raise Exception(f"旧vllm进程终止超时，超过{process_kill_wait}秒仍未终止")
-
-        # 等待端口释放（避免端口占用，增加额外缓冲）
-        logger.info("等待端口{port}释放...")
-        while is_port_open(host, port):
-            time.sleep(0.5)
-        logger.info(f"端口{port}已释放")
-
-    except FileNotFoundError:
-        raise Exception("系统中未找到pkill/pgrep命令，该功能仅支持Linux/macOS环境")
-    except Exception as e:
-        raise Exception(f"终止旧vllm进程失败：{str(e)}")
 
     # 设置NCCL和CUDA环境变量
     for key, value in env_configs.items():
