@@ -223,7 +223,7 @@ class StarterAgent(BaseAgent):
                     # if detect llm_node custom event and stream_message_state is finished, clear stream_message
                     # you should realize that there is a delay between update event and custom event
                     # so we need to clear the stream_message of the last turn, and you can fetch them in the llm_node.data.history
-                    if 'stream_message_state' in chunk_item.get('data', {}):
+                    if chunk_item.get('data', {}) is not None and 'stream_message_state' in chunk_item.get('data', {}):
                         stream_message_state = chunk_item.get('data', {}).get(
                             'stream_message_state', 'not_ready')
                         if stream_message_state == 'start':
