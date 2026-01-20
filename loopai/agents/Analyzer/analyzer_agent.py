@@ -36,7 +36,8 @@ class AnalyzerAgent(BaseAgent):
             required_fields = {
                 "analyzer": [
                     "analyze_model_path", "analyze_base_url", "analyze_api_key", "analyze_temperature", "analyze_top_p", 
-                    "output_brief", "analyze_task_type",  "analyze_sampling_top_k", "output_suggestion", "analyze_batch_size"
+                    "output_brief", "analyze_task_type",  "analyze_sampling_top_k", "output_suggestion", "analyze_batch_size","analyze_max_concurrency",
+                    "analyze_chunk_size","quick_brief","quick_brief_limit"
                 ],
                 "judger": ["eval_result_path"],
                 "default": ["output_dir"]
