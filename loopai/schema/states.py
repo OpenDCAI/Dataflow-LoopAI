@@ -356,7 +356,7 @@ class JudgerState(BaseModel):
     eval_base_url: str = Field(
         default="",
         title="评估模型 Base URL",
-        description="评估模型 Base URL",
+        description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
     eval_api_key: str = Field(
@@ -408,24 +408,35 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     eval_env_configs: str = Field(
-        default='{"CUDA_VISIBLE_DEVICES": "0","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
+        default='{"CUDA_VISIBLE_DEVICES": "0,1","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
         title="评估模型vllm启动环境参数",
         description="评估模型vllm启动环境参数，需要完整字符串配置，为空则认为已启动vllm将会跳过启动vllm的过程",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
-    eval_vllm_command: str = Field(
-        default="python -m vllm.entrypoints.openai.api_server --model /root/brjverl/models/Qwen2.5-Coder-7B-Instruct/ --port 8911 --tensor-parallel-size 1 --trust-remote-code --gpu-memory-utilization 0.9 --enable-auto-tool-choice --tool-call-parser hermes",
-        title="vllm服务启动命令",
-        description="vllm服务启动命令，需要完整命令，为空则认为已启动vllm将会跳过启动vllm的过程",
-        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+    eval_vllm_port: int = Field(
+        default=8911,
+        title="vllm本地启动参数——port",
+        description="vllm本地启动参数——port，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
+    eval_vllm_tensor_parallel_size: int = Field(
+        default=2,
+        title="vllm本地启动参数——tensor_parallel_size",
+        description="vllm本地启动参数——tensor_parallel_size，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
+    eval_vllm_gpu_memory_utilization: int = Field(
+        default=0.9,
+        title="vllm本地启动参数——gpu_memory_utilization",
+        description="vllm本地启动参数——gpu_memory_utilization，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
+        json_schema_extra={"ui_type": "slider", "ui_group": "评估模型"}
     )
     output_dir: str = Field(
         default="",
         title="评估模型输出文件目录",
         description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型", "is_output": True}
     )
-
 
 class AnalyzerState(BaseModel):
     analyze_task_type: str = Field(
