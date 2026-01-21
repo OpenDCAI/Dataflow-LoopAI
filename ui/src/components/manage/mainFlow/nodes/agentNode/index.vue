@@ -37,65 +37,84 @@
                 ></value-preview>
             </div>
         </div>
-        <div v-if="customInfoFiltered.length > 0" class="node-row-item">
-            <span
-                class="info-title"
-                style="font-size: 13px"
-                :style="{ color: thisData.iconColor }"
-                >{{ appConfig.local('Custom Info') }}</span
-            >
-        </div>
-        <hr v-if="customInfoFiltered.length > 0" />
-        <div v-if="customInfoFiltered.length > 0" class="node-group-item scroll-list" @wheel.stop>
+        <webcrawler-log-panel
+            v-if="isWebCrawlerAgent && customInfoFiltered.length > 0"
+            :foreground="thisData.iconColor"
+            :graphClsPrefix="thisData.graphClsPrefix"
+        />
+        <!-- 自定义 Node CustomInfo展示 -->
+        <component
+            :is="customInfoPanel"
+            :foreground="thisData.iconColor"
+            :graphClsPrefix="thisData.graphClsPrefix"
+        />
+
+        <!-- 其他 Agent 的通用 CustomInfo 展示 -->
+        <template v-if="customInfoFiltered.length > 0">
+            <div class="node-row-item">
+                <span
+                    class="info-title"
+                    style="font-size: 13px"
+                    :style="{ color: thisData.iconColor }"
+                    >{{ appConfig.local('Custom Info') }}</span
+                >
+            </div>
+            <hr v-if="customInfoFiltered.length > 0" />
             <div
-                v-for="(custom_info, c_index) in customInfoFiltered"
-                :key="`custom_${c_index}`"
-                class="node-row-item col"
+                v-if="customInfoFiltered.length > 0"
+                class="node-group-item scroll-list"
+                @wheel.stop
             >
-                <span class="info-title" :style="{ color: thisData.iconColor }">{{
-                    custom_info.key
-                }}</span>
-                <hr />
-                <div class="node-row-item">
-                    <span class="info-title">{{ appConfig.local('Message') }}</span>
-                    <p class="info-value tiny" :title="custom_info.value.message">
-                        {{ custom_info.value.message ? custom_info.value.message : 'null' }}
-                    </p>
-                </div>
-                <div v-if="custom_info.value.progress" class="node-row-item col">
-                    <span class="info-title">{{ appConfig.local('Progress') }}</span>
-                    <fv-progress-bar
-                        :model-value="custom_info.value.progress * 100"
-                        :foreground="thisData.iconColor"
-                        :background="'white'"
-                        :border-radius="8"
-                        style="width: 100%"
-                    ></fv-progress-bar>
-                </div>
-                <span class="info-title" :style="{ color: thisData.iconColor }">{{
-                    appConfig.local('Event Data')
-                }}</span>
-                <hr />
                 <div
-                    v-if="custom_info.value.data"
-                    v-for="(item_val, item_key) in custom_info.value.data"
-                    :key="`custom_item_${item_key}`"
+                    v-for="(custom_info, c_index) in customInfoFiltered"
+                    :key="`custom_${c_index}`"
                     class="node-row-item col"
                 >
-                    <span class="info-title">{{ item_key }}</span>
-                    <fv-text-box
-                        :model-value="item_val"
-                        :placeholder="appConfig.local('Please input') + ` ${item_key}`"
-                        font-size="12"
-                        border-radius="8"
-                        :reveal-border="true"
-                        style="width: 100%; height: 35px"
-                        @mousedown.stop
-                        @click.stop
-                    ></fv-text-box>
+                    <span class="info-title" :style="{ color: thisData.iconColor }">{{
+                        custom_info.key
+                    }}</span>
+                    <hr />
+                    <div class="node-row-item">
+                        <span class="info-title">{{ appConfig.local('Message') }}</span>
+                        <p class="info-value tiny" :title="custom_info.value.message">
+                            {{ custom_info.value.message ? custom_info.value.message : 'null' }}
+                        </p>
+                    </div>
+                    <div v-if="custom_info.value.progress" class="node-row-item col">
+                        <span class="info-title">{{ appConfig.local('Progress') }}</span>
+                        <fv-progress-bar
+                            :model-value="custom_info.value.progress * 100"
+                            :foreground="thisData.iconColor"
+                            :background="'white'"
+                            :border-radius="8"
+                            style="width: 100%"
+                        ></fv-progress-bar>
+                    </div>
+                    <span class="info-title" :style="{ color: thisData.iconColor }">{{
+                        appConfig.local('Event Data')
+                    }}</span>
+                    <hr />
+                    <div
+                        v-if="custom_info.value.data"
+                        v-for="(item_val, item_key) in custom_info.value.data"
+                        :key="`custom_item_${item_key}`"
+                        class="node-row-item col"
+                    >
+                        <span class="info-title">{{ item_key }}</span>
+                        <fv-text-box
+                            :model-value="item_val"
+                            :placeholder="appConfig.local('Please input') + ` ${item_key}`"
+                            font-size="12"
+                            border-radius="8"
+                            :reveal-border="true"
+                            style="width: 100%; height: 35px"
+                            @mousedown.stop
+                            @click.stop
+                        ></fv-text-box>
+                    </div>
                 </div>
             </div>
-        </div>
+        </template>
     </base-node>
 </template>
 
@@ -107,6 +126,7 @@ import { useLoopAI } from '@/stores/loopAI'
 
 import baseNode from '@/components/manage/mainFlow/nodes/baseNode.vue'
 import valuePreview from './valuePreview.vue'
+import WebCrawlerLogPanel from './webcrawlerLogPanel.vue'
 
 const { $api } = useGlobal()
 
@@ -222,6 +242,16 @@ const customInfoFiltered = computed(() => {
     }
     return filter_list
 })
+
+// 自定义节点信息展示
+const customInfoPanel = computed(() => {
+    if (thisData.value.graphClsPrefix === 'WebCrawlerAgent') {
+        return WebCrawlerLogPanel
+    }
+    return null
+})
+
+console.log('thisData.value.graphClsPrefix', thisData.value.graphClsPrefix)
 
 const runningMe = computed(() => {
     try {

@@ -169,7 +169,7 @@ export default {
                         status: 'Agent',
                         stateKey: 'configer',
                         graphClsPrefix: 'ConfigerAgent',
-                        include_nodes: ["config_node"],
+                        include_nodes: ['config_node'],
                         icon: 'Settings',
                         nodeInfo: 'Trainer Agent for Training',
                         iconColor: 'rgba(149, 91, 120, 1)',
@@ -187,7 +187,7 @@ export default {
                         status: 'Agent',
                         stateKey: 'trainer',
                         graphClsPrefix: 'TrainerAgent',
-                        include_nodes: ["train_node"],
+                        include_nodes: ['train_node'],
                         icon: 'Library',
                         nodeInfo: 'Trainer Agent for Training',
                         iconColor: 'rgba(207, 150, 12, 1)',
@@ -205,10 +205,26 @@ export default {
                         status: 'Agent',
                         stateKey: 'obtainer',
                         graphClsPrefix: 'ObtainerAgent',
-                        include_nodes: ["obtain_node"],
+                        include_nodes: ['obtain_node'],
                         icon: 'GiftboxOpen',
                         nodeInfo: 'Trainer Agent for Training',
                         iconColor: 'rgba(135, 127, 163, 1)',
+                        reverseHandle: true
+                    }
+                },
+                {
+                    id: 'webcrawler',
+                    type: 'agent-node',
+                    position: { x: 80, y: 401 },
+                    data: {
+                        label: 'Webcrawler',
+                        status: 'Agent',
+                        stateKey: 'webcrawler',
+                        graphClsPrefix: 'WebCrawlerAgent',
+                        include_nodes: ['webcrawler_dataset_node'],
+                        icon: 'GiftboxOpen',
+                        nodeInfo: 'Webcrawler',
+                        iconColor: 'rgba(134, 127, 163, 1)',
                         reverseHandle: true
                     }
                 },
@@ -221,7 +237,7 @@ export default {
                         status: 'Agent',
                         stateKey: 'judger',
                         graphClsPrefix: 'JudgerAgent',
-                        include_nodes: ["judge_node"],
+                        include_nodes: ['judge_node'],
                         icon: 'Bug',
                         nodeInfo: 'Trainer Agent for Training',
                         iconColor: 'rgba(89, 169, 133, 1)',
@@ -239,7 +255,7 @@ export default {
                         status: 'Agent',
                         stateKey: 'analyzer',
                         graphClsPrefix: 'AnalyzerAgent',
-                        include_nodes: ["analyze_node"],
+                        include_nodes: ['analyze_node'],
                         icon: 'AreaChart',
                         nodeInfo: 'Trainer Agent for Training',
                         iconColor: 'rgba(139, 145, 177, 1)',
@@ -309,6 +325,16 @@ export default {
                     type: 'base-edge',
                     source: 'analyzer',
                     target: 'obtainer',
+                    animated: true,
+                    data: {
+                        label: 'node'
+                    }
+                },
+                {
+                    id: 'e4->6',
+                    type: 'base-edge',
+                    source: 'analyzer',
+                    target: 'webcrawler',
                     animated: true,
                     data: {
                         label: 'node'
