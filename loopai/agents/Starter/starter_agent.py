@@ -15,6 +15,7 @@ from loopai.agents.Analyzer import AnalyzerAgent
 from loopai.agents.Obtainer import ObtainerAgent
 from loopai.agents.Constructor import ConstructorAgent
 from loopai.agents.Trainer import TrainerAgent
+from loopai.agents.WebCrawler import WebCrawlerAgent
 
 from loopai.agents.Configer.tools.check_config import check_config
 
@@ -141,6 +142,14 @@ class StarterAgent(BaseAgent):
             checkpointer=self.checkpointer,
             store=self.store
         )(**kwargs)
+        # WebCrawlerAgent for web crawling and dataset generation
+        webcrawler_node = WebCrawlerAgent(
+            model_name=self.model_name,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            checkpointer=self.checkpointer,
+            store=self.store
+        )(**kwargs)
         builder = StateGraph(LoopAIState, context_schema=RuntimeContext)
         builder.add_node("query_node", self.query_node)
         builder.add_node("llm_node", self.llm_node)
@@ -155,6 +164,7 @@ class StarterAgent(BaseAgent):
         builder.add_node("config_node", config_node)
         builder.add_node("judge_node", judge_node)
         builder.add_node("analyze_node", analyze_node)
+        builder.add_node("webcrawler_node", webcrawler_node)
         builder.add_node("end_node", self.end_node)
 
         builder.set_entry_point("query_node")
@@ -171,6 +181,7 @@ class StarterAgent(BaseAgent):
         builder.add_edge('config_node', 'query_node')
         builder.add_edge('judge_node', 'route_node')
         builder.add_edge('analyze_node', 'route_node')
+        builder.add_edge('webcrawler_node', 'query_node')
         builder.add_conditional_edges(
             "feedback_node",
             self.conditional_edge)
