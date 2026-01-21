@@ -6,7 +6,6 @@ from langchain_core.messages import AIMessage
 
 logger = get_logger()
 
-
 def end_node(state: LoopAIState) -> LoopAIState:
     """
     End node for webcrawler agent
@@ -21,8 +20,9 @@ def end_node(state: LoopAIState) -> LoopAIState:
     
     # 输出结束开始事件
     writer(StreamEvent(
-        current="end_node",
-        message="开始生成任务摘要"
+        current=state['current'],
+        message="开始生成任务摘要",
+        progress=0
     ).json())
     
     # 生成摘要
@@ -74,8 +74,9 @@ def end_node(state: LoopAIState) -> LoopAIState:
     # 输出任务完成事件
     result = webcrawler.get("output_result", {})
     writer(StreamEvent(
-        current="end_node",
+        current=state['current'],
         message=f"WebCrawler 任务完成 - 共爬取 {result.get('total_pages', 0)} 个网页",
+        progress=1,
         data={
             "summary": summary_text,
             "total_pages": result.get("total_pages", 0),

@@ -237,6 +237,13 @@ async def _websearch_workflow(
 ) -> Dict[str, Any]:
     """Async workflow for web search"""
     try:
+        # Ensure integer parameters are properly typed
+        max_urls = int(max_urls) if max_urls else 10
+        max_depth = int(max_depth) if max_depth else 4
+        concurrent_limit = int(concurrent_limit) if concurrent_limit else 10
+        topk_urls = int(topk_urls) if topk_urls else 5
+        url_timeout = int(url_timeout) if url_timeout else 60
+        
         # Step 1: Generate research queries
         logger.info("Step 1: Generating research queries...")
         if debug_mode:

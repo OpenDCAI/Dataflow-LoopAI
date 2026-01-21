@@ -8,7 +8,6 @@ from ..utils import CrawlOrchestrator
 
 logger = get_logger()
 
-
 def crawl_node(state: LoopAIState) -> LoopAIState:
     """
     Main crawl node - executes web crawling task
@@ -19,15 +18,16 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
     
     # 输出爬取开始事件
     writer(StreamEvent(
-        current="crawl_node",
-        message="开始执行网页爬取任务"
+        current=state['current'],
+        message="开始执行网页爬取任务",
+        progress=0
     ).json())
     
     # 如果有异常,跳过执行
     if state.get("exception"):
         logger.error(f"Skipping crawl due to previous exception: {state['exception']}")
         writer(StreamEvent(
-            current="crawl_node",
+            current=state['current'],
             message=f"因前序异常跳过爬取: {state['exception']}",
             data={"error": state['exception']}
         ).json())
@@ -53,8 +53,9 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
         task = "搜索相关技术内容"
     
     writer(StreamEvent(
-        current="crawl_node",
+        current=state['current'],
         message=f"爬取任务: {task[:100]}{'...' if len(task) > 100 else ''}",
+        progress=0.1,
         data={"task": task}
     ).json())
     
@@ -69,10 +70,10 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
             output_dir=os.path.join(state.get("output_dir", "./output"), "webcrawler_output"),
             stream_callback=writer,  # 传递 writer 作为回调
             # 爬取策略参数
-            num_queries=webcrawler.get("num_queries", 5),
-            crawl_depth=webcrawler.get("crawl_depth", 3),
-            max_links_per_page=webcrawler.get("max_links_per_page", 5),
-            concurrent_pages=webcrawler.get("concurrent_pages", 3),
+            num_queries=webcrawler.get("num_queries", 1),
+            crawl_depth=webcrawler.get("crawl_depth", 1),
+            max_links_per_page=webcrawler.get("max_links_per_page", 1),
+            concurrent_pages=webcrawler.get("concurrent_pages", 2),
             # 内容过滤参数
             min_text_length=webcrawler.get("min_text_length", 500),
             min_code_length=webcrawler.get("min_code_length", 50),
@@ -102,8 +103,9 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
         
         # 输出爬取完成事件
         writer(StreamEvent(
-            current="crawl_node",
+            current=state['current'],
             message=f"爬取任务完成 - 成功爬取 {result.get('total_pages', 0)} 个网页",
+            progress=1,
             data={
                 "total_pages": result.get('total_pages', 0),
                 "output_dir": webcrawler['output_dir'],
@@ -120,7 +122,7 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
         
         # 输出爬取失败事件
         writer(StreamEvent(
-            current="crawl_node",
+            current=state['current'],
             message=f"爬取任务失败: {str(e)}",
             data={"error": str(e)}
         ).json())

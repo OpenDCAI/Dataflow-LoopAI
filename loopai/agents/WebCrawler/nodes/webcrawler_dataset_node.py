@@ -33,6 +33,13 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
     5. Saves structured data as JSONL in intermediate format
     """
     logger.info("=== WebCrawler Dataset Node: Starting ===")
+    writer = get_stream_writer()
+    writer(StreamEvent(
+        current=state['current'],
+        message="开始执行数据集构建任务",
+        progress=0
+    ).json())
+    
     
     # Check if there's an exception from previous node
     if state.get("exception"):
@@ -204,23 +211,17 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
             except Exception as map_err:
                 logger.error(f"Error when mapping WebCrawler dataset via Constructor: {map_err}", exc_info=True)
         
-        # Send custom stream event if debug mode is enabled
-        if debug_mode:
-            try:
-                writer = get_stream_writer()
-                if writer:
-                    writer(StreamEvent(
-                        current=state.get('current', 'webcrawler_dataset_node'),
-                        message="WebCrawler Dataset node completed",
-                        data={
-                            'user_query': user_query,
-                            'sft_count': result.get("sft_count", 0),
-                            'pt_count': result.get("pt_count", 0),
-                            'has_exception': "exception" in result,
-                        }
-                    ).json())
-            except Exception as e:
-                logger.debug(f"Could not send stream event: {e}")
+        writer(StreamEvent(
+            current=state['current'],
+            message="数据集收集完成",
+            progress=1,
+            data={
+                'user_query': user_query,
+                'sft_count': result.get("sft_count", 0),
+                'pt_count': result.get("pt_count", 0),
+                'has_exception': "exception" in result,
+            }
+        ).json())
         
     except Exception as e:
         logger.error(f"WebCrawler Dataset node error: {e}", exc_info=True)

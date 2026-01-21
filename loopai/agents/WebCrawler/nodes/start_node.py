@@ -23,8 +23,7 @@ def _set_webcrawler_config(state: LoopAIState, key: str, value):
         state["webcrawler"] = {}
     state["webcrawler"][key] = value
 
-
-def start_node(state: LoopAIState, agent) -> LoopAIState:
+def start_node(state: LoopAIState) -> LoopAIState:
     """
     Start node for webcrawler agent
     Initialize configuration and validate required parameters
@@ -43,13 +42,12 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
     logger.info(f"[DEBUG] deepseek_api_key 是否存在: {'deepseek_api_key' in webcrawler}")
     
     writer = get_stream_writer()
-    
     # 输出开始事件
     writer(StreamEvent(
-        current="start_node",
-        message="WebCrawler 开始初始化配置"
+        current=state['current'],
+        message="WebCrawler 开始初始化配置",
+        progress=0
     ).json())
-    
     # === API 配置默认值 ===
     if not webcrawler.get("deepseek_api_base"):
         webcrawler["deepseek_api_base"] = "https://api.deepseek.com/v1"
@@ -60,33 +58,42 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
     
     if not webcrawler.get("temperature"):
         webcrawler["temperature"] = 0.7
+    webcrawler["temperature"] = float(webcrawler["temperature"])
     
     # === 查询设置默认值 ===
     if not webcrawler.get("num_queries"):
         webcrawler["num_queries"] = 5
+    webcrawler["num_queries"] = int(webcrawler["num_queries"])
     
     # === 爬取策略默认值 ===
     if not webcrawler.get("max_pages"):
         webcrawler["max_pages"] = 10000
+    webcrawler["max_pages"] = int(webcrawler["max_pages"])
     
     if not webcrawler.get("crawl_depth"):
         webcrawler["crawl_depth"] = 3
+    webcrawler["crawl_depth"] = int(webcrawler["crawl_depth"])
     
     if not webcrawler.get("max_links_per_page"):
         webcrawler["max_links_per_page"] = 5
+    webcrawler["max_links_per_page"] = int(webcrawler["max_links_per_page"])
     
     if not webcrawler.get("concurrent_pages"):
         webcrawler["concurrent_pages"] = 3
+    webcrawler["concurrent_pages"] = int(webcrawler["concurrent_pages"])
     
     # === 内容过滤默认值 ===
     if not webcrawler.get("min_text_length"):
         webcrawler["min_text_length"] = 500
+    webcrawler["min_text_length"] = int(webcrawler["min_text_length"])
     
     if not webcrawler.get("min_code_length"):
         webcrawler["min_code_length"] = 50
+    webcrawler["min_code_length"] = int(webcrawler["min_code_length"])
     
     if webcrawler.get("min_relevance_score") is None:
         webcrawler["min_relevance_score"] = 6
+    webcrawler["min_relevance_score"] = int(webcrawler["min_relevance_score"])
     
     if not webcrawler.get("url_patterns"):
         webcrawler["url_patterns"] = None
@@ -94,12 +101,15 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
     # === 运行时配置默认值 ===
     if not webcrawler.get("request_delay"):
         webcrawler["request_delay"] = 2.0
+    webcrawler["request_delay"] = float(webcrawler["request_delay"])
     
     if not webcrawler.get("timeout"):
         webcrawler["timeout"] = 30
+    webcrawler["timeout"] = int(webcrawler["timeout"])
     
     if not webcrawler.get("max_retries"):
         webcrawler["max_retries"] = 3
+    webcrawler["max_retries"] = int(webcrawler["max_retries"])
     
     # === 输出配置默认值 ===
     if not state.get("output_dir"):
@@ -114,12 +124,15 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
     # === 数据集生成配置默认值 ===
     if not webcrawler.get("max_records_per_page"):
         webcrawler["max_records_per_page"] = 10
+    webcrawler["max_records_per_page"] = int(webcrawler["max_records_per_page"])
     
     if not webcrawler.get("dataset_concurrent_limit"):
         webcrawler["dataset_concurrent_limit"] = 5
+    webcrawler["dataset_concurrent_limit"] = int(webcrawler["dataset_concurrent_limit"])
     
     if not webcrawler.get("max_content_length"):
         webcrawler["max_content_length"] = 50000
+    webcrawler["max_content_length"] = int(webcrawler["max_content_length"])
     
     if webcrawler.get("debug") is None:
         webcrawler["debug"] = False
@@ -129,7 +142,7 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
         logger.error("Missing DEEPSEEK_API_KEY")
         state["exception"] = "Missing required configuration: DEEPSEEK_API_KEY"
         writer(StreamEvent(
-            current="start_node",
+            current=state['current'],
             message="配置错误: 缺少 DEEPSEEK_API_KEY",
             data={"error": "Missing DEEPSEEK_API_KEY"}
         ).json())
@@ -139,7 +152,7 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
         logger.error("Missing TAVILY_API_KEY")
         state["exception"] = "Missing required configuration: TAVILY_API_KEY"
         writer(StreamEvent(
-            current="start_node",
+            current=state['current'],
             message="配置错误: 缺少 TAVILY_API_KEY",
             data={"error": "Missing TAVILY_API_KEY"}
         ).json())
@@ -154,8 +167,9 @@ def start_node(state: LoopAIState, agent) -> LoopAIState:
     
     # 输出配置完成事件
     writer(StreamEvent(
-        current="start_node",
+        current=state['current'],
         message=f"配置初始化完成 - 模型: {webcrawler.get('model')}, 最大页面数: {webcrawler.get('max_pages')}, 爬取深度: {webcrawler.get('crawl_depth')}",
+        progress=1,
         data={
             "model": webcrawler.get("model"),
             "max_pages": webcrawler.get("max_pages"),

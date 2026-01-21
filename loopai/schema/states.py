@@ -386,7 +386,7 @@ class WebCrawlerState(BaseModel):
 
     # === 查询生成配置 (Query Generation) ===
     num_queries: int = Field(
-        default=5,
+        default=1,
         title="查询数量",
         description="生成的搜索查询数量",
         json_schema_extra={"ui_type": "number", "ui_group": "查询设置"}
@@ -394,25 +394,25 @@ class WebCrawlerState(BaseModel):
 
     # === 爬取策略配置 (Crawl Strategy) ===
     max_pages: int = Field(
-        default=10000,
+        default=10,
         title="最大页面数",
         description="最大爬取页面数量",
         json_schema_extra={"ui_type": "number", "ui_group": "爬取策略"}
     )
     crawl_depth: int = Field(
-        default=3,
+        default=1,
         title="爬取深度",
         description="最大爬取深度",
         json_schema_extra={"ui_type": "number", "ui_group": "爬取策略"}
     )
     max_links_per_page: int = Field(
-        default=5,
+        default=2,
         title="每页最大链接数",
         description="每个页面最大跟踪链接数量",
         json_schema_extra={"ui_type": "number", "ui_group": "爬取策略"}
     )
     concurrent_pages: int = Field(
-        default=3,
+        default=2,
         title="并发页面数",
         description="并发爬取的页面数量",
         json_schema_extra={"ui_type": "number", "ui_group": "爬取策略"}

@@ -210,6 +210,7 @@ async def generate_pt_records(
         # Invoke LLM
         response = await llm.ainvoke(messages)
         response_content = response.content if hasattr(response, 'content') else str(response)
+        logger.info(f"PT response: {response_content}")
         
         # Parse JSON response
         clean_response = response_content.strip().replace("```json", "").replace("```", "")
