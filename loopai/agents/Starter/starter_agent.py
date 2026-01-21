@@ -80,7 +80,8 @@ class StarterAgent(BaseAgent):
             tool_res = json.loads(maybe_tool_message.content)
             state["next_to"] = tool_res.get("next_to", "query_node")
             last_message.content = '<cmd>根据用户指令执行: ' + \
-                tool_res.get("motivation", "chat") + '</cmd>\n' + last_message.content
+                tool_res.get("motivation", "chat") + \
+                '</cmd>\n' + last_message.content
         else:
             state["next_to"] = "query_node"
         logger.info(f'Messages: {state["messages"]}')
@@ -155,8 +156,10 @@ class StarterAgent(BaseAgent):
         builder.add_node("feedback_node", self.feedback_node)
         builder.add_node("route_node", self.route_node)
         builder.add_node("train_node", train_node)
-        builder.add_node("obtain_node", obtainer_node)  # Use ObtainerAgent subgraph
-        builder.add_node("constructor_node", constructor_node)  # Use ConstructorAgent subgraph
+        # Use ObtainerAgent subgraph
+        builder.add_node("obtain_node", obtainer_node)
+        # Use ConstructorAgent subgraph
+        builder.add_node("constructor_node", constructor_node)
         builder.add_node("evaluate_node", self.evaluate_node)
         builder.add_node("config_node", config_node)
         builder.add_node("judge_node", judge_node)
@@ -171,8 +174,10 @@ class StarterAgent(BaseAgent):
         builder.add_edge('llm_node', 'feedback_node')
         builder.add_edge('evaluate_node', 'query_node')
         builder.add_edge('train_node', 'query_node')
-        builder.add_edge('obtain_node', 'constructor_node')  # Obtainer -> Constructor
-        builder.add_edge('constructor_node', 'query_node')  # Constructor -> Query
+        # Obtainer -> Constructor
+        builder.add_edge('obtain_node', 'constructor_node')
+        # Constructor -> Query
+        builder.add_edge('constructor_node', 'query_node')
         builder.add_edge('config_node', 'query_node')
         builder.add_edge('judge_node', 'route_node')
         builder.add_edge('analyze_node', 'route_node')
@@ -193,11 +198,11 @@ class StarterAgent(BaseAgent):
         """
         self.graph.invoke(default_state, **invoke_args)
 
-    def get_state(self, config: dict):
+    def get_state(self, config: dict, subgraphs=False):
         """
         get the state of the graph
         """
-        return self.graph.get_state(config)
+        return self.graph.get_state(config, subgraphs=subgraphs)
 
     def __call__(self, input, **invoke_args):
         """
@@ -230,12 +235,15 @@ class StarterAgent(BaseAgent):
                     # you should realize that there is a delay between update event and custom event
                     # so we need to clear the stream_message of the last turn, and you can fetch them in the llm_node.data.history
                     if 'stream_message_state' in chunk_item.get('data', {}):
-                        stream_message_state = chunk_item.get('data', {}).get('stream_message_state', 'not_ready')
+                        stream_message_state = chunk_item.get('data', {}).get(
+                            'stream_message_state', 'not_ready')
                         if stream_message_state == 'start':
                             self.agent_event.clear_stream_message()
                 else:
                     key = '__starter__'
                 self.agent_event.set_custom_info(key, chunk_item)
+                self.agent_event.set_running_tasks(self.get_state(
+                        invoke_args['config'], subgraphs=True).tasks)
             # Receiving updates event, update state, and clear stream_message
             elif stream_mode == 'updates':
                 if len(namespace_item) > 0:
@@ -247,5 +255,7 @@ class StarterAgent(BaseAgent):
                     self.agent_event.set_path(key)
                     self.agent_event.update_state(
                         self.get_state(invoke_args['config']).values)
+                    self.agent_event.set_running_tasks(self.get_state(
+                        invoke_args['config'], subgraphs=True).tasks)
                     self.agent_event.clear_stream_message()
             yield res

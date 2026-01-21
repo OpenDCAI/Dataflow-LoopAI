@@ -33,6 +33,7 @@ def main():
 
     # LLaMA Factory项目目录
     llamafactory_dir = app_config['llamafactory_dir']
+    llamafactory_env_path = app_config.get('llamafactory_env_path', '')
     
     # 检查LLaMA Factory目录是否存在
     if not os.path.exists(llamafactory_dir):
@@ -53,7 +54,7 @@ def main():
     
     # 检查是否安装了LLaMA Factory
     try:
-        result = subprocess.run(["llamafactory-cli", "help"], 
+        result = subprocess.run([os.path.join(llamafactory_env_path, "llamafactory-cli"), "help"], 
                               capture_output=True, text=True, timeout=300)
         if result.returncode == 0:
             print("✅ LLaMA Factory CLI found")
