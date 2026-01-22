@@ -140,6 +140,13 @@ class ObtainerState(BaseModel):
     )
 
     # --- Task Logic (任务逻辑 - 通常由系统生成，前端设为只读或JSON视图) ---
+    user_query: str = Field(
+        default="",
+        title="用户需求",
+        description="原始用户需求语句",
+        json_schema_extra={"ui_type": "textarea",
+                           "readOnly": True, "ui_group": "任务状态"}
+    )
     intent_type: str = Field(
         default="",
         title="意图类型",
@@ -336,6 +343,20 @@ class ObtainerState(BaseModel):
         title="最终 JSONL 路径",
         description="最终数据集 JSONL 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "数据集生成"}
+    )
+
+    # --- Cleaning Subgraph (清洗子图参数) ---
+    cleaning_tool_plan: List[str] = Field(
+        default_factory=list,
+        title="清洗工具计划",
+        description="数据清洗工具执行计划",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "数据清洗"}
+    )
+    cleaning_results: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="清洗结果",
+        description="数据清洗执行结果",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "数据清洗"}
     )
 
 

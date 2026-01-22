@@ -116,6 +116,10 @@ class ObtainerAgent(BaseAgent):
             if not user_query:
                 user_query = state.get("automated_query", "")
             
+            # Write user_query to state if available
+            if user_query:
+                state.setdefault("obtainer", {})["user_query"] = user_query
+            
             # Get objective if available
             objective = state.get("automated_query", user_query)
             
@@ -153,6 +157,7 @@ class ObtainerAgent(BaseAgent):
                             if normalized_query != user_query:
                                 state["automated_query"] = normalized_query
                                 user_query = normalized_query
+                                state.setdefault("obtainer", {})["user_query"] = user_query
                                 objective = normalized_query
                                 logger.info(
                                     f"Obtain query normalized from eval-style to dataset request: "

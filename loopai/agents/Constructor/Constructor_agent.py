@@ -11,6 +11,7 @@ from loopai.schema.events import StreamEvent
 
 from loopai.logger import get_logger
 from loopai.agents.Constructor.nodes import postprocess_node
+from loopai.agents.Constructor.nodes.filter_node import CleaningSubgraph
 from loopai.agents.Constructor.mapping import MappingSubgraph
 from loopai.common.prompts import PromptLoader
 
@@ -313,6 +314,13 @@ class ConstructorAgent(BaseAgent):
         builder.add_node("start_node", self.get_start_node())
         builder.add_node("postprocess_node", postprocess_node)
         
+        # 使用 CleaningSubgraph 作为子图（数据清洗）
+        cleaning_subgraph = CleaningSubgraph(
+            checkpointer=self.checkpointer,
+            store=self.store
+        )
+        builder.add_node("data_cleaning", cleaning_subgraph.build())
+        
         # 使用 MappingSubgraph 作为子图
         mapping_subgraph = MappingSubgraph(
             checkpointer=self.checkpointer,
@@ -333,9 +341,12 @@ class ConstructorAgent(BaseAgent):
             }
         )
         
-        # postprocess_node -> mapping_subgraph (检查是否需要映射)
+        # postprocess_node -> data_cleaning (先进行数据清洗)
+        builder.add_edge("postprocess_node", "data_cleaning")
+        
+        # data_cleaning -> mapping_subgraph (检查是否需要映射)
         builder.add_conditional_edges(
-            "postprocess_node",
+            "data_cleaning",
             self.should_trigger_mapping,
             {
                 "mapping_subgraph": "mapping_subgraph",
