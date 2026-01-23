@@ -93,6 +93,8 @@ def _map_to_alpaca(record: Dict[str, Any]) -> Dict[str, Any]:
     Map to Alpaca format
     
     Target: {"instruction": "...", "input": "...", "output": "..."}
+    
+    For WebCrawler: system message (schema) content goes to "input" field
     """
     messages = _extract_messages_from_intermediate(record)
     
@@ -101,6 +103,9 @@ def _map_to_alpaca(record: Dict[str, Any]) -> Dict[str, Any]:
         instruction = ""
         output = ""
         input_text = ""  # 默认将 system 填入 Alpaca input
+        
+        # Extract system message content (schema) for input field
+        system_content = _get_system_prompt(record)
         
         for msg in messages:
             role = msg.get("role", "")

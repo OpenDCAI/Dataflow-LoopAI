@@ -83,9 +83,14 @@ async def get_state_config(base_dir):
 
 def format_value(item):
     type_name = item.get('type', 'str')
-    if 'value' not in item or item['value'] is None:
+    # Use 'value' if present, otherwise fallback to 'default'
+    value = item.get('value')
+    if value is None:
+        value = item.get('default')
+    if value is None:
         item['value'] = None
         return item
+    item['value'] = value
     if type_name == 'int':
         try:
             item['value'] = int(item['value'])
