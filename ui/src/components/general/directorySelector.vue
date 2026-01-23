@@ -16,7 +16,7 @@
                         :border-radius="6"
                         style="width: 100%; flex-shrink: 0"
                         @item-click="handleDirClick"
-                        @change="debounceGetFiles"
+                        @input-change="debounceGetFiles"
                         @keydown.down="handlePathMove"
                         @keydown.up="handlePathMove"
                         @keyup.enter="thisValue = false"
