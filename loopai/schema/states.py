@@ -638,10 +638,10 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     eval_format_type: str = Field(
-        default="human-eval",
+        default=None,
         title="评估模型问题格式化类型",
         description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"，格式化后的文件将存至output_dir定义的目录下",
-        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "list", "ui_group": "评估模型", "allowed_values": ["human-eval"]}
     )
     eval_batch_size: int = Field(
         default=10,

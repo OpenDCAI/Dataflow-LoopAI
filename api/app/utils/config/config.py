@@ -91,15 +91,18 @@ def format_value(item):
         item['value'] = None
         return item
     item['value'] = value
-    if type_name == 'int':
-        try:
-            item['value'] = int(item['value'])
-        except:
-            item['value'] = float(item['value'])
-    elif type_name == 'bool':
+    if type_name == 'bool':
         item['value'] = bool(item['value'])
-    elif type_name == 'float':
-        item['value'] = float(item['value'])
     else:
-        item['value'] = str(item['value'])
+        if type(item['value']) == int or type(item['value']) == float:
+            return item
+        if type_name == 'int':
+            try:
+                item['value'] = int(item['value'])
+            except:
+                item['value'] = float(item['value'])
+        elif type_name == 'float':
+            item['value'] = float(item['value'])
+        else:
+            item['value'] = str(item['value'])
     return item
