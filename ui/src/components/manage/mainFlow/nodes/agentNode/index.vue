@@ -37,11 +37,7 @@
                 ></value-preview>
             </div>
         </div>
-        <webcrawler-log-panel
-            v-if="isWebCrawlerAgent && customInfoFiltered.length > 0"
-            :foreground="thisData.iconColor"
-            :graphClsPrefix="thisData.graphClsPrefix"
-        />
+
         <!-- 自定义 Node CustomInfo展示 -->
         <component
             :is="customInfoPanel"
