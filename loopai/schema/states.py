@@ -595,7 +595,7 @@ class WebCrawlerState(BaseModel):
 
 class JudgerState(BaseModel):
     eval_model_path: str = Field(
-        default="",
+        default=None,
         title="评估模型路径",
         description="评估模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
@@ -608,7 +608,7 @@ class JudgerState(BaseModel):
                            "allowed_values": ["code", "text2sql"]}
     )
     eval_base_url: str = Field(
-        default="",
+        default=None,
         title="评估模型 Base URL",
         description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
@@ -632,7 +632,7 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
     eval_problem_path: str = Field(
-        default="",
+        default=None,
         title="评估模型问题路径",
         description="评估模型问题路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
@@ -656,7 +656,7 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
     eval_text2sql_dir: str = Field(
-        default="",
+        default=None,
         title="评估模型text2sql数据库目录",
         description="评估模型text2sql数据库目录，仅text2sql任务下生效，并且数据文件中需要以字段db_id标注出相应的数据库文件夹至路径目录下",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
@@ -686,7 +686,7 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "slider", "ui_group": "评估模型"}
     )
     output_dir: str = Field(
-        default="",
+        default=None,
         title="评估模型输出文件目录",
         description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型", "is_output": True}
