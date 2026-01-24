@@ -27,7 +27,7 @@ def init_model(model_path: str, base_url: str, api_key: str, temperature: float 
     return model
 
 
-def generate_sample(state):
+def generate_sample_code(state):
     """
     样本生成函数
     """
@@ -46,11 +46,12 @@ def generate_sample(state):
     output_dir = Path(judger_state['output_dir'])
     problem_path = judger_state['eval_problem_path']
     problem_file_name = str(Path(problem_path).stem)
-    test_case_path = str(output_dir / str(state_task_id) / (problem_file_name + "_sample.jsonl"))
+    test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
 
     batch_size = judger_state['eval_batch_size']
     num_samples_per_task = judger_state['eval_case_num']
-    
+    task_type = judger_state['eval_task_type']
+
     problems = read_problems(problem_path)
     all_task_ids = list(problems.keys())
     total_tasks = len(all_task_ids)
@@ -60,7 +61,7 @@ def generate_sample(state):
         writer(StreamEvent(
             current=state['current'],
             progress=0.0,
-            message="code任务样本合成开始",
+            message=f"{task_type}任务样本合成开始",
             data={"msg": f"任务总数：{total_tasks}|每个任务样本数：{num_samples_per_task}|总样本数：{total_samples}"}
         ).json())
     logger.info(f"\n===== 开始生成样本 =====")
@@ -93,7 +94,7 @@ def generate_sample(state):
                 writer(StreamEvent(
                     current=state['current'],
                     progress=round(cnt/total_samples, 1),
-                    message="code任务样本合成进度",
+                    message=f"{task_type}任务样本合成进度",
                     data={"progress_detail": f"{cnt}/{total_samples}"}
                 ).json())
     write_jsonl(test_case_path, samples)
@@ -102,9 +103,20 @@ def generate_sample(state):
     logger.info(f"实际生成样本数：{len(samples)}")
     logger.info(f"保存路径：{test_case_path}")
 
-    return {"sample_num":len(samples),"sample_save_path":test_case_path}
+    if writer:
+        writer(StreamEvent(
+            current=state['current'],
+            progress=1.0,
+            message=f"{task_type}任务样本合成完成",
+            data={
+                "msg": f"结果保存为[{test_case_path}]",
+                "sample_num": len(samples),
+                "sample_save_path": test_case_path
+            }
+        ).json())
+    return state
 
-def generate_sample_sql(state):
+def generate_sample_text2sql(state):
     judger_state = state.get("judger", {})
     state_task_id = state.get("task_id")
     logger.info(f"进入生成样本{state_task_id}")
@@ -118,8 +130,9 @@ def generate_sample_sql(state):
     output_dir = Path(judger_state['output_dir'])
     problem_path = judger_state['eval_problem_path']
     problem_file_name = str(Path(problem_path).stem)
-    test_case_path = str(output_dir / str(state_task_id) / (problem_file_name + "_sample.jsonl"))
+    test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
 
+    task_type = judger_state['eval_task_type']
     num_samples_per_task = judger_state['eval_case_num']
     batch_size = judger_state['eval_batch_size']
     text2sql_dir = Path(judger_state['eval_text2sql_dir'])
@@ -135,7 +148,7 @@ def generate_sample_sql(state):
         writer(StreamEvent(
             current=state['current'],
             progress=0.0,
-            message="code任务样本合成开始",
+            message=f"{task_type}任务样本合成开始",
             data={"msg": f"任务总数：{total_tasks}|每个任务样本数：{num_samples_per_task}|总样本数：{total_samples}"}
         ).json())
     logger.info(f"\n===== 开始生成样本 =====")
@@ -171,7 +184,7 @@ def generate_sample_sql(state):
                 writer(StreamEvent(
                     current=state['current'],
                     progress=round(cnt/total_samples, 1),
-                    message="text2sql任务样本合成进度",
+                    message=f"{task_type}任务样本合成进度",
                     data={"progress_detail": f"{cnt}/{total_samples}"}
                 ).json())
 
@@ -180,4 +193,16 @@ def generate_sample_sql(state):
     logger.info(f"\n===== 生成完成 =====")
     logger.info(f"实际生成样本数：{len(samples)}")
     logger.info(f"保存路径：{test_case_path}")
-    return {"sample_num":len(samples),"sample_save_path":test_case_path}   
+
+    if writer:
+        writer(StreamEvent(
+            current=state['current'],
+            progress=1.0,
+            message=f"{task_type}任务样本合成完成",
+            data={
+                "msg": f"结果保存为[{test_case_path}]",
+                "sample_num": len(samples),
+                "sample_save_path": test_case_path
+            }
+        ).json())
+    return state
