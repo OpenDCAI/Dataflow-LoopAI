@@ -425,11 +425,17 @@ class JudgerState(BaseModel):
         description="vllm本地启动参数——tensor_parallel_size，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
-    eval_vllm_gpu_memory_utilization: int = Field(
+    eval_vllm_gpu_memory_utilization: float = Field(
         default=0.9,
         title="vllm本地启动参数——gpu_memory_utilization",
         description="vllm本地启动参数——gpu_memory_utilization，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
         json_schema_extra={"ui_type": "slider", "ui_group": "评估模型"}
+    )
+    eval_vllm_env_path: float = Field(
+        default="",
+        title="vllm本地启动参数——启动环境",
+        description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     output_dir: str = Field(
         default="",
