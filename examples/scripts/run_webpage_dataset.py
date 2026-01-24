@@ -42,7 +42,7 @@ output_dir = os.getenv('OUTPUT_DIR', str(PROJECT_ROOT / 'output' / 'webpage_data
 os.makedirs(output_dir, exist_ok=True)
 
 # Test query (from command line argument or environment variable)
-test_query = os.getenv('TEST_QUERY', '收集关于代码的项目数据信息')
+test_query = os.getenv('TEST_QUERY', '收集关于SQL代码的项目数据信息')
 if len(os.sys.argv) > 1:
     test_query = ' '.join(os.sys.argv[1:])
 
