@@ -23,7 +23,7 @@ def data_format(state):
     output_dir = Path(judger_state['output_dir'])
 
     problem_file_name = str(Path(problem_path).stem)
-    target_format_path = str(output_dir / str(state_task_id) / (problem_file_name + "_format.jsonl"))
+    target_format_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_format.jsonl"))
 
     if(method is None):
         method = "human-eval"

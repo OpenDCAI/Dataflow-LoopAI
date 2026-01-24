@@ -58,33 +58,45 @@ def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         return False
 
 def start_vllm_openai_api_server(
-    env_configs, vllm_port, vllm_tensor_parallel_size, vllm_gpu_memory_utilization, vllm_model,
+    env_configs, 
+    vllm_env_path,  # 新增：指定环境的Python可执行文件路径（核心新增参数）
+    vllm_port, 
+    vllm_tensor_parallel_size, 
+    vllm_gpu_memory_utilization, 
+    vllm_model,
     poll_interval: float = 2.0,
     max_timeout: float = 300.0
 ) -> subprocess.Popen:
     """
-    启动vllm openai兼容api服务（彻底重新启动）
+    启动vllm openai兼容api服务（支持指定环境Python路径启动）
     :env_configs: 评估模型vllm启动环境参数
+    :vllm_env_path: 指定环境的Python可执行文件路径（如/root/envs/vllm/bin/python）
     :vllm_port: vllm启动参数——port
     :vllm_tensor_parallel_size: vllm启动参数——tensor_parallel_size
     :vllm_gpu_memory_utilization: vllm启动参数——gpu_memory_utilization
     :param poll_interval: 端口轮询检测间隔（秒）
     :param max_timeout: 最大等待超时时间（秒）
-    :param process_kill_wait: 旧进程终止等待超时时间（秒）
     :return: vllm子进程对象
     """
-    vllm_command = f"python -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {vllm_port} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes"
+    # ========== 新增：校验指定环境Python路径的有效性 ==========
+    if not os.path.exists(vllm_env_path):
+        raise Exception(f"指定的环境Python路径不存在：{vllm_env_path}")
+    if not os.access(vllm_env_path, os.X_OK):
+        raise Exception(f"指定的Python路径无执行权限：{vllm_env_path}")
+    logger.info(f"已确认环境Python路径有效：{vllm_env_path}")
+
+    vllm_command = f"{vllm_env_path} -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {vllm_port} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes"
     env_configs = json.loads(env_configs)
     process_pattern = "vllm.entrypoints.openai.api_server"
     port = parse_port_from_command_str(vllm_command)
     host = "localhost"
 
-    # 设置NCCL和CUDA环境变量
+    # 设置NCCL和CUDA环境变量（原有逻辑不变）
     for key, value in env_configs.items():
         os.environ[key] = value
     logger.info("已设置GPU和NCCL环境变量")
 
-    # 启动vllm子进程
+    # 启动vllm子进程（原有逻辑不变）
     proc = subprocess.Popen(
         vllm_command,
         stdout=subprocess.PIPE,
@@ -94,7 +106,7 @@ def start_vllm_openai_api_server(
         shell=True
     )
 
-    # 轮询检测端口可用性，判断服务是否就绪（优化读取逻辑，避免阻塞）
+    # 轮询检测端口可用性，判断服务是否就绪（原有逻辑不变）
     logger.info(f"正在启动vllm服务，监听端口{port}，等待服务就绪（超时{max_timeout}秒）...")
     start_time = time.time()
 
@@ -130,10 +142,22 @@ def start_vllm_openai_api_server(
     # 直接返回子进程对象
     return proc
 
+# # ========== 新增调用示例：传入环境路径启动vllm ==========
 # if __name__ == "__main__":
 #     # 调用函数启动vllm服务（基于端口检测）
 #     try:
-#         vllm_proc = start_vllm_openai_api_server('{"CUDA_VISIBLE_DEVICES": "0","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}', "python -m vllm.entrypoints.openai.api_server --model /root/brjverl/models/Qwen2.5-Coder-7B-Instruct/ --port 8911 --tensor-parallel-size 1 --trust-remote-code --gpu-memory-utilization 0.9 --enable-auto-tool-choice --tool-call-parser hermes")
+#         # 替换为你服务器上的实际环境Python路径
+#         ENV_PYTHON_PATH = "/root/envs/vllm_env/bin/python"  # 示例：虚拟环境Python路径
+#         # ENV_PYTHON_PATH = "/usr/local/anaconda3/envs/vllm/bin/python"  # Anaconda环境示例
+
+#         vllm_proc = start_vllm_openai_api_server(
+#             env_configs='{"CUDA_VISIBLE_DEVICES": "0","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
+#             env_python_path=ENV_PYTHON_PATH,  # 传入指定的环境Python路径
+#             vllm_port="8911",
+#             vllm_tensor_parallel_size="1",
+#             vllm_gpu_memory_utilization="0.9",
+#             vllm_model="/root/brjverl/models/Qwen2.5-Coder-7B-Instruct/"
+#         )
 
 #         # 后续Python业务代码（服务已完全就绪，可安全调用API）
 #         logger.info("=" * 50)
@@ -146,4 +170,4 @@ def start_vllm_openai_api_server(
 #         # print(f"可用模型列表：{models}")
 
 #     except Exception as e:
-#         logger.info(f"错误：{e}")
+#         logger.error(f"错误：{e}")  # 改为error级别更易识别错误

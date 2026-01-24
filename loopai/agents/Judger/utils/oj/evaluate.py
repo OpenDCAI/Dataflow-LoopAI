@@ -99,8 +99,8 @@ def evaluate_sample_sql(state):
     output_dir = Path(judger_state['output_dir'])
     problem_path = judger_state['eval_problem_path']
     problem_file_name = str(Path(problem_path).stem)
-    test_case_path = str(output_dir / str(state_task_id) / (problem_file_name + "_sample.jsonl"))
-    result_path = str(output_dir / str(state_task_id) / (problem_file_name + "_result.jsonl"))
+    test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
+    result_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_result.jsonl"))
     case_num = judger_state.get('eval_case_num', 10)
     task_type = judger_state['eval_task_type']
 
@@ -192,8 +192,8 @@ def evaluate_sample(state):
     output_dir = Path(judger_state['output_dir'])
     problem_path = judger_state['eval_problem_path']
     problem_file_name = str(Path(problem_path).stem)
-    test_case_path = str(output_dir / str(state_task_id) / (problem_file_name + "_sample.jsonl"))
-    result_path = str(output_dir / str(state_task_id) / (problem_file_name + "_result.jsonl"))
+    test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
+    result_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_result.jsonl"))
     case_num = judger_state.get('eval_case_num', 10)
     task_type = judger_state['eval_task_type']
 
