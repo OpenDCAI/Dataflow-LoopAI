@@ -32,6 +32,7 @@ graph.invoke({
         'eval_format_type': 'human-eval',
         'eval_text2sql_dir': '/root/brjverl/dataflow/examples/scripts/database/',
         'output_dir': '/root/brjverl/dataflow/examples/scripts/output/',
+        'eval_vllm_env_path': '/root/miniconda3/envs/loopai/bin/python3',
         'eval_batch_size': 10,
         'eval_case_num': 1,
         'eval_vllm_command': 'python -m vllm.entrypoints.openai.api_server --model /root/brjverl/models/Qwen2.5-Coder-7B-Instruct/ --port 8911 --tensor-parallel-size 1 --trust-remote-code --gpu-memory-utilization 0.9 --enable-auto-tool-choice --tool-call-parser hermes',
