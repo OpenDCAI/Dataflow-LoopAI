@@ -10,7 +10,7 @@ from pathlib import Path
 
 from loopai.schema.states import LoopAIState, RuntimeContext, get_missing_fields
 from loopai.agents import BaseAgent
-from .utils.oj.generate import generate_sample, generate_sample_sql
+from .utils.oj.generate import generate_sample_code, generate_sample_text2sql
 from .utils.oj.evaluate import evaluate_sample, evaluate_sample_sql
 from .utils.oj.format import data_format
 from .utils.oj.data import check_file
@@ -25,6 +25,8 @@ from loopai.logger import get_logger
 
 logger = get_logger()
 
+def _isNotNone(value):
+    return value != "" and value is not None
 
 class JudgerAgent(BaseAgent):
     @property
@@ -48,12 +50,15 @@ class JudgerAgent(BaseAgent):
             writer = get_stream_writer()
             required_fields = {
                 'judger':["eval_model_path", "eval_api_key", "eval_temperature",
-                               "eval_top_p", "eval_problem_path", "eval_batch_size", "eval_case_num", "eval_task_type", "output_dir"]
+                        "eval_top_p", "eval_problem_path", "eval_batch_size", 
+                        "eval_case_num", "eval_task_type", "output_dir"
+                ]
             }
             missing_fields = get_missing_fields(required_fields, state)
-            '''vllm启动检查'''
+
+            """vllm启动检查"""
             base_url = state.get("judger", {}).get("eval_base_url", None)
-            if(base_url != "" and base_url is not None):
+            if(_isNotNone(base_url)):
                 if writer:
                     writer(StreamEvent(
                         current=state['current'],
@@ -61,7 +66,9 @@ class JudgerAgent(BaseAgent):
                         message="已设置[eval_base_url]，正在进行vllm启动检查",
                         data={"msg": f""}
                     ).json())
+
                 res = check_vllm_running(base_url)
+
                 if(res is True):
                     logger.info("已启动vllm")
                     if writer:
@@ -81,17 +88,22 @@ class JudgerAgent(BaseAgent):
                             data={"msg": f""}
                         ).json())
                     missing_fields.setdefault("judger", []).append("eval_base_url")
-            '''数据有效检查'''
+
+            """数据有效检查"""
             check_result = check_file(state)
             for key, value in check_result.items():
                 is_true = bool(value)
                 if not is_true:
                     missing_fields.setdefault("judger", []).append(key)
-            '''检查text2sql必要字段'''
+                    
+            """检查text2sql必要字段"""
             if not missing_fields:
                 if state.get("judger", {}).get("eval_text2sql_dir", "") == "text2sql":
                     missing_fields = get_missing_fields({'judger':["eval_text2sql_dir"]}, state)
+            
             if missing_fields:
+                logger.info("$"*50)
+                logger.info(missing_fields)
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
                 state['automated_query'] = self.prompt_loader(
@@ -108,14 +120,47 @@ class JudgerAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
+    def check_param_type_node(state: LoopAIState) -> LoopAIState:
+        eval_temperature = state.get("judger", {}).get("eval_temperature", None)
+        if _isNotNone(eval_temperature):
+            state["judger"]["eval_temperature"] = float(eval_temperature)
+
+        eval_top_p = state.get("judger", {}).get("eval_top_p", None)
+        if _isNotNone(eval_top_p):
+            state["judger"]["eval_top_p"] = float(eval_top_p)
+
+        eval_batch_size = state.get("judger", {}).get("eval_batch_size", None)
+        if _isNotNone(eval_batch_size):
+            state["judger"]["eval_batch_size"] = int(eval_batch_size)
+        
+        eval_case_num = state.get("judger", {}).get("eval_case_num", None)
+        if _isNotNone(eval_case_num):
+            state["judger"]["eval_case_num"] = int(eval_case_num)
+        
+        eval_vllm_port = state.get("judger", {}).get("eval_vllm_port", None)
+        if _isNotNone(eval_vllm_port):
+            state["judger"]["eval_vllm_port"] = int(eval_vllm_port)
+
+        eval_vllm_tensor_parallel_size = state.get("judger", {}).get("eval_vllm_tensor_parallel_size", None)
+        if _isNotNone(eval_vllm_tensor_parallel_size):
+            state["judger"]["eval_vllm_tensor_parallel_size"] = int(eval_vllm_tensor_parallel_size)
+        
+        eval_vllm_gpu_memory_utilization = state.get("judger", {}).get("eval_vllm_gpu_memory_utilization", None)
+        if _isNotNone(eval_vllm_gpu_memory_utilization):
+            state["judger"]["eval_vllm_gpu_memory_utilization"] = float(eval_vllm_gpu_memory_utilization)
+
+        return state
+
+    @staticmethod
+    @BaseAgent.set_current
     def vllm_kill_node(state: LoopAIState) -> LoopAIState:
         env_configs = state.get("judger", {}).get("eval_env_configs", None)
-        vllm_port = state.get("judger", {}).get("eval_vllm_port", 8911)
+        vllm_port = state.get("judger", {}).get("eval_vllm_port", None)
         base_url = state.get("judger", {}).get("eval_base_url", None)
         writer = get_stream_writer()
         # 未设置base_url才会进入本地开启程序才会先关闭本地的vllm服务
-        if (base_url is None) or (base_url == "") or (base_url == f"http://localhost:{vllm_port}/v1"):
-            if(env_configs != "" and env_configs is not None and vllm_port != "" and vllm_port is not None ):
+        if  (not _isNotNone(base_url)) or (base_url == f"http://localhost:{vllm_port}/v1"):
+            if(_isNotNone(env_configs) and _isNotNone(vllm_port)):
                 if writer:
                     writer(StreamEvent(
                         current=state['current'],
@@ -123,7 +168,9 @@ class JudgerAgent(BaseAgent):
                         message="vllm关闭",
                         data={"msg": f""}
                     ).json())
+
                 res = kill_vllm_openai_api_server(vllm_port)
+
                 if res is True:
                     if writer:
                         writer(StreamEvent(
@@ -158,20 +205,22 @@ class JudgerAgent(BaseAgent):
         vllm_tensor_parallel_size = state.get("judger", {}).get("eval_vllm_tensor_parallel_size", 1)
         vllm_gpu_memory_utilization = state.get("judger", {}).get("eval_vllm_gpu_memory_utilization", 0.9)
         vllm_model = state.get("judger", {}).get("eval_model_path", None)
+        vllm_env_path = state.get("judger", {}).get("eval_vllm_env_path", None)
 
         writer = get_stream_writer()
-        if(env_configs != "" and env_configs is not None
-            and vllm_port != "" and vllm_port is not None 
-            and vllm_tensor_parallel_size != "" and vllm_tensor_parallel_size is not None
-            and vllm_gpu_memory_utilization != "" and vllm_gpu_memory_utilization is not None):
+        if(_isNotNone(env_configs) and _isNotNone(vllm_port) and _isNotNone(vllm_tensor_parallel_size) and _isNotNone(vllm_gpu_memory_utilization)):
             if writer:
                 writer(StreamEvent(
                     current=state['current'],
                     progress=0.0,
-                    message="vllm启动",
+                    message="vllm准备启动",
                     data={"msg": f""}
                 ).json())
-            start_vllm_openai_api_server(env_configs, vllm_port, vllm_tensor_parallel_size, vllm_gpu_memory_utilization, vllm_model)
+            
+            if not _isNotNone(vllm_env_path):
+                vllm_env_path = "python"
+
+            start_vllm_openai_api_server(env_configs, vllm_env_path, vllm_port, vllm_tensor_parallel_size, vllm_gpu_memory_utilization, vllm_model)
             state["judger"]["eval_base_url"] = f"http://localhost:{vllm_port}/v1"
             if writer:
                 writer(StreamEvent(
@@ -199,10 +248,10 @@ class JudgerAgent(BaseAgent):
         output_dir = Path(state.get("judger", {}).get("output_dir", "/"))
         problem_file_name = str(Path(problem_path).stem)
 
-        target_format_path = output_dir / str(state_task_id) / (problem_file_name + "_format.jsonl")
+        target_format_path = output_dir / str(state_task_id) / "judger" / (problem_file_name + "_format.jsonl")
 
         writer = get_stream_writer()
-        if(format_type != "" and format_type is not None):
+        if _isNotNone(format_type):
             if writer:
                 writer(StreamEvent(
                     current=state['current'],
@@ -227,44 +276,6 @@ class JudgerAgent(BaseAgent):
                     message="任务数据格式化结束",
                     data={"msg": '未设置[eval_format_type]参数，跳过数据格式化过程'}
                 ).json())
-        return state
-
-    @staticmethod
-    @BaseAgent.set_current
-    def generate_node(state: LoopAIState) -> LoopAIState:
-        writer = get_stream_writer()
-        problem_path = state.get("judger", {}).get("eval_problem_path", "")
-        case_num = state.get("judger", {}).get("eval_case_num", 10)
-        task_type = state.get("judger", {}).get("eval_task_type", "code")
-        output_dir = Path(state.get("judger", {}).get("output_dir", "/"))
-        state_task_id = state.get("task_id")
-
-        logger.info(f"{state["judger"]["eval_problem_path"]}")
-        problem_file_name = str(Path(problem_path).stem)
-        target_case_path = output_dir / str(state_task_id) / (problem_file_name + "_sample.jsonl")
-
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=0.0,
-                message=f"{task_type}任务样本合成开始",
-                data={"msg": f"对[{problem_path}]每个问题生成[{case_num}]条样例数据"}
-            ).json())
-
-        match task_type:
-            case "code":  # code
-                generate_sample(state)
-            case "text2sql":  # text2sql
-                generate_sample_sql(state)
-
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=1.0,
-                message=f"{task_type}任务样本合成完成",
-                data={"msg": f"结果保存为[{str(target_case_path)}]"}
-            ).json())
-
         return state
 
     @staticmethod
@@ -298,26 +309,26 @@ class JudgerAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
-    def check_required_fields_router(state: LoopAIState) -> str:
+    def check_param_type_next(state: LoopAIState) -> str:
         """
         如果已启动vllm则直接跳过本地启动阶段
         """
         base_url = state.get("judger", {}).get("eval_base_url", None)
-        if(base_url != "" and base_url is not None):
+        if _isNotNone(base_url):
             return "to_data_format"
         else:
             return "to_vllm_kill"
 
     @staticmethod
     @BaseAgent.set_current
-    def evaluate_router(state: LoopAIState) -> str:
+    def evaluate_next(state: LoopAIState) -> str:
         """
         如果已完成则结束未完成则开启本地vllm
         """
         base_url = state.get("judger", {}).get("eval_base_url", None)
         vllm_port = state.get("judger", {}).get("eval_vllm_port", None)
         # 判断是否为空，为空则开启本地
-        if((base_url == "") or (base_url is None)):
+        if not _isNotNone(base_url):
             return "to_vllm_kill"
         else:
             # 判断是否为本地路由，如果是则kill掉本地vllm，否则直接结束
@@ -328,13 +339,27 @@ class JudgerAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
-    def vllm_kill_router(state: LoopAIState) -> str:
+    def data_format_next(state: LoopAIState) -> str:
+        """
+        根据任务类型选择不同的生成节点
+        """
+        task_type = state.get("judger", {}).get("eval_task_type", None)
+        # 判断是否为空，为空则开启本地
+        match task_type:
+            case "code":  # code
+                return "to_generate_code"
+            case "text2sql":
+                return "to_generate_text2sql"
+
+    @staticmethod
+    @BaseAgent.set_current
+    def vllm_kill_next(state: LoopAIState) -> str:
         """
         如果已完成则结束未完成则开启本地vllm
         """
         base_url = state.get("judger", {}).get("eval_base_url", None)
         # 判断是否为空，为空则开启本地
-        if((base_url == "") or (base_url is None)):
+        if not _isNotNone(base_url):
             return "to_vllm_start"
         else:
             return "to_end"
@@ -342,19 +367,22 @@ class JudgerAgent(BaseAgent):
     def init_graph(self, **kwargs):
         builder = StateGraph(LoopAIState)
         builder.add_node("check_required_fields", self.get_check_required_fields_node())
+        builder.add_node("check_param_type", self.check_param_type_node)
         builder.add_node("vllm_kill", self.vllm_kill_node)
         builder.add_node("vllm_start", self.vllm_start_node)
         builder.add_node("data_format", self.data_format_node)
-        builder.add_node("generate", self.generate_node)
+        builder.add_node("generate_code", generate_sample_code)
+        builder.add_node("generate_text2sql", generate_sample_text2sql)
         builder.add_node("evaluate", self.evaluate_node)
+        builder.add_edge("check_required_fields", "check_param_type")
         builder.add_edge("vllm_start", "data_format")
-        builder.add_edge("data_format", "generate")
-        builder.add_edge("generate", "evaluate")
+        builder.add_edge("generate_code", "evaluate")
+        builder.add_edge("generate_text2sql", "evaluate")
         builder.set_entry_point("check_required_fields")
 
         builder.add_conditional_edges(
-            source="check_required_fields",  # 来源节点（从哪个节点跳转出来）
-            path=self.check_required_fields_router,  # 路由函数（执行条件判断，返回路由键）
+            source="check_param_type",  # 来源节点（从哪个节点跳转出来）
+            path=self.check_param_type_next,  # 路由函数（执行条件判断，返回路由键）
             path_map={  # 路由键-目标节点映射（路由键对应到具体节点）
                 "to_vllm_kill": "vllm_kill",  # 路由键1 → 计算节点
                 "to_data_format": "data_format",     # 路由键2 → 文本处理节点
@@ -362,8 +390,17 @@ class JudgerAgent(BaseAgent):
         )
 
         builder.add_conditional_edges(
+            source="data_format", 
+            path=self.data_format_next,
+            path_map={
+                "to_generate_code": "generate_code",
+                "to_generate_text2sql": "generate_text2sql",
+            }
+        )
+
+        builder.add_conditional_edges(
             source="evaluate", 
-            path=self.evaluate_router,
+            path=self.evaluate_next,
             path_map={
                 "to_vllm_kill": "vllm_kill",
                 "to_end": END,
@@ -372,7 +409,7 @@ class JudgerAgent(BaseAgent):
 
         builder.add_conditional_edges(
             source="vllm_kill", 
-            path=self.vllm_kill_router,
+            path=self.vllm_kill_next,
             path_map={
                 "to_vllm_start": "vllm_start",
                 "to_end": END,
