@@ -53,13 +53,20 @@ class ObtainerAgent(BaseAgent):
         """
         Get start node function that can access self
         """
-        @BaseAgent.set_current
         def start_node(state: LoopAIState):
             """
             Start node for obtainer agent
             Ensure configuration parameters are set in state
             """
             logger.info(f"ObtainerAgent: Starting task")
+            state['current'] = "ObtainerAgent.start_node"
+            writer = get_stream_writer()
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message="ObtainerAgent Config Start",
+                    progress=0
+                ).json())
             
             # Ensure obtainer configuration is set in state
             # Use values from constructor if not already in state
@@ -378,6 +385,13 @@ class ObtainerAgent(BaseAgent):
                     # Stream writer might not be available in all contexts
                     logger.debug(f"Could not send stream event: {e}")
             
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message="ObtainerAgent Config Complete",
+                    progress=1
+                ).json())
+
             return state
         
         return start_node
@@ -392,6 +406,15 @@ class ObtainerAgent(BaseAgent):
             Task decomposer node: decompose user input into task list
             """
             logger.info("ObtainerAgent: Task Decomposer Node - Starting task decomposition")
+            state['current'] = "ObtainerAgent.task_decomposer_node"
+            writer = get_stream_writer()
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message="Task Decomposer Start",
+                    progress=0
+                ).json())
+
             
             # Check if task_list already exists (skip if already decomposed)
             if state.get("obtainer", {}).get("task_list") and len(state.get("obtainer", {}).get("task_list", [])) > 0:
@@ -818,6 +841,12 @@ class ObtainerAgent(BaseAgent):
             # Increment task index
             state.setdefault("obtainer", {})["current_task_index"] = current_index + 1
             
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message="Task Decomposer Complete",
+                    progress=1
+                ).json())
             return state
         else:
             logger.warning("Next task node: No more tasks, should not reach here")
@@ -930,14 +959,57 @@ class ObtainerAgent(BaseAgent):
             logger.info("No download tasks found, routing to check_next_task_node to continue with next subtask")
             return "check_next_task_node"
 
+    @staticmethod
+    @BaseAgent.set_current
+    def websearch_node(state: LoopAIState):
+        writer = get_stream_writer()
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                message="ObtainerAgent WebSearch Start",
+                progress=0
+            ).json())
+        state = websearch_node(state)
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                message="ObtainerAgent WebSearch Complete",
+                progress=1
+            ).json())
+        return state
+
+    @staticmethod
+    @BaseAgent.set_current
+    def deep_explore_node(state: LoopAIState):
+        return deep_explore_node(state)
+
+    @staticmethod
+    @BaseAgent.set_current
+    def download_node(state: LoopAIState):
+        writer = get_stream_writer()
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                message="ObtainerAgent Download Start",
+                progress=0
+            ).json())
+        state = download_node(state)
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                message="ObtainerAgent Download Complete",
+                progress=1
+            ).json())
+        return state
+
 
     def init_graph(self, **kwargs):
         builder = StateGraph(LoopAIState)
         builder.add_node("start_node", self.get_start_node())
         builder.add_node("task_decomposer_node", self.get_task_decomposer_node())
-        builder.add_node("websearch_node", websearch_node)
-        builder.add_node("deep_explore_node", deep_explore_node)  # 占位节点，未实现，不接入工作流
-        builder.add_node("download_node", download_node)
+        builder.add_node("websearch_node", self.websearch_node)
+        builder.add_node("deep_explore_node", self.deep_explore_node)  # 占位节点，未实现，不接入工作流
+        builder.add_node("download_node", self.download_node)
         builder.add_node("check_next_task_node", self.check_next_task_node)
         builder.add_node("next_task_node", self.next_task_node)
         builder.add_node("end_node", self.end_node)
