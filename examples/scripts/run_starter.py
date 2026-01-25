@@ -179,6 +179,11 @@ while thread_states.interrupts:
         ):
             live.update(render_text(sg.agent_event.text(only_updated=True)))
             # print(chunk)
+            # namespace_item, stream_mode, chunk_item = chunk
+            # if stream_mode == 'updates' or stream_mode == 'custom':
+            #     print(namespace_item, '⭐⭐⭐' + stream_mode + '⭐⭐⭐', chunk_item)
+            # if stream_mode == 'messages':
+            #     print(namespace_item, '⭐⭐⭐' + stream_mode + '⭐⭐⭐', chunk_item)
     
     # # 不使用Live显示，直接运行
     # for chunk in sg(

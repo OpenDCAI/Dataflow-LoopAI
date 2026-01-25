@@ -226,6 +226,8 @@ class StarterAgent(BaseAgent):
                 # tags like ['Starter-LLM'] or ['Configer-LLM'], currently set as allowed all.
                 if 'tags' in meta_data and (self.llm_tag in meta_data['tags'] or True):
                     self.agent_event.set_stream_message(msg_chunk)
+                else:
+                    continue # skip other messages event to prevent llm batch callback congestion.
             # Receiving custom event, update custom_info
             elif stream_mode == 'custom':
                 if len(namespace_item) > 0:

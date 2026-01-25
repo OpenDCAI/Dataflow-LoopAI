@@ -72,8 +72,11 @@ def agent_worker(cmd_q: Queue, state_q: Queue, sg_init_args: dict):
                     config=config
                 ):
                     state_q.put(extract_state(sg, config, True))
+                print('finished a round of query')
                 
                 thread_states = sg.get_state(config)
+            
+            print('jump out of the while loop')
 
             state_q.put(extract_state(sg, config, False))
 

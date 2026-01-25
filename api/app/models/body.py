@@ -41,3 +41,12 @@ class TaskItem(BaseModel):
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
 
+class DatasetItem(BaseModel):
+    id: Optional[int] = None
+    name: Optional[str] = None
+    path: Optional[str] = None
+    status: Optional[str] = None
+    file_type: Optional[str] = None
+    size: Optional[int] = None
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
