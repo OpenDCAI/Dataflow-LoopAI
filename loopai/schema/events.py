@@ -92,7 +92,7 @@ class AgentEvent:
                 if k not in skip_key:
                     self.custom_info[current_key][k] = info[k]
                 else:
-                    if not self.custom_info[current_key][k]:
+                    if not self.custom_info[current_key][k] or not info[k]:
                         self.custom_info[current_key][k] = info[k]
                     else:
                         for k_key in info[k]:

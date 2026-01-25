@@ -6,6 +6,7 @@ from typing import Dict, Optional, List, List
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import glob
+import json
 
 from ...models.task_models import TaskStatus
 from .tools import ensure_directory_exists, get_current_timestamp
@@ -70,18 +71,19 @@ class TaskManager:
         env = os.environ.copy()
         
         # 从环境变量中获取配置，如果没有则使用默认值
-        env["CUDA_VISIBLE_DEVICES"] = os.getenv("CUDA_VISIBLE_DEVICES", "0,1")
+        app_config = json.load(open('../../../app_config.json'))
+        env["CUDA_VISIBLE_DEVICES"] = app_config.get("CUDA_VISIBLE_DEVICES", "0,1")
         env["NCCL_ALGO"] = "Ring"
         
         # 获取 LLaMA Factory 环境路径
-        llamafactory_env_path = os.getenv("LLAMAFACTORY_ENV_PATH")
+        llamafactory_env_path = app_config.get("llamafactory_env_path", "")
         if llamafactory_env_path:
             env["LLAMAFACTORY_ENV_PATH"] = llamafactory_env_path
         else:
             print("警告: 未找到LLAMAFACTORY_ENV_PATH环境变量，将使用系统默认的llamafactory-cli")
         
         # 检查必需的API密钥
-        swanlab_key = os.getenv("SWANLAB_API_KEY", "sGBINQXB1ThNYERXGPggy")
+        swanlab_key = app_config.get("swanlab_api_key", "sGBINQXB1ThNYERXGPggy")
         if swanlab_key:
             env["SWANLAB_API_KEY"] = swanlab_key
         else:

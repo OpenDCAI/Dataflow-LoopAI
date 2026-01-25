@@ -54,8 +54,8 @@ async def init_manager(task_id):
 
     # Read Tavily API key
     tavily_api_key = None
-    if 'tavily_api_key_path' in config['starter'] and os.path.exists(config['starter']['tavily_api_key_path']):
-        with open(config['starter']['tavily_api_key_path'], 'r') as f:
+    if 'tavily_api_key_path' in config['starter']:
+        with open(os.path.join(LoopAI_DIR, config['starter']['tavily_api_key_path']), 'r') as f:
             tavily_api_key = f.read().strip()
 
 
@@ -63,6 +63,7 @@ async def init_manager(task_id):
     if 'rag' in config and 'api_key_path' in config['rag'] and os.path.exists(config['rag']['api_key_path']):
         with open(config['rag']['api_key_path'], 'r') as f:
             rag_api_key = f.read().strip()
+    
 
     kaggle_username = config['starter'].get('kaggle_username', '') or ''
     kaggle_key = config['starter'].get('kaggle_key', '') or ''
@@ -86,6 +87,12 @@ async def init_manager(task_id):
             config['default_states']['obtainer']['rag_api_base_url'] = config['rag']['api_base_url']
     if rag_api_key:
         config['default_states']['obtainer']['rag_api_key'] = rag_api_key
+
+    # Configure webcrawler with API keys
+    if 'webcrawler' not in config['default_states']:
+        config['default_states']['webcrawler'] = {}
+    config['default_states']['webcrawler']['deepseek_api_key'] = api_key
+    config['default_states']['webcrawler']['tavily_api_key'] = tavily_api_key if tavily_api_key else ''
 
     manager = StarterManager(sg_init_args={
         'tools': [check_motivation],

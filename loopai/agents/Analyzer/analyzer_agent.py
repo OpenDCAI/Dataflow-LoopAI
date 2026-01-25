@@ -5,7 +5,7 @@ from langgraph.graph import StateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt, Command
 
-from loopai.schema.states import LoopAIState, RuntimeContext
+from loopai.schema.states import LoopAIState, RuntimeContext, get_missing_fields
 from loopai.agents import BaseAgent
 from .nodes import eval_model_node, analyze_result_node, draw_conclusion_node
 
@@ -36,20 +36,13 @@ class AnalyzerAgent(BaseAgent):
             required_fields = {
                 "analyzer": [
                     "analyze_model_path", "analyze_base_url", "analyze_api_key", "analyze_temperature", "analyze_top_p", 
-                    "output_brief", "analyze_task_type",  "analyze_sampling_top_k", "output_suggestion", "analyze_batch_size"
+                    "output_brief", "analyze_task_type",  "analyze_sampling_top_k", "output_suggestion", "analyze_batch_size","analyze_max_concurrency",
+                    "analyze_chunk_size","quick_brief","quick_brief_limit"
                 ],
                 "judger": ["eval_result_path"],
                 "default": ["output_dir"]
             }
-            missing_fields = {}
-            for key in required_fields:
-                for field in required_fields[key]:
-                    if key == 'default':
-                        if field not in state:
-                            missing_fields.setdefault(key, []).append(field)
-                    else:
-                        if field not in state.get(key, {}):
-                            missing_fields.setdefault(key, []).append(field)
+            missing_fields = get_missing_fields(required_fields, state)
             if missing_fields:
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'

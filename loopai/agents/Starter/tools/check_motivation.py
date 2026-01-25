@@ -6,7 +6,7 @@ def check_motivation(motivation: str) -> dict:
     Determine the next workflow node based on the user's motivation.
 
     Motivation must be one of:
-    ['chat', 'train', 'judge', 'analyze', 'obtain', 'config', 'finish']
+    ['chat', 'train', 'judge', 'analyze', 'obtain', 'webcrawler', 'config', 'finish']
 
     Returns:
         {
@@ -20,6 +20,7 @@ def check_motivation(motivation: str) -> dict:
         "judge": "judge_node",
         "analyze": "analyze_node",
         "obtain": "obtain_node",
+        "webcrawler": "webcrawler_node",
         "config": "config_node",
         "finish": "end_node",
         "chat": "query_node",

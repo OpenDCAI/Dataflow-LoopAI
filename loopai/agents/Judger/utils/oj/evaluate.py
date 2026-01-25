@@ -3,14 +3,35 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Union, Iterable, Dict
 import itertools
 import os
+import threading
+from pathlib import Path
 from datetime import datetime, date, time
 import numpy as np
 import tqdm
 from .data import write_jsonl, stream_jsonl, read_problems
 from .execution_sql import compare_sql_wrapper
 from .execution import check_correctness
+
+from langgraph.config import get_stream_writer
+from loopai.schema.events import StreamEvent
+
 from loopai.logger import get_logger
 logger = get_logger()
+
+def wrapped_execute(task_type, shared_num, process_lock, args, timeout, completion_id):
+    """包装函数：前两个参数为进程共享变量/锁，后三个参数与你的function_A一致"""
+    try:
+        # 调用你的原有function_A，传递业务参数（与你的原有调用逻辑一致）
+        match task_type:
+            case "code":  # code
+                check_correctness(args, timeout, completion_id)
+            case "text2sql":  # text2sql
+                compare_sql_wrapper(args, timeout, completion_id)
+    finally:
+        # 加锁保护跨进程共享变量自增，确保进程安全
+        with process_lock:
+            shared_num.value += 1
+
 def estimate_pass_at_k(
     num_samples: Union[int, List[int], np.ndarray],
     num_correct: Union[List[int], np.ndarray],
@@ -73,16 +94,22 @@ def evaluate_sample_sql(state):
     n_workers=1
     timeout=3.0
 
+    state_task_id = state.get("task_id")
     judger_state = state.get("judger", {})
-    test_case_path = judger_state.get("eval_test_case_path", "")
-    problem_path = judger_state.get('eval_problem_path', "")
-    result_path = judger_state.get('eval_result_path', "")
+    output_dir = Path(judger_state['output_dir'])
+    problem_path = judger_state['eval_problem_path']
+    problem_file_name = str(Path(problem_path).stem)
+    test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
+    result_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_result.jsonl"))
+    case_num = judger_state.get('eval_case_num', 10)
+    task_type = judger_state['eval_task_type']
 
     k = list(map(int, K.split(",")))
     n_workers = n_workers
     timeout = timeout
 
     problems = read_problems(problem_path)
+    total_samples = len(problems) * case_num
 
     """
     Check the generated samples against test suites.
@@ -93,7 +120,7 @@ def evaluate_sample_sql(state):
         completion_id = Counter()
         n_samples = 0
         results = defaultdict(list)
-
+        writer = get_stream_writer()
         logger.info("Reading samples...")
         for sample in tqdm.tqdm(stream_jsonl(test_case_path)):
             task_id = sample["task_id"]
@@ -106,13 +133,29 @@ def evaluate_sample_sql(state):
             futures.append(future)
             completion_id[task_id] += 1
             n_samples += 1
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=round(n_samples/total_samples, 1),
+                    message=f"{task_type}任务样本提交进度",
+                    data={"progress_detail": f"{n_samples}/{total_samples}"}
+                ).json())
 
         assert len(completion_id) == len(problems), "Some problems are not attempted."
 
+        n_samples2 = 0
         logger.info("Running test suites...")
         for future in tqdm.tqdm(as_completed(futures), total=len(futures)):
             result = future.result()
             results[result["task_id"]].append((result["completion_id"], result))
+            n_samples2 += 1
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=round(n_samples2/total_samples, 1),
+                    message=f"{task_type}任务样本评测进度",
+                    data={"progress_detail": f"{n_samples2}/{total_samples}"}
+                ).json())
 
     """Calculate pass@k."""
     pass_at_k = culculate_pass_at_k(k, results)
@@ -142,18 +185,24 @@ def evaluate_sample(state):
     K = '1,10,100'
     n_workers=1
     timeout=3.0
-
+    
+    state_task_id = state.get("task_id")
     judger_state = state.get("judger", {})
-    test_case_path = judger_state.get("eval_test_case_path", "")
-    problem_path = judger_state.get('eval_problem_path', "")
-    result_path = judger_state.get('eval_result_path', "")
+
+    output_dir = Path(judger_state['output_dir'])
+    problem_path = judger_state['eval_problem_path']
+    problem_file_name = str(Path(problem_path).stem)
+    test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
+    result_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_result.jsonl"))
+    case_num = judger_state.get('eval_case_num', 10)
+    task_type = judger_state['eval_task_type']
 
     k = list(map(int, K.split(",")))
     n_workers = n_workers
     timeout = timeout
 
     problems = read_problems(problem_path)
-
+    total_samples = len(problems) * case_num
     """
     Check the generated samples against test suites.
     """
@@ -163,7 +212,7 @@ def evaluate_sample(state):
         completion_id = Counter()
         n_samples = 0
         results = defaultdict(list)
-
+        writer = get_stream_writer()
         logger.info("Reading samples...")
         for sample in tqdm.tqdm(stream_jsonl(test_case_path)):
             task_id = sample["task_id"]
@@ -173,13 +222,28 @@ def evaluate_sample(state):
             futures.append(future)
             completion_id[task_id] += 1
             n_samples += 1
-
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=round(n_samples/total_samples, 1),
+                    message=f"{task_type}任务样本提交进度",
+                    data={"progress_detail": f"{n_samples}/{total_samples}"}
+                ).json())
+                
         assert len(completion_id) == len(problems), "Some problems are not attempted."
-
+        n_samples2 = 0
         logger.info("Running test suites...")
         for future in tqdm.tqdm(as_completed(futures), total=len(futures)):
             result = future.result()
             results[result["task_id"]].append((result["completion_id"], result))
+            n_samples2 += 1
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=round(n_samples2/total_samples, 1),
+                    message=f"{task_type}任务样本评测进度",
+                    data={"progress_detail": f"{n_samples2}/{total_samples}"}
+                ).json())
 
     """Calculate pass@k."""
     pass_at_k = culculate_pass_at_k(k, results)

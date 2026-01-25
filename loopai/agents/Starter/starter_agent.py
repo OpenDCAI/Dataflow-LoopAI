@@ -15,6 +15,7 @@ from loopai.agents.Analyzer import AnalyzerAgent
 from loopai.agents.Obtainer import ObtainerAgent
 from loopai.agents.Constructor import ConstructorAgent
 from loopai.agents.Trainer import TrainerAgent
+from loopai.agents.WebCrawler import WebCrawlerAgent
 
 from loopai.agents.Configer.tools.check_config import check_config
 
@@ -141,6 +142,14 @@ class StarterAgent(BaseAgent):
             checkpointer=self.checkpointer,
             store=self.store
         )(**kwargs)
+        # WebCrawlerAgent for web crawling and dataset generation
+        webcrawler_node = WebCrawlerAgent(
+            model_name=self.model_name,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            checkpointer=self.checkpointer,
+            store=self.store
+        )(**kwargs)
         builder = StateGraph(LoopAIState, context_schema=RuntimeContext)
         builder.add_node("query_node", self.query_node)
         builder.add_node("llm_node", self.llm_node)
@@ -155,6 +164,7 @@ class StarterAgent(BaseAgent):
         builder.add_node("config_node", config_node)
         builder.add_node("judge_node", judge_node)
         builder.add_node("analyze_node", analyze_node)
+        builder.add_node("webcrawler_node", webcrawler_node)
         builder.add_node("end_node", self.end_node)
 
         builder.set_entry_point("query_node")
@@ -171,6 +181,7 @@ class StarterAgent(BaseAgent):
         builder.add_edge('config_node', 'query_node')
         builder.add_edge('judge_node', 'route_node')
         builder.add_edge('analyze_node', 'route_node')
+        builder.add_edge('webcrawler_node', 'query_node')
         builder.add_conditional_edges(
             "feedback_node",
             self.conditional_edge)
@@ -215,6 +226,8 @@ class StarterAgent(BaseAgent):
                 # tags like ['Starter-LLM'] or ['Configer-LLM'], currently set as allowed all.
                 if 'tags' in meta_data and (self.llm_tag in meta_data['tags'] or True):
                     self.agent_event.set_stream_message(msg_chunk)
+                else:
+                    continue # skip other messages event to prevent llm batch callback congestion.
             # Receiving custom event, update custom_info
             elif stream_mode == 'custom':
                 if len(namespace_item) > 0:
@@ -223,7 +236,7 @@ class StarterAgent(BaseAgent):
                     # if detect llm_node custom event and stream_message_state is finished, clear stream_message
                     # you should realize that there is a delay between update event and custom event
                     # so we need to clear the stream_message of the last turn, and you can fetch them in the llm_node.data.history
-                    if 'stream_message_state' in chunk_item.get('data', {}):
+                    if chunk_item.get('data', {}) is not None and 'stream_message_state' in chunk_item.get('data', {}):
                         stream_message_state = chunk_item.get('data', {}).get(
                             'stream_message_state', 'not_ready')
                         if stream_message_state == 'start':
