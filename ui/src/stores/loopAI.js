@@ -24,13 +24,31 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         })
     }
 
+    const datasets = ref([])
+    const getDatasets = async () => {
+        await proxy.$api.dataset.getDataset().then((res) => {
+            if (res.code === 200) {
+                let _datasets = res.data || []
+                _datasets.forEach((item) => {
+                    item.showPreview = false
+                    item.expanded = false
+                })
+                datasets.value = _datasets
+            } else {
+                proxy.$barWarning(res.message, {
+                    status: 'warning'
+                })
+            }
+        })
+    }
+
     const tasks = ref([])
     const getTasks = async () => {
         await proxy.$api.task.getTasks().then((res) => {
             if (res.code === 200) {
                 let _tasks = res.data || []
                 _tasks.forEach((item) => {
-                    item.show = true;
+                    item.show = true
                 })
                 tasks.value = _tasks
             } else {
@@ -48,33 +66,35 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         event_streaming: 'not_ready',
         current: null,
         running_tasks: null,
-        interrupt_value: "input the human query",
+        interrupt_value: 'input the human query',
         state: null,
         custom_info: null,
         update_custom_info: null
     })
     const getStatus = async () => {
-        await proxy.$api.starter.getAgentStatus().then((res) => {
-            if (res.code === 200) {
-                taskStatus.value.started = true
-                for (let key in taskStatus.value) {
-                    if (res.data[key] !== undefined)
-                        taskStatus.value[key] = res.data[key]
+        await proxy.$api.starter
+            .getAgentStatus()
+            .then((res) => {
+                if (res.code === 200) {
+                    taskStatus.value.started = true
+                    for (let key in taskStatus.value) {
+                        if (res.data[key] !== undefined) taskStatus.value[key] = res.data[key]
+                    }
+                    syncMessages()
+                    checkIfMsgStreamOnGoing()
+                } else {
+                    taskStatus.value.started = false
+                    taskStatus.value.running = false
+                    taskStatus.value.waiting_llm = false
                 }
-                syncMessages()
-                checkIfMsgStreamOnGoing()
-            } else {
-                taskStatus.value.started = false
+            })
+            .catch((error) => {
                 taskStatus.value.running = false
                 taskStatus.value.waiting_llm = false
-            }
-        }).catch((error) => {
-            taskStatus.value.running = false
-            taskStatus.value.waiting_llm = false
-            proxy.$barWarning('server connection error', {
-                status: 'error'
+                proxy.$barWarning('server connection error', {
+                    status: 'error'
+                })
             })
-        })
     }
     // sometimes when the llm call the tools, the msg stream will receive the finished status, but it actually still not finished.
     // we should check if the msg stream is on going.
@@ -85,7 +105,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
     const taskMessages = ref([])
     const msgStreamModel = ref({
         msg: null,
-        loading: false,
+        loading: false
     })
     const msgEventSource = ref(null)
     const getMessages = async () => {
@@ -100,20 +120,18 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         }
         if (taskStatus.value.waiting_llm)
             try {
-                taskMessages.value = taskStatus.value.custom_info.llm_node.data.history;
-            }
-            catch (e) {
+                taskMessages.value = taskStatus.value.custom_info.llm_node.data.history
+            } catch (e) {
                 await getMsg()
             }
         else {
             await getMsg()
         }
-
     }
     const syncMessages = () => {
         const getMsg = () => {
             try {
-                let _messages = [];
+                let _messages = []
                 taskStatus.value.state.messages.forEach((item, index) => {
                     _messages.push({
                         type: item.type,
@@ -121,20 +139,17 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     })
                 })
                 taskMessages.value = _messages
-            }
-            catch (e) {
+            } catch (e) {
                 taskMessages.value = []
             }
         }
         if (taskStatus.value.waiting_llm)
             try {
-                taskMessages.value = taskStatus.value.custom_info.llm_node.data.history;
-            }
-            catch (e) {
+                taskMessages.value = taskStatus.value.custom_info.llm_node.data.history
+            } catch (e) {
                 getMsg()
             }
-        else
-            getMsg()
+        else getMsg()
     }
     const getMsgStream = async () => {
         if (msgEventSource.value) {
@@ -153,8 +168,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     msgStreamModel.value.msg = null
                     await getStatus()
                 }
-            }
-            else if (resData.code === 400) {
+            } else if (resData.code === 400) {
                 msgStreamModel.value.loading = false
                 msgStreamModel.value.msg = null
                 proxy.$barWarning(resData.message, {
@@ -185,6 +199,8 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         configId,
         config,
         getConfigs,
+        datasets,
+        getDatasets,
         tasks,
         getTasks,
         taskStatus,
@@ -194,6 +210,6 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         getMessages,
         getMsgStream,
         stateSchema,
-        getStateSchema,
+        getStateSchema
     }
 })

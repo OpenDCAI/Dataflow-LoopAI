@@ -1,29 +1,21 @@
 <template>
-    <div
-        class="lp-flow-default-node"
-        :class="[{ selected: selected }]"
-        :style="{
-            '--node-background': thisData.background,
-            '--node-icon-color': thisData.iconColor,
-            '--node-border-color': thisData.borderColor,
-            '--node-shadow-color': thisData.shadowColor,
-            '--node-group-background': thisData.groupBackground,
-            '--node-title-color': thisData.titleColor,
-            '--node-status-color': thisData.statusColor,
-            '--node-info-title-color': thisData.infoTitleColor,
-            '--default-handle-color': thisData.defaultHandleColor,
-            '--default-handle-shadow-color': thisData.defaultHandleShadowColor
-        }"
-    >
+    <div class="lp-flow-default-node" :class="[{ selected: selected }]" :style="{
+        '--node-background': thisData.background,
+        '--node-icon-color': thisData.iconColor,
+        '--node-border-color': thisData.borderColor,
+        '--node-shadow-color': thisData.shadowColor,
+        '--node-group-background': thisData.groupBackground,
+        '--node-title-color': thisData.titleColor,
+        '--node-status-color': thisData.statusColor,
+        '--node-info-title-color': thisData.infoTitleColor,
+        '--default-handle-color': thisData.defaultHandleColor,
+        '--default-handle-shadow-color': thisData.defaultHandleShadowColor
+    }">
         <div class="lp-flow-node-shadow" :class="[{ 'running-shadow': running }]"></div>
-        <div class="lp-flow-node-container">
+        <div class="lp-flow-node-container" :class="[{ 'row-mode': rowLayoutContent }]">
             <div class="node-banner" :title="id">
                 <div class="icon-block" :style="{ background: thisData.iconBackground }">
-                    <i
-                        v-if="!thisData.img"
-                        class="ms-Icon"
-                        :class="[`ms-Icon--${thisData.icon}`]"
-                    ></i>
+                    <i v-if="!thisData.img" class="ms-Icon" :class="[`ms-Icon--${thisData.icon}`]"></i>
                     <fv-img v-else class="icon-img" :src="thisData.img"></fv-img>
                 </div>
                 <div class="content-block">
@@ -31,21 +23,14 @@
                     <p class="main-title" :title="thisData.label">{{ thisData.label }}</p>
                 </div>
                 <div class="control-block" @mousedown.stop @click.stop>
-                    <fv-button
-                        v-if="thisData.enableDelete"
-                        theme="dark"
-                        border-radius="8"
-                        :font-size="12"
-                        background="rgba(215, 95, 95, 1)"
-                        border-color="rgba(255, 255, 255, 0.1)"
-                        style="width: 25px; height: 25px"
-                        @click="
+                    <fv-button v-if="thisData.enableDelete" theme="dark" border-radius="8" :font-size="12"
+                        background="rgba(215, 95, 95, 1)" border-color="rgba(255, 255, 255, 0.1)"
+                        style="width: 25px; height: 25px" @click="
                             $emit('delete-node', {
                                 id: id,
                                 data: thisData
                             })
-                        "
-                    >
+                            ">
                         <i class="ms-Icon ms-Icon--Cancel"></i>
                     </fv-button>
                 </div>
@@ -53,7 +38,7 @@
             <div class="node-info">
                 <p>{{ thisData.nodeInfo }}</p>
             </div>
-            <div class="remain-content-block">
+            <div class="remain-content-block" :class="[{ 'row': rowLayoutContent }]">
                 <slot>
                     <div class="node-group-item">
                         <div class="node-row-item">
@@ -65,26 +50,14 @@
                     </div>
                 </slot>
             </div>
-            <Handle
-                v-if="thisData.useTargetHandle"
-                :id="`node::target::node`"
-                type="target"
-                class="handle-item default"
-                :position="!thisData.reverseHandle ? Position.Left : Position.Right"
-                :style="{
+            <Handle v-if="thisData.useTargetHandle" :id="`node::target::node`" type="target" class="handle-item default"
+                :position="!thisData.reverseHandle ? Position.Left : Position.Right" :style="{
                     top: thisData.defaultTargetTop
-                }"
-            />
-            <Handle
-                v-if="thisData.useSourceHandle"
-                :id="`node::source::node`"
-                type="source"
-                class="handle-item default"
-                :position="!thisData.reverseHandle ? Position.Right : Position.Left"
-                :style="{
+                }" />
+            <Handle v-if="thisData.useSourceHandle" :id="`node::source::node`" type="source" class="handle-item default"
+                :position="!thisData.reverseHandle ? Position.Right : Position.Left" :style="{
                     top: thisData.defaultSourceHandleTop
-                }"
-            />
+                }" />
         </div>
     </div>
 </template>
@@ -111,6 +84,10 @@ const props = defineProps({
         default: () => ({})
     },
     running: {
+        type: Boolean,
+        default: false
+    },
+    rowLayoutContent: {
         type: Boolean,
         default: false
     }
@@ -181,6 +158,10 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             0px 0px 1px var(--node-shadow-color),
             3px 6px 16px transparent,
             -3px 6px 16px transparent;
+
+        &.row-mode {
+            width: auto;
+        }
 
         &:hover {
             box-shadow:
@@ -302,6 +283,18 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             margin-top: 5px;
             display: flex;
             flex-direction: column;
+
+            &.row {
+                flex-direction: row;
+            }
+
+            .col-wrapper {
+                position: relative;
+                width: 100%;
+                height: auto;
+                display: flex;
+                flex-direction: column;
+            }
 
             .node-group-item {
                 position: relative;
@@ -428,6 +421,7 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
         z-index: -1;
 
         &.running-shadow {
+
             &:before,
             &:after {
                 content: '';
@@ -436,19 +430,17 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
                 left: -2px;
                 width: calc(100% + 4px);
                 height: calc(100% + 4px);
-                background: linear-gradient(
-                    45deg,
-                    rgba(226, 121, 162, 1),
-                    rgba(146, 156, 218, 1),
-                    rgba(129, 208, 246, 1),
-                    rgba(239, 192, 48, 1),
-                    rgba(246, 100, 100, 1),
-                    rgba(226, 121, 162, 1),
-                    rgba(146, 156, 218, 1),
-                    rgba(129, 208, 246, 1),
-                    rgba(239, 192, 48, 1),
-                    rgba(246, 100, 100, 1)
-                );
+                background: linear-gradient(45deg,
+                        rgba(226, 121, 162, 1),
+                        rgba(146, 156, 218, 1),
+                        rgba(129, 208, 246, 1),
+                        rgba(239, 192, 48, 1),
+                        rgba(246, 100, 100, 1),
+                        rgba(226, 121, 162, 1),
+                        rgba(146, 156, 218, 1),
+                        rgba(129, 208, 246, 1),
+                        rgba(239, 192, 48, 1),
+                        rgba(246, 100, 100, 1));
                 background-size: 400%;
                 border-radius: 8px;
                 z-index: -1;
@@ -469,9 +461,11 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             0% {
                 background-position: 0 0;
             }
+
             50.01% {
                 background-position: 200% 0;
             }
+
             100% {
                 background-position: 0 0;
             }

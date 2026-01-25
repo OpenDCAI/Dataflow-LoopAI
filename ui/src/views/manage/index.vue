@@ -1,55 +1,33 @@
 <template>
     <div class="manage-container">
         <div class="manage-content-block">
-            <fv-navigation-view
-                v-model="currentNav"
-                :title="''"
-                :options="navList"
-                v-model:expand="isExpand"
-                :foreground="color"
-                :expandWidth="250"
-                background="rgba(243, 243, 243, 1)"
-                :flyout-display="1368"
-                :mobile-display="1024"
-                class="navigation-view"
-                :show-back="false"
-                :show-search="false"
-                :show-setting="false"
-                @item-click="handleItemClick"
-                @back="$Back()"
-            >
+            <fv-navigation-view v-model="currentNav" :title="''" :options="navList" v-model:expand="isExpand"
+                :foreground="color" :expandWidth="250" background="rgba(243, 243, 243, 1)" :flyout-display="1368"
+                :mobile-display="1024" class="navigation-view" :show-back="false" :show-search="false"
+                :show-setting="false" @item-click="handleItemClick" @back="$Back()">
                 <template v-slot:banner>
                     <div class="title-block name">
                         <img class="nav-icon" :src="img.loopai" alt="" style="height: 25px" />
-                        <img
-                            v-show="isExpand"
-                            class="nav-icon"
-                            :src="img.logo"
-                            alt=""
-                            style="margin-left: 15px"
-                        />
+                        <img v-show="isExpand" class="nav-icon" :src="img.logo" alt="" style="margin-left: 15px" />
                     </div>
                 </template>
                 <template v-slot:listItem="x">
                     <div class="nav-item" :class="{ collapse: !isExpand }">
-                        <img
-                            v-show="x.item.type !== 'header' && x.item.img"
-                            class="nav-item-icon"
-                            :src="x.item.img"
-                            alt=""
-                        />
-                        <i
-                            v-show="x.item.type !== 'header' && !x.item.img"
-                            class="ms-Icon nav-item-icon"
-                            :class="['ms-Icon--' + x.item.icon]"
-                        ></i>
+                        <img v-show="x.item.type !== 'header' && x.item.img" class="nav-item-icon" :src="x.item.img"
+                            alt="" />
+                        <i v-show="x.item.type !== 'header' && !x.item.img" class="ms-Icon nav-item-icon"
+                            :class="['ms-Icon--' + x.item.icon]"></i>
                         <p class="name" :style="{ color: x.item.type === 'header' ? color : '' }">
                             {{ x.valueTrigger(x.item.name) }}
                         </p>
                     </div>
                 </template>
             </fv-navigation-view>
-            <router-view></router-view>
+            <router-view v-slot="{ Component }">
+                <KeepAlive>
+                    <component :is="Component" />
+                </KeepAlive>
+            </router-view>
         </div>
     </div>
 </template>
@@ -167,7 +145,7 @@ export default {
 
                 .nav-icon {
                     width: auto;
-                    height: 35px;
+                    height: 20px;
                     margin-left: 5px;
                     object-fit: cover;
                 }

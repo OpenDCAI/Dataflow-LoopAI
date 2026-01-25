@@ -97,7 +97,7 @@ export default {
             default: false
         },
         title: {
-            default: 'New Task'
+            default: 'Select Directory'
         },
         filePath: {
             default: ''

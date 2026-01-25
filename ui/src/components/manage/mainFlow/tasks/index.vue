@@ -6,66 +6,37 @@
                     <fv-img class="logo" :src="img.task" alt="task"></fv-img>
                     <p class="title">{{ local('Tasks') }}</p>
                 </div>
-                <fv-button
-                    border-radius="8"
-                    style="width: 35px; height: 35px"
-                    @click="thisValue = false"
-                >
+                <fv-button border-radius="8" style="width: 35px; height: 35px" @click="thisValue = false">
                     <i class="ms-Icon ms-Icon--ChevronLeft"></i>
                 </fv-button>
             </div>
             <div class="lp-task-content">
                 <hr />
                 <div class="search-block">
-                    <fv-text-box
-                        :placeholder="local('Search Tasks ...')"
-                        icon="Search"
-                        class="task-search-box"
-                        :revealBorder="true"
-                        borderRadius="30"
-                        borderWidth="2"
-                        :isBoxShadow="true"
-                        :focusBorderColor="color"
-                        :revealBorderColor="'rgba(103, 105, 251, 0.6)'"
+                    <fv-text-box :placeholder="local('Search Tasks ...')" icon="Search" class="task-search-box"
+                        :revealBorder="true" borderRadius="30" borderWidth="2" :isBoxShadow="true"
+                        :focusBorderColor="color" :revealBorderColor="'rgba(103, 105, 251, 0.6)'"
                         :reveal-background-color="[
                             'rgba(103, 105, 251, 0.1)',
                             'rgba(103, 105, 251, 0.6)'
-                        ]"
-                        @debounce-input="searchText = $event"
-                    ></fv-text-box>
+                        ]" @debounce-input="searchText = $event"></fv-text-box>
                     <div v-show="searchText" class="search-result-info">
                         {{ local('Total') }}: {{ totalNumVisible }} {{ local('tasks') }}
                         <p class="search-text">"{{ searchText }}"</p>
                     </div>
                 </div>
                 <hr />
-                <fv-button
-                    icon="Add"
-                    border-radius="8"
-                    :is-box-shadow="true"
+                <fv-button icon="Add" border-radius="8" :is-box-shadow="true"
                     style="width: calc(100% - 20px); height: 40px; margin-left: 10px"
-                    @click="(show.add = true), (addPanelMode = 'add')"
-                    >{{ local('New Task') }}</fv-button
-                >
+                    @click="(show.add = true), (addPanelMode = 'add')">{{ local('New Task') }}</fv-button>
                 <div v-show="!lock.task" class="task-list-loading">
-                    <fv-progress-ring
-                        loading="true"
-                        :r="20"
-                        :border-width="3"
-                        :color="color"
-                        :background="'rgba(245, 245, 245, 1)'"
-                    ></fv-progress-ring>
+                    <fv-progress-ring loading="true" :r="20" :border-width="3" :color="color"
+                        :background="'rgba(245, 245, 245, 1)'"></fv-progress-ring>
                 </div>
                 <div class="task-list-block">
-                    <div
-                        v-show="item.show"
-                        v-for="(item, index) in tasks"
-                        :key="item.id"
-                        class="task-item"
-                        :class="[{ choosen: thisTask === item }]"
-                        @click="selectTask(item)"
-                        @contextmenu="showRightMenu($event, item)"
-                    >
+                    <div v-show="item.show" v-for="(item, index) in tasks" :key="item.id" class="task-item"
+                        :class="[{ choosen: thisTask && thisTask.task_id === item.task_id }]" @click="selectTask(item)"
+                        @contextmenu="showRightMenu($event, item)">
                         <div class="task-item-main">
                             <div class="main-icon">
                                 <i class="ms-Icon ms-Icon--DialShape3"></i>
@@ -77,11 +48,8 @@
                                     <p class="task-info" :title="item.task_id">
                                         {{ local('Task ID') }}: {{ item.task_id }}
                                     </p>
-                                    <time-rounder
-                                        :model-value="new Date(item.updatedAt)"
-                                        :foreground="color"
-                                        style="width: auto"
-                                    ></time-rounder>
+                                    <time-rounder :model-value="new Date(item.updatedAt)" :foreground="color"
+                                        style="width: auto"></time-rounder>
                                 </div>
                             </div>
                         </div>
@@ -89,11 +57,8 @@
                     </div>
                 </div>
             </div>
-            <task-panel
-                v-model="show.add"
-                :obj="currentContextItem"
-                :addPanelMode="addPanelMode"
-            ></task-panel>
+            <task-panel v-model="show.add" :obj="currentContextItem" :addPanelMode="addPanelMode"
+                @confirm="confirmTask"></task-panel>
             <fv-right-menu v-model="show.rightMenu" ref="rightMenu">
                 <span @click="(show.add = true), (addPanelMode = 'add')">
                     <i class="ms-Icon ms-Icon--Add" :style="{ color: color }"></i>
@@ -248,6 +213,9 @@ export default {
                 }
             })
         },
+        confirmTask(item) {
+            if (!this.thisTask) this.thisTask = item
+        },
         showRightMenu($event, item) {
             this.currentContextItem = item
             $event.preventDefault()
@@ -374,6 +342,7 @@ export default {
 
                 &:hover {
                     background: rgba(227, 231, 251, 0.6);
+
                     .task-item-main {
                         .content-block {
                             .task-name {
@@ -405,11 +374,9 @@ export default {
                         width: 40px;
                         height: 40px;
                         flex-shrink: 0;
-                        background: linear-gradient(
-                            90deg,
-                            rgba(73, 131, 251, 1) 0%,
-                            rgba(100, 161, 252, 1) 100%
-                        );
+                        background: linear-gradient(90deg,
+                                rgba(73, 131, 251, 1) 0%,
+                                rgba(100, 161, 252, 1) 100%);
                         border: 1px solid rgba(120, 120, 120, 0.1);
                         border-radius: 8px;
                         color: whitesmoke;
@@ -462,9 +429,11 @@ export default {
         }
     }
 }
+
 .task-slide-enter-active {
     transition: all 0.6s ease-out;
 }
+
 .task-slide-leave-active {
     transition: all 0.3s;
 }

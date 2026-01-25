@@ -65,6 +65,26 @@ export class ConfigModel {
     config=undefined
     
 }
+export class DatasetItem {
+  
+    /**
+     *
+
+     */ 
+    constructor(id = undefined,name = undefined,description = undefined,path = undefined,status = undefined,file_type = undefined,size = undefined,createdAt = undefined,updatedAt = undefined){
+        this.id = id
+        this.name = name
+        this.description = description
+        this.path = path
+        this.status = status
+        this.file_type = file_type
+        this.size = size
+        this.createdAt = createdAt
+        this.updatedAt = updatedAt
+    }
+    
+    
+}
 export class HTTPValidationError {
   
     /**

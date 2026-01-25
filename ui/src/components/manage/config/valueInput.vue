@@ -1,99 +1,45 @@
 <template>
     <div class="value-input-row-item">
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
-        <fv-text-box
-            v-if="computedUIType === 'text'"
-            v-model="modelValue.value"
-            :placeholder="local(name)"
-            border-radius="3"
-            :border-width="2"
-            :reveal-border="true"
-            :disabled="!lock"
-            :border-color="'rgba(120, 120, 120, 0.1)'"
-            :focus-border-color="color"
-            :is-box-shadow="true"
-            underline
-        ></fv-text-box>
-        <fv-toggle-switch
-            v-if="computedUIType === 'bool'"
-            v-model="modelValue.value"
-            :on="local('True')"
-            :off="local('False')"
-            :width="65"
-            :height="25"
-            :switch-on-background="color"
-            :inside-content="true"
-            :disabled="!lock"
-        ></fv-toggle-switch>
-        <fv-combobox
-            v-if="computedUIType === 'list'"
-            v-model="listValueModel"
-            :placeholder="modelValue.title"
-            :options="formatAllowedValues"
-        ></fv-combobox>
-        <div v-if="computedUIType === 'slider'" class="value-input-row-item">
-            <fv-slider
-                v-model="slideValueModel"
-                :showLabel="true"
-                :unit="1"
-                :color="color"
-                :disabled="!lock"
-                background="rgba(255, 255, 255, 0.8)"
-                style="margin: 5px 0px; flex: 1"
-            >
+        <fv-text-box v-if="computedUIType === 'text'" v-model="textModel"
+            :left-icon="modelValue.ui_type === 'number' ? 'Keyboard12Key' : 'Characters'" :placeholder="local(name)"
+            border-radius="3" :border-width="2" :reveal-border="true" :disabled="!lock"
+            :border-color="'rgba(120, 120, 120, 0.1)'" :focus-border-color="color" :is-box-shadow="true"
+            underline></fv-text-box>
+        <fv-toggle-switch v-if="computedUIType === 'bool'" v-model="modelValue.value" :on="local('True')"
+            :off="local('False')" :width="65" :height="25" :switch-on-background="color" :inside-content="true"
+            :disabled="!lock"></fv-toggle-switch>
+        <fv-combobox v-if="computedUIType === 'list'" v-model="listValueModel" :placeholder="modelValue.title"
+            :options="formatAllowedValues"></fv-combobox>
+        <div v-if="computedUIType === 'slider'" class="value-input-row-item" style="width: 260px;">
+            <fv-slider v-model="slideValueModel" :showLabel="true" :unit="1" :color="color" :disabled="!lock"
+                background="rgba(255, 255, 255, 0.8)" style="margin: 5px 0px; flex: 1">
                 <template v-slot="prop">
                     <span>{{ prop.modelValue / 100 }}</span>
                 </template>
             </fv-slider>
-            <fv-text-box
-                v-model="modelValue.value"
-                :placeholder="local(modelValue.name)"
-                border-radius="3"
-                :border-width="2"
-                :reveal-border="true"
-                :disabled="!lock"
-                :border-color="'rgba(120, 120, 120, 0.1)'"
-                :focus-border-color="color"
-                :is-box-shadow="true"
-                underline
-                style="width: 80px"
-            ></fv-text-box>
+            <fv-text-box v-model="modelValue.value" :placeholder="local(modelValue.name)" border-radius="3"
+                :border-width="2" :reveal-border="true" :disabled="!lock" :border-color="'rgba(120, 120, 120, 0.1)'"
+                :focus-border-color="color" :is-box-shadow="true" underline style="width: 80px"></fv-text-box>
         </div>
-        <div v-if="computedUIType === 'dir'" class="value-input-row-item">
-            <fv-breadcrumb
-                v-model="dirModel"
-                :border-radius="6"
-                :font-size="'12px'"
-                :disabled="true"
-                :title="modelValue.value"
-                style="flex: 1; flex-shrink: 0"
-                @click="show.dir = true"
-            >
+        <div v-if="computedUIType === 'dir'" class="value-input-row-item" style="width: 260px;">
+            <fv-button theme="light" background="#facf5c" border-radius="6"
+                style="width: 25px; height: 25px; flex-shrink: 0" :title="local('Select from Dataset')"
+                @click="$emit('select-dataset')">
+                <i class="ms-Icon ms-Icon--Wheel"></i>
+            </fv-button>
+            <fv-breadcrumb v-model="dirModel" class="breadcrumb-custom" :border-radius="6" :font-size="'12px'"
+                :disabled="true" :title="modelValue.value" @click="show.dir = true">
             </fv-breadcrumb>
-            <directory-selector
-                v-model="show.dir"
-                v-model:filePath="dirModel"
-                @cancel="modelValue.value = modelValue.default_value"
-            ></directory-selector>
+            <directory-selector v-model="show.dir" v-model:filePath="dirModel"
+                @cancel="modelValue.value = modelValue.default_value"></directory-selector>
         </div>
-        <fv-button
-            theme="dark"
-            background="rgba(111, 92, 196, 1)"
-            border-radius="30"
-            style="width: 25px; height: 25px; flex-shrink: 0"
-            :title="local('Set as Default')"
-            @click="setDefault"
-        >
+        <fv-button theme="dark" background="rgba(111, 92, 196, 1)" border-radius="30"
+            style="width: 25px; height: 25px; flex-shrink: 0" :title="local('Set as Default')" @click="setDefault">
             <i class="ms-Icon ms-Icon--Leaf"></i>
         </fv-button>
-        <fv-button
-            theme="dark"
-            background="rgba(200, 38, 45, 1)"
-            border-radius="30"
-            style="width: 25px; height: 25px; flex-shrink: 0"
-            :title="local('Clear as None')"
-            @click="clearNone"
-        >
+        <fv-button theme="dark" background="rgba(200, 38, 45, 1)" border-radius="30"
+            style="width: 25px; height: 25px; flex-shrink: 0" :title="local('Clear as None')" @click="clearNone">
             <i class="ms-Icon ms-Icon--Delete"></i>
         </fv-button>
     </div>
@@ -131,6 +77,20 @@ export default {
     computed: {
         ...mapState(useAppConfig, ['local']),
         ...mapState(useTheme, ['color']),
+        textModel: {
+            get() {
+                return this.modelValue.value ? this.modelValue.value.toString() : this.modelValue.value
+            },
+            set(value) {
+                if (value === null) {
+                    this.modelValue.value = null
+                    return;
+                }
+                if (this.modelValue.type === 'int' || this.modelValue.ui_type === 'number') value = parseInt(value)
+                else if (this.modelValue.type === 'float' || this.modelValue.ui_type === 'slider') value = parseFloat(value)
+                this.modelValue.value = value
+            }
+        },
         slideValueModel: {
             get() {
                 return this.modelValue.value * 100
@@ -196,7 +156,7 @@ export default {
 
 <style lang="scss">
 .value-input-row-item {
-    width: 300px;
+    width: 320px;
     gap: 5px;
     display: flex;
     align-items: center;
@@ -214,6 +174,20 @@ export default {
         color: rgba(120, 120, 120, 1);
         border-radius: 6px;
         user-select: none;
+    }
+
+    .breadcrumb-custom {
+        flex: 1;
+        flex-shrink: 0;
+        background: rgba(120, 120, 120, 0.1);
+
+        &:hover {
+            background: rgba(120, 120, 120, 0.2);
+        }
+
+        &:active {
+            background: rgba(120, 120, 120, 0.3);
+        }
     }
 }
 </style>

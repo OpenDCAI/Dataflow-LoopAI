@@ -1380,6 +1380,372 @@ train.get_all_swanlab_logs_train_swanlab_logs_get.fullPath=`${axios.defaults.bas
 */
 train.get_all_swanlab_logs_train_swanlab_logs_get.path=`/train/swanlab-logs`
 
+export class dataset {
+ 
+  /**
+  * @summary 获取数据集列表
+  * @param {String} [search] 
+  * @param {Number} [offset] 
+  * @param {Number} [limit] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async getDataset(search,offset,limit,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/dataset/dataset',
+        data:{},
+        params:{search,offset,limit},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
+  * @summary 创建数据集
+  * @param {String} [name] 
+  * @param {String} [description] 
+  * @param {String} [path] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async createDataset(name,description,path,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'post',
+        url:'/dataset/dataset',
+        data:{},
+        params:{name,description,path},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
+  * @summary 获取数据集总数
+  * @param {String} [search] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async getDatasetCount(search,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/dataset/dataset/count',
+        data:{},
+        params:{search},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
+  * @summary 更新数据集
+  * @param {Number} [pathdataset_id] 
+  * @param {UserModel.DatasetItem} [datasetitem] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async updateDataset(pathdataset_id,datasetitem,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'put',
+        url:'/dataset/dataset/'+pathdataset_id+'',
+        data:datasetitem,
+        params:{},
+        headers:{
+          "Content-Type":"application/json"
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
+  * @summary 删除数据集
+  * @param {Number} [pathdataset_id] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async deleteDataset(pathdataset_id,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'delete',
+        url:'/dataset/dataset/'+pathdataset_id+'',
+        data:{},
+        params:{},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
+  * @summary 预览数据集
+  * @param {Number} [pathdataset_id] 
+  * @param {Number} [offset] 
+  * @param {Number} [limit] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async previewDataset(pathdataset_id,offset,limit,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/dataset/dataset/preview/'+pathdataset_id+'',
+        data:{},
+        params:{offset,limit},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+}
+
+// class dataset static method properties bind
+/**
+* @description getDataset url链接，包含baseURL
+*/
+dataset.getDataset.fullPath=`${axios.defaults.baseURL}/dataset/dataset`
+/**
+* @description getDataset url链接，不包含baseURL
+*/
+dataset.getDataset.path=`/dataset/dataset`
+/**
+* @description createDataset url链接，包含baseURL
+*/
+dataset.createDataset.fullPath=`${axios.defaults.baseURL}/dataset/dataset`
+/**
+* @description createDataset url链接，不包含baseURL
+*/
+dataset.createDataset.path=`/dataset/dataset`
+/**
+* @description getDatasetCount url链接，包含baseURL
+*/
+dataset.getDatasetCount.fullPath=`${axios.defaults.baseURL}/dataset/dataset/count`
+/**
+* @description getDatasetCount url链接，不包含baseURL
+*/
+dataset.getDatasetCount.path=`/dataset/dataset/count`
+/**
+* @description updateDataset url链接，包含baseURL
+*/
+dataset.updateDataset.fullPath=`${axios.defaults.baseURL}/dataset/dataset/{dataset_id}`
+/**
+* @description updateDataset url链接，不包含baseURL
+*/
+dataset.updateDataset.path=`/dataset/dataset/{dataset_id}`
+/**
+* @description deleteDataset url链接，包含baseURL
+*/
+dataset.deleteDataset.fullPath=`${axios.defaults.baseURL}/dataset/dataset/{dataset_id}`
+/**
+* @description deleteDataset url链接，不包含baseURL
+*/
+dataset.deleteDataset.path=`/dataset/dataset/{dataset_id}`
+/**
+* @description previewDataset url链接，包含baseURL
+*/
+dataset.previewDataset.fullPath=`${axios.defaults.baseURL}/dataset/dataset/preview/{dataset_id}`
+/**
+* @description previewDataset url链接，不包含baseURL
+*/
+dataset.previewDataset.path=`/dataset/dataset/preview/{dataset_id}`
+
 export class common {
  
   /**
