@@ -28,6 +28,7 @@ class DatasetModel(BaseModel):
     """数据集模型"""
     id = fields.IntField(pk=True)
     name = fields.CharField(max_length=255)
+    description = fields.TextField(null=True)
     path = fields.TextField(null=True)
     file_type = fields.TextField(null=True)
     size = fields.IntField(null=True)

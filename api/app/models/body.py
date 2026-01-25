@@ -44,6 +44,7 @@ class TaskItem(BaseModel):
 class DatasetItem(BaseModel):
     id: Optional[int] = None
     name: Optional[str] = None
+    description: Optional[str] = None
     path: Optional[str] = None
     status: Optional[str] = None
     file_type: Optional[str] = None
