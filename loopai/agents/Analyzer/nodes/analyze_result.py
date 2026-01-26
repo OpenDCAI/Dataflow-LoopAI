@@ -151,7 +151,7 @@ def analyze_result_node(state: LoopAIState):
     def _emit(message, *, progress=None, data=None):
         if writer:
             writer(StreamEvent(
-                current="AnalyzerAgent",
+                current="AnalyzerAgent.analyze_result_node",
                 message=message,
                 progress=progress,
                 data=data
