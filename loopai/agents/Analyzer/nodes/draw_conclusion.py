@@ -44,12 +44,17 @@ def pick_samples_by_stage(
 
     if not groups:
         return []
+    def safe_int(x, default=-1):
+        try:
+            return int(x)
+        except:
+            return default
 
     # 2. 组内稳定排序（保证多次运行一致）
     def stable_key(r):
         return (
             str(r.get("task_id") or ""),
-            int(r.get("sample_index") or -1),
+            safe_int(r.get("sample_index")),
         )
 
     for k in groups:
@@ -221,8 +226,14 @@ def make_final_json(summary: dict, oj_records: list):
     pass_rate_samples = float(summary.get("pass_rate_samples", 0.0) or 0.0)
     pass_at_k = summary.get("pass_at_k_task") or {}
     stage_dist = summary.get("failure_stage_distribution") or {}
-    loc_dist = summary.get("loc_distribution") or {}
-    kw_dist = summary.get("kw_distribution") or {}
+    task_type = summary.get("task_type") or "code"
+
+    if task_type == "text2sql":
+        loc_dist = summary.get("sql_length_distribution") or summary.get("loc_distribution") or {}
+        kw_dist = summary.get("sql_token_distribution") or summary.get("kw_distribution") or {}
+    else:
+        loc_dist = summary.get("loc_distribution") or {}
+        kw_dist = summary.get("kw_distribution") or {}
 
     stage_sorted = sorted(stage_dist.items(), key=lambda x: (-x[1], x[0]))
     loc_sorted = sorted(loc_dist.items(), key=lambda x: x[0])
@@ -349,8 +360,14 @@ def make_human_text(final_json: dict, background: str = None) -> str:
     lines.append(f"本次评测共 {t} 个样本，其中通过 {p} 个，样本正确率 {pass_rate_str}。")
     if top_cnt > 0:
         lines.append(f"最主要的失败类型是 “{top_name}”，共有 {top_cnt} 次。")
-    lines.append(f"代码行数分布（LOC）：{loc_desc}。")
-    lines.append(f"控制语句分布：{kw_desc}。")
+    task_type = final_json.get("dataset", {}).get("task_type", "code")
+
+    if task_type == "text2sql":
+        lines.append(f"SQL 语句长度分布：{loc_desc}。")
+        lines.append(f"SQL 词元数量分布：{kw_desc}。")
+    else:
+        lines.append(f"代码行数分布（LOC）：{loc_desc}。")
+        lines.append(f"控制语句分布：{kw_desc}。")
 
     extras = final_json.get("extras") or {}
     if extras:
@@ -370,7 +387,7 @@ def draw_conclusion_node(state: LoopAIState):
     def _emit(message, *, progress=None, data=None):
         if writer:
             writer(StreamEvent(
-                current="JudgerAgent.draw_conclusion_node",
+                current="AnalyzerAgent",
                 message=message,
                 progress=progress,
                 data=data
@@ -383,13 +400,13 @@ def draw_conclusion_node(state: LoopAIState):
     summary_path = _analyzer(state).get('analyze_output_summary_path')
 
     # ===== 读取 summary =====
-    _emit("读取评测摘要", data={"summary_path": summary_path})
+    _emit("读取评测摘要", progress=0.1 , data={"summary_path": summary_path})
     with open(summary_path, "r", encoding="utf-8") as f:
         summary = json.load(f)
     summary["_file_path"] = summary_path
 
     # ===== 读取 OJ 记录 =====
-    _emit("读取评测记录", data={"results_file": summary.get("results_file")})
+    _emit("读取评测记录", progress=0.2 , data={"results_file": summary.get("results_file")})
     oj_records, _ = try_read_oj_records(summary.get("results_file"))
     run_ts, final_json = make_final_json(summary, oj_records)
 
@@ -430,7 +447,7 @@ def draw_conclusion_node(state: LoopAIState):
             k: (str(v)[:200] + "…") if isinstance(v, str) and len(str(v)) > 200 else str(v)
             for k, v in first.items()
         }
-
+    summary["task_type"] = task_type  
     final_json["dataset"] = {
         "name": dataset_name,
         "task_type": task_type,
@@ -456,13 +473,13 @@ def draw_conclusion_node(state: LoopAIState):
 
     # ===== 写入 JSON 报告 =====
     final_json_path = os.path.join(outdir, f"final_report_{run_ts}.json")
-    _emit("写入最终 JSON 报告", data={"path": final_json_path})
+    _emit("写入最终 JSON 报告", progress=0.4 , data={"path": final_json_path})
     with open(final_json_path, "w", encoding="utf-8") as f:
         f.write(json.dumps(final_json, ensure_ascii=False, indent=2))
 
     # ===== 写入文本报告（包含背景介绍）=====
     final_txt_path = os.path.join(outdir, f"final_report_{run_ts}.txt")
-    _emit("写入文本报告", data={"path": final_txt_path})
+    _emit("写入文本报告", progress=0.5 , data={"path": final_txt_path})
     with open(final_txt_path, "w", encoding="utf-8") as f:
         f.write(make_human_text(final_json, background=background_text))
 
