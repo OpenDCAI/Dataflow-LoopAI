@@ -370,7 +370,7 @@ class ObtainerAgent(BaseAgent):
                     writer = get_stream_writer()
                     if writer:
                         writer(StreamEvent(
-                            current=state.get('current', 'obtainer_start_node'),
+                            current=state['current'],
                             message="ObtainerAgent configuration initialized",
                             data={
                                 'model': state.get('obtainer', {}).get('model_path'),
@@ -516,7 +516,12 @@ class ObtainerAgent(BaseAgent):
                         first_task = task_list[0].get("task_name", user_input)
                         state["automated_query"] = first_task
                         logger.info(f"Decomposed into {len(task_list)} tasks. Starting with task 1/{len(task_list)}: {first_task[:100]}...")
-                        
+                        if writer:
+                            writer(StreamEvent(
+                                current=state['current'],
+                                message=f"Decomposed into {len(task_list)} tasks. Starting with task 1/{len(task_list)}: {first_task[:100]}...",
+                            ).json())
+
                         # Clear RAG collection for the first task (keep downloads folder)
                         output_dir = state.get("output_dir", "./output")
                         download_dir = os.path.join(output_dir, "downloads")
@@ -708,12 +713,21 @@ class ObtainerAgent(BaseAgent):
         """
         task_list = state.get("obtainer_task_list", [])
         current_index = state.get("obtainer_current_task_index", 0)
+        writer = get_stream_writer()
         
         if current_index < len(task_list):
             next_task = task_list[current_index]
             task_name = next_task.get("task_name", "")
             
             logger.info(f"Next task node: Preparing task {current_index + 1}/{len(task_list)}: {task_name[:100]}...")
+
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message=f"Next task node: Preparing task {current_index + 1}/{len(task_list)}: {task_name[:100]}...",
+                    progress=(current_index + 1)/(len(task_list) + 1),
+                ).json())
+
             
             # Clear RAG collection to prevent data duplication between subtasks (keep downloads folder)
             output_dir = state.get("output_dir", "./output")
@@ -928,7 +942,7 @@ class ObtainerAgent(BaseAgent):
                         'download_results': state.get("obtainer", {}).get("download_results", {})
                     }
                     writer(StreamEvent(
-                        current=state.get('current', 'obtainer_end_node'),
+                        current=state['current'],
                         message="ObtainerAgent task completed",
                         data=summary_data
                     ).json())

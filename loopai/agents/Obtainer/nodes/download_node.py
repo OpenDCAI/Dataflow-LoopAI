@@ -134,6 +134,7 @@ def download_node(state: LoopAIState) -> LoopAIState:
             kaggle_username=kaggle_username if kaggle_username else None,
             kaggle_key=kaggle_key if kaggle_key else None,
             debug_mode=debug_mode,
+            event_name=state['current'],
         ))
         
         # Update state with results
@@ -194,7 +195,7 @@ def download_node(state: LoopAIState) -> LoopAIState:
                 writer = get_stream_writer()
                 if writer:
                     writer(StreamEvent(
-                        current=state.get('current', 'download_node'),
+                        current=state['current'],
                         message="Download node completed",
                         progress=len(completed_tasks) / len(download_tasks) if download_tasks else 0,
                         progress_num=len(completed_tasks),
@@ -246,6 +247,7 @@ async def _download_workflow(
     kaggle_username: Optional[str] = None,
     kaggle_key: Optional[str] = None,
     debug_mode: bool = False,
+    event_name: str = "download_workflow"
 ) -> Dict[str, Any]:
     """Async workflow for executing download tasks"""
     completed_tasks = []
@@ -275,7 +277,7 @@ async def _download_workflow(
                 writer = get_stream_writer()
                 if writer:
                     writer(StreamEvent(
-                        current="download_workflow",
+                        current=event_name,
                         message=f"Processing download task {task_idx}/{len(download_tasks)}: {task_objective}",
                         progress=task_idx / len(download_tasks) if download_tasks else 0,
                         progress_num=task_idx,
@@ -360,7 +362,7 @@ async def _download_workflow(
                                 writer = get_stream_writer()
                                 if writer:
                                     writer(StreamEvent(
-                                        current="download_workflow",
+                                        current=event_name,
                                         message=f"Download succeeded: {task_objective} via {method}",
                                         progress=task_idx / len(download_tasks) if download_tasks else 0,
                                         progress_num=task_idx,
