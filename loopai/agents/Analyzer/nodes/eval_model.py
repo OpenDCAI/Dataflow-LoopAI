@@ -269,7 +269,7 @@ def summarize_brief(
     Returns:
         一句话中文短评
     """
-    if task_type == "sql":
+    if task_type == "text2sql":
         tpl_name = "brief_sql_user"
     else:
         tpl_name = "brief_user"
@@ -380,7 +380,7 @@ def build_evidence_for_record(rec: Dict[str, Any], task_type: str) -> Dict[str, 
     Returns:
         判因 evidence 字典
     """
-    if task_type == "sql":
+    if task_type == "text2sql":
         return build_evidence_for_record_sql(rec)
     return build_evidence_for_record_code(rec)
 
@@ -443,7 +443,7 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
             for t in tags:
                 tag_counter[t] += 1
 
-        if task_type == "sql":
+        if task_type == "text2sql":
             # NEW: 对于 sql，用 SQL 语句长度 / 词元数量做粗分布统计
             sql = (
                 rec.get("completion")
@@ -526,7 +526,7 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
         lines.append(f"  - {k}: {v}")
     lines.append("标签 Top： " + ", ".join([f"{k}:{v}" for k, v in tag_counter.most_common(8)]))
 
-    if task_type == "sql":
+    if task_type == "text2sql":
      
         if loc_bins:
             lines.append("SQL 语句长度分布（按字符数粗分）： " +
@@ -623,7 +623,7 @@ def run_general_text_fallback_eval(state: LoopAIState):
     writer = get_stream_writer()
     if writer:
        writer(StreamEvent(
-        current=state.get("current") or "AnalyzerAgent",
+        current="AnalyzerAgent",
         progress=1.0,
         message="通用文本质量兜底评估完成（BLEU + Lexical）",
         data=result
@@ -665,13 +665,13 @@ def eval_model_node(state: LoopAIState):
         7. 生成评测摘要报告
     """
     cfg = _analyzer(state)
-    task_type = cfg.get("analyze_task_type", "code")  # "code" 或 "sql"
-    if task_type not in ("code", "sql"):
+    task_type = cfg.get("analyze_task_type", "code")  # "code" 或 "text2sql"
+    if task_type not in ("code", "text2sql"):
         return run_general_text_fallback_eval(state)
     writer = get_stream_writer()
     if writer:
        writer(StreamEvent(
-        current=state.get("current") or "AnalyzerAgent",
+        current="AnalyzerAgent",
         progress=0.0,
         message="常规任务评测样本开始",
         data={"task_type": task_type}
@@ -696,23 +696,30 @@ def eval_model_node(state: LoopAIState):
     batch_size = int(cfg.get("analyze_batch_size", 20))
     llm = init_model(state)
     total_batches = (len(failed_results) + batch_size - 1) // batch_size
+    start_p = 0.05   # 判因阶段起点
+    end_p = 0.70     # 判因阶段终点
+    span = end_p - start_p
 
-    # 批量处理
-    for i in tqdm(range(0, len(failed_results), batch_size)):
+    for i in tqdm(range(0, total_failed, batch_size)):
         processed = min(i + batch_size, total_failed)
-        progress = processed / max(total_failed, 1)
+        ratio = processed / max(total_failed, 1)
+
+        # 🟢 动态真实进度
+        progress = start_p + span * ratio
+
         if writer:
            writer(StreamEvent(
-        current=state.get("current") or "AnalyzerAgent",
-        progress=progress,
-        message="常规任务样本合成中",
-        data={
-            "current_batch": i // batch_size + 1,
-            "total_batches": total_batches,
-            "processed_samples": min(i + batch_size, len(failed_results)),
-            "total_failed_samples": len(failed_results),
-            }
-           ).json())
+               current="AnalyzerAgent",
+               progress=round(progress, 3),
+               message=f"判因分析中 ({processed}/{total_failed})",
+               data={
+                "current_batch": i // batch_size + 1,
+                "total_batches": total_batches,
+                "processed_samples": processed,
+                "total_failed_samples": total_failed,
+                }
+            ).json())
+
         batch = failed_results[i:i + batch_size]
 
         evidences: List[Dict[str, Any]] = []
@@ -724,7 +731,7 @@ def eval_model_node(state: LoopAIState):
         overall_start = time.time()
         if writer:
            writer(StreamEvent(
-        current=state.get("current") or "AnalyzerAgent",
+        current="AnalyzerAgent",
         progress=None,
         message="正在调用分析模型",
         data={"batch_size": len(batch)}
@@ -754,7 +761,7 @@ def eval_model_node(state: LoopAIState):
         limit = int(cfg.get("quick_brief_limit", 20))
         if writer:
            writer(StreamEvent(
-        current=state.get("current") or "AnalyzerAgent",
+        current="AnalyzerAgent",
         progress=0.70,
         message="开始生成失败样本中文短评",
         data={"limit": limit, "failed_samples": len(failed_results)}
@@ -808,11 +815,12 @@ def eval_model_node(state: LoopAIState):
             return out
 
         picked_idx = _pick_quick_brief_indices()
+        total_brief = len(picked_idx)
 
         for idx in picked_idx:
             rec = failed_results[idx]
             try:
-                if task_type == "sql":
+                if task_type == "text2sql":
                     brief_inputs = build_brief_inputs_sql(rec)
                 else:
                     brief_inputs = build_brief_inputs_code(rec)
@@ -828,6 +836,14 @@ def eval_model_node(state: LoopAIState):
                 )
             except Exception as e:
                 rec["brief_analysis"] = f"（短评生成失败：{e}）"
+            if writer and total_brief > 0:
+               progress = 0.70 + 0.15 * (k / total_brief)
+               writer(StreamEvent(
+               current="AnalyzerAgent",
+               progress=round(progress, 3),
+               message=f"生成短评中 ({k}/{total_brief})",
+               data=None
+               ).json())
 
     logger.info(f" 判因完成：共 {len(failed_results)} 条")
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -844,14 +860,14 @@ def eval_model_node(state: LoopAIState):
     logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if cfg.get('quick_brief', False) else ""))
     if writer:
        writer(StreamEvent(
-        current=state.get("current") or "AnalyzerAgent",
+        current="AnalyzerAgent",
         progress=0.85,
         message="已写入增强评测结果",
         data={"output_path": str(out_jsonl_path)}
        ).json())
     try:
         summary_json_path, summary_txt_path = _build_and_write_summary(
-            result_content, Path(state['output_dir']), ts, task_type=task_type
+            failed_results, Path(state['output_dir']), ts, task_type=task_type
         )
         with open(summary_json_path, "r", encoding="utf-8") as f:
             sdata = json.load(f)
@@ -862,7 +878,7 @@ def eval_model_node(state: LoopAIState):
         logger.info(f" 已在 {state['output_dir']} 生成 summary，路径：{summary_json_path} / {summary_txt_path}")
         if writer:
            writer(StreamEvent(
-        current=state.get("current") or "AnalyzerAgent",
+        current="AnalyzerAgent",
         progress=0.90,
         message="已生成评测摘要",
         data={ 
@@ -877,7 +893,7 @@ def eval_model_node(state: LoopAIState):
         logger.warning(f"[WARN] 生成 summary 时发生错误：{e}")
     if writer:
        writer(StreamEvent(
-        current=state.get("current") or "AnalyzerAgent",
+        current="AnalyzerAgent",
         progress=1.0,
         message="评测流程完成",
         data=None
