@@ -23,6 +23,9 @@ class TaskManager:
         self.runs_dir = runs_dir
         self.tasks: Dict[str, Dict] = {}
         self.executor = ThreadPoolExecutor(max_workers=4)
+        # 打印当前工作目录
+        print(f"TaskManager 初始化 - 当前工作目录: {os.getcwd()}")
+
         self.app_config = json.load(open('../../../app_config.json'))
         self.llamafactory_dir = self.app_config.get("llamafactory_dir")
         # self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
