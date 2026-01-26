@@ -76,7 +76,7 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
         )
         
         # 确保输出目录存在
-        output_dir = state.get('output_dir', './output/trainer')
+        output_dir = state.get('trainer', {}).get('output_dir', './output/trainer')
         os.makedirs(output_dir, exist_ok=True)
           # 保存配置文件为YAML格式
         config_output_path = state.get('trainer', {}).get('train_output_config_path')

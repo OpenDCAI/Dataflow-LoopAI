@@ -31,7 +31,7 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
     
     try:
         # 获取数据集路径
-        dataset_path = state.get('train_input_dataset_path')
+        dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
         if not dataset_path:
             raise ValueError("缺少训练数据集路径 (train_input_dataset_path)")
         
@@ -44,7 +44,7 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
         report = generate_format_report(check_result)
         
         # 保存报告到输出目录
-        output_dir = state.get('output_dir', './output/trainer')
+        output_dir = state.get('trainer', {}).get('output_dir', './output/trainer')
         os.makedirs(output_dir, exist_ok=True)
         
         report_path = os.path.join(output_dir, 'data_check_report.txt')
