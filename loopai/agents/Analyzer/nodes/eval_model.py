@@ -778,11 +778,16 @@ def eval_model_node(state: LoopAIState):
             for idx, rec in enumerate(failed_results):
                 stg = (rec.get("judge") or {}).get("stage") or "other"
                 groups[str(stg)].append(idx)
+            def safe_int(x, default=-1):
+                try:
+                    return int(x)
+                except:
+                    return default
 
             # 组内保持稳定顺序（task_id / sample_index / idx）
             def _stable_key(i: int):
                 r = failed_results[i]
-                return (str(r.get("task_id") or ""), int(r.get("sample_index") or -1), i)
+                return (str(r.get("task_id") or ""),safe_int(r.get("sample_index")), i)
 
             for k in list(groups.keys()):
                 groups[k].sort(key=_stable_key)
@@ -817,7 +822,7 @@ def eval_model_node(state: LoopAIState):
         picked_idx = _pick_quick_brief_indices()
         total_brief = len(picked_idx)
 
-        for idx in picked_idx:
+        for i, idx in enumerate(picked_idx, 1):
             rec = failed_results[idx]
             try:
                 if task_type == "text2sql":
@@ -837,11 +842,11 @@ def eval_model_node(state: LoopAIState):
             except Exception as e:
                 rec["brief_analysis"] = f"（短评生成失败：{e}）"
             if writer and total_brief > 0:
-               progress = 0.70 + 0.15 * (k / total_brief)
+               progress = 0.70 + 0.15 * (i / total_brief)
                writer(StreamEvent(
                current="AnalyzerAgent",
                progress=round(progress, 3),
-               message=f"生成短评中 ({k}/{total_brief})",
+               message=f"生成短评中 ({i}/{total_brief})",
                data=None
                ).json())
 

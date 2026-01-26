@@ -44,12 +44,17 @@ def pick_samples_by_stage(
 
     if not groups:
         return []
+    def safe_int(x, default=-1):
+        try:
+            return int(x)
+        except:
+            return default
 
     # 2. 组内稳定排序（保证多次运行一致）
     def stable_key(r):
         return (
             str(r.get("task_id") or ""),
-            int(r.get("sample_index") or -1),
+            safe_int(r.get("sample_index")),
         )
 
     for k in groups:
