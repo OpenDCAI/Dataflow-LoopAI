@@ -105,7 +105,9 @@ class TaskManager:
             llamafactory_env_path = env.get("LLAMAFACTORY_ENV_PATH")
             if llamafactory_env_path:
                 # 如果指定了环境路径，使用完整路径
-                cmd = [os.path.join(llamafactory_env_path, "llamafactory-cli"), "train", config_path]
+                python_exe = os.path.join(llamafactory_env_path, "python")
+                cmd = [python_exe, "-m", "llamafactory.cli", "train", config_path]
+                # cmd = [os.path.join(llamafactory_env_path, "llamafactory-cli"), "train", config_path]
                 print(f"使用指定环境路径执行训练: {llamafactory_env_path}")
             else:
                 # 否则使用系统PATH中的llamafactory-cli

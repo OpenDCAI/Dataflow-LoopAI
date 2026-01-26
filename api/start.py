@@ -96,7 +96,7 @@ def main():
         
         # 设置环境变量，将当前项目目录和LLaMA Factory目录都加入PYTHONPATH
         env = os.environ.copy()
-        pythonpath_parts = [current_dir, llamafactory_dir, "/jizhicfs/hymiezhao/miniconda3/envs/llamafactory/lib/python3.10/site-packages"]
+        pythonpath_parts = [current_dir, llamafactory_dir]
         if 'PYTHONPATH' in env:
             pythonpath_parts.append(env['PYTHONPATH'])
         env['PYTHONPATH'] = os.pathsep.join(pythonpath_parts)
