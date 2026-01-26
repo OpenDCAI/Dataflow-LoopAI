@@ -255,52 +255,7 @@ class TrainerAgent(BaseAgent):
         """
         self.init_graph(**kwargs)
         return self.graph
-    
-    def validate_input_state(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        验证输入状态
-        
-        Args:
-            state: 输入状态字典
-            
-        Returns:
-            验证结果字典
-        """
-        
-        result = {
-            "valid": True,
-            "errors": [],
-            "warnings": []
-        }
-        
-        # 检查必需的字段
-        required_fields = [
-            'train_input_dataset_path',
-            'train_input_task_description'
-        ]
-        
-        for field in required_fields:
-            if not state.get(field):
-                result["errors"].append(f"缺少必需的字段: {field}")
-                result["valid"] = False
-        
-        # 检查可选字段并设置默认值
-        defaults = {
-            'train_input_model_name': 'qwen2.5-7b-instruct',
-            'train_output_dir': './output/training',
-            'train_input_use_swanlab': True,
-            'train_input_swanlab_project': 'llamafactory_training',
-            'training_service_url': 'http://localhost:8000',
-            'output_dir': './output/trainer'
-        }
-        
-        for field, default_value in defaults.items():
-            if field not in state:
-                state[field] = default_value
-                result["warnings"].append(f"字段 {field} 使用默认值: {default_value}")
-        
-        return result
-    
+
     def get_training_summary(self, state: LoopAIState) -> Dict[str, Any]:
         """
         获取训练摘要信息
