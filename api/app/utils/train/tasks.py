@@ -100,14 +100,14 @@ class TaskManager:
         try:
             # 构建训练命令
             env = self._get_safe_env()
-            
+            env["PYTHONPATH"] = "/jizhicfs/hymiezhao/miniconda3/envs/llamafactory/lib/python3.10/site-packages"
+            env["PATH"] = f"/jizhicfs/hymiezhao/miniconda3/envs/llamafactory/bin:{env.get('PATH','')}"
+            env["PYTHONNOUSERSITE"] = "True"
             # 根据环境路径构建命令
             llamafactory_env_path = env.get("LLAMAFACTORY_ENV_PATH")
             if llamafactory_env_path:
                 # 如果指定了环境路径，使用完整路径
-                python_exe = os.path.join(llamafactory_env_path, "python")
-                cmd = [python_exe, "-m", "llamafactory.cli", "train", config_path]
-                # cmd = [os.path.join(llamafactory_env_path, "llamafactory-cli"), "train", config_path]
+                cmd = [os.path.join(llamafactory_env_path, "llamafactory-cli"), "train", config_path]
                 print(f"使用指定环境路径执行训练: {llamafactory_env_path}")
             else:
                 # 否则使用系统PATH中的llamafactory-cli
