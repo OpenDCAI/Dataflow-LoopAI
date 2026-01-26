@@ -23,7 +23,7 @@ class TaskManager:
         self.runs_dir = runs_dir
         self.tasks: Dict[str, Dict] = {}
         self.executor = ThreadPoolExecutor(max_workers=4)
-        self.app_config = json.load(open('./app_config.json'))
+        self.app_config = json.load(open('../../../app_config.json'))
         self.llamafactory_dir = self.app_config.get("llamafactory_dir")
         # self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
         
