@@ -18,20 +18,6 @@ from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
 logger = get_logger()
 
-def wrapped_execute(task_type, shared_num, process_lock, args, timeout, completion_id):
-    """包装函数：前两个参数为进程共享变量/锁，后三个参数与你的function_A一致"""
-    try:
-        # 调用你的原有function_A，传递业务参数（与你的原有调用逻辑一致）
-        match task_type:
-            case "code":  # code
-                check_correctness(args, timeout, completion_id)
-            case "text2sql":  # text2sql
-                compare_sql_wrapper(args, timeout, completion_id)
-    finally:
-        # 加锁保护跨进程共享变量自增，确保进程安全
-        with process_lock:
-            shared_num.value += 1
-
 def estimate_pass_at_k(
     num_samples: Union[int, List[int], np.ndarray],
     num_correct: Union[List[int], np.ndarray],
