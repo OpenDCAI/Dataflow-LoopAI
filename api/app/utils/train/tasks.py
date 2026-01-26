@@ -71,7 +71,7 @@ class TaskManager:
         env = os.environ.copy()
         
         # 从环境变量中获取配置，如果没有则使用默认值
-        app_config = json.load(open('../../../app_config.json'))
+        app_config = json.load(open('./api/app_config.json'))
         env["CUDA_VISIBLE_DEVICES"] = app_config.get("CUDA_VISIBLE_DEVICES", "0,1")
         env["NCCL_ALGO"] = "Ring"
         
