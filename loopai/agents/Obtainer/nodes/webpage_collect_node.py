@@ -131,7 +131,7 @@ def webpage_collect_node(state: LoopAIState) -> LoopAIState:
                 writer = get_stream_writer()
                 if writer:
                     writer(StreamEvent(
-                        current=state.get('current', 'webpage_collect_node'),
+                        current=state['current'],
                         message="WebPage Collect node completed",
                         data={
                             'user_query': user_query,

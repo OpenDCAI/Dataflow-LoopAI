@@ -171,6 +171,7 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
             url_timeout=state.get("obtainer", {}).get("url_timeout", 60),  # Timeout in seconds for each URL exploration
             tavily_api_key=tavily_api_key if tavily_api_key else None,
             debug_mode=debug_mode,
+            event_name=state['current'],
         ))
         
         # Update state with results
@@ -183,25 +184,24 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
             logger.info(f"WebSearch completed: {len(result.get('subtasks', []))} subtasks generated")
         
         # Send custom stream event if debug mode is enabled
-        debug_mode = state.get("obtainer_debug", False)
-        if debug_mode:
-            try:
-                writer = get_stream_writer()
-                if writer:
-                    writer(StreamEvent(
-                        current=state.get('current', 'websearch_node'),
-                        message="WebSearch node completed",
-                        data={
-                            'user_query': user_query,
-                            'research_summary': result.get("research_summary", "")[:200] if "exception" not in result else None,
-                            'subtasks_count': len(result.get("subtasks", [])),
-                            'urls_visited_count': len(result.get("urls_visited", [])),
-                            'has_exception': "exception" in result,
-                            'exception': result.get("exception") if "exception" in result else None
-                        }
-                    ).json())
-            except Exception as e:
-                logger.debug(f"Could not send stream event: {e}")
+        try:
+            writer = get_stream_writer()
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message="WebSearch node completed",
+                    progress=1,
+                    data={
+                        'user_query': user_query,
+                        'research_summary': result.get("research_summary", "")[:200] if "exception" not in result else None,
+                        'subtasks_count': len(result.get("subtasks", [])),
+                        'urls_visited_count': len(result.get("urls_visited", [])),
+                        'has_exception': "exception" in result,
+                        'exception': result.get("exception") if "exception" in result else None
+                    }
+                ).json())
+        except Exception as e:
+            logger.debug(f"Could not send stream event: {e}")
         
     except Exception as e:
         logger.error(f"WebSearch node error: {e}", exc_info=True)
@@ -234,6 +234,7 @@ async def _websearch_workflow(
     url_timeout: int = 60,
     tavily_api_key: str = None,
     debug_mode: bool = False,
+    event_name: str = "websearch_workflow"
 ) -> Dict[str, Any]:
     """Async workflow for web search"""
     try:
@@ -251,7 +252,7 @@ async def _websearch_workflow(
                 writer = get_stream_writer()
                 if writer:
                     writer(StreamEvent(
-                        current="websearch_workflow",
+                        current=event_name,
                         message="Generating research queries",
                         progress=0.0,
                         progress_num=0,
@@ -275,7 +276,7 @@ async def _websearch_workflow(
                 writer = get_stream_writer()
                 if writer:
                     writer(StreamEvent(
-                        current="websearch_workflow",
+                        current=event_name,
                         message=f"Generated {len(queries)} research queries",
                         progress=0.25,
                         progress_num=1,
@@ -292,7 +293,7 @@ async def _websearch_workflow(
                 writer = get_stream_writer()
                 if writer:
                     writer(StreamEvent(
-                        current="websearch_workflow",
+                        current=event_name,
                         message="Searching for URLs",
                         progress=0.25,
                         progress_num=1,
@@ -319,7 +320,7 @@ async def _websearch_workflow(
                 writer = get_stream_writer()
                 if writer:
                     writer(StreamEvent(
-                        current="websearch_workflow",
+                        current=event_name,
                         message=f"Found {len(unique_urls)} unique URLs to visit",
                         progress=0.5,
                         progress_num=2,
@@ -474,7 +475,7 @@ async def _websearch_workflow(
                     writer = get_stream_writer()
                     if writer:
                         writer(StreamEvent(
-                            current="websearch_workflow",
+                            current=event_name,
                             message=f"Exploring depth {current_depth}/{max_depth} with {len(current_layer)} URLs",
                             progress=0.5 + (current_depth / max_depth) * 0.25,
                             data={
@@ -563,7 +564,7 @@ async def _websearch_workflow(
                 writer = get_stream_writer()
                 if writer:
                     writer(StreamEvent(
-                        current="websearch_workflow",
+                        current=event_name,
                         message=f"Visited and stored {len(visited_urls)}/{len(unique_urls)} URLs",
                         progress=0.75,
                         progress_num=3,
@@ -604,7 +605,7 @@ async def _websearch_workflow(
                 writer = get_stream_writer()
                 if writer:
                     writer(StreamEvent(
-                        current="websearch_workflow",
+                        current=event_name,
                         message=f"Generated {len(new_subtasks)} download subtasks",
                         progress=1.0,
                         progress_num=4,
