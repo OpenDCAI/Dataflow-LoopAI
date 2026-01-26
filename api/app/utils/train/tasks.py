@@ -23,7 +23,9 @@ class TaskManager:
         self.runs_dir = runs_dir
         self.tasks: Dict[str, Dict] = {}
         self.executor = ThreadPoolExecutor(max_workers=4)
-        self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
+        self.app_config = json.load(open('./app_config.json'))
+        self.llamafactory_dir = self.app_config.get("llamafactory_dir")
+        # self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
         
         # 确保目录存在
         for directory in [configs_dir, logs_dir, runs_dir, self.llamafactory_dir]:
@@ -71,19 +73,18 @@ class TaskManager:
         env = os.environ.copy()
         
         # 从环境变量中获取配置，如果没有则使用默认值
-        app_config = json.load(open('./api/app_config.json'))
-        env["CUDA_VISIBLE_DEVICES"] = app_config.get("CUDA_VISIBLE_DEVICES", "0,1")
+        env["CUDA_VISIBLE_DEVICES"] = self.app_config.get("CUDA_VISIBLE_DEVICES", "0,1")
         env["NCCL_ALGO"] = "Ring"
         
         # 获取 LLaMA Factory 环境路径
-        llamafactory_env_path = app_config.get("llamafactory_env_path", "")
+        llamafactory_env_path = self.app_config.get("llamafactory_env_path", "")
         if llamafactory_env_path:
             env["LLAMAFACTORY_ENV_PATH"] = llamafactory_env_path
         else:
             print("警告: 未找到LLAMAFACTORY_ENV_PATH环境变量，将使用系统默认的llamafactory-cli")
         
         # 检查必需的API密钥
-        swanlab_key = app_config.get("swanlab_api_key", "sGBINQXB1ThNYERXGPggy")
+        swanlab_key = self.app_config.get("swanlab_api_key", "sGBINQXB1ThNYERXGPggy")
         if swanlab_key:
             env["SWANLAB_API_KEY"] = swanlab_key
         else:
