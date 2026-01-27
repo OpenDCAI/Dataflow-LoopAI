@@ -58,7 +58,7 @@ training_state = {
         'train_input_use_swanlab': True,
         'train_input_swanlab_project': 'test_llamafactory_training',
         'training_service_url': 'http://localhost:8000',  # 远程训练服务地址
-        'output_dir': './output/trainer_test'
+        'output_dir': '/jizhicfs/hymiezhao/lpc/repos/lr/Dataflow-LoopAI/output/trainer_test'
     }
 }
 
