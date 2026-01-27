@@ -42,17 +42,20 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         if not state.get('trainer', {}).get('trainer_config_generation_success', False):
             raise ValueError("配置生成未成功，无法执行训练")
         
+        framework = state.get('trainer', {}).get('train_framework')
+
         config_path = state.get('trainer', {}).get('train_output_config_path')
         if not config_path or not os.path.exists(config_path):
-            raise ValueError(f"YAML配置文件不存在: {config_path}")
+            raise ValueError(f"配置文件不存在: {config_path}")
         
         # 获取参数
         task_description = state.get('trainer', {}).get('train_input_task_description', '未指定任务描述')
         service_url = state.get('trainer', {}).get('training_service_url', 'http://localhost:8000')
         
-        logger.info(f"YAML配置文件: {config_path}")
+        logger.info(f"配置文件: {config_path}")
         logger.info(f"训练服务地址: {service_url}")
         logger.info(f"任务描述: {task_description}")
+        logger.info(f"训练框架: {framework}")
         
         # 进度：开始连接服务
         if writer:
@@ -95,7 +98,8 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         
         start_time = time.time()
         success, task_id_or_error, error_detail = client.start_training(
-            yaml_config_path=config_path,
+            framework=framework,
+            config_path=config_path,
             task_name=f"trainer_agent_{int(start_time)}"
         )
         
@@ -110,7 +114,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             writer(StreamEvent(
                 current=state['current'],
                 progress=0.4,
-                message=f"训练任务提交成功，任务ID: {task_id}",
+                message=f"训练任务提交成功，任务ID: {task_id}, 训练框架: {framework}",
                 data={"task_id": task_id, "start_time": start_time}
             ).json())
         

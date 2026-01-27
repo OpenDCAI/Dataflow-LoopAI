@@ -39,35 +39,37 @@ class TrainingServiceClient:
         except Exception as e:
             logger.error(f"检查服务健康状态失败: {str(e)}")
             return False
-    
-    def start_training(self, yaml_config_path: str, task_name: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
+
+    def start_training(self, framework: str, config_path: str, task_name: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
         """
         启动训练任务
         
         Args:
-            yaml_config_path: YAML配置文件路径
+            framework: 训练框架
+            config_path: 配置文件路径
             task_name: 任务名称
             
         Returns:
             (成功标志, 任务ID或错误信息, 错误详情)
         """
         try:
-            # 读取YAML配置文件
-            if not os.path.exists(yaml_config_path):
-                return False, f"配置文件不存在: {yaml_config_path}", None
+            if not os.path.exists(config_path):
+                return False, f"配置文件不存在: {config_path}", None
             
-            with open(yaml_config_path, 'r', encoding='utf-8') as f:
-                yaml_content = f.read()
+            # with open(config_path, 'r', encoding='utf-8') as f:
+            #     yaml_content = f.read()
             
-            # 验证YAML格式
-            try:
-                yaml.safe_load(yaml_content)
-            except yaml.YAMLError as e:
-                return False, f"YAML格式错误: {str(e)}", None
+            # # 验证YAML格式
+            # try:
+            #     yaml.safe_load(yaml_content)
+            # except yaml.YAMLError as e:
+            #     return False, f"YAML格式错误: {str(e)}", None
             
             # 构建请求数据
             request_data = {
-                "config": yaml_content
+                "framework": framework,
+                "config_path": config_path,
+                # "config_path": yaml_content
             }
             
             if task_name:

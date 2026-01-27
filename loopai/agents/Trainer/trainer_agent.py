@@ -326,6 +326,7 @@ class TrainerAgent(BaseAgent):
             # Trainer 运行前需要的字段，如果缺失则触发 Configer 子图来补全配置
             required_fields = {
                 "trainer": [
+                    'train_framework',
                     'train_input_dataset_path',
                     'train_input_task_description',
                     'train_input_config_template_path',

@@ -25,18 +25,20 @@ class TaskManager:
         self.executor = ThreadPoolExecutor(max_workers=4)
         self.app_config = json.load(open('/jizhicfs/hymiezhao/lpc/repos/lr/Dataflow-LoopAI/api/app_config.json'))
         self.llamafactory_dir = self.app_config.get("llamafactory_dir")
+        self.verl_dir = self.app_config.get("verl_dir")
         # self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
         
         # 确保目录存在
         for directory in [configs_dir, logs_dir, runs_dir, self.llamafactory_dir]:
             ensure_directory_exists(directory)
-    
-    def create_task(self, task_id: str, config_path: str, task_name: Optional[str] = None) -> Dict:
+
+    def create_task(self, task_id: str, config_path: str, framework: str, task_name: Optional[str] = None) -> Dict:
         """创建新的训练任务"""
         task_info = {
             'task_id': task_id,
             'task_name': task_name or task_id,
             'config_path': config_path,
+            'framework': framework,
             'status': TaskStatus.PENDING,
             'created_at': get_current_timestamp(),
             'started_at': None,
@@ -97,46 +99,94 @@ class TaskManager:
         task_info = self.tasks[task_id]
         config_path = task_info['config_path']
         log_path = os.path.join(self.logs_dir, f"{task_id}.log")
+        framework = task_info['framework']
         try:
-            # 构建训练命令
-            env = self._get_safe_env()
-            env["PYTHONPATH"] = "/jizhicfs/hymiezhao/miniconda3/envs/llamafactory/lib/python3.10/site-packages"
-            env["PATH"] = f"/jizhicfs/hymiezhao/miniconda3/envs/llamafactory/bin:{env.get('PATH','')}"
-            env["PYTHONNOUSERSITE"] = "True"
-            # 根据环境路径构建命令
-            llamafactory_env_path = env.get("LLAMAFACTORY_ENV_PATH")
-            if llamafactory_env_path:
-                # 如果指定了环境路径，使用完整路径
-                cmd = [os.path.join(llamafactory_env_path, "llamafactory-cli"), "train", config_path]
-                print(f"使用指定环境路径执行训练: {llamafactory_env_path}")
-            else:
-                # 否则使用系统PATH中的llamafactory-cli
-                cmd = ["llamafactory-cli", "train", config_path]
-                print("使用系统默认的llamafactory-cli执行训练")
-            
-            print(f"训练命令: {' '.join(cmd)}")
-            
-            # 启动训练进程
-            with open(log_path, 'w', encoding='utf-8') as log_file:
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                    cwd=self.llamafactory_dir,
-                    env=env
-                )
-                
-                task_info['process'] = process
-                
-                # 等待进程完成
-                return_code = process.wait()
-                
-                if return_code == 0:
-                    task_info['status'] = TaskStatus.COMPLETED
+            if framework == 'llamafactory':
+                # 构建训练命令
+                env = self._get_safe_env()
+                env["PYTHONPATH"] = "/jizhicfs/hymiezhao/miniconda3/envs/llamafactory/lib/python3.10/site-packages"
+                env["PATH"] = f"/jizhicfs/hymiezhao/miniconda3/envs/llamafactory/bin:{env.get('PATH','')}"
+                env["PYTHONNOUSERSITE"] = "True"
+                # 根据环境路径构建命令
+                llamafactory_env_path = env.get("LLAMAFACTORY_ENV_PATH")
+                if llamafactory_env_path:
+                    # 如果指定了环境路径，使用完整路径
+                    cmd = [os.path.join(llamafactory_env_path, "llamafactory-cli"), "train", config_path]
+                    print(f"使用指定环境路径执行训练: {llamafactory_env_path}")
                 else:
-                    task_info['status'] = TaskStatus.FAILED
-                    task_info['error_message'] = f"Training process exited with code {return_code}"
+                    # 否则使用系统PATH中的llamafactory-cli
+                    cmd = ["llamafactory-cli", "train", config_path]
+                    print("使用系统默认的llamafactory-cli执行训练")
+                
+                print(f"训练命令: {' '.join(cmd)}")
+                
+                # 启动训练进程
+                with open(log_path, 'w', encoding='utf-8') as log_file:
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=log_file,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        cwd=self.llamafactory_dir,
+                        env=env
+                    )
+                    
+                    task_info['process'] = process
+                    
+                    # 等待进程完成
+                    return_code = process.wait()
+                    
+                    if return_code == 0:
+                        task_info['status'] = TaskStatus.COMPLETED
+                    else:
+                        task_info['status'] = TaskStatus.FAILED
+                        task_info['error_message'] = f"Training process exited with code {return_code}"
+            elif framework == 'verl':
+                # 构建训练命令
+                env = self._get_safe_env()
+                env["PYTHONPATH"] = "/jizhicfs/hymiezhao/miniconda3/envs/sql-verl/lib/python3.10/site-packages"
+                env["PATH"] = f"/jizhicfs/hymiezhao/miniconda3/envs/sql-verl/bin:{env.get('PATH','')}"
+                env["PYTHONNOUSERSITE"] = "True"
+                # 根据环境路径构建命令
+                # verl_env_path = env.get("VERL_ENV_PATH")
+                # if verl_env_path:
+                #     # 如果指定了环境路径，使用完整路径
+                #     cmd = [os.path.join(verl_env_path, "verl-cli"), "train", config_path]
+                #     print(f"使用指定环境路径执行训练: {verl_env_path}")
+                # else:
+                #     # 否则使用系统PATH中的llamafactory-cli
+                #     cmd = ["llamafactory-cli", "train", config_path]
+                #     print("使用系统默认的llamafactory-cli执行训练")
+                cmd = ["bash", config_path]
+                print(f"训练命令: {' '.join(cmd)}")
+
+                # 启动训练进程
+                with open(log_path, 'w', encoding='utf-8') as log_file:
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=log_file,
+                        stderr=subprocess.STDOUT,
+                        universal_newlines=True,
+                        cwd=self.verl_dir,
+                        env=env
+                    )
+                    
+                    task_info['process'] = process
+                    
+                    # 等待进程完成
+                    return_code = process.wait()
+                    
+                    if return_code == 0:
+                        task_info['status'] = TaskStatus.COMPLETED
+                    else:
+                        task_info['status'] = TaskStatus.FAILED
+                        task_info['error_message'] = f"Training process exited with code {return_code}"
+            else:
+                task_info['status'] = TaskStatus.FAILED
+                task_info['error_message'] = f"Unsupported training framework: {framework}" 
+                with open(log_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write(f"\n\nError: {str(e)}\n")
+
                 
         except Exception as e:
             task_info['status'] = TaskStatus.FAILED
