@@ -2,11 +2,22 @@ import axios from 'axios'
 
 let ax = axios.create();
 
+const devURL = '/api'
+const prodURL = '/api'
+
+const getBaseURL = () => {
+    if (process.env.NODE_ENV == 'production') {
+        return prodURL;
+    } else {
+        return devURL;
+    }
+}
+
 // config here
 if (process.env.NODE_ENV == 'production') {
-    ax.defaults.baseURL = 'http://127.0.0.1:8000';
+    ax.defaults.baseURL = prodURL;
 } else {
-    ax.defaults.baseURL = '/api';
+    ax.defaults.baseURL = devURL;
 }
 
 // ax.interceptors.request.use(
@@ -38,3 +49,4 @@ if (process.env.NODE_ENV == 'production') {
 // )
 
 export default ax;
+export { devURL, prodURL, getBaseURL }
