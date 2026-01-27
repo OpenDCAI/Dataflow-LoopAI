@@ -12,17 +12,55 @@ See [Vite Configuration Reference](https://vitejs.dev/config/).
 
 ## Project Setup
 
+1. NVM(Node Version Manager) installation
+```shell
+# github download
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+# Mirror Download (faster in China)
+curl -so- https://gitee.com/mirrors/nvm/raw/v0.39.7/install.sh | bash
+```
+2. Refresh the terminal to activate the NVM command
+```shell
+# using bash
+source ~/.bashrc
+# using zsh
+source ~/.zshrc
+```
+
+3. Install NVM 20
+```shell
+nvm install 20
+nvm use 20
+nvm alias default 20
+```
+
+4. check version for node and NPM, node should be version `v20.x.x`
+```shell
+node -v
+npm -v
+```
+
+5. Install Yarn
+
+```bash
+corepack enable
+corepack prepare yarn@stable --activate
+yarn -v
+```
+
+6. Install Project Dependencies
+
 ```sh
 yarn
 ```
 
-### Compile and Hot-Reload for Development
+7. Compile and Hot-Reload for Development
 
 ```sh
 yarn dev
 ```
 
-### Compile and Minify for Production
+## Compile and Minify for Production
 
 ```sh
 yarn build
