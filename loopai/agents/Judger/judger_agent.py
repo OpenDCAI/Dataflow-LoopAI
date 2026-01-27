@@ -249,7 +249,6 @@ class JudgerAgent(BaseAgent):
         problem_file_name = str(Path(problem_path).stem)
 
         target_format_path = output_dir / str(state_task_id) / "judger" / (problem_file_name + "_format.jsonl")
-
         writer = get_stream_writer()
         if _isNotNone(format_type):
             if writer:
@@ -276,6 +275,18 @@ class JudgerAgent(BaseAgent):
                     message="任务数据格式化结束",
                     data={"msg": '未设置[eval_format_type]参数，跳过数据格式化过程'}
                 ).json())
+        return state
+
+    @staticmethod
+    @BaseAgent.set_current
+    def generate_node(state: LoopAIState) -> LoopAIState:
+        task_type = state.get("judger", {}).get("eval_task_type", "code")
+        writer = get_stream_writer()
+        match task_type:
+            case "code":  # code
+                res = generate_sample_code(state)
+            case "text2sql":
+                res = generate_sample_sql(state)
         return state
 
     @staticmethod
@@ -339,20 +350,6 @@ class JudgerAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
-    def data_format_next(state: LoopAIState) -> str:
-        """
-        根据任务类型选择不同的生成节点
-        """
-        task_type = state.get("judger", {}).get("eval_task_type", None)
-        # 判断是否为空，为空则开启本地
-        match task_type:
-            case "code":  # code
-                return "to_generate_code"
-            case "text2sql":
-                return "to_generate_text2sql"
-
-    @staticmethod
-    @BaseAgent.set_current
     def vllm_kill_next(state: LoopAIState) -> str:
         """
         如果已完成则结束未完成则开启本地vllm
@@ -371,11 +368,12 @@ class JudgerAgent(BaseAgent):
         builder.add_node("vllm_kill", self.vllm_kill_node)
         builder.add_node("vllm_start", self.vllm_start_node)
         builder.add_node("data_format", self.data_format_node)
-        builder.add_node("generate_code", generate_sample_code)
+        builder.add_node("generate_code", self.generate_node)
         builder.add_node("generate_text2sql", generate_sample_text2sql)
         builder.add_node("evaluate", self.evaluate_node)
         builder.add_edge("check_required_fields", "check_param_type")
         builder.add_edge("vllm_start", "data_format")
+        builder.add_edge("data_format", "generate_code")
         builder.add_edge("generate_code", "evaluate")
         builder.add_edge("generate_text2sql", "evaluate")
         builder.set_entry_point("check_required_fields")
@@ -386,15 +384,6 @@ class JudgerAgent(BaseAgent):
             path_map={  # 路由键-目标节点映射（路由键对应到具体节点）
                 "to_vllm_kill": "vllm_kill",  # 路由键1 → 计算节点
                 "to_data_format": "data_format",     # 路由键2 → 文本处理节点
-            }
-        )
-
-        builder.add_conditional_edges(
-            source="data_format", 
-            path=self.data_format_next,
-            path_map={
-                "to_generate_code": "generate_code",
-                "to_generate_text2sql": "generate_text2sql",
             }
         )
 
