@@ -64,10 +64,10 @@ def webpage_dataset_node(state: LoopAIState) -> LoopAIState:
     # Initialize components
     try:
         # Get configuration from state or use defaults
-        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
-        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
-        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
-        temperature = state.get("obtainer_temperature", 0.7)
+        model_name = state.get("obtainer", {}).get("model_path") or state.get("analyze_model_path")
+        base_url = state.get("obtainer", {}).get("base_url") or state.get("analyze_base_url")
+        api_key = state.get("obtainer", {}).get("api_key") or state.get("analyze_api_key")
+        temperature = state.get("obtainer", {}).get("temperature", 0.7)
         
         if not model_name or not base_url or not api_key:
             logger.error("Missing required configuration for webpage dataset node")
@@ -78,7 +78,7 @@ def webpage_dataset_node(state: LoopAIState) -> LoopAIState:
         prompt_loader = PromptLoader(state.get("prompt_template_dir"))
         
         # Get category (PT or SFT)
-        category = state.get("obtainer_category", "PT").upper()
+        category = state.get("obtainer", {}).get("category", "PT").upper()
         
         # Output directory
         output_dir = state.get("output_dir", "./output")
@@ -86,8 +86,8 @@ def webpage_dataset_node(state: LoopAIState) -> LoopAIState:
         os.makedirs(dataset_dir, exist_ok=True)
         
         # Get webpage data source (from webpage_collect_node or directly from URLs)
-        webpage_data_path = state.get("webpage_collect_jsonl_path", "")
-        webpage_urls = state.get("webpage_collect_urls_visited", [])
+        webpage_data_path = state.get("obtainer", {}).get("webpage_collect_jsonl_path", "")
+        webpage_urls = state.get("obtainer", {}).get("webpage_collect_urls_visited", [])
         
         # Run async workflow
         debug_mode = state.get("obtainer_debug", False)
@@ -102,9 +102,9 @@ def webpage_dataset_node(state: LoopAIState) -> LoopAIState:
             output_dir=dataset_dir,
             webpage_data_path=webpage_data_path,
             webpage_urls=webpage_urls,
-            max_records_per_page=state.get("obtainer_max_records_per_page", 10),
-            min_relevance_score=state.get("obtainer_min_relevance_score", 0.7),
-            dataset_concurrent_limit=state.get("obtainer_dataset_concurrent_limit", 5),
+            max_records_per_page=state.get("obtainer_max_records_per_page", 10),  # These might not be in obtainer dict
+            min_relevance_score=state.get("obtainer_min_relevance_score", 0.7),  # These might not be in obtainer dict
+            dataset_concurrent_limit=state.get("obtainer_dataset_concurrent_limit", 5),  # These might not be in obtainer dict
             debug_mode=debug_mode,
         ))
         
@@ -112,9 +112,9 @@ def webpage_dataset_node(state: LoopAIState) -> LoopAIState:
         if "exception" in result:
             state["exception"] = result["exception"]
         else:
-            state["webpage_dataset_summary"] = result.get("summary", "")
-            state["webpage_dataset_count"] = result.get("dataset_count", 0)
-            state["webpage_dataset_jsonl_path"] = result.get("jsonl_path", "")
+            state.setdefault("obtainer", {})["webpage_dataset_summary"] = result.get("summary", "")
+            state.setdefault("obtainer", {})["webpage_dataset_count"] = result.get("dataset_count", 0)
+            state.setdefault("obtainer", {})["webpage_dataset_jsonl_path"] = result.get("jsonl_path", "")
             logger.info(
                 f"WebPage Dataset completed: {result.get('dataset_count', 0)} records generated, "
                 f"saved to {result.get('jsonl_path', '')}"

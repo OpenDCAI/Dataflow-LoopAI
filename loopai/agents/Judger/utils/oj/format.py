@@ -2,35 +2,127 @@ import json
 import os
 import shutil
 import tempfile
+import re
+from pathlib import Path
 from typing import Optional, Callable
+
+from langgraph.config import get_stream_writer
+from loopai.schema.events import StreamEvent
+
+from loopai.schema.states import LoopAIState
+from loopai.agents import BaseAgent
+
 from loopai.logger import get_logger
 logger = get_logger()
 
-def data_format(state, method):
-    """选择适配器"""
+"""
+问题集标准目标json格式
+{
+    "task_id": "test/0",          # 题号:{问题集名}/{序号}
+    "prompt": "def return1():\n    \"\"\"This function has no input parameters, and your task is to make it return the integer 1.\n    \"\"\"", # 函数定义+问题描述提示（以多行注释形式写在函数定义下），为了减少处理过程，需保证大模型生成的结果为完整函数，不包含其他文本内容
+    "entry_point": "return1",     # 函数名
+    "canonical_solution": "def return1():\n    return 1", # 标准程序，需要完整的(包含函数定义)代码
+    "test_list":["assert return1() == 1"] # 测试用例列表，其中的函数名需要和entry_point一致
+}
+
+样例集标准目标json格式
+{
+    "task_id": "test/0",          # 题号:{问题集名}/{序号}
+    "completion":"def return1():\n    \"\"\"This function has no input parameters, and your task is to make it return the integer 1.\n    \"\"\"\n    return 1" # 完整的样例代码
+}
+"""
+
+def data_format(state):
+    """
+    选择适配器
+    """
+
+    judger_state = state.get("judger", {})
+    
+    method = judger_state['eval_format_type']
+    state_task_id = state.get("task_id")
+    problem_path = judger_state['eval_problem_path']
+    output_dir = Path(judger_state['output_dir'])
+
+    problem_file_name = str(Path(problem_path).stem)
+    target_format_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_format.jsonl"))
+
+    if(method is None):
+        method = "human-eval"
     match method:
         case "human-eval":  # human-eval
-            return preprocess_json_file(state['eval_problem_path'], state['eval_problem_path'], human_eval_format)
+            return preprocess_json_file(state, problem_path, target_format_path, human_eval_format)
+        case "mbpp":  # human-eval
+            return preprocess_json_file(state, problem_path, target_format_path, mbpp_format)
         case _:  # 通配符（类似 switch 的 default）
-            return preprocess_json_file(state['eval_problem_path'], state['eval_problem_path'], human_eval_format)
+            return preprocess_json_file(state, problem_path, target_format_path, human_eval_format)
 
+def extract_function_names(code_text):
+    """
+    从Python代码文本中提取所有函数定义的函数名
+    :param code_text: 包含Python函数定义的文本字符串
+    :return: 提取到的函数名列表（去重，保持首次出现顺序）
+    """
+    pattern = r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\('
+    
+    # 全局匹配所有符合规则的函数名
+    func_names = re.findall(pattern, code_text, re.MULTILINE)
+    
+    # 去重并保留首次出现的顺序（避免重复定义的函数名重复输出）
+    unique_func_names = list(dict.fromkeys(func_names))
+    
+    if unique_func_names:  # 列表非空
+        return unique_func_names[0]
+    else:  # 列表为空
+        return ""
+
+def extract_before_and_func_def(code_text):
+    """
+    提取代码文本中「第一个函数定义行及之前的所有内容」（保留原始换行/空格格式，冒号后无多余空格）
+    :param code_text: 包含Python代码的文本字符串（支持\r\n/\n换行）
+    :return: 提取结果（字符串）；无函数定义返回空字符串
+    """
+    # 核心：.*? 兼容def开头无前置内容的场景
+    pattern = r'^(.*?def\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\(.*?\)\s*:)'
+    match = re.search(pattern, code_text, re.DOTALL | re.MULTILINE)
+    
+    if match:
+        # 只去除结果末尾的多余空白（空格/制表符/换行），保留冒号本身
+        result = match.group(1).rstrip()
+        # 移除补空格的逻辑，直接返回清理后的结果
+        return result
+    return ""
+
+def mbpp_format(line):
+    """
+    mbpp行处理
+    """
+
+    if not isinstance(line, dict):
+        """验证是否为字典（避免非 JSON 对象格式，比如数组、字符串"""
+        logger.error(f"警告：行数据不是 JSON 对象（是 {type(line).__name__}），返回空字典")
+        return {}
+    line["canonical_solution"] = line["code"]
+    logger.info("已处理")
+    # 划分测试用例
+    line["test_list"] = list(dict.fromkeys(line["test_list"] + line["challenge_test_list"]))
+
+    # 提示词
+    line["prompt"] = extract_before_and_func_def(line["code"]) + "\n    \"\"\"" + line["text"] + "\n    \"\"\""
+
+    # entry_point
+    line["entry_point"] = extract_function_names(line["code"])
+
+    del line["challenge_test_list"]
+    del line["code"]
+    del line["text"]
+    del line["test_setup_code"]
+
+    return line
 
 def human_eval_format(line):
     """
-    问题集标准目标json格式
-    {
-        "task_id": "test/0",          # 题号:{问题集名}/{序号}
-        "prompt": "def return1():\n    \"\"\"This function has no input parameters, and your task is to make it return the integer 1.\n    \"\"\"", # 函数定义+问题描述提示（以多行注释形式写在函数定义下），为了减少处理过程，需保证大模型生成的结果为完整函数，不包含其他文本内容
-        "entry_point": "return1",     # 函数名
-        "canonical_solution": "def return1():\n    return 1", # 标准程序，需要完整的(包含函数定义)代码
-        "test_list":["assert return1() == 1"] # 测试用例列表，其中的函数名需要和entry_point一致
-    }
-
-    样例集标准目标json格式
-    {
-        "task_id": "test/0",          # 题号:{问题集名}/{序号}
-        "completion":"def return1():\n    \"\"\"This function has no input parameters, and your task is to make it return the integer 1.\n    \"\"\"\n    return 1" # 完整的样例代码
-    }
+    human_eval行处理
     """
     if not isinstance(line, dict):
         """验证是否为字典（避免非 JSON 对象格式，比如数组、字符串"""
@@ -70,6 +162,7 @@ def human_eval_format(line):
     return line
 
 def preprocess_json_file(
+    state: LoopAIState,
     input_path: str,
     output_path: str,
     line_processor: Optional[Callable[[dict], Optional[dict]]] = None
@@ -82,13 +175,17 @@ def preprocess_json_file(
         line_processor: 自定义行处理函数（可选），接收每行解析后的dict，返回处理后的dict；
                        返回None则过滤该行数据（不写入输出文件
     """
+    dir_path = Path(output_path)
+    (dir_path.parent).mkdir(parents=True, exist_ok=True)
+
     # 统计变量
     total_lines = 0
     success_lines = 0
     error_lines = 0
     filtered_lines = 0
+    cnt_lines = 0
     temp_file = None  # 临时文件句柄（用于后续清理）
-
+    writer = get_stream_writer()
     try:
         # 判断是否需要用临时文件（输入输出路径相同，或为了安全）
         use_temp_file = (input_path == output_path)
@@ -108,9 +205,12 @@ def preprocess_json_file(
             outfile = open(output_path, 'w', encoding='utf-8')
 
         # 读取并处理文件
+        with open(input_path, 'r', encoding='utf-8') as infile:
+            total_lines = sum(1 for _ in infile)
         with open(input_path, 'r', encoding='utf-8') as infile, outfile:
             for line_num, line in enumerate(infile, start=1):
-                total_lines += 1
+                cnt_lines += 1
+                # total_lines += 1
                 line = line.strip()
                 if not line:
                     continue  # 跳过空行
@@ -139,6 +239,14 @@ def preprocess_json_file(
                     outfile.write('\n')
                     success_lines += 1
 
+                if writer:
+                    writer(StreamEvent(
+                        current=state['current'],
+                        progress=round(cnt_lines/total_lines, 1),
+                        message="任务数据格式化中",
+                        data={"success": success_lines, "filtered": filtered_lines, "error": error_lines, "progress": f"{cnt_lines}/{total_lines}"}
+                    ).json())
+
         # 关键：如果用了临时文件，替换原文件（原子操作，避免文件损坏）
         if use_temp_file and temp_file:
             # 跨平台兼容：Windows需要先删除原文件，Unix可直接替换
@@ -158,17 +266,37 @@ def preprocess_json_file(
 
     except FileNotFoundError:
         logger.error(f"错误：输入文件不存在 → {input_path}")
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message="任务数据格式化出错",
+                data={"msg": f"错误：输入文件不存在 → {input_path}"}
+            ).json())
     except PermissionError:
         logger.error(f"错误：无读写权限 → 输入文件：{input_path} / 输出文件：{output_path}")
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=1.0,
+                message="任务数据格式化出错",
+                data={"msg": f"错误：无读写权限 → 输入文件：{input_path} / 输出文件：{output_path}"}
+            ).json())
     except Exception as e:
         # 出错时清理临时文件，避免残留
         if use_temp_file and temp_file and os.path.exists(temp_file.name):
             os.remove(temp_file.name)
             logger.error(f"处理失败，已清理临时文件 → {temp_file.name}")
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=1.0,
+                    message="任务数据格式化出错",
+                    data={"msg": f"意外错误：{str(e)}，已清理临时文件 → {temp_file.name}"}
+                ).json())
         logger.error(f"意外错误：{str(e)}")
     finally:
         # 确保临时文件句柄关闭（即使出错）
         if temp_file:
             temp_file.close()
-
 # preprocess_json_file("/root/brjverl/verl/compiler/data/copy.jsonl","/root/brjverl/verl/compiler/data/copy2.jsonl",data_format)

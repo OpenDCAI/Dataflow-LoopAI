@@ -20,7 +20,7 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
     logger.info("=== Post-process Node: Starting ===")
     
     # Check if there are any successful downloads
-    subtasks = state.get("obtainer_subtasks", [])
+    subtasks = state.get("obtainer", {}).get("subtasks", [])
     successful_downloads = [
         task for task in subtasks 
         if task.get("type") == "download" and task.get("status") == "completed_successfully"
@@ -87,17 +87,17 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
                             break
     
     # Get category (PT or SFT) - default to PT if not specified
-    category = state.get("obtainer_category", "PT").upper()
+    category = state.get("obtainer", {}).get("category", "PT").upper()
     if category not in ["PT", "SFT"]:
         logger.warning(f"Invalid category '{category}', defaulting to PT")
         category = "PT"
     
     # Initialize components
     try:
-        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
-        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
-        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
-        temperature = state.get("obtainer_temperature", 0.0)
+        model_name = state.get("obtainer", {}).get("model_path") or state.get("analyze_model_path")
+        base_url = state.get("obtainer", {}).get("base_url") or state.get("analyze_base_url")
+        api_key = state.get("obtainer", {}).get("api_key") or state.get("analyze_api_key")
+        temperature = state.get("obtainer", {}).get("temperature", 0.0)
         
         if not model_name or not base_url or not api_key:
             logger.error("Missing required configuration for post-process node")
@@ -123,9 +123,9 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             return state
         
         # Get additional configuration from state or environment
-        llm_timeout = state.get("obtainer_llm_timeout", 120.0)
-        max_retries = state.get("obtainer_max_retries", 3)
-        max_concurrent_mapping = state.get("obtainer_max_concurrent_mapping", 10)
+        llm_timeout = state.get("obtainer_llm_timeout", 120.0)  # This might not be in obtainer dict
+        max_retries = state.get("obtainer_max_retries", 3)  # This might not be in obtainer dict
+        max_concurrent_mapping = state.get("obtainer_max_concurrent_mapping", 10)  # This might not be in obtainer dict
         
         # Run async workflow
         result = asyncio.run(_postprocess_workflow(
@@ -146,7 +146,7 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
         if "exception" in result:
             state["exception"] = result["exception"]
         else:
-            state["obtainer_postprocess_results"] = {
+            state.setdefault("obtainer", {})["postprocess_results"] = {
                 "total_records_processed": result.get("total_records_processed", 0),
                 "processed_sources_count": result.get("processed_sources_count", 0),
                 "output_dir": result.get("output_dir", ""),
@@ -154,7 +154,7 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             # Save intermediate format path for mapping node
             output_dir = result.get("output_dir", "")
             if output_dir and os.path.exists(output_dir):
-                state["obtainer_intermediate_data_path"] = output_dir
+                state.setdefault("obtainer", {})["intermediate_data_path"] = output_dir
                 logger.info(f"Intermediate format data saved at: {output_dir}")
             logger.info(
                 f"Post-process node completed: {result.get('total_records_processed', 0)} records processed."

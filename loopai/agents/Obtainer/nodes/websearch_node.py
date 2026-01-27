@@ -1,6 +1,10 @@
 import json
 import asyncio
 import os
+import random
+import time
+from urllib.parse import urlparse
+
 from typing import Dict, Any, List, Optional
 
 from langgraph.config import get_stream_writer
@@ -19,6 +23,24 @@ from loopai.agents.Obtainer.utils import (
 from loopai.common.prompts import PromptLoader
 
 logger = get_logger()
+
+# 需要跳过的域名列表（这些网站可能会触发 CAPTCHA 验证或有反爬虫保护）
+BLOCKED_DOMAINS = [
+    "stackoverflow.com",
+]
+
+
+def _is_blocked_url(url: str) -> bool:
+    """检查 URL 是否属于被阻止的域名"""
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        for blocked in BLOCKED_DOMAINS:
+            if blocked in domain:
+                return True
+        return False
+    except Exception:
+        return False
 
 
 def websearch_node(state: LoopAIState) -> LoopAIState:
@@ -70,10 +92,10 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
     # Initialize components
     try:
         # Get configuration from state or use defaults
-        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
-        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
-        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
-        temperature = state.get("obtainer_temperature", 0.7)
+        model_name = state.get("obtainer", {}).get("model_path") or state.get("analyze_model_path")
+        base_url = state.get("obtainer", {}).get("base_url") or state.get("analyze_base_url")
+        api_key = state.get("obtainer", {}).get("api_key") or state.get("analyze_api_key")
+        temperature = state.get("obtainer", {}).get("temperature", 0.7)
         
         if not model_name or not base_url or not api_key:
             logger.error("Missing required configuration for websearch node")
@@ -86,18 +108,21 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
         # Initialize RAG Manager with independent RAG configuration
         rag_persist_dir = state.get("output_dir", "./output") + "/rag_db"
         # Use RAG-specific API config if provided, otherwise fallback to obtainer config
-        rag_api_base_url = state.get("obtainer_rag_api_base_url") or base_url
-        rag_api_key = state.get("obtainer_rag_api_key") or api_key
-        rag_embed_model = state.get("obtainer_rag_embed_model") or None
-        rag_collection_name = state.get("obtainer_rag_collection_name", "rag_collection")
+        rag_api_base_url = state.get("obtainer", {}).get("rag_api_base_url") or base_url
+        rag_api_key = state.get("obtainer", {}).get("rag_api_key") or api_key
+        rag_embed_model = state.get("obtainer", {}).get("rag_embed_model") or None
+        rag_collection_name = state.get("obtainer", {}).get("rag_collection_name", "rag_collection")
         rag_manager = RAGManager(
             api_base_url=rag_api_base_url,
             api_key=rag_api_key,
             embed_model=rag_embed_model,
             persist_directory=rag_persist_dir,
-            reset=state.get("obtainer_reset_rag", False),
+            reset=state.get("obtainer", {}).get("reset_rag", False),
             collection_name=rag_collection_name,
         )
+        
+        # Store RAG manager in state for cleanup (if needed)
+        # We'll close it at the end of this function
         
         # Initialize Query Generator
         query_generator = QueryGenerator(
@@ -115,7 +140,7 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
             api_key=api_key,
             temperature=temperature,
             prompt_loader=prompt_loader,
-            max_download_subtasks=state.get("obtainer_max_download_subtasks"),
+            max_download_subtasks=state.get("obtainer", {}).get("max_download_subtasks"),
         )
         
         # Initialize URL Selector for intelligent URL selection
@@ -128,7 +153,7 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
         )
         
         # Get Tavily API key from state or environment
-        tavily_api_key = state.get("obtainer_tavily_api_key", "") or os.getenv("TAVILY_API_KEY", "")
+        tavily_api_key = state.get("obtainer", {}).get("tavily_api_key", "") or os.getenv("TAVILY_API_KEY", "")
         
         # Run async workflow
         debug_mode = state.get("obtainer_debug", False)
@@ -138,12 +163,12 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
             summary_agent=summary_agent,
             rag_manager=rag_manager,
             url_selector=url_selector,
-            search_engine=state.get("obtainer_search_engine", "tavily"),
-            max_urls=state.get("obtainer_max_urls", 10),
-            max_depth=state.get("obtainer_max_depth", 4),  # Maximum exploration depth
-            concurrent_limit=state.get("obtainer_concurrent_limit", 10),  # Concurrent URL processing
-            topk_urls=state.get("obtainer_topk_urls", 5),  # Top-k URLs to select from each page
-            url_timeout=state.get("obtainer_url_timeout", 60),  # Timeout in seconds for each URL exploration
+            search_engine=state.get("obtainer", {}).get("search_engine", "tavily"),
+            max_urls=state.get("obtainer", {}).get("max_urls", 10),
+            max_depth=state.get("obtainer", {}).get("max_depth", 4),  # Maximum exploration depth
+            concurrent_limit=state.get("obtainer", {}).get("concurrent_limit", 10),  # Concurrent URL processing
+            topk_urls=state.get("obtainer", {}).get("topk_urls", 5),  # Top-k URLs to select from each page
+            url_timeout=state.get("obtainer", {}).get("url_timeout", 60),  # Timeout in seconds for each URL exploration
             tavily_api_key=tavily_api_key if tavily_api_key else None,
             debug_mode=debug_mode,
         ))
@@ -152,9 +177,9 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
         if "exception" in result:
             state["exception"] = result["exception"]
         else:
-            state["obtainer_research_summary"] = result.get("research_summary", "")
-            state["obtainer_subtasks"] = result.get("subtasks", [])
-            state["obtainer_urls_visited"] = result.get("urls_visited", [])
+            state.setdefault("obtainer", {})["research_summary"] = result.get("research_summary", "")
+            state.setdefault("obtainer", {})["subtasks"] = result.get("subtasks", [])
+            state.setdefault("obtainer", {})["urls_visited"] = result.get("urls_visited", [])
             logger.info(f"WebSearch completed: {len(result.get('subtasks', []))} subtasks generated")
         
         # Send custom stream event if debug mode is enabled
@@ -181,6 +206,15 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
     except Exception as e:
         logger.error(f"WebSearch node error: {e}", exc_info=True)
         state["exception"] = f"WebSearch error: {str(e)}"
+    finally:
+        # Always close RAG manager to release database connections
+        try:
+            if 'rag_manager' in locals():
+                logger.info("[RAG] Closing RAG Manager to release database connections...")
+                rag_manager.close()
+                logger.info("[RAG] RAG Manager closed")
+        except Exception as e:
+            logger.warning(f"[RAG] Error closing RAG Manager: {e}")
     
     logger.info("=== WebSearch Node: Completed ===")
     return state
@@ -203,6 +237,13 @@ async def _websearch_workflow(
 ) -> Dict[str, Any]:
     """Async workflow for web search"""
     try:
+        # Ensure integer parameters are properly typed
+        max_urls = int(max_urls) if max_urls else 10
+        max_depth = int(max_depth) if max_depth else 4
+        concurrent_limit = int(concurrent_limit) if concurrent_limit else 10
+        topk_urls = int(topk_urls) if topk_urls else 5
+        url_timeout = int(url_timeout) if url_timeout else 60
+        
         # Step 1: Generate research queries
         logger.info("Step 1: Generating research queries...")
         if debug_mode:
@@ -264,8 +305,10 @@ async def _websearch_workflow(
         for query in queries:
             search_results = await WebTools.search_web(query, search_engine, tavily_api_key=tavily_api_key)
             urls = WebTools.extract_urls_from_search_results(search_results)
+            # 过滤掉被阻止的域名
+            urls = [u for u in urls if not _is_blocked_url(u)]
             all_urls.extend(urls)
-            logger.info(f"Query '{query}' found {len(urls)} URLs")
+            logger.info(f"Query '{query}' found {len(urls)} URLs (after filtering blocked domains)")
         
         # Remove duplicates and limit
         unique_urls = list(dict.fromkeys(all_urls))[:max_urls]
@@ -292,6 +335,7 @@ async def _websearch_workflow(
         visited_urls_set = set()  # Track visited URLs to avoid duplicates
         rag_tasks = []  # async tasks for RAG writes to avoid blocking exploration
         rag_write_semaphore = asyncio.Semaphore(2)  # limit concurrent RAG writes
+        crawled_pages = []  # Store crawled page content for return
         
         # URL queue: each item is (url, depth)
         url_queue = [(url, 0) for url in unique_urls]  # Initialize with depth 0
@@ -304,6 +348,22 @@ async def _websearch_workflow(
             """Explore a URL: read content, store in RAG, and return candidate URLs for next layer"""
             async with semaphore:
                 try:
+                    # 检查 URL 是否属于被阻止的域名
+                    if _is_blocked_url(url):
+                        logger.info(f"[Depth {depth}/{max_depth}] Skipping blocked domain: {url}")
+                        return {
+                            "url": url,
+                            "depth": depth,
+                            "candidate_urls": [],
+                            "success": False,
+                            "reason": "blocked_domain"
+                        }
+                    
+                    # 每个网页实际爬取前增加 2-4 秒的随机延迟
+                    delay = random.uniform(2.0, 4.0)
+                    logger.info(f"[Depth {depth}/{max_depth}] Sleeping {delay:.2f}s before crawling URL: {url}")
+                    time.sleep(delay)
+
                     logger.info(f"[Depth {depth}/{max_depth}] Exploring URL: {url}")
                     
                     # Read webpage content
@@ -335,6 +395,16 @@ async def _websearch_workflow(
                             if url not in visited_urls_set:
                                 visited_urls_set.add(url)
                                 visited_urls.append(url)
+                                # Store page content for return (even if RAG is disabled)
+                                crawled_pages.append({
+                                    "source_url": url,
+                                    "text_content": webpage_text,
+                                    "extraction_method": "jina_reader",
+                                    "structured_content": {
+                                        "title": page_content.get("title", ""),
+                                        "url": url
+                                    }
+                                })
                         
                         logger.info(f"[Depth {depth}] Successfully stored content from {url} ({len(candidate_urls)} links found)")
                         
@@ -343,7 +413,8 @@ async def _websearch_workflow(
                         if depth < max_depth - 1 and candidate_urls:
                             # Filter out already visited URLs (with lock protection)
                             async with queue_lock:
-                                new_candidate_urls = [u for u in candidate_urls if u not in visited_urls_set]
+                                # 过滤已访问的 URL 和被阻止的域名
+                                new_candidate_urls = [u for u in candidate_urls if u not in visited_urls_set and not _is_blocked_url(u)]
                             
                             if new_candidate_urls:
                                 try:
@@ -547,6 +618,7 @@ async def _websearch_workflow(
             "research_summary": research_summary,
             "subtasks": new_subtasks,
             "urls_visited": visited_urls,
+            "crawled_pages": crawled_pages,  # Return crawled page content
         }
         
     except Exception as e:
@@ -556,5 +628,6 @@ async def _websearch_workflow(
             "research_summary": "",
             "subtasks": [],
             "urls_visited": [],
+            "crawled_pages": [],
         }
 

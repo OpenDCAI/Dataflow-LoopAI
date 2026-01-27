@@ -2,16 +2,18 @@ import sys
 import sqlite3
 from func_timeout import func_timeout, FunctionTimedOut
 import re
+from loopai.logger import get_logger
+logger = get_logger()
 
 def extract_solution(solution_str: str):
     sql_pattern = r'```sql(.*?)```'
     matches = list(re.finditer(sql_pattern, solution_str, re.DOTALL))
     
     if not matches:
-        print("[Error] No valid SQL tags found")
+        logger.error("[Error] No valid SQL tags found")
         return None
     
-    print(f"[Parsed SQL]: {matches[-1].group(1).strip()}")
+    # logger.info(f"[Parsed SQL]: {matches[-1].group(1).strip()}")
     return matches[-1].group(1).strip()
 
 def execute_sql(data_idx, db_file, sql):
@@ -47,7 +49,7 @@ def compare_sql(question_id, db_file, question, ground_truth, pred_sql) :
         predicted_res = cursor.fetchall()
         cursor.execute(ground_truth)
         ground_truth_res = cursor.fetchall()
-        print('Successfully executed')
+        logger.info('Successfully executed')
         if set(predicted_res) == set(ground_truth_res):
             correctness = 1
         #截取predicted_res的前200个字符保存为字符串

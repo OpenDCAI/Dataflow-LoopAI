@@ -17,7 +17,7 @@ from langgraph.runtime import Runtime
 from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState
-from loopai.schema.states import RuntimeContext
+from loopai.schema.states import RuntimeContext, get_missing_fields
 from loopai.schema.events import StreamEvent
 from loopai.agents import BaseAgent
 from .nodes import data_check_node, config_generation_node, training_execution_node
@@ -369,17 +369,16 @@ class TrainerAgent(BaseAgent):
                 ).json())
             
             # Trainer 运行前需要的字段，如果缺失则触发 Configer 子图来补全配置
-            required_fields = [
-                'train_input_dataset_path',
-                'train_input_task_description',
-                'train_input_config_template_path',
-                'train_output_dir',
-                'train_input_model_name'
-            ]
-            missing_fields = []
-            for field in required_fields:
-                if field not in state:
-                    missing_fields.append(field)
+            required_fields = {
+                "trainer": [
+                    'train_input_dataset_path',
+                    'train_input_task_description',
+                    'train_input_config_template_path',
+                    'train_output_dir',
+                    'train_input_model_name'
+                ]
+            }
+            missing_fields = get_missing_fields(required_fields, state)
                     
             if missing_fields:
                 # 进度：发现缺失字段
@@ -400,7 +399,7 @@ class TrainerAgent(BaseAgent):
                 # 使用 PromptLoader 生成引导自动化填充的 query
                 state['automated_query'] = self.prompt_loader(
                     "automated_query", "trainer_missing_fields_prompt")
-                state['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
+                state.setdefault('configer', {})['configer_error'] = missing_fields
                 goto_node = runtime.context['exception_navigate']
                 logger.info(f'found missing fields, goto {goto_node}')
                 return Command(

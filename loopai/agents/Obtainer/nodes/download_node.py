@@ -36,7 +36,7 @@ def download_node(state: LoopAIState) -> LoopAIState:
     logger.info("=== Download Node: Starting ===")
     
     # Get download subtasks
-    subtasks = state.get("obtainer_subtasks", [])
+    subtasks = state.get("obtainer", {}).get("subtasks", [])
     download_tasks = [task for task in subtasks if task.get("type") == "download"]
     
     if not download_tasks:
@@ -82,10 +82,10 @@ def download_node(state: LoopAIState) -> LoopAIState:
     
     # Initialize components
     try:
-        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
-        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
-        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
-        temperature = state.get("obtainer_temperature", 0.7)
+        model_name = state.get("obtainer", {}).get("model_path") or state.get("analyze_model_path")
+        base_url = state.get("obtainer", {}).get("base_url") or state.get("analyze_base_url")
+        api_key = state.get("obtainer", {}).get("api_key") or state.get("analyze_api_key")
+        temperature = state.get("obtainer", {}).get("temperature", 0.7)
         
         if not model_name or not base_url or not api_key:
             logger.error("Missing required configuration for download node")
@@ -110,12 +110,12 @@ def download_node(state: LoopAIState) -> LoopAIState:
         os.makedirs(download_dir, exist_ok=True)
         
         # Get search engine for web download
-        search_engine = state.get("obtainer_search_engine", "tavily")
-        max_urls = state.get("obtainer_max_urls", 10)
+        search_engine = state.get("obtainer", {}).get("search_engine", "tavily")
+        max_urls = state.get("obtainer", {}).get("max_urls", 10)
         
         # Get Kaggle credentials from state or environment
-        kaggle_username = state.get("obtainer_kaggle_username", "") or os.getenv("KAGGLE_USERNAME", "")
-        kaggle_key = state.get("obtainer_kaggle_key", "") or os.getenv("KAGGLE_KEY", "")
+        kaggle_username = state.get("obtainer", {}).get("kaggle_username", "") or os.getenv("KAGGLE_USERNAME", "")
+        kaggle_key = state.get("obtainer", {}).get("kaggle_key", "") or os.getenv("KAGGLE_KEY", "")
         
         # Run async workflow
         debug_mode = state.get("obtainer_debug", False)
@@ -175,8 +175,8 @@ def download_node(state: LoopAIState) -> LoopAIState:
                     task["status"] = "pending"
             updated_subtasks.append(task)
         
-        state["obtainer_subtasks"] = updated_subtasks
-        state["obtainer_download_results"] = {
+        state.setdefault("obtainer", {})["subtasks"] = updated_subtasks
+        state.setdefault("obtainer", {})["download_results"] = {
             "completed": len(completed_tasks),
             "failed": len(failed_tasks),
             "total": len(download_tasks),

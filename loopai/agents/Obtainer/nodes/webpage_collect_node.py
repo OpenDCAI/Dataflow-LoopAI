@@ -71,10 +71,10 @@ def webpage_collect_node(state: LoopAIState) -> LoopAIState:
     # Initialize components
     try:
         # Get configuration from state or use defaults
-        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
-        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
-        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
-        temperature = state.get("obtainer_temperature", 0.7)
+        model_name = state.get("obtainer", {}).get("model_path") or state.get("analyze_model_path")
+        base_url = state.get("obtainer", {}).get("base_url") or state.get("analyze_base_url")
+        api_key = state.get("obtainer", {}).get("api_key") or state.get("analyze_api_key")
+        temperature = state.get("obtainer", {}).get("temperature", 0.7)
         
         if not model_name or not base_url or not api_key:
             logger.error("Missing required configuration for webpage collect node")
@@ -85,7 +85,7 @@ def webpage_collect_node(state: LoopAIState) -> LoopAIState:
         prompt_loader = PromptLoader(state.get("prompt_template_dir"))
         
         # Get Tavily API key
-        tavily_api_key = state.get("obtainer_tavily_api_key", "") or os.getenv("TAVILY_API_KEY", "")
+        tavily_api_key = state.get("obtainer", {}).get("tavily_api_key", "") or os.getenv("TAVILY_API_KEY", "")
         
         # Output directory
         output_dir = state.get("output_dir", "./output")
@@ -103,11 +103,11 @@ def webpage_collect_node(state: LoopAIState) -> LoopAIState:
             prompt_loader=prompt_loader,
             tavily_api_key=tavily_api_key if tavily_api_key else None,
             output_dir=webpage_collect_dir,
-            max_exploration_depth=state.get("obtainer_max_exploration_depth", 5),
-            max_jina_urls=state.get("obtainer_max_jina_urls", 50),
-            playwright_concurrent_limit=state.get("obtainer_playwright_concurrent_limit", 3),
-            jina_concurrent_limit=state.get("obtainer_jina_concurrent_limit", 10),
-            proxy=state.get("obtainer_proxy") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("ALL_PROXY") or None,
+            max_exploration_depth=state.get("obtainer_max_exploration_depth", 5),  # These might not be in obtainer dict
+            max_jina_urls=state.get("obtainer_max_jina_urls", 50),  # These might not be in obtainer dict
+            playwright_concurrent_limit=state.get("obtainer_playwright_concurrent_limit", 3),  # These might not be in obtainer dict
+            jina_concurrent_limit=state.get("obtainer_jina_concurrent_limit", 10),  # These might not be in obtainer dict
+            proxy=state.get("obtainer", {}).get("proxy") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("ALL_PROXY") or None,
             debug_mode=debug_mode,
         ))
         
@@ -115,11 +115,11 @@ def webpage_collect_node(state: LoopAIState) -> LoopAIState:
         if "exception" in result:
             state["exception"] = result["exception"]
         else:
-            state["webpage_collect_summary"] = result.get("summary", "")
-            state["webpage_collect_urls_visited"] = result.get("urls_visited", [])
-            state["webpage_collect_data_count"] = result.get("data_count", 0)
-            state["webpage_collect_jsonl_path"] = result.get("jsonl_path", "")
-            state["webpage_collect_db_path"] = result.get("db_path", "")
+            state.setdefault("obtainer", {})["webpage_collect_summary"] = result.get("summary", "")
+            state.setdefault("obtainer", {})["webpage_collect_urls_visited"] = result.get("urls_visited", [])
+            state.setdefault("obtainer", {})["webpage_collect_data_count"] = result.get("data_count", 0)
+            state.setdefault("obtainer", {})["webpage_collect_jsonl_path"] = result.get("jsonl_path", "")
+            state.setdefault("obtainer", {})["webpage_collect_db_path"] = result.get("db_path", "")
             logger.info(
                 f"WebPage Collect completed: {result.get('data_count', 0)} pages collected, "
                 f"{len(result.get('urls_visited', []))} URLs visited"

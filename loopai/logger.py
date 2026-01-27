@@ -76,12 +76,35 @@ def _make_colored_formatter():
         style="%",
     )
 
-# ---------- 4) 获取 logger（贴近 loguru 的 add 行为） ----------
+def _make_plain_formatter():
+    """创建不带颜色的格式化器，用于文件输出"""
+    return logging.Formatter(
+        fmt=(
+            "%(asctime)s.%(msecs)03d"
+            " | %(levelname)-8s"
+            " | %(name)s"
+            ":%(filename)s"
+            ":%(funcName)s"
+            ":%(lineno)d"
+            " - %(message)s"
+        ),
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+# ---------- 4) 实时刷新的文件 Handler ----------
+class ImmediateFlushFileHandler(logging.FileHandler):
+    """文件 Handler，每次写入后立即刷新，确保日志实时保存"""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+# ---------- 5) 获取 logger（贴近 loguru 的 add 行为） ----------
 def get_logger(level: str = None) -> logging.Logger:
     """返回一个名为 'DataFlow-LoopAI' 的 logger：
     - 控制台输出分流：<ERROR 到 stdout；>=ERROR 到 stderr
     - 颜色与格式尽量贴近 loguru 默认
     - 避免重复添加 handler
+    - 如果设置了 DF_LOG_FILE_PATH 环境变量，会自动添加文件日志
     """
     if level is None:
         level = os.getenv("DF_LOGGING_LEVEL", "INFO")
@@ -110,4 +133,45 @@ def get_logger(level: str = None) -> logging.Logger:
 
     logger.addHandler(h_out)
     logger.addHandler(h_err)
+    
+    # 如果设置了日志文件路径，添加文件 handler
+    log_file_path = os.getenv("DF_LOG_FILE_PATH")
+    if log_file_path:
+        add_file_handler(logger, log_file_path, level)
+    
     return logger
+
+def add_file_handler(logger: logging.Logger, log_file_path: str, level = None) -> None:
+    """为 logger 添加文件 handler，实时写入日志文件
+    
+    Args:
+        logger: 要添加 handler 的 logger
+        log_file_path: 日志文件路径（可以是相对路径或绝对路径）
+        level: 日志级别（字符串如 "INFO" 或整数），如果为 None 则使用 logger 的当前级别
+    """
+    if level is None:
+        level = logger.level
+    elif isinstance(level, str):
+        # 如果是字符串，转换为日志级别整数
+        level = getattr(logging, level.upper(), logging.INFO)
+    
+    # 确保日志目录存在
+    log_dir = os.path.dirname(os.path.abspath(log_file_path))
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+    
+    # 检查是否已经添加了相同路径的文件 handler
+    abs_log_path = os.path.abspath(log_file_path)
+    for handler in logger.handlers:
+        if isinstance(handler, logging.FileHandler) and handler.baseFilename == abs_log_path:
+            # 已经存在相同路径的文件 handler，不重复添加
+            return
+    
+    # 创建文件 handler（使用实时刷新）
+    plain_fmt = _make_plain_formatter()
+    h_file = ImmediateFlushFileHandler(log_file_path, encoding='utf-8')
+    h_file.setLevel(level)
+    h_file.setFormatter(plain_fmt)
+    
+    logger.addHandler(h_file)
+    logger.info(f"File logging enabled: {log_file_path}")

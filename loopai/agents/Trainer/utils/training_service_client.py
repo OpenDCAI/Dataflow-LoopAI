@@ -72,11 +72,10 @@ class TrainingServiceClient:
             
             if task_name:
                 request_data["task_name"] = task_name
-            
             # 发送训练请求
-            logger.info(f"发送训练请求到: {self.base_url}/train")
+            logger.info(f"发送训练请求到: {self.base_url}/train/")
             response = self.session.post(
-                f"{self.base_url}/train",
+                f"{self.base_url}/train/",
                 json=request_data,
                 timeout=30
             )
@@ -112,7 +111,7 @@ class TrainingServiceClient:
             (成功标志, 状态信息, 错误信息)
         """
         try:
-            response = self.session.get(f"{self.base_url}/status/{task_id}", timeout=10)
+            response = self.session.get(f"{self.base_url}/train/status/{task_id}", timeout=10)
             
             if response.status_code == 200:
                 return True, response.json(), None
@@ -138,7 +137,7 @@ class TrainingServiceClient:
         """
         try:
             params = {"lines": lines} if lines > 0 else {}
-            response = self.session.get(f"{self.base_url}/logs/{task_id}", params=params, timeout=10)
+            response = self.session.get(f"{self.base_url}/train/logs/{task_id}", params=params, timeout=10)
             
             if response.status_code == 200:
                 result = response.json()
@@ -189,7 +188,7 @@ class TrainingServiceClient:
                 return False, None, f"获取任务状态失败: {error}"
             
             task_status = status_info.get("status")
-            state['trainer_current_training_status'] = task_status
+            state.setdefault('trainer', {})['trainer_current_training_status'] = task_status
             
             # 调用进度回调
             if progress_callback:
@@ -220,7 +219,7 @@ class TrainingServiceClient:
             (成功标志, SwanLab日志路径, 错误信息)
         """
         try:
-            response = self.session.get(f"{self.base_url}/swanlab-logs/{task_id}", timeout=10)
+            response = self.session.get(f"{self.base_url}/train/swanlab-logs/{task_id}", timeout=10)
             
             if response.status_code == 200:
                 result = response.json()
@@ -254,7 +253,7 @@ class TrainingServiceClient:
             (成功标志, 日志文件夹列表, 错误信息)
         """
         try:
-            response = self.session.get(f"{self.base_url}/swanlab-logs", timeout=10)
+            response = self.session.get(f"{self.base_url}/train/swanlab-logs", timeout=10)
             
             if response.status_code == 200:
                 result = response.json()

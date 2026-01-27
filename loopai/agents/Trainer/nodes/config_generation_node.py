@@ -38,15 +38,15 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
     
     try:
         # 检查数据检查是否通过
-        if not state.get('trainer_data_check_passed', False):
+        if not state.get('trainer', {}).get('trainer_data_check_passed', False):
             raise ValueError("数据格式检查未通过，无法生成配置")
         
         # 获取必要参数
-        task_description = state.get('train_input_task_description')
+        task_description = state.get('trainer', {}).get('train_input_task_description')
         if not task_description:
             raise ValueError("缺少训练任务描述 (train_input_task_description)")
         
-        dataset_path = state.get('train_input_dataset_path')
+        dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
         if not dataset_path:
             raise ValueError("缺少训练数据集路径 (train_input_dataset_path)")
         
@@ -54,11 +54,11 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
         logger.info(f"数据集路径: {dataset_path}")
         
         # 获取可选参数
-        model_name = state.get('train_input_model_name', 'qwen2.5-7b-instruct')
-        template_path = state.get('train_input_config_template_path')
-        training_output_dir = state.get('train_output_dir', './output/training')
-        use_swanlab = state.get('train_input_use_swanlab', True)
-        swanlab_project = state.get('train_input_swanlab_project', 'llamafactory_training')
+        model_name = state.get('trainer', {}).get('train_input_model_name', 'qwen2.5-7b-instruct')
+        template_path = state.get('trainer', {}).get('train_input_config_template_path')
+        training_output_dir = state.get('trainer', {}).get('train_output_dir', './output/training')
+        use_swanlab = state.get('trainer', {}).get('train_input_use_swanlab', True)
+        swanlab_project = state.get('trainer', {}).get('train_input_swanlab_project', 'llamafactory_training')
         
         # 创建配置生成器
         generator = ConfigGenerator()
@@ -79,7 +79,7 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
         output_dir = state.get('output_dir', './output/trainer')
         os.makedirs(output_dir, exist_ok=True)
           # 保存配置文件为YAML格式
-        config_output_path = state.get('train_output_config_path')
+        config_output_path = state.get('trainer', {}).get('train_output_config_path')
         if not config_output_path:
             config_output_path = os.path.join(output_dir, 'training_config.yaml')
         
@@ -95,10 +95,10 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
             f.write(explanation)
         
         # 更新状态
-        state['train_config'] = config
-        state['train_output_config_path'] = config_output_path
-        state['trainer_config_explanation_path'] = explanation_path
-        state['trainer_config_generation_success'] = True
+        state.setdefault('trainer', {})['train_config'] = config
+        state.setdefault('trainer', {})['train_output_config_path'] = config_output_path
+        state.setdefault('trainer', {})['trainer_config_explanation_path'] = explanation_path
+        state.setdefault('trainer', {})['trainer_config_generation_success'] = True
         
         logger.info("✅ 配置生成成功")
         logger.info(f"配置文件保存至: {config_output_path}")
@@ -121,8 +121,8 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
         
     except Exception as e:
         logger.error(f"配置生成节点执行失败: {str(e)}")
-        state['trainer_config_generation_success'] = False
-        state['trainer_config_generation_error'] = str(e)
+        state.setdefault('trainer', {})['trainer_config_generation_success'] = False
+        state.setdefault('trainer', {})['trainer_config_generation_error'] = str(e)
     
     logger.info("配置生成节点执行完成")
     return state

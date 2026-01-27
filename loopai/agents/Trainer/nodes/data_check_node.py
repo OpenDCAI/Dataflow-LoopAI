@@ -54,20 +54,20 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
         logger.info(f"数据检查报告已保存到: {report_path}")
         
         # 更新状态
-        state['trainer_data_check_result'] = check_result
-        state['train_output_data_check_report_path'] = report_path
+        state.setdefault('trainer', {})['trainer_data_check_result'] = check_result
+        state.setdefault('trainer', {})['train_output_data_check_report_path'] = report_path
         
         # 记录检查结果
         if check_result['is_valid']:
             logger.info("✅ 数据格式检查通过")
             logger.info(f"数据集包含 {check_result['total_samples']} 个样本")
-            state['trainer_data_check_passed'] = True
+            state.setdefault('trainer', {})['trainer_data_check_passed'] = True
         else:
             logger.warning("❌ 数据格式检查未通过")
             logger.warning(f"发现 {len(check_result['errors'])} 个错误")
             for error in check_result['errors'][:5]:  # 只显示前5个错误
                 logger.warning(f"  - {error}")
-            state['trainer_data_check_passed'] = False
+            state.setdefault('trainer', {})['trainer_data_check_passed'] = False
         
         # 显示警告信息
         if check_result.get('warnings'):
@@ -77,8 +77,8 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
         
     except Exception as e:
         logger.error(f"数据检查节点执行失败: {str(e)}")
-        state['trainer_data_check_passed'] = False
-        state['trainer_data_check_error'] = str(e)
+        state.setdefault('trainer', {})['trainer_data_check_passed'] = False
+        state.setdefault('trainer', {})['trainer_data_check_error'] = str(e)
     
     logger.info("数据检查节点执行完成")
     return state
