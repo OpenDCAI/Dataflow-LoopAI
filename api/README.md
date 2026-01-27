@@ -122,12 +122,7 @@ pip install llamafactory-cli
 cd api/
 ```
 
-2. **安装依赖**
-```bash
-pip install -r requirements.txt
-```
-
-3. **配置 LLaMA Factory**
+1. **配置 LLaMA Factory**
 
 创建`api/app`下`app_config.json`并指定`llamafactory_dir`和`llamafactory_env_path`
 
