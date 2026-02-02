@@ -322,7 +322,6 @@ class TrainerAgent(BaseAgent):
                     message="正在检查训练所需的配置字段...",
                     data={"stage": "field_validation"}
                 ).json())
-            
             # Trainer 运行前需要的字段，如果缺失则触发 Configer 子图来补全配置
             required_fields = {
                 "trainer": [
@@ -334,6 +333,12 @@ class TrainerAgent(BaseAgent):
                     'train_input_model_name'
                 ]
             }
+            
+            # 如果使用 LlamaFactory 框架，则需要额外的字段
+            framework = state.get('trainer', {}).get('train_framework')
+            if framework == 'llamafactory':
+                required_fields["trainer"].append('llamafactory_dir')
+            
             missing_fields = get_missing_fields(required_fields, state)
                     
             if missing_fields:
