@@ -108,8 +108,9 @@ async def init_manager(task_id):
 
 @router.post("/agent/start", operation_id='startAgent', summary="Start the agent")
 async def start_agent(task_id: str):
-    if not manager:
-        await init_manager(task_id)
+    if manager:
+        manager.stop()
+    await init_manager(task_id)
     state = await get_task_state(task_id, default_states)
     manager.start(default_state=state)
     return response_body(message="Agent started")

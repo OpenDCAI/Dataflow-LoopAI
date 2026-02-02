@@ -1,7 +1,7 @@
 <template>
     <div class="bottom-block">
         <div class="logo">
-            <img draggable="false" src="@/assets/logo/logo.png" alt="" />
+            <img draggable="false" src="@/assets/logo/LoopAI_logo.svg" alt="" />
             <p>Dataflow</p>
         </div>
         <div class="info-container">

@@ -387,7 +387,7 @@ def draw_conclusion_node(state: LoopAIState):
     def _emit(message, *, progress=None, data=None):
         if writer:
             writer(StreamEvent(
-                current="AnalyzerAgent",
+                current="AnalyzerAgent.draw_conclusion_node",
                 message=message,
                 progress=progress,
                 data=data

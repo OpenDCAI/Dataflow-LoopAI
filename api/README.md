@@ -122,14 +122,15 @@ pip install llamafactory-cli
 cd api/
 ```
 
-2. **安装依赖**
-```bash
-pip install -r requirements.txt
-```
+1. **配置 LLaMA Factory**
 
-3. **验证 LLaMA Factory 安装**
-```bash
-llamafactory-cli --help
+创建`api/app`下`app_config.json`并指定`llamafactory_dir`和`llamafactory_env_path`
+
+```json
+{
+    "llamafactory_dir": "/home/lpc/repos/LLaMA-Factory/",
+    "llamafactory_env_path": "/home/lpc/miniconda3/envs/lmf/bin/"
+}
 ```
 
 4. **启动服务**
