@@ -54,7 +54,24 @@ yarn -v
 yarn
 ```
 
-7. Compile and Hot-Reload for Development
+7. Set up Backend API
+
+In `vite.config.js`, we set up a reverse proxy to point `/api` to `http://<host>:8000/`.
+
+```javascript
+server: {
+    host: '0.0.0.0',
+    proxy: {
+        '/api': {
+            target: 'http://100.64.0.18:8000/', // 后端 FastAPI 地址
+            changeOrigin: true,
+            rewrite: path => path.replace(/^\/api/, '') // 如果后端没有 /api 前缀
+        }
+    }
+}
+```
+
+8. Compile and Hot-Reload for Development
 
 ```sh
 yarn dev
