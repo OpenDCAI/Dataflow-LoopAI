@@ -10,7 +10,7 @@ from .controllers.config import router as config_router
 from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
 from .controllers.train import router as train_router
-from .controllers.dataset import router as dataset_router
+from .controllers.resource import router as resource_router
 
 import os
 import signal
@@ -61,7 +61,7 @@ app.include_router(config_router, prefix="/config", tags=["config"])
 app.include_router(starter_router, prefix="/starter", tags=["starter"])
 app.include_router(task_router, prefix="/task", tags=["task"])
 app.include_router(train_router, prefix="/train", tags=["train"])
-app.include_router(dataset_router, prefix="/dataset", tags=["dataset"])
+app.include_router(resource_router, prefix="/resource", tags=["resource"])
 
 
 @app.get("/")

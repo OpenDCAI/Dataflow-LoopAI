@@ -1,14 +1,14 @@
 import os
 import json
-from ...models.body import DatasetItem
+from ...models.body import ResourceItem
 
 
-def format_db_item(dataset: DatasetItem):
+def format_db_item(dataset: ResourceItem):
     """
     format_db_item 的 Docstring
 
     :param dataset: 说明
-    :type dataset: DatasetItem
+    :type dataset: ResourceItem
     """
     path = dataset.path
     if not os.path.exists(path):

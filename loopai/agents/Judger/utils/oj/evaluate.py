@@ -161,7 +161,7 @@ def evaluate_sample_sql(state):
     # 写入评测日志
     write_evaluate_log(pass_at_k, result_path, test_case_path, problem_path)
 
-    return pass_at_k
+    return {"pass_at_k": pass_at_k, "result_path": result_path}
 
 def evaluate_sample(state):
     """
@@ -249,4 +249,4 @@ def evaluate_sample(state):
     # 写入评测日志
     write_evaluate_log(pass_at_k, result_path, test_case_path, problem_path)
 
-    return pass_at_k
+    return {"pass_at_k": pass_at_k, "result_path": result_path}

@@ -688,13 +688,13 @@ class JudgerState(BaseModel):
     eval_vllm_env_path: str = Field(
         default="",
         title="vllm本地启动参数——启动环境",
-        description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动",
+        description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动。参数需要具体到python目录，格式应为<path>/miniconda3/envs/<env_name>/bin/python",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     output_dir: str = Field(
         default=None,
         title="评估模型输出文件目录",
-        description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果",
+        description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果。输出文件路径将会在judger参数output_result_path（评测结果）、output_case_path（评测样例集）、output_problem_path（评测格式化后问题集）中记录。",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型", "is_output": True}
     )
 
