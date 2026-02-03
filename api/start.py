@@ -78,11 +78,18 @@ def main():
         # 切换到LLaMA Factory目录
         os.chdir(llamafactory_dir)
         print(f"✅ Changed working directory to: {os.getcwd()}")        # 启动uvicorn服务器
+        # cmd = [
+        #     "uvicorn", 
+        #     "app.main:app",
+        #     "--host", "0.0.0.0", 
+        #     "--port", "8000"
+        # ]
         cmd = [
-            "uvicorn", 
+            sys.executable,
+            "-m", "uvicorn",
             "app.main:app",
-            "--host", "0.0.0.0", 
-            "--port", "8000"
+            "--host", "0.0.0.0",
+            "--port", "8000",
         ]
         
         print(f"🔧 Running FastAPI")

@@ -2,7 +2,7 @@ import os
 from fastapi import APIRouter
 from ..models.body import response_body, DatasetItem
 from ..models.db_models import DatasetModel
-from ..utils.dataset.dataset import format_db_item, preview_json, preview_text
+from ..utils.dataset.dataset import format_db_item, preview_json, preview_csv, preview_text
 
 router = APIRouter(tags=["dataset"])
 
@@ -74,7 +74,9 @@ async def preview_dataset(dataset_id: int, offset: int = 0, limit: int = 15):
     ext = os.path.splitext(path)[1]
     if ext == '.jsonl' or ext == '.json':
         samples, count = preview_json(path, offset, limit)
-    elif ext == '.txt':
+    elif ext in ['.csv', '.tsv']:
+        samples, count = preview_csv(path, offset, limit)
+    elif ext in ['.txt', '.md']:
         samples, count = preview_text(path, offset, limit)
     else:
         return response_body(code=401, message="file type not supported")()

@@ -14,7 +14,8 @@ class TaskStatus(str, Enum):
 
 class TrainRequest(BaseModel):
     """训练请求模型"""
-    config: str
+    framework: str
+    config_path: str
     task_name: Optional[str] = None
 
 

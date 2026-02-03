@@ -793,6 +793,19 @@ class AnalyzerState(BaseModel):
 
 
 class TrainerState(BaseModel):
+    train_framework: str = Field(
+        default="",
+        title="训练框架",
+        description="训练框架",
+        json_schema_extra={"ui_type": "list", "ui_group": "训练模型",
+                           "allowed_values": ["llamafactory", "verl"]}
+    )
+    llamafactory_dir: str = Field(
+        default="",
+        title="LlamaFactory 目录",
+        description="LlamaFactory 目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
     train_dataset_path: str = Field(
         default="",
         title="训练数据集路径",
