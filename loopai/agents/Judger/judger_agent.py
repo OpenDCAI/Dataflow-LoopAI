@@ -115,7 +115,10 @@ class JudgerAgent(BaseAgent):
                     update=state,
                     goto=goto_node,
                     graph=Command.PARENT
-                )           
+                )
+            state["judger"]["output_result_path"] = ""
+            state["judger"]["output_case_path"] = ""
+            state["judger"]["output_problem_path"] = ""
         return check_required_fields
 
     @staticmethod
@@ -275,6 +278,7 @@ class JudgerAgent(BaseAgent):
                     message="任务数据格式化结束",
                     data={"msg": '未设置[eval_format_type]参数，跳过数据格式化过程'}
                 ).json())
+        state["judger"]["output_problem_path"] = state["judger"]["eval_problem_path"]
         return state
 
     @staticmethod
@@ -287,6 +291,7 @@ class JudgerAgent(BaseAgent):
                 res = generate_sample_code(state)
             case "text2sql":
                 res = generate_sample_sql(state)
+        state["judger"]["output_case_path"] = res
         return state
 
     @staticmethod
@@ -314,8 +319,9 @@ class JudgerAgent(BaseAgent):
                 current=state['current'],
                 progress=1.0,
                 message=f"{task_type}任务评测样本结果",
-                data=res
+                data=res["pass_at_k"]
             ).json())
+        state["judger"]["output_result_path"] = res["result_path"]
         return state
 
     @staticmethod

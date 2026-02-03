@@ -80,7 +80,7 @@ def generate_sample_code(state):
             for case_i in range(case_id, min(case_id + batch_size, total_samples), 1):
                 prompts.append(problems[all_task_ids[case_i // num_samples_per_task]]['prompt'])
                 batch_task_id_list.append(all_task_ids[case_i // num_samples_per_task])
-            responses = model.batch(prompts, config={"callbacks": []})
+            responses = model.batch(prompts)
             for task_id, response in zip(batch_task_id_list, responses):
                 completion = response.content
                 samples.append({
@@ -114,7 +114,7 @@ def generate_sample_code(state):
                 "sample_save_path": test_case_path
             }
         ).json())
-    return state
+    return test_case_path
 
 def generate_sample_text2sql(state):
     judger_state = state.get("judger", {})
@@ -167,7 +167,7 @@ def generate_sample_text2sql(state):
             for case_i in range(case_id, min(case_id + batch_size, total_samples), 1):
                 prompts.append(problems[all_task_ids[case_i // num_samples_per_task]]['prompt'])
                 batch_task_id_list.append(all_task_ids[case_i // num_samples_per_task])
-            responses = model.batch(prompts, config={"callbacks": []})
+            responses = model.batch(prompts)
             for task_id, response in zip(batch_task_id_list, responses):
                 completion = response.content
                 samples.append({
@@ -205,4 +205,4 @@ def generate_sample_text2sql(state):
                 "sample_save_path": test_case_path
             }
         ).json())
-    return state
+    return test_case_path
