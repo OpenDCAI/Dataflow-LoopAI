@@ -67,19 +67,24 @@ async def delete_resource(resource_id: int):
     await ds_model.delete()
     return response_body()()
 
-@router.get("/resource/preview/{resource_id}", operation_id='previewResource', summary="预览资源")
-async def preview_resource(resource_id: int, offset: int = 0, limit: int = 15):
-    """预览资源"""
-    ds_model = await ResourceModel.get_or_none(id=resource_id)
-    if not ds_model:
-        return response_body(code=404, message="resource not found")()
-    path = ds_model.path
+@router.post("/resource/preview", operation_id='previewResource', summary="预览资源")
+async def preview_resource(resource_id: str, offset: int = 0, limit: int = 15):
+    """预览资源
+    :param resource_id: 资源ID, 可以是文件路径或数据库ID, 其中文件路径需要以`file:///`开头
+    """
+    if resource_id.startswith('file:///'):
+        path = resource_id[len('file:///'):]
+    else:
+        ds_model = await ResourceModel.get_or_none(id=resource_id)
+        if not ds_model:
+            return response_body(code=404, message="resource not found")()
+        path = ds_model.path
     ext = os.path.splitext(path)[1]
     if ext == '.jsonl' or ext == '.json':
         samples, count = preview_json(path, offset, limit)
     elif ext in ['.csv', '.tsv']:
         samples, count = preview_csv(path, offset, limit)
-    elif ext in ['.txt', '.md']:
+    elif ext in ['.txt', '.md', '.html', '.log']:
         samples, count = preview_text(path, offset, limit)
     else:
         return response_body(code=401, message="file type not supported")()
