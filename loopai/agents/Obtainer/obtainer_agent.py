@@ -468,7 +468,7 @@ class ObtainerAgent(BaseAgent):
             if not user_input:
                 logger.warning("No user input found, using default task")
                 state.setdefault("obtainer", {})["task_list"] = [{"task_name": "收集数据集用于大模型微调"}]
-                state.setdefault("obtainer", {})["current_task_index"] = 0
+                state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                 state["automated_query"] = state.get("obtainer", {}).get("task_list", [])[0]["task_name"]
                 return state
             
@@ -509,7 +509,7 @@ class ObtainerAgent(BaseAgent):
                         task_list = task_list[:max_decomposed_tasks]
                     
                     state.setdefault("obtainer", {})["task_list"] = task_list
-                    state.setdefault("obtainer", {})["current_task_index"] = 0
+                    state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                     
                     # Set first task as automated_query
                     if task_list and len(task_list) > 0:
@@ -602,7 +602,7 @@ class ObtainerAgent(BaseAgent):
                     else:
                         logger.warning("Task decomposition returned empty list, using original input")
                         state.setdefault("obtainer", {})["task_list"] = [{"task_name": user_input}]
-                        state.setdefault("obtainer", {})["current_task_index"] = 0
+                        state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                         state["automated_query"] = user_input
                         # Determine category for the fallback task
                         if model_name and base_url and api_key:
@@ -640,7 +640,7 @@ class ObtainerAgent(BaseAgent):
                 else:
                     logger.warning("Model configuration missing, using original input as single task")
                     state.setdefault("obtainer", {})["task_list"] = [{"task_name": user_input}]
-                    state.setdefault("obtainer", {})["current_task_index"] = 0
+                    state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                     state["automated_query"] = user_input
                     # Use keyword-based detection as fallback
                     user_input_lower = user_input.lower()
@@ -652,7 +652,7 @@ class ObtainerAgent(BaseAgent):
             except Exception as e:
                 logger.error(f"Error in task decomposition: {e}, using original input as single task")
                 state.setdefault("obtainer", {})["task_list"] = [{"task_name": user_input}]
-                state.setdefault("obtainer", {})["current_task_index"] = 0
+                state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                 state["automated_query"] = user_input
                 # Use keyword-based detection as fallback
                 user_input_lower = user_input.lower()
@@ -711,8 +711,8 @@ class ObtainerAgent(BaseAgent):
         """
         Next task node: prepare next task for execution
         """
-        task_list = state.get("obtainer_task_list", [])
-        current_index = state.get("obtainer_current_task_index", 0)
+        task_list = state.get("obtainer", {}).get("task_list", [])
+        current_index = state.get("obtainer", {}).get("current_task_index", 0)
         writer = get_stream_writer()
         
         if current_index < len(task_list):
@@ -980,15 +980,22 @@ class ObtainerAgent(BaseAgent):
         if writer:
             writer(StreamEvent(
                 current=state['current'],
-                message="ObtainerAgent WebSearch Start",
-                progress=0
+                message="ObtainerAgent WebResearch 开始",
+                progress=0.0,
+                data={"phase": "webresearch", "message": "WebResearch 流程启动，将显示内部进度"},
             ).json())
         state = websearch_node(state)
         if writer:
+            subtasks = state.get("obtainer", {}).get("subtasks", [])
             writer(StreamEvent(
                 current=state['current'],
-                message="ObtainerAgent WebSearch Complete",
-                progress=1
+                message="ObtainerAgent WebResearch 完成",
+                progress=1.0,
+                data={
+                    "phase": "webresearch",
+                    "subtasks_count": len(subtasks),
+                    "urls_visited_count": len(state.get("obtainer", {}).get("urls_visited", [])),
+                },
             ).json())
         return state
 

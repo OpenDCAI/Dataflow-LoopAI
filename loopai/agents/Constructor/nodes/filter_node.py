@@ -12,19 +12,22 @@ import re
 from typing import Dict, Any, List, Optional
 
 from langgraph.graph import StateGraph
+from langgraph.config import get_stream_writer
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.store.base import BaseStore
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
 from loopai.schema.states import LoopAIState
+from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
 from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.agents.Constructor.tools.data_filter_tools import (
     basic_data_flitter,
     domain_text2sql_cleaner,
     domain_code_gen_cleaner,
-    domain_normal_data_cleaner
+    domain_normal_data_cleaner,
+    benchmark_data_cleaner
 )
 
 logger = get_logger()
@@ -47,6 +50,7 @@ TOOL_MAP = {
     "text2sql": domain_text2sql_cleaner,
     "code_generate": domain_code_gen_cleaner,
     "normal_data": domain_normal_data_cleaner,
+    "benchmark_cleaner": benchmark_data_cleaner,
 }
 
 
@@ -132,7 +136,7 @@ def _parse_json_list(response_text: str) -> List[str]:
     return []
 
 
-async def planner_node(state: LoopAIState) -> LoopAIState:
+def planner_node(state: LoopAIState) -> LoopAIState:
     """
     规划节点：决定需要调用哪些工具
     
@@ -142,7 +146,16 @@ async def planner_node(state: LoopAIState) -> LoopAIState:
     3. 添加领域工具（如果有）
     """
     logger.info("=== Cleaning Subgraph: Planner Node ===")
-    
+    current = state.get("current", "ConstructorAgent.data_cleaning")
+    writer = get_stream_writer()
+    if writer:
+        writer(StreamEvent(
+            current=current,
+            message="Constructor: 数据清洗 - 规划清洗工具",
+            progress=0.0,
+            data={"phase": "data_cleaning", "node": "planner"},
+        ).json())
+
     try:
         # 1. 初始化 tool_plan，先添加基础工具 basic_data_flitter（始终执行，用于基础数据过滤）
         tool_plan: List[str] = ["basic_data_flitter"]
@@ -211,8 +224,8 @@ async def planner_node(state: LoopAIState) -> LoopAIState:
                     HumanMessage(content=user_prompt)
                 ]
                 
-                # 调用LLM
-                response = await llm.ainvoke(messages)
+                # 调用LLM（同步调用）
+                response = llm.invoke(messages)
                 response_text = response.content.strip()
                 
                 logger.debug(f"LLM response for domain tool planning: {response_text}")
@@ -259,12 +272,19 @@ async def planner_node(state: LoopAIState) -> LoopAIState:
         state["exception"] = f"Error in planner_node: {str(e)}"
     
     logger.info("=== Cleaning Subgraph: Planner Node Completed ===")
-    # 确保返回的 state 包含 tool_plan
+    if writer:
+        tool_plan = state.get("obtainer", {}).get("cleaning_tool_plan", [])
+        writer(StreamEvent(
+            current=current,
+            message=f"Constructor: 数据清洗 - 规划完成，将执行 {len(tool_plan)} 个工具",
+            progress=0.2,
+            data={"phase": "data_cleaning", "node": "planner", "tool_plan": tool_plan},
+        ).json())
     logger.debug(f"Returning state with cleaning_tool_plan: {state.get('obtainer', {}).get('cleaning_tool_plan')}")
     return state
 
 
-async def process_node(state: LoopAIState) -> LoopAIState:
+def process_node(state: LoopAIState) -> LoopAIState:
     """
     执行节点：按顺序执行工具计划
     
@@ -275,7 +295,16 @@ async def process_node(state: LoopAIState) -> LoopAIState:
     4. 更新State
     """
     logger.info("=== Cleaning Subgraph: Process Node ===")
-    
+    current = state.get("current", "ConstructorAgent.data_cleaning")
+    writer = get_stream_writer()
+    if writer:
+        writer(StreamEvent(
+            current=current,
+            message="Constructor: 数据清洗 - 执行清洗工具",
+            progress=0.2,
+            data={"phase": "data_cleaning", "node": "process"},
+        ).json())
+
     try:
         # 1. 获取 tool_plan（从 state.obtainer 中获取）
         obtainer_state = state.get("obtainer", {})
@@ -310,8 +339,19 @@ async def process_node(state: LoopAIState) -> LoopAIState:
             "final_data_path": current_data_path
         }
         
-        for tool_name in tool_plan:
+        total_tools = len(tool_plan)
+        for tool_idx, tool_name in enumerate(tool_plan):
             try:
+                if writer:
+                    progress = 0.2 + 0.55 * (tool_idx / max(total_tools, 1))
+                    writer(StreamEvent(
+                        current=current,
+                        message=f"Constructor: 数据清洗 - 执行工具 ({tool_idx + 1}/{total_tools}) {tool_name}",
+                        progress=progress,
+                        progress_num=tool_idx + 1,
+                        total=total_tools,
+                        data={"phase": "data_cleaning", "node": "process", "tool": tool_name},
+                    ).json())
                 logger.info(f"Executing tool: {tool_name}")
                 
                 # 从TOOL_MAP获取工具函数
@@ -325,8 +365,21 @@ async def process_node(state: LoopAIState) -> LoopAIState:
                 
                 tool_func = TOOL_MAP[tool_name]
                 
-                # 调用工具函数
-                result = await tool_func(current_data_path, state)
+                # 调用工具函数（同步调用）
+                result = tool_func(current_data_path, state)
+                
+                # 检查工具是否执行成功（通过 success 字段或检查是否有错误）
+                tool_success = getattr(result, 'success', True)  # 向后兼容：默认为 True
+                error_message = getattr(result, 'error_message', '')
+                
+                if not tool_success:
+                    logger.warning(f"Tool {tool_name} failed: {error_message}")
+                    cleaning_results["tools_failed"].append({
+                        "tool": tool_name,
+                        "error": error_message or "Tool returned success=False"
+                    })
+                    # 工具失败时不更新路径，继续执行下一个工具
+                    continue
                 
                 # 更新数据路径（链式调用）
                 new_data_path = result.cleaned_data_path or current_data_path
@@ -359,12 +412,173 @@ async def process_node(state: LoopAIState) -> LoopAIState:
         logger.info(f"Process node completed. Final data path: {current_data_path}")
         logger.info(f"Tools executed: {len(cleaning_results['tools_executed'])}, "
                    f"Tools failed: {len(cleaning_results['tools_failed'])}")
-        
+        if writer:
+            writer(StreamEvent(
+                current=current,
+                message=f"Constructor: 数据清洗 - 执行完成，共 {len(cleaning_results['tools_executed'])} 个工具",
+                progress=0.75,
+                data={"phase": "data_cleaning", "node": "process", "tools_executed": len(cleaning_results["tools_executed"])},
+            ).json())
+
     except Exception as e:
         logger.error(f"Error in process_node: {e}", exc_info=True)
         state["exception"] = f"Error in process_node: {str(e)}"
-    
+
     logger.info("=== Cleaning Subgraph: Process Node Completed ===")
+    return state
+
+
+def benchmark_cleaner_node(state: LoopAIState) -> LoopAIState:
+    """
+    Benchmark 清洗节点：移除与 benchmark 数据集相似/重复的记录
+    
+    此节点在领域工具清洗之后执行，根据 state.banckmark_jsonl_path 指定的
+    benchmark 数据集，从清洗后的数据中移除相似的记录，防止测试数据泄露。
+    
+    逻辑：
+    1. 检查 banckmark_jsonl_path 是否存在
+    2. 如果存在，调用 benchmark_data_cleaner 工具执行清洗
+    3. 更新数据路径和清洗结果
+    """
+    logger.info("=== Cleaning Subgraph: Benchmark Cleaner Node ===")
+    current = state.get("current", "ConstructorAgent.data_cleaning")
+    writer = get_stream_writer()
+    if writer:
+        writer(StreamEvent(
+            current=current,
+            message="Constructor: 数据清洗 - Benchmark 去重",
+            progress=0.8,
+            data={"phase": "data_cleaning", "node": "benchmark_cleaner"},
+        ).json())
+
+    try:
+        # 1. 检查是否配置了 benchmark 路径
+        benchmark_path = state.get("banckmark_jsonl_path", "")
+        if not benchmark_path:
+            logger.info("No benchmark_jsonl_path configured, skipping benchmark cleaning")
+            if writer:
+                writer(StreamEvent(
+                    current=current,
+                    message="Constructor: 数据清洗 - 未配置 Benchmark，跳过",
+                    progress=1.0,
+                    data={"phase": "data_cleaning", "node": "benchmark_cleaner", "skipped": True},
+                ).json())
+            return state
+
+        import os
+        if not os.path.exists(benchmark_path):
+            logger.warning(f"Benchmark path does not exist: {benchmark_path}, skipping benchmark cleaning")
+            return state
+        
+        # 2. 获取当前数据路径（从 state.obtainer 中获取）
+        obtainer_state = state.get("obtainer", {})
+        current_data_path = obtainer_state.get("intermediate_data_path", "")
+        if not current_data_path:
+            logger.warning("No intermediate data path found, skipping benchmark cleaning")
+            return state
+        
+        if not os.path.exists(current_data_path):
+            logger.warning(f"Data path does not exist: {current_data_path}, skipping benchmark cleaning")
+            return state
+        
+        logger.info(f"Executing benchmark cleaner on: {current_data_path}")
+        logger.info(f"Using benchmark file: {benchmark_path}")
+        
+        # 3. 调用 benchmark_data_cleaner 工具
+        result = benchmark_data_cleaner(current_data_path, state)
+        
+        # 4. 检查工具执行结果
+        tool_success = getattr(result, 'success', True)
+        error_message = getattr(result, 'error_message', '')
+        
+        if not tool_success:
+            logger.warning(f"Benchmark cleaner failed: {error_message}")
+            # 工具失败时，记录错误但不中断流程
+            if "obtainer" not in state:
+                state["obtainer"] = {}
+            cleaning_results = state["obtainer"].get("cleaning_results", {})
+            if "tools_failed" not in cleaning_results:
+                cleaning_results["tools_failed"] = []
+            cleaning_results["tools_failed"].append({
+                "tool": "benchmark_cleaner",
+                "error": error_message or "Tool returned success=False"
+            })
+            state["obtainer"]["cleaning_results"] = cleaning_results
+            return state
+        
+        # 5. 更新数据路径（链式调用）
+        new_data_path = result.cleaned_data_path or current_data_path
+        if new_data_path != current_data_path:
+            logger.info(f"Benchmark cleaner updated data path: {current_data_path} -> {new_data_path}")
+        
+        # 6. 更新 State
+        if "obtainer" not in state:
+            state["obtainer"] = {}
+        state["obtainer"]["intermediate_data_path"] = new_data_path
+        
+        # 更新清洗结果统计
+        cleaning_results = state["obtainer"].get("cleaning_results", {})
+        if "tools_executed" not in cleaning_results:
+            cleaning_results["tools_executed"] = []
+        cleaning_results["tools_executed"].append({
+            "tool": "benchmark_cleaner",
+            "result": {
+                "cleaned_data_path": result.cleaned_data_path,
+                "total_records": result.total_records,
+                "valid_records": result.valid_records,
+                "invalid_records": result.invalid_records
+            }
+        })
+        cleaning_results["final_data_path"] = new_data_path
+        
+        # 记录 benchmark 清洗结果
+        cleaning_results["benchmark_cleaning"] = {
+            "benchmark_path": benchmark_path,
+            "records_removed": result.invalid_records,
+            "records_kept": result.valid_records
+        }
+        
+        state["obtainer"]["cleaning_results"] = cleaning_results
+        
+        logger.info(f"Benchmark cleaner completed - "
+                   f"total: {result.total_records}, "
+                   f"kept: {result.valid_records}, "
+                   f"removed: {result.invalid_records}")
+        if writer:
+            writer(StreamEvent(
+                current=current,
+                message=f"Constructor: 数据清洗 - Benchmark 完成，保留 {result.valid_records} 条",
+                progress=1.0,
+                data={
+                    "phase": "data_cleaning",
+                    "node": "benchmark_cleaner",
+                    "valid_records": result.valid_records,
+                    "invalid_records": result.invalid_records,
+                },
+            ).json())
+
+    except Exception as e:
+        logger.error(f"Error in benchmark_cleaner_node: {e}", exc_info=True)
+        # 发生错误时，记录异常但不中断流程
+        if "obtainer" not in state:
+            state["obtainer"] = {}
+        cleaning_results = state["obtainer"].get("cleaning_results", {})
+        if "tools_failed" not in cleaning_results:
+            cleaning_results["tools_failed"] = []
+        cleaning_results["tools_failed"].append({
+            "tool": "benchmark_cleaner",
+            "error": str(e)
+        })
+        state["obtainer"]["cleaning_results"] = cleaning_results
+        if writer:
+            writer(StreamEvent(
+                current=current,
+                message="Constructor: 数据清洗 - Benchmark 节点结束",
+                progress=1.0,
+                data={"phase": "data_cleaning", "node": "benchmark_cleaner", "error": str(e)},
+            ).json())
+
+    logger.info("=== Cleaning Subgraph: Benchmark Cleaner Node Completed ===")
     return state
 
 
@@ -498,6 +712,8 @@ class CleaningSubgraph(BaseAgent):
         """
         构建并编译清洗子图
         
+        流程：planner_node -> process_node -> benchmark_cleaner_node -> END
+        
         Returns:
             编译后的 StateGraph
         """
@@ -506,13 +722,15 @@ class CleaningSubgraph(BaseAgent):
         # 添加节点
         builder.add_node("planner_node", planner_node)
         builder.add_node("process_node", process_node)
+        builder.add_node("benchmark_cleaner_node", benchmark_cleaner_node)
         
         # 设置入口点
         builder.set_entry_point("planner_node")
         
-        # 连线: planner -> process -> END
+        # 连线: planner -> process -> benchmark_cleaner -> END
         builder.add_edge("planner_node", "process_node")
-        builder.set_finish_point("process_node")
+        builder.add_edge("process_node", "benchmark_cleaner_node")
+        builder.set_finish_point("benchmark_cleaner_node")
         
         # 编译图
         compile_kwargs = {}

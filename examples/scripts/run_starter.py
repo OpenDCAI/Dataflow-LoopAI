@@ -6,7 +6,6 @@ from loopai.agents import StarterAgent
 from loopai.memory import checkpointer, store
 from loopai.agents.Starter.tools.check_motivation import check_motivation
 from loopai.logger import get_logger, add_file_handler
-from loopai.schema.states import process_obtainer_config
 
 from rich.console import Console
 from rich.live import Live
@@ -16,16 +15,17 @@ console = Console()
 
 cfg = OmegaConf.load("./examples/config/starter.yaml")
 
-# Read starter API keys for fallback
+# Read starter configuration
+starter_model_name = getattr(cfg.starter, 'model_name', 'deepseek-chat') or 'deepseek-chat'
+starter_base_url = getattr(cfg.starter, 'base_url', 'https://api.deepseek.com') or 'https://api.deepseek.com'
 starter_api_key = getattr(cfg.starter, 'api_key', '') or ''
 starter_tavily_api_key = getattr(cfg.starter, 'tavily_api_key', '') or ''
 starter_kaggle_username = getattr(cfg.starter, 'kaggle_username', '') or ''
 starter_kaggle_key = getattr(cfg.starter, 'kaggle_key', '') or ''
 
-
 sg = StarterAgent(tools=[check_motivation],
-                  model_name="deepseek-chat",
-                  base_url="https://api.deepseek.com",
+                  model_name=starter_model_name,
+                  base_url=starter_base_url,
                   api_key=starter_api_key,
                   checkpointer=checkpointer,
                   store=store)
@@ -33,44 +33,36 @@ sg = StarterAgent(tools=[check_motivation],
 sg.init_graph()
 
 # %%
-config = {"configurable": {"thread_id": "1"}}
-
-# Prepare starter and RAG configs for fallback
-starter_config = {
-    'api_key': starter_api_key,
-    'tavily_api_key': starter_tavily_api_key,
-    'kaggle_username': starter_kaggle_username,
-    'kaggle_key': starter_kaggle_key,
-}
-
-rag_config = {}
-if hasattr(cfg, 'rag') and cfg.rag:
-    rag_config = OmegaConf.to_container(cfg.rag, resolve=True) or {}
-
-# Prepare merged states with fallback logic
+# Prepare merged states
 merged_states_dict = {
     'eval_batch_size': 10,
     'analyze_batch_size': 20,
 }
 
-# Process obtainer configuration with fallbacks
+# Handle obtainer configuration
 if hasattr(cfg.default_states, 'obtainer') and cfg.default_states.obtainer:
     obtainer_cfg = cfg.default_states.obtainer
-    obtainer_dict = OmegaConf.to_container(obtainer_cfg, resolve=True) or {}
-    merged_states_dict['obtainer'] = process_obtainer_config(
-        obtainer_dict, starter_config, rag_config
-    )
-else:
-    # Fallback: create minimal obtainer config
-    merged_states_dict['obtainer'] = process_obtainer_config(
-        {}, starter_config, rag_config
-    )
+    merged_states_dict['obtainer'] = OmegaConf.to_container(obtainer_cfg, resolve=True) or {}
 
 # Handle obtainer_debug separately if it exists
 if hasattr(cfg.default_states, 'obtainer_debug'):
     merged_states_dict['obtainer_debug'] = cfg.default_states.obtainer_debug
 
 merged_states = OmegaConf.merge(cfg.default_states, merged_states_dict)
+
+# 从状态中读取 recursion_limit，如果没有则使用较大的默认值（例如 100）
+try:
+    recursion_limit = merged_states.get('recursion_limit', 100)
+except (AttributeError, KeyError):
+    recursion_limit = getattr(merged_states, 'recursion_limit', 100)
+if not recursion_limit:
+    recursion_limit = 100
+
+# LangGraph 配置：显式提高 recursion_limit
+config = {
+    "recursion_limit": recursion_limit,
+    "configurable": {"thread_id": "1"},
+}
 
 # 配置日志文件路径
 # 从 merged_states 获取 output_dir，如果不存在则使用默认值

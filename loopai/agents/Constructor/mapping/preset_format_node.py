@@ -35,8 +35,14 @@ def preset_format_node(state: LoopAIState, store: BaseStore = None) -> LoopAISta
     """
     logger.info("=== Preset Format Node: Starting ===")
     
+    # 确保 obtainer 字典存在
+    if "obtainer" not in state:
+        state["obtainer"] = {}
+    
+    obtainer_state = state.get("obtainer", {})
+    
     # 获取用户选择的格式ID
-    format_id = state.get("obtainer_mapping_selected_format_id", "")
+    format_id = obtainer_state.get("mapping_selected_format_id", "")
     
     if not format_id:
         logger.error("No format_id found in state")
@@ -59,8 +65,8 @@ def preset_format_node(state: LoopAIState, store: BaseStore = None) -> LoopAISta
         ))
         
         # 重置意图，返回 inquiry
-        state["obtainer_mapping_user_intent"] = ""
-        state["obtainer_mapping_selected_format_id"] = ""
+        state["obtainer"]["mapping_user_intent"] = ""
+        state["obtainer"]["mapping_selected_format_id"] = ""
         return state
     
     # 存储 pending format
@@ -72,7 +78,7 @@ def preset_format_node(state: LoopAIState, store: BaseStore = None) -> LoopAISta
         "example": result.get("example", {}),
         "is_preset": True  # 标记为预设格式
     }
-    state["obtainer_pending_format"] = pending_format
+    state["obtainer"]["pending_format"] = pending_format
     
     logger.info(f"Selected preset format: {format_id}")
     

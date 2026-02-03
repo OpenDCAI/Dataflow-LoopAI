@@ -112,6 +112,10 @@ def download_node(state: LoopAIState) -> LoopAIState:
         # Get search engine for web download
         search_engine = state.get("obtainer", {}).get("search_engine", "tavily")
         max_urls = state.get("obtainer", {}).get("max_urls", 10)
+        tavily_api_key = (
+            state.get("obtainer", {}).get("tavily_api_key", "")
+            or os.getenv("TAVILY_API_KEY", "")
+        )
         
         # Get Kaggle credentials from state or environment
         kaggle_username = state.get("obtainer", {}).get("kaggle_username", "") or os.getenv("KAGGLE_USERNAME", "")
@@ -131,6 +135,7 @@ def download_node(state: LoopAIState) -> LoopAIState:
             prompt_loader=prompt_loader,
             search_engine=search_engine,
             max_urls=max_urls,
+            tavily_api_key=tavily_api_key if tavily_api_key else None,
             kaggle_username=kaggle_username if kaggle_username else None,
             kaggle_key=kaggle_key if kaggle_key else None,
             debug_mode=debug_mode,
@@ -244,6 +249,7 @@ async def _download_workflow(
     prompt_loader: Optional[PromptLoader] = None,
     search_engine: str = "tavily",
     max_urls: int = 10,
+    tavily_api_key: Optional[str] = None,
     kaggle_username: Optional[str] = None,
     kaggle_key: Optional[str] = None,
     debug_mode: bool = False,
@@ -345,6 +351,7 @@ async def _download_workflow(
                             base_url=base_url,
                             api_key=api_key,
                             temperature=temperature,
+                            tavily_api_key=tavily_api_key,
                         )
                     else:
                         logger.warning(f"Unknown download method: {method}, skipping")
@@ -606,6 +613,7 @@ async def _try_web_download(
     base_url: Optional[str] = None,
     api_key: Optional[str] = None,
     temperature: float = 0.7,
+    tavily_api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Try downloading from web using Playwright and LLM-based link extraction"""
     logger.info("[Web] Attempting download...")
@@ -638,7 +646,11 @@ async def _try_web_download(
             else search_keywords
         )
         logger.info(f"[Web] Searching with query: {query_kw}")
-        search_results = await WebTools.search_web(query_kw, search_engine)
+        search_results = await WebTools.search_web(
+            query_kw,
+            search_engine,
+            tavily_api_key=tavily_api_key or "",
+        )
         
         # Extract URLs from search results
         urls = WebTools.extract_urls_from_search_results(search_results)

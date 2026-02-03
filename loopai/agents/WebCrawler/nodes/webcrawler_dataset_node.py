@@ -159,9 +159,12 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
                         f"Running script_mapping_node for WebCrawler SFT data: "
                         f"path={sft_path}, format={sft_format}"
                     )
-                    state["obtainer_intermediate_data_path"] = sft_path
-                    state["obtainer_category"] = "SFT"
-                    state["obtainer_confirmed_format"] = {
+                    # 确保 obtainer 字典存在
+                    if "obtainer" not in state:
+                        state["obtainer"] = {}
+                    state["obtainer"]["intermediate_data_path"] = sft_path
+                    state["obtainer"]["category"] = "SFT"
+                    state["obtainer"]["confirmed_format"] = {
                         "format_id": sft_format,
                         "format_name": sft_format,
                         "description": "Auto-selected by WebCrawler for SFT mapping",
@@ -171,8 +174,8 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
                     }
                     state = script_mapping_node(state)
 
-                    if state.get("obtainer_mapping_results"):
-                        sft_mapping = dict(state["obtainer_mapping_results"])
+                    if state.get("obtainer", {}).get("mapping_results"):
+                        sft_mapping = dict(state["obtainer"]["mapping_results"])
                         mapping_results["sft"] = sft_mapping
                         webcrawler["dataset_sft_mapped_path"] = sft_mapping.get(
                             "output_file", ""
@@ -186,9 +189,9 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
                         f"Running script_mapping_node for WebCrawler PT data: "
                         f"path={pt_path}, format={pt_format}"
                     )
-                    state["obtainer_intermediate_data_path"] = pt_path
-                    state["obtainer_category"] = "PT"
-                    state["obtainer_confirmed_format"] = {
+                    state["obtainer"]["intermediate_data_path"] = pt_path
+                    state["obtainer"]["category"] = "PT"
+                    state["obtainer"]["confirmed_format"] = {
                         "format_id": pt_format,
                         "format_name": pt_format,
                         "description": "Auto-selected by WebCrawler for PT mapping",
@@ -198,8 +201,8 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
                     }
                     state = script_mapping_node(state)
 
-                    if state.get("obtainer_mapping_results"):
-                        pt_mapping = dict(state["obtainer_mapping_results"])
+                    if state.get("obtainer", {}).get("mapping_results"):
+                        pt_mapping = dict(state["obtainer"]["mapping_results"])
                         mapping_results["pt"] = pt_mapping
                         webcrawler["dataset_pt_mapped_path"] = pt_mapping.get(
                             "output_file", ""

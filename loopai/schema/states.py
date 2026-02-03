@@ -293,6 +293,92 @@ class ObtainerState(BaseModel):
         json_schema_extra={"ui_type": "code_editor",
                            "language": "json", "ui_group": "数据映射"}
     )
+    confirmed_format: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="确认的目标格式",
+        description="确认的目标格式信息，包含 format_id, format_name, schema, example, is_preset 等",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "数据映射"}
+    )
+    pending_format: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="待确认的格式",
+        description="待用户确认的格式信息",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "数据映射"}
+    )
+    mapping_auto_mode: bool = Field(
+        default=False,
+        title="自动映射模式",
+        description="是否启用自动映射模式（跳过用户交互）",
+        json_schema_extra={"ui_type": "switch", "ui_group": "数据映射"}
+    )
+    confirmation_result: str = Field(
+        default="",
+        title="确认结果",
+        description="格式确认结果: confirmed/restart/modify",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "数据映射"}
+    )
+    mapping_user_intent: str = Field(
+        default="",
+        title="用户意图",
+        description="用户在映射流程中的意图: preset_format/custom_format 等",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "数据映射"}
+    )
+    mapping_selected_format_id: str = Field(
+        default="",
+        title="选择的格式ID",
+        description="用户选择的预设格式ID",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "数据映射"}
+    )
+    mapping_custom_description: str = Field(
+        default="",
+        title="自定义格式描述",
+        description="用户自定义格式的描述",
+        json_schema_extra={"ui_type": "textarea", "ui_group": "数据映射"}
+    )
+    mapping_results: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="映射结果",
+        description="数据映射执行结果",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "数据映射"}
+    )
+    cleaning_tool_plan: Optional[List[str]] = Field(
+        default=None,
+        title="清洗工具计划",
+        description="数据清洗工具执行计划列表",
+        json_schema_extra={"ui_type": "tags_input", "ui_group": "数据清洗"}
+    )
+    cleaning_results: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="清洗结果",
+        description="数据清洗执行结果",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "数据清洗"}
+    )
+
+    # --- Constructor 配置参数 ---
+    llm_timeout: float = Field(
+        default=120.0,
+        title="LLM 超时时间",
+        description="LLM 调用超时时间（秒）",
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    max_retries: int = Field(
+        default=3,
+        title="最大重试次数",
+        description="操作失败时的最大重试次数",
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    max_concurrent_mapping: int = Field(
+        default=10,
+        title="最大并发映射数",
+        description="数据映射的最大并发数",
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    debug: bool = Field(
+        default=False,
+        title="调试模式",
+        description="是否启用调试模式",
+        json_schema_extra={"ui_type": "switch", "ui_group": "构造配置"}
+    )
 
     # --- Sub-node: Webpage Collect (网页收集节点参数) ---
     webpage_collect_summary: str = Field(
@@ -318,6 +404,12 @@ class ObtainerState(BaseModel):
         title="JSONL 路径",
         description="网页收集结果 JSONL 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "网页收集"}
+    )
+    banckmark_jsonl_path: str = Field(
+        default="",
+        title="测试使用的banchmark的JSONL 路径",
+        description="测试使用的banchmark的JSONL 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "banchmark"}
     )
     webpage_collect_db_path: str = Field(
         default="",

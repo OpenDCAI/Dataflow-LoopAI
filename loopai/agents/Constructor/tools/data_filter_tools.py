@@ -569,9 +569,11 @@ class BaseCleanResult(BaseModel):
     total_records: int = 0
     valid_records: int = 0
     invalid_records: int = 0
+    success: bool = True  # 标记工具执行是否成功
+    error_message: str = ""  # 错误信息
 
 
-async def basic_data_flitter(data_path: str, state: LoopAIState) -> BaseCleanResult:
+def basic_data_flitter(data_path: str, state: LoopAIState) -> BaseCleanResult:
     """
     基础工具：逐条检查数据文件是否符合schema规范
     
@@ -682,11 +684,15 @@ async def basic_data_flitter(data_path: str, state: LoopAIState) -> BaseCleanRes
         # 检查文件或目录是否存在
         if not os.path.exists(data_path):
             logger.error(f"Data path does not exist: {data_path}")
+            result.success = False
+            result.error_message = f"Data path does not exist: {data_path}"
             return result
 
         if os.path.isfile(data_path):
             if not data_path.endswith(".jsonl"):
                 logger.warning(f"Unsupported file format (expect .jsonl): {data_path}")
+                result.success = False
+                result.error_message = f"Unsupported file format (expect .jsonl): {data_path}"
                 return result
 
             base_dir = os.path.dirname(data_path)
@@ -698,6 +704,8 @@ async def basic_data_flitter(data_path: str, state: LoopAIState) -> BaseCleanRes
                 counts = _write_valid_jsonl(data_path, cleaned_path, category)
             except Exception as e:
                 logger.error(f"Error reading file {data_path}: {e}")
+                result.success = False
+                result.error_message = f"Error reading file {data_path}: {e}"
                 return result
 
             result.total_records = counts["total"]
@@ -720,6 +728,8 @@ async def basic_data_flitter(data_path: str, state: LoopAIState) -> BaseCleanRes
             ]
             if not jsonl_files:
                 logger.warning(f"No JSONL files found in directory: {data_path}")
+                result.success = False
+                result.error_message = f"No JSONL files found in directory: {data_path}"
                 return result
 
             cleaned_dir = f"{data_path}_cleaned"
@@ -754,6 +764,8 @@ async def basic_data_flitter(data_path: str, state: LoopAIState) -> BaseCleanRes
                 result.cleaned_data_path = data_path
         else:
             logger.warning(f"Unsupported data path type: {data_path}")
+            result.success = False
+            result.error_message = f"Unsupported data path type: {data_path}"
             return result
 
         logger.info(
@@ -771,7 +783,7 @@ async def basic_data_flitter(data_path: str, state: LoopAIState) -> BaseCleanRes
     return result
 
 
-async def domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
+def domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
     """
     领域工具：针对Text2SQL数据的特定清洗 (并发优化版)
     
@@ -787,6 +799,11 @@ async def domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> BaseCle
     Returns:
         包含清洗结果的字典
     """
+    return asyncio.run(_async_domain_text2sql_cleaner(data_path, state))
+
+
+async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
+    """内部异步实现"""
     logger.info(f"domain_text2sql_cleaner: Cleaning Text2SQL data from {data_path}")
     
     result = BaseCleanResult(
@@ -888,127 +905,187 @@ async def domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> BaseCle
             item["error"] = f"Agent Error: {str(e)}"
             return False
 
+    # === 内部函数：处理单个文件 ===
+    async def _process_single_file(file_path: str) -> Tuple[List[Dict], int, int, int]:
+        """
+        处理单个JSONL文件，返回 (有效记录列表, 总数, 有效数, 无效数)
+        """
+        all_records = []
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        all_records.append(json.loads(line))
+                    except:
+                        pass
+        
+        file_total = len(all_records)
+        
+        # 第一步：初始 Schema 验证
+        processed_records = []
+        
+        for record in all_records:
+            messages = record.get("messages", [])
+            system_content = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+            if not system_content:
+                system_content = record.get("system", "")
+                
+            user_content = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
+            assistant_content = next((m.get("content", "") for m in messages if m.get("role") == "assistant"), "")
+            
+            # 初始验证
+            if not system_content:
+                success, error_msg = False, "Schema is empty"
+            else:
+                success, error_msg = _test_schema_creation(system_content)
+            
+            if success:
+                processed_records.append({"record": record, "valid": True})
+            else:
+                # 记录失败项，准备修复
+                processed_records.append({
+                    "record": record, 
+                    "valid": False, 
+                    "error": error_msg,
+                    "retry_count": 0,
+                    "user_content": user_content,
+                    "assistant_content": assistant_content
+                })
+
+        # 第二步：并发循环修复
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            to_repair = [
+                item for item in processed_records 
+                if not item["valid"] and item["retry_count"] < max_retries
+            ]
+            
+            if not to_repair:
+                break
+                
+            logger.info(f"[{os.path.basename(file_path)}] Schema Repair Attempt {attempt + 1}/{max_retries}, items to repair: {len(to_repair)}")
+            
+            total_items = len(to_repair)
+            for i in range(0, total_items, BATCH_SIZE):
+                batch = to_repair[i : i + BATCH_SIZE]
+                logger.info(f"  > Processing batch {i//BATCH_SIZE + 1}/{(total_items + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
+                
+                tasks = []
+                for item in batch:
+                    item["retry_count"] += 1
+                    tasks.append(_repair_single_item(item))
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                success_count = sum(1 for r in results if r is True)
+                logger.info(f"  > Batch finished. Success: {success_count}/{len(batch)}")
+
+        # 第三步：SQL 执行验证
+        final_valid_records = []
+        schema_valid_items = [item for item in processed_records if item["valid"]]
+        
+        for item in schema_valid_items:
+            record = item["record"]
+            messages = record.get("messages", [])
+            system_content = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+            if not system_content:
+                system_content = record.get("system", "")
+            assistant_content = next((m.get("content", "") for m in messages if m.get("role") == "assistant"), "")
+            
+            if _test_sql_execution(system_content, assistant_content):
+                final_valid_records.append(record)
+
+        file_valid = len(final_valid_records)
+        file_invalid = file_total - file_valid
+        
+        return final_valid_records, file_total, file_valid, file_invalid
+
     # === 数据读取与预处理 ===
-    if not os.path.exists(data_path) or not os.path.isfile(data_path):
+    if not os.path.exists(data_path):
         logger.error(f"Data path not found: {data_path}")
+        result.success = False
+        result.error_message = f"Data path not found: {data_path}"
         return result
 
-    all_records = []
-    with open(data_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            if line.strip():
-                try:
-                    all_records.append(json.loads(line))
-                except:
-                    pass
-    
-    result.total_records = len(all_records)
-    
-    # === 第一步：初始 Schema 验证 ===
-    processed_records = [] 
-    
-    for record in all_records:
-        messages = record.get("messages", [])
-        system_content = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
-        if not system_content:
-            system_content = record.get("system", "")
-            
-        user_content = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
-        assistant_content = next((m.get("content", "") for m in messages if m.get("role") == "assistant"), "")
+    # 处理单个文件
+    if os.path.isfile(data_path):
+        if not data_path.endswith(".jsonl"):
+            logger.warning(f"Unsupported file format (expect .jsonl): {data_path}")
+            result.success = False
+            result.error_message = f"Unsupported file format (expect .jsonl): {data_path}"
+            return result
         
-        # 初始验证
-        if not system_content:
-            success, error_msg = False, "Schema is empty"
-        else:
-            success, error_msg = _test_schema_creation(system_content)
+        final_valid_records, file_total, file_valid, file_invalid = await _process_single_file(data_path)
         
-        if success:
-            processed_records.append({"record": record, "valid": True})
-        else:
-            # 记录失败项，准备修复
-            processed_records.append({
-                "record": record, 
-                "valid": False, 
-                "error": error_msg,
-                "retry_count": 0,
-                "user_content": user_content,
-                "assistant_content": assistant_content
-            })
+        result.total_records = file_total
+        result.valid_records = file_valid
+        result.invalid_records = file_invalid
 
-    # === 第二步：并发循环修复 (重点修改区域) ===
-    max_retries = 3
-    
-    for attempt in range(max_retries):
-        # 筛选出当前依然无效且未达到重试次数上限的记录
-        to_repair = [
-            item for item in processed_records 
-            if not item["valid"] and item["retry_count"] < max_retries
+        base_dir = os.path.dirname(data_path)
+        base_name = os.path.basename(data_path)
+        name, ext = os.path.splitext(base_name)
+        cleaned_path = os.path.join(base_dir, f"{name}_text2sql_cleaned{ext}")
+        
+        try:
+            with open(cleaned_path, 'w', encoding='utf-8') as f:
+                for record in final_valid_records:
+                    f.write(json.dumps(record, ensure_ascii=False) + '\n')
+            result.cleaned_data_path = cleaned_path
+            logger.info(f"domain_text2sql_cleaner: Cleaned data saved to {cleaned_path}")
+        except Exception as e:
+            logger.error(f"Error saving cleaned data: {e}")
+            result.cleaned_data_path = data_path
+
+    # 处理目录
+    elif os.path.isdir(data_path):
+        jsonl_files = [
+            f for f in os.listdir(data_path)
+            if f.endswith(".jsonl") and os.path.isfile(os.path.join(data_path, f))
         ]
-        
-        if not to_repair:
-            break
-            
-        logger.info(f"Schema Repair Attempt {attempt + 1}/{max_retries}, items to repair: {len(to_repair)}")
-        
-        # --- 分 Batch 并发执行 ---
-        total_items = len(to_repair)
-        for i in range(0, total_items, BATCH_SIZE):
-            batch = to_repair[i : i + BATCH_SIZE]
-            logger.info(f"  > Processing batch {i//BATCH_SIZE + 1}/{(total_items + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
-            
-            # 创建当前 batch 的所有任务
-            tasks = []
-            for item in batch:
-                item["retry_count"] += 1 # 增加重试计数
-                tasks.append(_repair_single_item(item))
-            
-            # 并发执行并等待当前 batch 完成
-            # return_exceptions=True 防止单条失败导致整个 batch 崩溃
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # 简单的结果统计日志
-            success_count = sum(1 for r in results if r is True)
-            logger.info(f"  > Batch finished. Success: {success_count}/{len(batch)}")
+        if not jsonl_files:
+            logger.warning(f"No JSONL files found in directory: {data_path}")
+            result.success = False
+            result.error_message = f"No JSONL files found in directory: {data_path}"
+            return result
 
-    # === 第三步：SQL 执行验证 (在修复后的有效数据上运行) ===
-    final_valid_records = []
-    # 筛选所有 schema 有效的记录
-    schema_valid_items = [item for item in processed_records if item["valid"]]
-    
-    for item in schema_valid_items:
-        record = item["record"]
-        messages = record.get("messages", [])
-        system_content = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
-        if not system_content:
-             system_content = record.get("system", "")
-        assistant_content = next((m.get("content", "") for m in messages if m.get("role") == "assistant"), "")
-        
-        if _test_sql_execution(system_content, assistant_content):
-            final_valid_records.append(record)
+        cleaned_dir = f"{data_path}_text2sql_cleaned"
+        os.makedirs(cleaned_dir, exist_ok=True)
+
+        any_valid = False
+        for filename in jsonl_files:
+            input_path = os.path.join(data_path, filename)
+            output_path = os.path.join(cleaned_dir, filename)
+            
+            try:
+                final_valid_records, file_total, file_valid, file_invalid = await _process_single_file(input_path)
+                
+                result.total_records += file_total
+                result.valid_records += file_valid
+                result.invalid_records += file_invalid
+
+                if file_valid > 0:
+                    any_valid = True
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        for record in final_valid_records:
+                            f.write(json.dumps(record, ensure_ascii=False) + '\n')
+                    logger.info(f"domain_text2sql_cleaner: Cleaned {filename} -> {output_path}")
+            except Exception as e:
+                logger.warning(f"Error processing file {input_path}: {e}")
+                continue
+
+        if any_valid:
+            result.cleaned_data_path = cleaned_dir
+            logger.info(f"domain_text2sql_cleaner: Cleaned data saved to {cleaned_dir}")
         else:
-            # 哪怕 Schema 修复成功了，但 SQL 执行还是挂了，算作无效
-            # logger.warning(f"SQL execution failed for record: {record.get('id', 'unknown')}")
-            result.invalid_records += 1
-
-    # === 第四步：输出结果 ===
-    result.valid_records = len(final_valid_records)
-    # 修正 invalid 计数：总数 - 最终有效数
-    result.invalid_records = result.total_records - result.valid_records
-
-    base_dir = os.path.dirname(data_path)
-    base_name = os.path.basename(data_path)
-    name, ext = os.path.splitext(base_name)
-    cleaned_path = os.path.join(base_dir, f"{name}_text2sql_cleaned{ext}")
-    
-    try:
-        with open(cleaned_path, 'w', encoding='utf-8') as f:
-            for record in final_valid_records:
-                f.write(json.dumps(record, ensure_ascii=False) + '\n')
-        result.cleaned_data_path = cleaned_path
-        logger.info(f"domain_text2sql_cleaner: Cleaned data saved to {cleaned_path}")
-    except Exception as e:
-        logger.error(f"Error saving cleaned data: {e}")
-        result.cleaned_data_path = data_path
+            shutil.rmtree(cleaned_dir, ignore_errors=True)
+            logger.warning("No valid records found, keeping original directory path")
+            result.cleaned_data_path = data_path
+    else:
+        logger.warning(f"Unsupported data path type: {data_path}")
+        result.success = False
+        result.error_message = f"Unsupported data path type: {data_path}"
+        return result
 
     logger.info(
         f"domain_text2sql_cleaner: Cleaning completed - "
@@ -1096,7 +1173,7 @@ def _test_syntax_with_treesitter(code: str, language: str) -> Tuple[bool, str]:
         return False, f"ParseError: {str(e)}"
 
 
-async def domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
+def domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
     """
     领域工具：针对代码生成数据的特定清洗 (多语言支持版)
     
@@ -1113,6 +1190,11 @@ async def domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> BaseCle
     Returns:
         包含清洗结果的字典
     """
+    return asyncio.run(_async_domain_code_gen_cleaner(data_path, state))
+
+
+async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
+    """内部异步实现"""
     logger.info(f"domain_code_gen_cleaner: Cleaning code generation data from {data_path}")
     
     result = BaseCleanResult(
@@ -1199,221 +1281,285 @@ async def domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> BaseCle
                 "reasoning": f"Error: {str(e)}"
             }
 
-    # === 数据读取与预处理 ===
-    if not os.path.exists(data_path) or not os.path.isfile(data_path):
-        logger.error(f"Data path not found: {data_path}")
-        return result
-
-    all_records = []
-    with open(data_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            if line.strip():
-                try:
-                    all_records.append(json.loads(line))
-                except:
-                    pass
-    
-    result.total_records = len(all_records)
-    logger.info(f"Total records to process: {result.total_records}")
-    
-    # === 第一步：并发64个batch判断领域和打标签 ===
-    logger.info("Step 1: Analyzing domain and labeling language (concurrent batches)...")
-    analyzed_records = []
-    
-    total_records = len(all_records)
-    for i in range(0, total_records, BATCH_SIZE):
-        batch = all_records[i : i + BATCH_SIZE]
-        logger.info(f"  > Processing analysis batch {i//BATCH_SIZE + 1}/{(total_records + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
+    # === 内部函数：处理单个文件 ===
+    async def _process_single_file(file_path: str) -> Tuple[List[Dict], int, int, int]:
+        """
+        处理单个JSONL文件，返回 (有效记录列表, 总数, 有效数, 无效数)
+        """
+        all_records = []
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        all_records.append(json.loads(line))
+                    except:
+                        pass
         
-        tasks = [_analyze_single_record(record) for record in batch]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        file_total = len(all_records)
+        logger.info(f"[{os.path.basename(file_path)}] Total records to process: {file_total}")
         
-        for r in results:
-            if isinstance(r, Exception):
-                logger.error(f"Error in analysis: {r}")
-                continue
-            analyzed_records.append(r)
-    
-    # 过滤出符合代码生成领域且语言在支持列表中的记录
-    codegen_records = [
-        item for item in analyzed_records 
-        if item["is_codegen"] and item.get("language", "unknown").lower() in SUPPORTED_LANGUAGES
-    ]
-    filtered_count = len([item for item in analyzed_records if item["is_codegen"] and item.get("language", "unknown").lower() not in SUPPORTED_LANGUAGES])
-    if filtered_count > 0:
-        logger.info(f"Filtered out {filtered_count} records with unsupported languages")
-    logger.info(f"Code generation records with supported languages: {len(codegen_records)}/{result.total_records}")
-    
-    # === 第二步：使用tree-sitter检查语法 ===
-    logger.info("Step 2: Checking syntax with tree-sitter...")
-    processed_records = []
-    
-    for item in codegen_records:
-        record = item["record"]
-        code, user_query = _extract_code_from_record(record)
-        language = item["language"]
+        # 第一步：并发64个batch判断领域和打标签
+        logger.info(f"[{os.path.basename(file_path)}] Step 1: Analyzing domain and labeling language...")
+        analyzed_records = []
         
-        if not code:
-            processed_records.append({
-                "record": record,
-                "valid": False,
-                "error": "No code found",
-                "retry_count": 0,
-                "user_query": user_query,
-                "language": language,
-                "is_syntax_error": True
-            })
-        else:
-            # 使用tree-sitter检查语法
-            success, error_msg = _test_syntax_with_treesitter(code, language)
+        for i in range(0, file_total, BATCH_SIZE):
+            batch = all_records[i : i + BATCH_SIZE]
+            logger.info(f"  > Processing analysis batch {i//BATCH_SIZE + 1}/{(file_total + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
             
-            if success:
-                processed_records.append({
-                    "record": record,
-                    "valid": True,
-                    "language": language
-                })
-            else:
+            tasks = [_analyze_single_record(record) for record in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error(f"Error in analysis: {r}")
+                    continue
+                analyzed_records.append(r)
+        
+        # 过滤出符合代码生成领域且语言在支持列表中的记录
+        codegen_records = [
+            item for item in analyzed_records 
+            if item["is_codegen"] and item.get("language", "unknown").lower() in SUPPORTED_LANGUAGES
+        ]
+        filtered_count = len([item for item in analyzed_records if item["is_codegen"] and item.get("language", "unknown").lower() not in SUPPORTED_LANGUAGES])
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} records with unsupported languages")
+        logger.info(f"Code generation records with supported languages: {len(codegen_records)}/{file_total}")
+        
+        # 第二步：使用tree-sitter检查语法
+        logger.info(f"[{os.path.basename(file_path)}] Step 2: Checking syntax with tree-sitter...")
+        processed_records = []
+        
+        for item in codegen_records:
+            record = item["record"]
+            code, user_query = _extract_code_from_record(record)
+            language = item["language"]
+            
+            if not code:
                 processed_records.append({
                     "record": record,
                     "valid": False,
-                    "error": error_msg,
+                    "error": "No code found",
                     "retry_count": 0,
                     "user_query": user_query,
                     "language": language,
                     "is_syntax_error": True
                 })
+            else:
+                success, error_msg = _test_syntax_with_treesitter(code, language)
+                
+                if success:
+                    processed_records.append({
+                        "record": record,
+                        "valid": True,
+                        "language": language
+                    })
+                else:
+                    processed_records.append({
+                        "record": record,
+                        "valid": False,
+                        "error": error_msg,
+                        "retry_count": 0,
+                        "user_query": user_query,
+                        "language": language,
+                        "is_syntax_error": True
+                    })
 
-    # === 第三步：修复循环 ===
-    logger.info("Step 3: Repairing syntax errors...")
-    max_retries = 3
-    
-    async def _repair_single_item(item):
-        """处理单条数据的修复逻辑：调用Agent -> 验证 -> 更新记录"""
-        record = item["record"]
-        current_code, user_query = _extract_code_from_record(record)
-        language = item.get("language", "python")
+        # 第三步：修复循环
+        logger.info(f"[{os.path.basename(file_path)}] Step 3: Repairing syntax errors...")
+        max_retries = 3
         
-        if not current_code:
-            item["valid"] = False
-            item["error"] = "No code found in record"
-            return False
-        
-        try:
-            # 异步调用 Agent（Agent会判断领域，不符合则舍弃）
-            new_code, is_codegen = await repair_agent.repair_code(
-                code=current_code,
-                error_msg=item["error"],
-                user_query=user_query,
-                language=language,
-                syntax_error=item.get("is_syntax_error", True)
-            )
+        async def _repair_single_item(item):
+            """处理单条数据的修复逻辑"""
+            record = item["record"]
+            current_code, user_query = _extract_code_from_record(record)
+            language = item.get("language", "python")
             
-            if not is_codegen:
-                # Agent判断不符合代码生成领域，舍弃
+            if not current_code:
                 item["valid"] = False
-                item["error"] = "Not code generation domain"
+                item["error"] = "No code found in record"
                 return False
             
-            # 验证新代码
-            success, error_msg = _test_syntax_with_treesitter(new_code, language)
+            try:
+                new_code, is_codegen = await repair_agent.repair_code(
+                    code=current_code,
+                    error_msg=item["error"],
+                    user_query=user_query,
+                    language=language,
+                    syntax_error=item.get("is_syntax_error", True)
+                )
+                
+                if not is_codegen:
+                    item["valid"] = False
+                    item["error"] = "Not code generation domain"
+                    return False
+                
+                success, error_msg = _test_syntax_with_treesitter(new_code, language)
+                
+                if success:
+                    code_updated = False
+                    for msg in record.get("messages", []):
+                        if msg.get("role") == "assistant":
+                            msg["content"] = new_code
+                            code_updated = True
+                            break
+                    
+                    if not code_updated:
+                        if "assistant" in record:
+                            record["assistant"] = new_code
+                        else:
+                            if "messages" not in record:
+                                record["messages"] = []
+                            assistant_found = False
+                            for msg in record["messages"]:
+                                if msg.get("role") == "assistant":
+                                    msg["content"] = new_code
+                                    assistant_found = True
+                                    break
+                            if not assistant_found:
+                                record["messages"].append({"role": "assistant", "content": new_code})
+
+                    item["valid"] = True
+                    item["record"] = record
+                    item["error"] = None
+                    return True
+                else:
+                    item["error"] = error_msg
+                    return False
+
+            except Exception as e:
+                item["error"] = f"Agent Error: {str(e)}"
+                return False
+        
+        for attempt in range(max_retries):
+            to_repair = [
+                item for item in processed_records
+                if not item["valid"] and item.get("retry_count", 0) < max_retries
+            ]
+            
+            if not to_repair:
+                break
+                
+            logger.info(f"Code Repair Attempt {attempt + 1}/{max_retries}, items to repair: {len(to_repair)}")
+            
+            total_items = len(to_repair)
+            for i in range(0, total_items, BATCH_SIZE):
+                batch = to_repair[i : i + BATCH_SIZE]
+                logger.info(f"  > Processing batch {i//BATCH_SIZE + 1}/{(total_items + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
+                
+                tasks = []
+                for item in batch:
+                    item["retry_count"] = item.get("retry_count", 0) + 1
+                    tasks.append(_repair_single_item(item))
+                
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                success_count = sum(1 for r in results if r is True)
+                logger.info(f"  > Batch finished. Success: {success_count}/{len(batch)}")
+
+        # 第四步：最终验证
+        logger.info(f"[{os.path.basename(file_path)}] Step 4: Final validation...")
+        final_valid_records = []
+        code_valid_items = [item for item in processed_records if item["valid"]]
+        
+        for item in code_valid_items:
+            record = item["record"]
+            code, _ = _extract_code_from_record(record)
+            language = item.get("language", "python")
+            
+            success, _ = _test_syntax_with_treesitter(code, language)
             
             if success:
-                # 更新逻辑
-                code_updated = False
-                for msg in record.get("messages", []):
-                    if msg.get("role") == "assistant":
-                        msg["content"] = new_code
-                        code_updated = True
-                        break
-                
-                if not code_updated:
-                    if "assistant" in record:
-                        record["assistant"] = new_code
-                    else:
-                        if "messages" not in record:
-                            record["messages"] = []
-                        assistant_found = False
-                        for msg in record["messages"]:
-                            if msg.get("role") == "assistant":
-                                msg["content"] = new_code
-                                assistant_found = True
-                                break
-                        if not assistant_found:
-                            record["messages"].append({"role": "assistant", "content": new_code})
+                final_valid_records.append(record)
 
-                item["valid"] = True
-                item["record"] = record
-                item["error"] = None
-                return True
-            else:
-                item["error"] = error_msg
-                return False
+        file_valid = len(final_valid_records)
+        file_invalid = file_total - file_valid
+        
+        return final_valid_records, file_total, file_valid, file_invalid
 
+    # === 数据读取与预处理 ===
+    if not os.path.exists(data_path):
+        logger.error(f"Data path not found: {data_path}")
+        result.success = False
+        result.error_message = f"Data path not found: {data_path}"
+        return result
+
+    # 处理单个文件
+    if os.path.isfile(data_path):
+        if not data_path.endswith(".jsonl"):
+            logger.warning(f"Unsupported file format (expect .jsonl): {data_path}")
+            result.success = False
+            result.error_message = f"Unsupported file format (expect .jsonl): {data_path}"
+            return result
+        
+        final_valid_records, file_total, file_valid, file_invalid = await _process_single_file(data_path)
+        
+        result.total_records = file_total
+        result.valid_records = file_valid
+        result.invalid_records = file_invalid
+
+        base_dir = os.path.dirname(data_path)
+        base_name = os.path.basename(data_path)
+        name, ext = os.path.splitext(base_name)
+        cleaned_path = os.path.join(base_dir, f"{name}_codegen_cleaned{ext}")
+        
+        try:
+            with open(cleaned_path, 'w', encoding='utf-8') as f:
+                for record in final_valid_records:
+                    f.write(json.dumps(record, ensure_ascii=False) + '\n')
+            result.cleaned_data_path = cleaned_path
+            logger.info(f"domain_code_gen_cleaner: Cleaned data saved to {cleaned_path}")
         except Exception as e:
-            item["error"] = f"Agent Error: {str(e)}"
-            return False
-    
-    for attempt in range(max_retries):
-        to_repair = [
-            item for item in processed_records
-            if not item["valid"] and item.get("retry_count", 0) < max_retries
+            logger.error(f"Error saving cleaned data: {e}")
+            result.cleaned_data_path = data_path
+
+    # 处理目录
+    elif os.path.isdir(data_path):
+        jsonl_files = [
+            f for f in os.listdir(data_path)
+            if f.endswith(".jsonl") and os.path.isfile(os.path.join(data_path, f))
         ]
-        
-        if not to_repair:
-            break
-            
-        logger.info(f"Code Repair Attempt {attempt + 1}/{max_retries}, items to repair: {len(to_repair)}")
-        
-        total_items = len(to_repair)
-        for i in range(0, total_items, BATCH_SIZE):
-            batch = to_repair[i : i + BATCH_SIZE]
-            logger.info(f"  > Processing batch {i//BATCH_SIZE + 1}/{(total_items + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
-            
-            tasks = []
-            for item in batch:
-                item["retry_count"] = item.get("retry_count", 0) + 1
-                tasks.append(_repair_single_item(item))
-            
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            success_count = sum(1 for r in results if r is True)
-            logger.info(f"  > Batch finished. Success: {success_count}/{len(batch)}")
+        if not jsonl_files:
+            logger.warning(f"No JSONL files found in directory: {data_path}")
+            result.success = False
+            result.error_message = f"No JSONL files found in directory: {data_path}"
+            return result
 
-    # === 第四步：最终验证 ===
-    logger.info("Step 4: Final validation...")
-    final_valid_records = []
-    code_valid_items = [item for item in processed_records if item["valid"]]
-    
-    for item in code_valid_items:
-        record = item["record"]
-        code, _ = _extract_code_from_record(record)
-        language = item.get("language", "python")
-        
-        success, _ = _test_syntax_with_treesitter(code, language)
-        
-        if success:
-            final_valid_records.append(record)
+        cleaned_dir = f"{data_path}_codegen_cleaned"
+        os.makedirs(cleaned_dir, exist_ok=True)
+
+        any_valid = False
+        for filename in jsonl_files:
+            input_path = os.path.join(data_path, filename)
+            output_path = os.path.join(cleaned_dir, filename)
+            
+            try:
+                final_valid_records, file_total, file_valid, file_invalid = await _process_single_file(input_path)
+                
+                result.total_records += file_total
+                result.valid_records += file_valid
+                result.invalid_records += file_invalid
+
+                if file_valid > 0:
+                    any_valid = True
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        for record in final_valid_records:
+                            f.write(json.dumps(record, ensure_ascii=False) + '\n')
+                    logger.info(f"domain_code_gen_cleaner: Cleaned {filename} -> {output_path}")
+            except Exception as e:
+                logger.warning(f"Error processing file {input_path}: {e}")
+                continue
+
+        if any_valid:
+            result.cleaned_data_path = cleaned_dir
+            logger.info(f"domain_code_gen_cleaner: Cleaned data saved to {cleaned_dir}")
         else:
-            result.invalid_records += 1
-
-    # === 输出结果 ===
-    result.valid_records = len(final_valid_records)
-    result.invalid_records = result.total_records - result.valid_records
-
-    base_dir = os.path.dirname(data_path)
-    base_name = os.path.basename(data_path)
-    name, ext = os.path.splitext(base_name)
-    cleaned_path = os.path.join(base_dir, f"{name}_codegen_cleaned{ext}")
-    
-    try:
-        with open(cleaned_path, 'w', encoding='utf-8') as f:
-            for record in final_valid_records:
-                f.write(json.dumps(record, ensure_ascii=False) + '\n')
-        result.cleaned_data_path = cleaned_path
-        logger.info(f"domain_code_gen_cleaner: Cleaned data saved to {cleaned_path}")
-    except Exception as e:
-        logger.error(f"Error saving cleaned data: {e}")
-        result.cleaned_data_path = data_path
+            shutil.rmtree(cleaned_dir, ignore_errors=True)
+            logger.warning("No valid records found, keeping original directory path")
+            result.cleaned_data_path = data_path
+    else:
+        logger.warning(f"Unsupported data path type: {data_path}")
+        result.success = False
+        result.error_message = f"Unsupported data path type: {data_path}"
+        return result
 
     logger.info(
         f"domain_code_gen_cleaner: Cleaning completed - "
@@ -1425,7 +1571,7 @@ async def domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> BaseCle
     return result
 
 
-async def domain_normal_data_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
+def domain_normal_data_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
     """
     领域工具：针对常规对话QA数据的特定清洗
     
@@ -1447,6 +1593,11 @@ async def domain_normal_data_cleaner(data_path: str, state: LoopAIState) -> Base
             "invalid_records": int
         }
     """
+    return asyncio.run(_async_domain_normal_data_cleaner(data_path, state))
+
+
+async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
+    """内部异步实现"""
     logger.info(f"domain_normal_data_cleaner: Cleaning normal QA data from {data_path}")
     
     result = BaseCleanResult(
@@ -1509,170 +1660,239 @@ async def domain_normal_data_cleaner(data_path: str, state: LoopAIState) -> Base
         
         return user_content, assistant_content
     
-    # === 数据读取与预处理 ===
-    if not os.path.exists(data_path) or not os.path.isfile(data_path):
-        logger.error(f"Data path not found: {data_path}")
-        return result
-    
-    all_records = []
-    with open(data_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            if line.strip():
+    # === 内部函数：处理单个文件 ===
+    async def _process_single_file(file_path: str) -> Tuple[List[Dict], int, int, int]:
+        """
+        处理单个JSONL文件，返回 (有效记录列表, 总数, 有效数, 无效数)
+        """
+        all_records = []
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        all_records.append(json.loads(line))
+                    except:
+                        pass
+        
+        file_total = len(all_records)
+        logger.info(f"[{os.path.basename(file_path)}] Total records to process: {file_total}")
+        logger.info(f"[{os.path.basename(file_path)}] Target domain query: {user_query}")
+        
+        # 第一步：并发判断领域相关性
+        logger.info(f"[{os.path.basename(file_path)}] Step 1: Analyzing domain relevance...")
+        analyzed_records = []
+        
+        for i in range(0, file_total, BATCH_SIZE):
+            batch = all_records[i : i + BATCH_SIZE]
+            logger.info(f"  > Processing analysis batch {i//BATCH_SIZE + 1}/{(file_total + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
+            
+            async def _analyze_single_record(record):
+                """分析单条记录：判断是否与领域相关"""
                 try:
-                    all_records.append(json.loads(line))
-                except:
-                    pass
-    
-    result.total_records = len(all_records)
-    logger.info(f"Total records to process: {result.total_records}")
-    logger.info(f"Target domain query: {user_query}")
-    
-    # === 第一步：并发判断领域相关性 ===
-    logger.info("Step 1: Analyzing domain relevance (concurrent batches)...")
-    analyzed_records = []
-    
-    total_records = len(all_records)
-    for i in range(0, total_records, BATCH_SIZE):
-        batch = all_records[i : i + BATCH_SIZE]
-        logger.info(f"  > Processing analysis batch {i//BATCH_SIZE + 1}/{(total_records + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
-        
-        async def _analyze_single_record(record):
-            """分析单条记录：判断是否与领域相关"""
-            try:
-                analysis = await domain_agent.analyze_record(record, user_query)
-                return {
-                    "record": record,
-                    "is_related": analysis.get("is_related", False),
-                    "reasoning": analysis.get("reasoning", "")
-                }
-            except Exception as e:
-                logger.error(f"Error analyzing record: {e}")
-                return {
-                    "record": record,
-                    "is_related": False,
-                    "reasoning": f"Error: {str(e)}"
-                }
-        
-        tasks = [_analyze_single_record(record) for record in batch]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for r in results:
-            if isinstance(r, Exception):
-                logger.error(f"Error in analysis: {r}")
-                continue
-            analyzed_records.append(r)
-    
-    # 过滤出与领域相关的记录
-    related_records = [
-        item for item in analyzed_records 
-        if item["is_related"]
-    ]
-    filtered_count = len(analyzed_records) - len(related_records)
-    if filtered_count > 0:
-        logger.info(f"Filtered out {filtered_count} records not related to the domain")
-    logger.info(f"Domain-related records: {len(related_records)}/{result.total_records}")
-    
-    # === 第二步：完善回答并验证 ===
-    logger.info("Step 2: Improving answers and validating quality...")
-    processed_records = []
-    
-    total_related = len(related_records)
-    for i in range(0, total_related, BATCH_SIZE):
-        batch = related_records[i : i + BATCH_SIZE]
-        logger.info(f"  > Processing improvement batch {i//BATCH_SIZE + 1}/{(total_related + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
-        
-        async def _improve_single_item(item):
-            """处理单条数据的完善逻辑：调用Agent -> 更新记录"""
-            record = item["record"]
-            user_content, assistant_content = _extract_content_from_record(record)
+                    analysis = await domain_agent.analyze_record(record, user_query)
+                    return {
+                        "record": record,
+                        "is_related": analysis.get("is_related", False),
+                        "reasoning": analysis.get("reasoning", "")
+                    }
+                except Exception as e:
+                    logger.error(f"Error analyzing record: {e}")
+                    return {
+                        "record": record,
+                        "is_related": False,
+                        "reasoning": f"Error: {str(e)}"
+                    }
             
-            if not user_content or not assistant_content:
-                item["valid"] = False
-                item["error"] = "Missing user or assistant content"
-                return False
+            tasks = [_analyze_single_record(record) for record in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            try:
-                # 异步调用 Agent 完善回答并验证
-                improved_content, is_valid, error_msg = await repair_agent.improve_and_validate(
-                    user_content=user_content,
-                    assistant_content=assistant_content,
-                    user_query=user_query
-                )
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error(f"Error in analysis: {r}")
+                    continue
+                analyzed_records.append(r)
+        
+        # 过滤出与领域相关的记录
+        related_records = [
+            item for item in analyzed_records 
+            if item["is_related"]
+        ]
+        filtered_count = len(analyzed_records) - len(related_records)
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} records not related to the domain")
+        logger.info(f"Domain-related records: {len(related_records)}/{file_total}")
+        
+        # 第二步：完善回答并验证
+        logger.info(f"[{os.path.basename(file_path)}] Step 2: Improving answers and validating quality...")
+        processed_records = []
+        
+        total_related = len(related_records)
+        for i in range(0, total_related, BATCH_SIZE):
+            batch = related_records[i : i + BATCH_SIZE]
+            logger.info(f"  > Processing improvement batch {i//BATCH_SIZE + 1}/{(total_related + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
+            
+            async def _improve_single_item(item):
+                """处理单条数据的完善逻辑"""
+                record = item["record"]
+                user_content, assistant_content = _extract_content_from_record(record)
                 
-                if not is_valid:
+                if not user_content or not assistant_content:
                     item["valid"] = False
-                    item["error"] = error_msg
+                    item["error"] = "Missing user or assistant content"
                     return False
                 
-                # 更新记录中的 assistant 内容
-                content_updated = False
-                for msg in record.get("messages", []):
-                    if msg.get("role") == "assistant":
-                        msg["content"] = improved_content
-                        content_updated = True
-                        break
+                try:
+                    improved_content, is_valid, error_msg = await repair_agent.improve_and_validate(
+                        user_content=user_content,
+                        assistant_content=assistant_content,
+                        user_query=user_query
+                    )
+                    
+                    if not is_valid:
+                        item["valid"] = False
+                        item["error"] = error_msg
+                        return False
+                    
+                    content_updated = False
+                    for msg in record.get("messages", []):
+                        if msg.get("role") == "assistant":
+                            msg["content"] = improved_content
+                            content_updated = True
+                            break
+                    
+                    if not content_updated:
+                        if "assistant" in record:
+                            record["assistant"] = improved_content
+                        else:
+                            if "messages" not in record:
+                                record["messages"] = []
+                            assistant_found = False
+                            for msg in record["messages"]:
+                                if msg.get("role") == "assistant":
+                                    msg["content"] = improved_content
+                                    assistant_found = True
+                                    break
+                            if not assistant_found:
+                                record["messages"].append({"role": "assistant", "content": improved_content})
+                    
+                    item["valid"] = True
+                    item["record"] = record
+                    item["error"] = None
+                    return True
+                    
+                except Exception as e:
+                    item["error"] = f"Agent Error: {str(e)}"
+                    item["valid"] = False
+                    return False
+            
+            tasks = [_improve_single_item(item) for item in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for item, r in zip(batch, results):
+                if isinstance(r, Exception):
+                    logger.error(f"Error in improvement: {r}")
+                    item["valid"] = False
+                    item["error"] = f"Exception: {str(r)}"
+                processed_records.append(item)
+        
+        # 第三步：收集有效记录
+        logger.info(f"[{os.path.basename(file_path)}] Step 3: Collecting valid records...")
+        final_valid_records = []
+        
+        for item in processed_records:
+            if item.get("valid", False):
+                final_valid_records.append(item["record"])
+        
+        file_valid = len(final_valid_records)
+        file_invalid = file_total - file_valid
+        
+        return final_valid_records, file_total, file_valid, file_invalid
+
+    # === 数据读取与预处理 ===
+    if not os.path.exists(data_path):
+        logger.error(f"Data path not found: {data_path}")
+        result.success = False
+        result.error_message = f"Data path not found: {data_path}"
+        return result
+
+    # 处理单个文件
+    if os.path.isfile(data_path):
+        if not data_path.endswith(".jsonl"):
+            logger.warning(f"Unsupported file format (expect .jsonl): {data_path}")
+            result.success = False
+            result.error_message = f"Unsupported file format (expect .jsonl): {data_path}"
+            return result
+        
+        final_valid_records, file_total, file_valid, file_invalid = await _process_single_file(data_path)
+        
+        result.total_records = file_total
+        result.valid_records = file_valid
+        result.invalid_records = file_invalid
+
+        base_dir = os.path.dirname(data_path)
+        base_name = os.path.basename(data_path)
+        name, ext = os.path.splitext(base_name)
+        cleaned_path = os.path.join(base_dir, f"{name}_normal_cleaned{ext}")
+        
+        try:
+            with open(cleaned_path, 'w', encoding='utf-8') as f:
+                for record in final_valid_records:
+                    f.write(json.dumps(record, ensure_ascii=False) + '\n')
+            result.cleaned_data_path = cleaned_path
+            logger.info(f"domain_normal_data_cleaner: Cleaned data saved to {cleaned_path}")
+        except Exception as e:
+            logger.error(f"Error saving cleaned data: {e}")
+            result.cleaned_data_path = data_path
+
+    # 处理目录
+    elif os.path.isdir(data_path):
+        jsonl_files = [
+            f for f in os.listdir(data_path)
+            if f.endswith(".jsonl") and os.path.isfile(os.path.join(data_path, f))
+        ]
+        if not jsonl_files:
+            logger.warning(f"No JSONL files found in directory: {data_path}")
+            result.success = False
+            result.error_message = f"No JSONL files found in directory: {data_path}"
+            return result
+
+        cleaned_dir = f"{data_path}_normal_cleaned"
+        os.makedirs(cleaned_dir, exist_ok=True)
+
+        any_valid = False
+        for filename in jsonl_files:
+            input_path = os.path.join(data_path, filename)
+            output_path = os.path.join(cleaned_dir, filename)
+            
+            try:
+                final_valid_records, file_total, file_valid, file_invalid = await _process_single_file(input_path)
                 
-                if not content_updated:
-                    if "assistant" in record:
-                        record["assistant"] = improved_content
-                    else:
-                        if "messages" not in record:
-                            record["messages"] = []
-                        assistant_found = False
-                        for msg in record["messages"]:
-                            if msg.get("role") == "assistant":
-                                msg["content"] = improved_content
-                                assistant_found = True
-                                break
-                        if not assistant_found:
-                            record["messages"].append({"role": "assistant", "content": improved_content})
-                
-                item["valid"] = True
-                item["record"] = record
-                item["error"] = None
-                return True
-                
+                result.total_records += file_total
+                result.valid_records += file_valid
+                result.invalid_records += file_invalid
+
+                if file_valid > 0:
+                    any_valid = True
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        for record in final_valid_records:
+                            f.write(json.dumps(record, ensure_ascii=False) + '\n')
+                    logger.info(f"domain_normal_data_cleaner: Cleaned {filename} -> {output_path}")
             except Exception as e:
-                item["error"] = f"Agent Error: {str(e)}"
-                item["valid"] = False
-                return False
-        
-        tasks = [_improve_single_item(item) for item in batch]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for item, r in zip(batch, results):
-            if isinstance(r, Exception):
-                logger.error(f"Error in improvement: {r}")
-                item["valid"] = False
-                item["error"] = f"Exception: {str(r)}"
-            processed_records.append(item)
-    
-    # === 第三步：收集有效记录 ===
-    logger.info("Step 3: Collecting valid records...")
-    final_valid_records = []
-    
-    for item in processed_records:
-        if item.get("valid", False):
-            final_valid_records.append(item["record"])
-    
-    # === 输出结果 ===
-    result.valid_records = len(final_valid_records)
-    result.invalid_records = result.total_records - result.valid_records
-    
-    base_dir = os.path.dirname(data_path)
-    base_name = os.path.basename(data_path)
-    name, ext = os.path.splitext(base_name)
-    cleaned_path = os.path.join(base_dir, f"{name}_normal_cleaned{ext}")
-    
-    try:
-        with open(cleaned_path, 'w', encoding='utf-8') as f:
-            for record in final_valid_records:
-                f.write(json.dumps(record, ensure_ascii=False) + '\n')
-        result.cleaned_data_path = cleaned_path
-        logger.info(f"domain_normal_data_cleaner: Cleaned data saved to {cleaned_path}")
-    except Exception as e:
-        logger.error(f"Error saving cleaned data: {e}")
-        result.cleaned_data_path = data_path
+                logger.warning(f"Error processing file {input_path}: {e}")
+                continue
+
+        if any_valid:
+            result.cleaned_data_path = cleaned_dir
+            logger.info(f"domain_normal_data_cleaner: Cleaned data saved to {cleaned_dir}")
+        else:
+            shutil.rmtree(cleaned_dir, ignore_errors=True)
+            logger.warning("No valid records found, keeping original directory path")
+            result.cleaned_data_path = data_path
+    else:
+        logger.warning(f"Unsupported data path type: {data_path}")
+        result.success = False
+        result.error_message = f"Unsupported data path type: {data_path}"
+        return result
     
     logger.info(
         f"domain_normal_data_cleaner: Cleaning completed - "
@@ -1683,3 +1903,362 @@ async def domain_normal_data_cleaner(data_path: str, state: LoopAIState) -> Base
     
     return result
 
+
+def benchmark_data_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
+    """
+    Benchmark 数据清洗工具：从清洗后的数据集中移除与 benchmark 数据集相似/重复的记录
+    
+    清洗流程：
+    1. 读取 benchmark JSONL 文件，构建去重索引
+    2. 遍历数据集，移除与 benchmark 数据相似的记录
+    3. 输出清洗后的数据
+    
+    相似度判断规则：
+    - 对于 SFT 数据：比较 user 和 assistant 内容的相似度
+    - 对于 PT 数据：比较 text 内容的相似度
+    - 使用多种策略：精确匹配、归一化匹配、关键内容匹配
+    
+    Args:
+        data_path: 数据文件路径
+        state: 当前状态（包含 banckmark_jsonl_path 用于指定 benchmark 数据路径）
+    
+    Returns:
+        包含清洗结果的字典
+    """
+    logger.info(f"benchmark_data_cleaner: Cleaning benchmark data from {data_path}")
+    
+    result = BaseCleanResult(
+        cleaned_data_path=data_path,
+        total_records=0,
+        valid_records=0,
+        invalid_records=0
+    )
+    
+    # 获取 benchmark 文件路径
+    benchmark_path = state.get("banckmark_jsonl_path", "")
+    if not benchmark_path:
+        logger.info("No benchmark_jsonl_path specified, skipping benchmark cleaning")
+        return result
+    
+    if not os.path.exists(benchmark_path):
+        logger.warning(f"Benchmark file not found: {benchmark_path}, skipping benchmark cleaning")
+        return result
+    
+    # 获取数据类别（PT或SFT）- 从 state.obtainer.category 获取
+    obtainer_state = state.get("obtainer", {})
+    category = obtainer_state.get("category", "PT").upper()
+    if category not in ["PT", "SFT"]:
+        logger.warning(f"Unknown category '{category}', defaulting to SFT for benchmark cleaning")
+        category = "SFT"
+    
+    logger.info(f"benchmark_data_cleaner: Category = {category}, Benchmark path = {benchmark_path}")
+    
+    # === 内部辅助函数 ===
+    
+    def _normalize_text(text: str) -> str:
+        """归一化文本：移除多余空白、转小写"""
+        if not text:
+            return ""
+        # 移除多余空白字符
+        normalized = ' '.join(text.split())
+        # 转小写
+        normalized = normalized.lower()
+        return normalized
+    
+    def _extract_key_content(text: str, max_len: int = 500) -> str:
+        """提取关键内容用于快速比较"""
+        if not text:
+            return ""
+        normalized = _normalize_text(text)
+        # 取前 max_len 个字符作为关键内容
+        return normalized[:max_len]
+    
+    def _extract_record_signature_sft(record: Dict[str, Any]) -> Tuple[str, str, str]:
+        """
+        提取 SFT 记录的签名用于比较
+        
+        Returns:
+            (user_content, assistant_content, combined_key) 元组
+        """
+        messages = record.get("messages", [])
+        user_content = ""
+        assistant_content = ""
+        
+        for msg in messages:
+            role = msg.get("role", "").lower()
+            content = msg.get("content", "")
+            if role == "user" and not user_content:
+                user_content = content
+            elif role == "assistant" and not assistant_content:
+                assistant_content = content
+        
+        # 如果 messages 中没有，尝试从顶层字段获取
+        if not user_content:
+            user_content = record.get("user", "") or record.get("instruction", "") or record.get("input", "")
+        if not assistant_content:
+            assistant_content = record.get("assistant", "") or record.get("output", "") or record.get("response", "")
+        
+        # 创建组合键用于快速查找
+        user_key = _extract_key_content(user_content)
+        assistant_key = _extract_key_content(assistant_content)
+        combined_key = f"{user_key}|||{assistant_key}"
+        
+        return user_content, assistant_content, combined_key
+    
+    def _extract_record_signature_pt(record: Dict[str, Any]) -> Tuple[str, str]:
+        """
+        提取 PT 记录的签名用于比较
+        
+        Returns:
+            (text_content, text_key) 元组
+        """
+        text_content = record.get("text", "")
+        text_key = _extract_key_content(text_content)
+        return text_content, text_key
+    
+    def _is_similar_sft(record_sig: Tuple[str, str, str], benchmark_sigs: set, benchmark_full: Dict[str, Tuple[str, str]]) -> bool:
+        """
+        判断 SFT 记录是否与 benchmark 数据相似
+        
+        使用多层次匹配：
+        1. 快速键匹配
+        2. 用户内容精确匹配
+        3. 用户内容高相似度匹配
+        """
+        user_content, assistant_content, combined_key = record_sig
+        
+        # 1. 快速键匹配
+        if combined_key in benchmark_sigs:
+            return True
+        
+        # 2. 用户内容精确匹配（归一化后）
+        user_normalized = _normalize_text(user_content)
+        for bm_key, (bm_user, bm_assistant) in benchmark_full.items():
+            bm_user_normalized = _normalize_text(bm_user)
+            # 用户问题完全相同
+            if user_normalized == bm_user_normalized:
+                return True
+            # 用户问题是子串关系且长度相近
+            if len(user_normalized) > 50 and len(bm_user_normalized) > 50:
+                if user_normalized in bm_user_normalized or bm_user_normalized in user_normalized:
+                    # 长度相近才认为是相似
+                    len_ratio = len(user_normalized) / len(bm_user_normalized) if len(bm_user_normalized) > 0 else 0
+                    if 0.8 <= len_ratio <= 1.25:
+                        return True
+        
+        return False
+    
+    def _is_similar_pt(record_sig: Tuple[str, str], benchmark_sigs: set, benchmark_full: Dict[str, str]) -> bool:
+        """
+        判断 PT 记录是否与 benchmark 数据相似
+        """
+        text_content, text_key = record_sig
+        
+        # 1. 快速键匹配
+        if text_key in benchmark_sigs:
+            return True
+        
+        # 2. 精确匹配（归一化后）
+        text_normalized = _normalize_text(text_content)
+        for bm_key, bm_text in benchmark_full.items():
+            bm_normalized = _normalize_text(bm_text)
+            if text_normalized == bm_normalized:
+                return True
+            # 子串关系且长度相近
+            if len(text_normalized) > 100 and len(bm_normalized) > 100:
+                if text_normalized in bm_normalized or bm_normalized in text_normalized:
+                    len_ratio = len(text_normalized) / len(bm_normalized) if len(bm_normalized) > 0 else 0
+                    if 0.8 <= len_ratio <= 1.25:
+                        return True
+        
+        return False
+    
+    # === 加载 Benchmark 数据 ===
+    logger.info(f"Loading benchmark data from {benchmark_path}...")
+    benchmark_sigs = set()  # 快速查找键集合
+    benchmark_full = {}  # 完整内容字典
+    benchmark_count = 0
+    
+    try:
+        # 支持单个文件或目录
+        benchmark_files = []
+        if os.path.isfile(benchmark_path):
+            benchmark_files = [benchmark_path]
+        elif os.path.isdir(benchmark_path):
+            benchmark_files = [
+                os.path.join(benchmark_path, f) 
+                for f in os.listdir(benchmark_path) 
+                if f.endswith(".jsonl") and os.path.isfile(os.path.join(benchmark_path, f))
+            ]
+        
+        for bm_file in benchmark_files:
+            with open(bm_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                        benchmark_count += 1
+                        
+                        if category == "SFT":
+                            user_content, assistant_content, combined_key = _extract_record_signature_sft(record)
+                            benchmark_sigs.add(combined_key)
+                            benchmark_full[combined_key] = (user_content, assistant_content)
+                        else:  # PT
+                            text_content, text_key = _extract_record_signature_pt(record)
+                            benchmark_sigs.add(text_key)
+                            benchmark_full[text_key] = text_content
+                            
+                    except json.JSONDecodeError:
+                        continue
+        
+        logger.info(f"Loaded {benchmark_count} benchmark records, {len(benchmark_sigs)} unique signatures")
+        
+    except Exception as e:
+        logger.error(f"Error loading benchmark data: {e}")
+        result.success = False
+        result.error_message = f"Error loading benchmark data: {e}"
+        return result
+    
+    if benchmark_count == 0:
+        logger.warning("No benchmark records loaded, skipping benchmark cleaning")
+        return result
+    
+    # === 处理数据文件 ===
+    
+    def _process_single_file(input_path: str, output_path: str) -> Dict[str, int]:
+        """处理单个文件，返回统计信息"""
+        counts = {"total": 0, "valid": 0, "invalid": 0, "benchmark_removed": 0}
+        
+        with open(input_path, 'r', encoding='utf-8') as fin, open(output_path, 'w', encoding='utf-8') as fout:
+            for line in fin:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                    counts["total"] += 1
+                except json.JSONDecodeError:
+                    counts["invalid"] += 1
+                    continue
+                
+                # 提取签名并检查相似度
+                is_benchmark = False
+                if category == "SFT":
+                    record_sig = _extract_record_signature_sft(record)
+                    is_benchmark = _is_similar_sft(record_sig, benchmark_sigs, benchmark_full)
+                else:  # PT
+                    record_sig = _extract_record_signature_pt(record)
+                    is_benchmark = _is_similar_pt(record_sig, benchmark_sigs, benchmark_full)
+                
+                if is_benchmark:
+                    counts["benchmark_removed"] += 1
+                    counts["invalid"] += 1
+                else:
+                    fout.write(json.dumps(record, ensure_ascii=False) + '\n')
+                    counts["valid"] += 1
+        
+        return counts
+    
+    try:
+        if not os.path.exists(data_path):
+            logger.error(f"Data path does not exist: {data_path}")
+            result.success = False
+            result.error_message = f"Data path does not exist: {data_path}"
+            return result
+        
+        if os.path.isfile(data_path):
+            if not data_path.endswith(".jsonl"):
+                logger.warning(f"Unsupported file format (expect .jsonl): {data_path}")
+                result.success = False
+                result.error_message = f"Unsupported file format (expect .jsonl): {data_path}"
+                return result
+            
+            base_dir = os.path.dirname(data_path)
+            base_name = os.path.basename(data_path)
+            name, ext = os.path.splitext(base_name)
+            cleaned_path = os.path.join(base_dir, f"{name}_benchmark_cleaned{ext}")
+            
+            counts = _process_single_file(data_path, cleaned_path)
+            
+            result.total_records = counts["total"]
+            result.valid_records = counts["valid"]
+            result.invalid_records = counts["invalid"]
+            
+            if result.valid_records > 0:
+                result.cleaned_data_path = cleaned_path
+                logger.info(f"benchmark_data_cleaner: Cleaned data saved to {cleaned_path}")
+                logger.info(f"benchmark_data_cleaner: Removed {counts['benchmark_removed']} benchmark-similar records")
+            else:
+                if os.path.exists(cleaned_path):
+                    os.remove(cleaned_path)
+                logger.warning("No valid records after benchmark cleaning, keeping original file path")
+                result.cleaned_data_path = data_path
+        
+        elif os.path.isdir(data_path):
+            jsonl_files = [
+                f for f in os.listdir(data_path)
+                if f.endswith(".jsonl") and os.path.isfile(os.path.join(data_path, f))
+            ]
+            if not jsonl_files:
+                logger.warning(f"No JSONL files found in directory: {data_path}")
+                result.success = False
+                result.error_message = f"No JSONL files found in directory: {data_path}"
+                return result
+            
+            cleaned_dir = f"{data_path}_benchmark_cleaned"
+            os.makedirs(cleaned_dir, exist_ok=True)
+            
+            total_benchmark_removed = 0
+            any_valid = False
+            for filename in jsonl_files:
+                input_path = os.path.join(data_path, filename)
+                output_path = os.path.join(cleaned_dir, filename)
+                
+                try:
+                    counts = _process_single_file(input_path, output_path)
+                    
+                    result.total_records += counts["total"]
+                    result.valid_records += counts["valid"]
+                    result.invalid_records += counts["invalid"]
+                    total_benchmark_removed += counts["benchmark_removed"]
+                    
+                    if counts["valid"] > 0:
+                        any_valid = True
+                    else:
+                        if os.path.exists(output_path):
+                            os.remove(output_path)
+                            
+                except Exception as e:
+                    logger.warning(f"Error processing file {input_path}: {e}")
+                    continue
+            
+            if any_valid:
+                result.cleaned_data_path = cleaned_dir
+                logger.info(f"benchmark_data_cleaner: Cleaned data saved to {cleaned_dir}")
+                logger.info(f"benchmark_data_cleaner: Total removed {total_benchmark_removed} benchmark-similar records")
+            else:
+                shutil.rmtree(cleaned_dir, ignore_errors=True)
+                logger.warning("No valid records after benchmark cleaning, keeping original directory path")
+                result.cleaned_data_path = data_path
+        else:
+            logger.warning(f"Unsupported data path type: {data_path}")
+            result.success = False
+            result.error_message = f"Unsupported data path type: {data_path}"
+            return result
+        
+        logger.info(
+            f"benchmark_data_cleaner: Cleaning completed - "
+            f"total: {result.total_records}, "
+            f"valid: {result.valid_records}, "
+            f"invalid: {result.invalid_records}"
+        )
+        
+    except Exception as e:
+        logger.error(f"benchmark_data_cleaner: Error cleaning data from {data_path}: {e}")
+        result.cleaned_data_path = data_path
+        result.success = False
+        result.error_message = str(e)
+    
+    return result

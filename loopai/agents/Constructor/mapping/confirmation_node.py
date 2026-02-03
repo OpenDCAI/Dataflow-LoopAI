@@ -26,7 +26,12 @@ def confirmation_node(state: LoopAIState, store: BaseStore = None) -> LoopAIStat
     """
     logger.info("=== Confirmation Node: Starting ===")
     
-    pending_format = state.get("obtainer_pending_format")
+    # 确保 obtainer 字典存在
+    if "obtainer" not in state:
+        state["obtainer"] = {}
+    
+    obtainer_state = state.get("obtainer", {})
+    pending_format = obtainer_state.get("pending_format")
     
     if not pending_format:
         logger.error("No pending format found")
@@ -91,9 +96,13 @@ def _analyze_confirmation_intent(
     """Analyze user confirmation intent"""
     logger.info(f"Analyzing confirmation intent: {user_input}")
     
+    # 确保 obtainer 字典存在
+    if "obtainer" not in state:
+        state["obtainer"] = {}
+    
     if not user_input or not user_input.strip():
-        state["obtainer_confirmation_result"] = "confirmed"
-        state["obtainer_confirmed_format"] = pending_format
+        state["obtainer"]["confirmation_result"] = "confirmed"
+        state["obtainer"]["confirmed_format"] = pending_format
         logger.info("Empty input, defaulting to confirmed")
         _save_to_store(state, store, user_input)
         return state
@@ -102,38 +111,38 @@ def _analyze_confirmation_intent(
     
     confirm_keywords = ["confirm", "yes", "ok", "y"]
     if user_input_lower in confirm_keywords or user_input_lower in [kw + " format" for kw in confirm_keywords]:
-        state["obtainer_confirmation_result"] = "confirmed"
-        state["obtainer_confirmed_format"] = pending_format
+        state["obtainer"]["confirmation_result"] = "confirmed"
+        state["obtainer"]["confirmed_format"] = pending_format
         logger.info("Quick match: confirmed")
         _save_to_store(state, store, user_input)
         return state
     
     if user_input_lower in PRESET_FORMATS:
-        state["obtainer_confirmation_result"] = "restart"
-        state["obtainer_mapping_user_intent"] = "preset_format"
-        state["obtainer_mapping_selected_format_id"] = user_input_lower
-        state["obtainer_pending_format"] = None
+        state["obtainer"]["confirmation_result"] = "restart"
+        state["obtainer"]["mapping_user_intent"] = "preset_format"
+        state["obtainer"]["mapping_selected_format_id"] = user_input_lower
+        state["obtainer"]["pending_format"] = None
         logger.info(f"Quick match: switch to preset format {user_input_lower}")
         _save_to_store(state, store, user_input)
         return state
     
     restart_exact_keywords = ["restart", "reselect", "cancel", "list"]
     if user_input_lower in restart_exact_keywords:
-        state["obtainer_confirmation_result"] = "restart"
-        state["obtainer_pending_format"] = None
-        state["obtainer_confirmed_format"] = None
-        state["obtainer_mapping_user_intent"] = ""
-        state["obtainer_mapping_selected_format_id"] = ""
-        state["obtainer_mapping_custom_description"] = ""
+        state["obtainer"]["confirmation_result"] = "restart"
+        state["obtainer"]["pending_format"] = None
+        state["obtainer"]["confirmed_format"] = None
+        state["obtainer"]["mapping_user_intent"] = ""
+        state["obtainer"]["mapping_selected_format_id"] = ""
+        state["obtainer"]["mapping_custom_description"] = ""
         logger.info("Quick match: restart - exact keyword match")
         _save_to_store(state, store, user_input)
         return state
     
     modify_exact_keywords = ["modify", "change"]
     if user_input_lower in modify_exact_keywords:
-        state["obtainer_confirmation_result"] = "modify"
-        state["obtainer_pending_format"] = None
-        state["obtainer_mapping_custom_description"] = ""
+        state["obtainer"]["confirmation_result"] = "modify"
+        state["obtainer"]["pending_format"] = None
+        state["obtainer"]["mapping_custom_description"] = ""
         logger.info("Quick match: modify - exact keyword match")
         _save_to_store(state, store, user_input)
         return state
@@ -141,14 +150,15 @@ def _analyze_confirmation_intent(
     if len(user_input) > 5:
         logger.info("Input is long enough, using LLM analysis")
     
-    model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
-    base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
-    api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
+    obtainer = state.get("obtainer", {})
+    model_name = obtainer.get("model_path")
+    base_url = obtainer.get("base_url")
+    api_key = obtainer.get("api_key")
     
     if not model_name or not base_url or not api_key:
         logger.warning("No LLM config, treating as modify request")
-        state["obtainer_confirmation_result"] = "modify"
-        state["obtainer_mapping_custom_description"] = user_input
+        state["obtainer"]["confirmation_result"] = "modify"
+        state["obtainer"]["mapping_custom_description"] = user_input
         _save_to_store(state, store, user_input)
         return state
     
@@ -189,33 +199,33 @@ Available preset format IDs: {preset_format_ids}"""
             modify_desc = result.get("modify_description", "")
             
             if action == "confirmed":
-                state["obtainer_confirmation_result"] = "confirmed"
-                state["obtainer_confirmed_format"] = pending_format
+                state["obtainer"]["confirmation_result"] = "confirmed"
+                state["obtainer"]["confirmed_format"] = pending_format
             elif action == "switch_preset" and target_format:
-                state["obtainer_confirmation_result"] = "restart"
-                state["obtainer_mapping_user_intent"] = "preset_format"
-                state["obtainer_mapping_selected_format_id"] = target_format.lower()
-                state["obtainer_pending_format"] = None
+                state["obtainer"]["confirmation_result"] = "restart"
+                state["obtainer"]["mapping_user_intent"] = "preset_format"
+                state["obtainer"]["mapping_selected_format_id"] = target_format.lower()
+                state["obtainer"]["pending_format"] = None
             elif action == "modify":
-                state["obtainer_confirmation_result"] = "modify"
-                state["obtainer_mapping_custom_description"] = modify_desc or user_input
+                state["obtainer"]["confirmation_result"] = "modify"
+                state["obtainer"]["mapping_custom_description"] = modify_desc or user_input
             elif action == "restart":
-                state["obtainer_confirmation_result"] = "restart"
-                state["obtainer_pending_format"] = None
-                state["obtainer_mapping_user_intent"] = ""
+                state["obtainer"]["confirmation_result"] = "restart"
+                state["obtainer"]["pending_format"] = None
+                state["obtainer"]["mapping_user_intent"] = ""
             else:
-                state["obtainer_confirmation_result"] = "confirmed"
-                state["obtainer_confirmed_format"] = pending_format
+                state["obtainer"]["confirmation_result"] = "confirmed"
+                state["obtainer"]["confirmed_format"] = pending_format
             
             logger.info(f"LLM analysis: action={action}")
         else:
-            state["obtainer_confirmation_result"] = "confirmed"
-            state["obtainer_confirmed_format"] = pending_format
+            state["obtainer"]["confirmation_result"] = "confirmed"
+            state["obtainer"]["confirmed_format"] = pending_format
             
     except Exception as e:
         logger.error(f"LLM analysis failed: {e}")
-        state["obtainer_confirmation_result"] = "confirmed"
-        state["obtainer_confirmed_format"] = pending_format
+        state["obtainer"]["confirmation_result"] = "confirmed"
+        state["obtainer"]["confirmed_format"] = pending_format
     
     _save_to_store(state, store, user_input)
     logger.info("=== Confirmation Node: Completed ===")
@@ -263,7 +273,7 @@ def _save_to_store(state: LoopAIState, store: BaseStore, user_input: str):
             "event_type": "confirmation_completed",
             "timestamp": datetime.datetime.now().isoformat(),
             "user_input": user_input,
-            "result": state.get("obtainer_confirmation_result", "")
+            "result": state.get("obtainer", {}).get("confirmation_result", "")
         }
         
         namespace = ("mapping", thread_id)
