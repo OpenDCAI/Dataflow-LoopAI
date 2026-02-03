@@ -1,6 +1,6 @@
 <template>
     <div class="collapse-item-content">
-        <div class="control-block">
+        <div v-if="showBack" class="control-block">
             <fv-button background="transparent" border-radius="8" style="width: 30px; height: 30px"
                 @click="$emit('back')">
                 <i class="ms-Icon ms-Icon--Back"></i>
@@ -24,6 +24,10 @@ export default {
         item: {
             type: Object,
             default: () => ({})
+        },
+        showBack: {
+            type: Boolean,
+            default: true
         }
     },
     data() {
