@@ -65,26 +65,6 @@ export class ConfigModel {
     config=undefined
     
 }
-export class DatasetItem {
-  
-    /**
-     *
-
-     */ 
-    constructor(id = undefined,name = undefined,description = undefined,path = undefined,status = undefined,file_type = undefined,size = undefined,createdAt = undefined,updatedAt = undefined){
-        this.id = id
-        this.name = name
-        this.description = description
-        this.path = path
-        this.status = status
-        this.file_type = file_type
-        this.size = size
-        this.createdAt = createdAt
-        this.updatedAt = updatedAt
-    }
-    
-    
-}
 export class HTTPValidationError {
   
     /**
@@ -131,6 +111,27 @@ export class LogResponse {
      * @type {Number}
      */
     total_lines=undefined
+    
+}
+export class ResourceItem {
+  
+    /**
+     *
+
+     */ 
+    constructor(id = undefined,name = undefined,description = undefined,path = undefined,status = undefined,file_type = undefined,res_type = undefined,size = undefined,createdAt = undefined,updatedAt = undefined){
+        this.id = id
+        this.name = name
+        this.description = description
+        this.path = path
+        this.status = status
+        this.file_type = file_type
+        this.res_type = res_type
+        this.size = size
+        this.createdAt = createdAt
+        this.updatedAt = updatedAt
+    }
+    
     
 }
 export class SwanLabLogFolder {
@@ -251,10 +252,12 @@ export class TrainRequest {
   
     /**
      *
-     * @param {String} config 
+     * @param {String} framework 
+     * @param {String} config_path 
      */ 
-    constructor(config = undefined,task_name = undefined){
-        this.config = config
+    constructor(framework = undefined,config_path = undefined,task_name = undefined){
+        this.framework = framework
+        this.config_path = config_path
         this.task_name = task_name
     }
        
@@ -262,7 +265,12 @@ export class TrainRequest {
      * 
      * @type {String}
      */
-    config=undefined
+    framework=undefined   
+    /**
+     * 
+     * @type {String}
+     */
+    config_path=undefined
     
 }
 export class TrainResponse {

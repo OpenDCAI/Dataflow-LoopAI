@@ -57,7 +57,7 @@
             <msg-list></msg-list>
         </div>
         <page-loading :model-value="!lock.loading" title="Loading..."></page-loading>
-        <datasetPanel v-model="show.dataset" :title="local('Dataset')"></datasetPanel>
+        <resourcePanel v-model="show.dataset" :title="local('Resources')"></resourcePanel>
     </div>
 </template>
 
@@ -73,10 +73,10 @@ import taskNav from '@/components/manage/mainFlow/tasks/index.vue'
 import pageLoading from '@/components/general/pageLoading.vue'
 import queryBlock from '@/components/manage/chat/queryBlock.vue'
 import msgList from '@/components/manage/chat/msgList.vue'
-import datasetPanel from '@/components/manage/mainFlow/panels/datasetPanel/index.vue'
+import resourcePanel from '@/components/manage/mainFlow/panels/resourcePanel/index.vue'
 import currentTaskBlock from '@/components/manage/mainFlow/tools/currentTaskBlock.vue'
 
-import databaseIcon from '@/assets/flow/database.svg'
+import resourceIcon from '@/assets/flow/resources.svg'
 import pipelineIcon from '@/assets/flow/pipeline.svg'
 import saveIcon from '@/assets/flow/save.svg'
 
@@ -87,7 +87,7 @@ export default {
         pageLoading,
         queryBlock,
         msgList,
-        datasetPanel,
+        resourcePanel,
         currentTaskBlock
     },
     data() {
@@ -97,9 +97,9 @@ export default {
             currentTask: null,
             options: [
                 {
-                    name: () => this.local('Dataset'),
+                    name: () => this.local('Resources'),
                     icon: 'Play',
-                    img: databaseIcon,
+                    img: resourceIcon,
                     func: () => {
                         this.show.dataset = true
                     }

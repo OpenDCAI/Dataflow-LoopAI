@@ -1380,10 +1380,10 @@ train.get_all_swanlab_logs_train_swanlab_logs_get.fullPath=`${axios.defaults.bas
 */
 train.get_all_swanlab_logs_train_swanlab_logs_get.path=`/train/swanlab-logs`
 
-export class dataset {
+export class resource {
  
   /**
-  * @summary 获取数据集列表
+  * @summary 获取资源列表
   * @param {String} [search] 
   * @param {Number} [offset] 
   * @param {Number} [limit] 
@@ -1391,12 +1391,12 @@ export class dataset {
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async getDataset(search,offset,limit,cancelSource,uploadProgress,downloadProgress){
+  static async getResource(search,offset,limit,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
-        url:'/dataset/dataset',
+        url:'/resource/resource',
         data:{},
         params:{search,offset,limit},
         headers:{
@@ -1436,22 +1436,23 @@ export class dataset {
   }
  
   /**
-  * @summary 创建数据集
+  * @summary 创建资源
   * @param {String} [name] 
   * @param {String} [description] 
   * @param {String} [path] 
+  * @param {String} [res_type] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async createDataset(name,description,path,cancelSource,uploadProgress,downloadProgress){
+  static async createResource(name,description,path,res_type,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'post',
-        url:'/dataset/dataset',
+        url:'/resource/resource',
         data:{},
-        params:{name,description,path},
+        params:{name,description,path,res_type},
         headers:{
           "Content-Type":""
         },
@@ -1489,18 +1490,18 @@ export class dataset {
   }
  
   /**
-  * @summary 获取数据集总数
+  * @summary 获取资源总数
   * @param {String} [search] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async getDatasetCount(search,cancelSource,uploadProgress,downloadProgress){
+  static async getResourceCount(search,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
-        url:'/dataset/dataset/count',
+        url:'/resource/resource/count',
         data:{},
         params:{search},
         headers:{
@@ -1540,20 +1541,20 @@ export class dataset {
   }
  
   /**
-  * @summary 更新数据集
-  * @param {Number} [pathdataset_id] 
-  * @param {UserModel.DatasetItem} [datasetitem] 
+  * @summary 更新资源
+  * @param {Number} [pathresource_id] 
+  * @param {UserModel.ResourceItem} [resourceitem] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async updateDataset(pathdataset_id,datasetitem,cancelSource,uploadProgress,downloadProgress){
+  static async updateResource(pathresource_id,resourceitem,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'put',
-        url:'/dataset/dataset/'+pathdataset_id+'',
-        data:datasetitem,
+        url:'/resource/resource/'+pathresource_id+'',
+        data:resourceitem,
         params:{},
         headers:{
           "Content-Type":"application/json"
@@ -1592,18 +1593,18 @@ export class dataset {
   }
  
   /**
-  * @summary 删除数据集
-  * @param {Number} [pathdataset_id] 
+  * @summary 删除资源
+  * @param {Number} [pathresource_id] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async deleteDataset(pathdataset_id,cancelSource,uploadProgress,downloadProgress){
+  static async deleteResource(pathresource_id,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'delete',
-        url:'/dataset/dataset/'+pathdataset_id+'',
+        url:'/resource/resource/'+pathresource_id+'',
         data:{},
         params:{},
         headers:{
@@ -1643,20 +1644,20 @@ export class dataset {
   }
  
   /**
-  * @summary 预览数据集
-  * @param {Number} [pathdataset_id] 
+  * @summary 预览资源
+  * @param {Number} [pathresource_id] 
   * @param {Number} [offset] 
   * @param {Number} [limit] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async previewDataset(pathdataset_id,offset,limit,cancelSource,uploadProgress,downloadProgress){
+  static async previewResource(pathresource_id,offset,limit,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
-        url:'/dataset/dataset/preview/'+pathdataset_id+'',
+        url:'/resource/resource/preview/'+pathresource_id+'',
         data:{},
         params:{offset,limit},
         headers:{
@@ -1696,55 +1697,55 @@ export class dataset {
   }
 }
 
-// class dataset static method properties bind
+// class resource static method properties bind
 /**
-* @description getDataset url链接，包含baseURL
+* @description getResource url链接，包含baseURL
 */
-dataset.getDataset.fullPath=`${axios.defaults.baseURL}/dataset/dataset`
+resource.getResource.fullPath=`${axios.defaults.baseURL}/resource/resource`
 /**
-* @description getDataset url链接，不包含baseURL
+* @description getResource url链接，不包含baseURL
 */
-dataset.getDataset.path=`/dataset/dataset`
+resource.getResource.path=`/resource/resource`
 /**
-* @description createDataset url链接，包含baseURL
+* @description createResource url链接，包含baseURL
 */
-dataset.createDataset.fullPath=`${axios.defaults.baseURL}/dataset/dataset`
+resource.createResource.fullPath=`${axios.defaults.baseURL}/resource/resource`
 /**
-* @description createDataset url链接，不包含baseURL
+* @description createResource url链接，不包含baseURL
 */
-dataset.createDataset.path=`/dataset/dataset`
+resource.createResource.path=`/resource/resource`
 /**
-* @description getDatasetCount url链接，包含baseURL
+* @description getResourceCount url链接，包含baseURL
 */
-dataset.getDatasetCount.fullPath=`${axios.defaults.baseURL}/dataset/dataset/count`
+resource.getResourceCount.fullPath=`${axios.defaults.baseURL}/resource/resource/count`
 /**
-* @description getDatasetCount url链接，不包含baseURL
+* @description getResourceCount url链接，不包含baseURL
 */
-dataset.getDatasetCount.path=`/dataset/dataset/count`
+resource.getResourceCount.path=`/resource/resource/count`
 /**
-* @description updateDataset url链接，包含baseURL
+* @description updateResource url链接，包含baseURL
 */
-dataset.updateDataset.fullPath=`${axios.defaults.baseURL}/dataset/dataset/{dataset_id}`
+resource.updateResource.fullPath=`${axios.defaults.baseURL}/resource/resource/{resource_id}`
 /**
-* @description updateDataset url链接，不包含baseURL
+* @description updateResource url链接，不包含baseURL
 */
-dataset.updateDataset.path=`/dataset/dataset/{dataset_id}`
+resource.updateResource.path=`/resource/resource/{resource_id}`
 /**
-* @description deleteDataset url链接，包含baseURL
+* @description deleteResource url链接，包含baseURL
 */
-dataset.deleteDataset.fullPath=`${axios.defaults.baseURL}/dataset/dataset/{dataset_id}`
+resource.deleteResource.fullPath=`${axios.defaults.baseURL}/resource/resource/{resource_id}`
 /**
-* @description deleteDataset url链接，不包含baseURL
+* @description deleteResource url链接，不包含baseURL
 */
-dataset.deleteDataset.path=`/dataset/dataset/{dataset_id}`
+resource.deleteResource.path=`/resource/resource/{resource_id}`
 /**
-* @description previewDataset url链接，包含baseURL
+* @description previewResource url链接，包含baseURL
 */
-dataset.previewDataset.fullPath=`${axios.defaults.baseURL}/dataset/dataset/preview/{dataset_id}`
+resource.previewResource.fullPath=`${axios.defaults.baseURL}/resource/resource/preview/{resource_id}`
 /**
-* @description previewDataset url链接，不包含baseURL
+* @description previewResource url链接，不包含baseURL
 */
-dataset.previewDataset.path=`/dataset/dataset/preview/{dataset_id}`
+resource.previewResource.path=`/resource/resource/preview/{resource_id}`
 
 export class common {
  

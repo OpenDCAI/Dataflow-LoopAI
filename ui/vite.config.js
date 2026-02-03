@@ -23,6 +23,7 @@ export default defineConfig({
     },
     server: {
         host: '0.0.0.0',
+        port: 5174,
         proxy: {
             '/api': {
                 target: 'http://100.64.0.18:8000/', // 后端 FastAPI 地址
