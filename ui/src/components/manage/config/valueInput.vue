@@ -24,9 +24,9 @@
         </div>
         <div v-if="computedUIType === 'dir'" class="value-input-row-item" style="width: 260px;">
             <fv-button theme="light" background="#facf5c" border-radius="6"
-                style="width: 25px; height: 25px; flex-shrink: 0" :title="local('Select from Dataset')"
+                style="width: 25px; height: 25px; flex-shrink: 0" :title="local('Select from Resource')"
                 @click="$emit('select-dataset')">
-                <i class="ms-Icon ms-Icon--Wheel"></i>
+                <i class="ms-Icon ms-Icon--GiftboxOpen"></i>
             </fv-button>
             <fv-breadcrumb v-model="dirModel" class="breadcrumb-custom" :border-radius="6" :font-size="'12px'"
                 :disabled="true" :title="modelValue.value" @click="show.dir = true">
