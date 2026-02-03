@@ -1645,21 +1645,21 @@ export class resource {
  
   /**
   * @summary 预览资源
-  * @param {Number} [pathresource_id] 
+  * @param {String} [resource_id] 
   * @param {Number} [offset] 
   * @param {Number} [limit] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async previewResource(pathresource_id,offset,limit,cancelSource,uploadProgress,downloadProgress){
+  static async previewResource(resource_id,offset,limit,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
-        method:'get',
-        url:'/resource/resource/preview/'+pathresource_id+'',
+        method:'post',
+        url:'/resource/resource/preview',
         data:{},
-        params:{offset,limit},
+        params:{resource_id,offset,limit},
         headers:{
           "Content-Type":""
         },
@@ -1741,11 +1741,11 @@ resource.deleteResource.path=`/resource/resource/{resource_id}`
 /**
 * @description previewResource url链接，包含baseURL
 */
-resource.previewResource.fullPath=`${axios.defaults.baseURL}/resource/resource/preview/{resource_id}`
+resource.previewResource.fullPath=`${axios.defaults.baseURL}/resource/resource/preview`
 /**
 * @description previewResource url链接，不包含baseURL
 */
-resource.previewResource.path=`/resource/resource/preview/{resource_id}`
+resource.previewResource.path=`/resource/resource/preview`
 
 export class common {
  

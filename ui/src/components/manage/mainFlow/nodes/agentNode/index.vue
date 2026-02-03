@@ -77,7 +77,7 @@ import { useAppConfig } from '@/stores/appConfig'
 import { useLoopAI } from '@/stores/loopAI'
 
 import baseNode from '@/components/manage/mainFlow/nodes/baseNode.vue'
-import valuePreview from './valuePreview.vue'
+import valuePreview from './valuePreview/index.vue'
 import WebCrawlerLogPanel from './webcrawlerLogPanel.vue'
 
 const { $api } = useGlobal()
