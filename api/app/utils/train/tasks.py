@@ -14,6 +14,9 @@ from .tools import ensure_directory_exists, get_current_timestamp
 from dotenv import load_dotenv
 load_dotenv()
 
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(CURRENT_DIR)))
+
 class TaskManager:
     """训练任务管理器"""
     
@@ -23,7 +26,7 @@ class TaskManager:
         self.runs_dir = runs_dir
         self.tasks: Dict[str, Dict] = {}
         self.executor = ThreadPoolExecutor(max_workers=4)
-        self.app_config = json.load(open('/jizhicfs/hymiezhao/lpc/repos/lr/Dataflow-LoopAI/api/app_config.json'))
+        self.app_config = json.load(open(os.path.join(BASE_DIR, "app_config.json")))
         self.llamafactory_dir = self.app_config.get("llamafactory_dir")
         self.verl_dir = self.app_config.get("verl_dir")
         # self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
