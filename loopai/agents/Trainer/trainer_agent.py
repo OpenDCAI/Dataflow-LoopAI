@@ -329,7 +329,7 @@ class TrainerAgent(BaseAgent):
                     'train_input_dataset_path',
                     'train_input_task_description',
                     'train_input_config_template_path',
-                    'train_output_dir',
+                    'output_dir',
                     'train_input_model_name'
                 ]
             }

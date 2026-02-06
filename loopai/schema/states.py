@@ -830,12 +830,6 @@ class TrainerState(BaseModel):
         description="训练配置输出路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
-    train_output_dir: str = Field(
-        default="",
-        title="训练输出目录",
-        description="训练输出目录",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
-    )
     train_input_model_name: str = Field(
         default="",
         title="训练模型名称",
@@ -1068,7 +1062,6 @@ class LoopAIState(MessagesState):
     # train_input_task_description: str
     # train_input_config_template_path: str
     # train_config_output_path: str
-    # train_output_dir: str
     # train_input_model_name: str
     # train_input_use_swanlab: bool = True
     # train_input_swanlab_project: str
