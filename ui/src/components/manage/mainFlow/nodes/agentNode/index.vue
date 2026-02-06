@@ -37,7 +37,7 @@
                         class="node-row-item col">
                         <span class="info-title" :style="{ color: thisData.iconColor }">{{
                             custom_info.key
-                            }}</span>
+                        }}</span>
                         <hr />
                         <div class="node-row-item">
                             <span class="info-title">{{ appConfig.local('Message') }}</span>
@@ -53,12 +53,12 @@
                         </div>
                         <span class="info-title" :style="{ color: thisData.iconColor }">{{
                             appConfig.local('Event Data')
-                            }}</span>
+                        }}</span>
                         <hr />
                         <div v-if="custom_info.value.data" v-for="(item_val, item_key) in custom_info.value.data"
                             :key="`custom_item_${item_key}`" class="node-row-item col">
                             <span class="info-title">{{ item_key }}</span>
-                            <fv-text-box :model-value="item_val"
+                            <fv-text-box :model-value="item_val !== null ? item_val.toString() : 'null'"
                                 :placeholder="appConfig.local('Please input') + ` ${item_key}`" font-size="12"
                                 border-radius="8" :reveal-border="true" style="width: 100%; height: 35px"
                                 @mousedown.stop @click.stop></fv-text-box>

@@ -1,11 +1,11 @@
 <template>
     <div class="value-preview-row-item">
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
-        <p v-if="computedUIType === 'default'" class="none-value">{{ thisValue }}</p>
+        <span v-if="computedUIType === 'default'" class="none-value">{{ thisValue }}</span>
         <fv-text-box v-if="computedUIType === 'text'" v-model="thisValue" :placeholder="local(modelKey)"
             border-radius="6" :border-width="2" :reveal-border="true" :disabled="!lock"
             :border-color="'rgba(120, 120, 120, 0.1)'" :focus-border-color="foreground" :is-box-shadow="true" underline
-            style="height: 30px; margin-bottom: 3px" readonly></fv-text-box>
+            style="width: 100%; height: 30px; margin-bottom: 3px" readonly></fv-text-box>
         <fv-toggle-switch v-if="computedUIType === 'bool'" v-model="thisValue" :on="local('True')" :off="local('False')"
             :width="65" :height="25" :switch-on-background="foreground" :inside-content="true"
             :disabled="!lock"></fv-toggle-switch>
@@ -179,15 +179,17 @@ export default {
     .none-value {
         @include HcenterVcenter;
 
-        width: auto;
-        height: 100%;
+        width: 100%;
+        height: auto;
         flex: 1;
-        padding: 5px 15px;
+        padding: 5px 5px;
         background: rgba(255, 255, 255, 0.8);
         font-size: 12px;
         color: rgba(120, 120, 120, 1);
         border-radius: 6px;
+        overflow-wrap: anywhere;
         user-select: none;
+        overflow: hidden;
     }
 }
 </style>
