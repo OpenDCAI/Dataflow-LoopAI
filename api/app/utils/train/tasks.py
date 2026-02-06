@@ -53,6 +53,14 @@ class TaskManager:
         self.tasks[task_id] = task_info
         return task_info
     
+    def get_last_task(self) -> Optional[Dict]:
+        """获取最后创建的任务"""
+        if not self.tasks:
+            return None
+        # 按创建时间排序，返回最新的任务
+        sorted_tasks = sorted(self.tasks.values(), key=lambda x: x['created_at'], reverse=True)
+        return sorted_tasks[0]
+    
     def start_training(self, task_id: str) -> bool:
         """启动训练任务"""
         if task_id not in self.tasks:
