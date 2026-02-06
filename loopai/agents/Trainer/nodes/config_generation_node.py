@@ -25,7 +25,6 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
             - train_input_dataset_path: 训练数据集路径
             - train_input_model_name: 基础模型名称（可选，默认 qwen2.5-7b-instruct）
             - train_input_config_template_path: 配置模板路径（可选）
-            - train_output_dir: 训练输出目录（可选，默认 ./output/training）
             - train_input_use_swanlab: 是否使用 SwanLab（可选，默认 True）
             - train_input_swanlab_project: SwanLab 项目名称（可选）
             - output_dir: 输出目录
@@ -56,7 +55,7 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
         # 获取可选参数
         model_name = state.get('trainer', {}).get('train_input_model_name', 'qwen2.5-7b-instruct')
         template_path = state.get('trainer', {}).get('train_input_config_template_path')
-        training_output_dir = state.get('trainer', {}).get('train_output_dir', './output/training')
+        training_output_dir = state.get('trainer', {}).get('output_dir', './output/training')
         use_swanlab = state.get('trainer', {}).get('train_input_use_swanlab', True)
         swanlab_project = state.get('trainer', {}).get('train_input_swanlab_project', 'llamafactory_training')
         
