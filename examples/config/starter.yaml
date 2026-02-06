@@ -102,6 +102,8 @@ default_states:
   obtainer_debug: false
 
   trainer:
+    train_framework: 'llamafactory'
+    llamafactory_dir: '/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/'
     train_input_dataset_path: "/home/lpc/repos/Dataflow-LoopAI/data/alpaca_en_demo.json" # to defined the path of training dataset (json/jsonl format)
     train_input_task_description: "训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务" # to defined the task description for training
     train_input_config_template_path: "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml" # to defined the path of llamafactory config template
