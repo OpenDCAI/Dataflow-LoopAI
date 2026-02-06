@@ -189,7 +189,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             if training_progress:
                 # 从日志中解析出的实际训练进度
                 actual_progress = log_parser.get_progress_percentage(training_progress)
-                progress_val = actual_progress  # 将训练进度映射到0.4-0.8区间
+                progress_val = actual_progress
                 progress_text = training_progress['progress_text']
                 time_text = training_progress['time_text']
                 

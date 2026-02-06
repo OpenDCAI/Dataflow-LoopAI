@@ -848,6 +848,12 @@ class TrainerState(BaseModel):
         description="SwanLab 项目名称",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
+    output_dir: str = Field(
+        default="",
+        title="输出目录",
+        description="输出目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
     data_check_passed: bool = Field(
         default=False,
         title="数据检查是否通过",
