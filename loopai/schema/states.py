@@ -806,19 +806,19 @@ class TrainerState(BaseModel):
         description="LlamaFactory 目录",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
-    train_dataset_path: str = Field(
+    train_input_dataset_path: str = Field(
         default="",
         title="训练数据集路径",
         description="训练数据集路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
-    train_task_description: str = Field(
+    train_input_task_description: str = Field(
         default="",
         title="训练任务描述",
         description="训练任务描述",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
-    train_config_template_path: str = Field(
+    train_input_config_template_path: str = Field(
         default="",
         title="训练配置模板路径",
         description="训练配置模板路径",
@@ -836,19 +836,19 @@ class TrainerState(BaseModel):
         description="训练输出目录",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
-    train_model_name: str = Field(
+    train_input_model_name: str = Field(
         default="",
         title="训练模型名称",
         description="训练模型名称",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
-    train_use_swanlab: bool = Field(
+    train_input_use_swanlab: bool = Field(
         default=True,
         title="是否使用 SwanLab",
         description="是否使用 SwanLab",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
-    train_swanlab_project: str = Field(
+    train_input_swanlab_project: str = Field(
         default="",
         title="SwanLab 项目名称",
         description="SwanLab 项目名称",
@@ -1064,14 +1064,14 @@ class LoopAIState(MessagesState):
     # === WebCrawler (网页爬取模块) ===
     webcrawler: Annotated[Dict[str, Any], merge_dict]
 
-    # train_dataset_path: str
-    # train_task_description: str
-    # train_config_template_path: str
+    # train_input_dataset_path: str
+    # train_input_task_description: str
+    # train_input_config_template_path: str
     # train_config_output_path: str
     # train_output_dir: str
-    # train_model_name: str
-    # train_use_swanlab: bool = True
-    # train_swanlab_project: str
+    # train_input_model_name: str
+    # train_input_use_swanlab: bool = True
+    # train_input_swanlab_project: str
     # data_check_passed: bool = False
     # data_check_result: dict = {}
     # data_check_report_path: str = ""
