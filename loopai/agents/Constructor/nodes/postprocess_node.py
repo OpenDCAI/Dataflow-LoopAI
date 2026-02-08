@@ -43,6 +43,13 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
     """Post-process node that converts downloaded datasets to PT/SFT format"""
     logger.info("=== Post-process Node: Starting ===")
     
+    _emit_postprocess_progress(
+        event_name=state.get('current', 'postprocess_node'),
+        message="Constructor: 后处理节点开始",
+        progress=0.0,
+        data={"phase": "postprocess", "node": "postprocess_node"},
+    )
+    
     # Check if there are any successful downloads
     subtasks = state.get("obtainer_subtasks", [])
     successful_downloads = [

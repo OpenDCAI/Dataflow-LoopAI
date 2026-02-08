@@ -295,7 +295,17 @@ class ConstructorAgent(BaseAgent):
                 progress=0.0,
                 data={"phase": "postprocess"},
             ).json())
-        state = postprocess_node(state)
+        try:
+            state = postprocess_node(state)
+        except Exception as e:
+            logger.error(f"Constructor postprocess_node error: {e}", exc_info=True)
+            state["exception"] = f"Postprocess error: {str(e)}"
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message=f"Constructor: 后处理异常: {str(e)[:200]}",
+                    data={"error": str(e), "phase": "postprocess"},
+                ).json())
         if writer:
             res = state.get("obtainer", {}).get("postprocess_results", {})
             writer(StreamEvent(
@@ -307,6 +317,7 @@ class ConstructorAgent(BaseAgent):
                     "total_records_processed": res.get("total_records_processed", 0),
                     "processed_sources_count": res.get("processed_sources_count", 0),
                     "output_dir": res.get("output_dir", ""),
+                    "has_exception": bool(state.get("exception")),
                 },
             ).json())
         return state
@@ -338,14 +349,16 @@ class ConstructorAgent(BaseAgent):
         if writer:
             cleaning_results = state.get("obtainer", {}).get("cleaning_results", {})
             tools_executed = cleaning_results.get("tools_executed", [])
+            has_exception = bool(state.get("exception"))
             writer(StreamEvent(
                 current=state.get('current', 'ConstructorAgent.data_cleaning'),
-                message="Constructor: 数据清洗完成",
+                message="Constructor: 数据清洗完成" if not has_exception else f"Constructor: 数据清洗完成(有异常)",
                 progress=1.0,
                 data={
                     "phase": "data_cleaning",
                     "tools_executed": [t.get("tool") if isinstance(t, dict) else str(t) for t in tools_executed],
                     "tools_count": len(tools_executed),
+                    "has_exception": has_exception,
                 },
             ).json())
         return state
@@ -376,14 +389,16 @@ class ConstructorAgent(BaseAgent):
         writer = get_stream_writer()
         if writer:
             mapping_results = state.get("obtainer", {}).get("mapping_results", {})
+            has_exception = bool(state.get("exception"))
             writer(StreamEvent(
                 current=state.get('current', 'ConstructorAgent.mapping_subgraph'),
-                message="Constructor: 格式映射完成",
+                message="Constructor: 格式映射完成" if not has_exception else "Constructor: 格式映射完成(有异常)",
                 progress=1.0,
                 data={
                     "phase": "mapping",
                     "total_mapped_records": mapping_results.get("total_mapped_records", 0),
                     "final_output_dir": mapping_results.get("final_output_dir", ""),
+                    "has_exception": has_exception,
                 },
             ).json())
         return state
