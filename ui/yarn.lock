@@ -174,10 +174,10 @@
     "@babel/helper-string-parser" "^7.27.1"
     "@babel/helper-validator-identifier" "^7.27.1"
 
-"@creatorsn/powereditor3@^0.1.9":
-  version "0.1.9"
-  resolved "https://registry.yarnpkg.com/@creatorsn/powereditor3/-/powereditor3-0.1.9.tgz#a539a464e57ece5f5860152ed5f3e59f2ec7cd92"
-  integrity sha512-rLVq9NIYHPqPPrAjh9jRiiPWHxwAGyxrQXk28LhPGzukOLop4W/fUC+1fTqP4f9dZyt2XroQPBOSakfMudfinw==
+"@creatorsn/powereditor3@^0.1.10":
+  version "0.1.10"
+  resolved "https://registry.yarnpkg.com/@creatorsn/powereditor3/-/powereditor3-0.1.10.tgz#045f104aa765cde9ab472feaefbd89bd35164b9b"
+  integrity sha512-eRK9sdoEFHTAofLgw5EmIr8iFwyk8228TZrsWdxFgrVTxzcw2g/ROpKf/B5lJOCq9Mko/jUwjKQsHJkcJhcMJg==
   dependencies:
     "@creatorsn/vfluent3" "^0.3.13"
     "@tiptap/core" "2.3.0"
@@ -233,10 +233,10 @@
     swiper "8.3.2"
     vue "^3.4.20"
 
-"@creatorsn/vfluent3@^0.3.29":
-  version "0.3.29"
-  resolved "https://registry.yarnpkg.com/@creatorsn/vfluent3/-/vfluent3-0.3.29.tgz#16fdbcf70281211f905f9a99377b4ecd7913bb6d"
-  integrity sha512-li57ZWy+AF3IfSerPsKTVay7JyWr1XWjXHmphN2Vq4HWYzRh0Mfv1zNlXOmIjpZjX8dhtDoSLE3wyOLVVzkWZA==
+"@creatorsn/vfluent3@^0.3.37":
+  version "0.3.37"
+  resolved "https://registry.yarnpkg.com/@creatorsn/vfluent3/-/vfluent3-0.3.37.tgz#8968248a1c81c8ad4d9254512d4ea43a43fc63b3"
+  integrity sha512-nUBHK+ete5+uBKx7foneIZ8VDZAG7pEMiqZlW+ihU9rvRPgh2sTUhox6CVoEIGB6Cxs33LFOoMp6N68wGemHQQ==
   dependencies:
     "@vue/shared" "^3.4.20"
     gsap "3.1.1"
@@ -2661,6 +2661,11 @@ highlight.js@11.6.0, highlight.js@~11.6.0:
   version "11.6.0"
   resolved "https://registry.yarnpkg.com/highlight.js/-/highlight.js-11.6.0.tgz#a50e9da05763f1bb0c1322c8f4f755242cff3f5a"
   integrity sha512-ig1eqDzJaB0pqEvlPVIpSSyMaO92bH1N2rJpLMN/nX396wTpDA4Eq0uK+7I/2XG17pFaaKE0kjV/XPeGt7Evjw==
+
+highlight.js@^11.11.1:
+  version "11.11.1"
+  resolved "https://registry.yarnpkg.com/highlight.js/-/highlight.js-11.11.1.tgz#fca06fa0e5aeecf6c4d437239135fabc15213585"
+  integrity sha512-Xwwo44whKBVCYoliBQwaPvtd/2tYFkRQtXDWj1nackaV2JPXx3L0+Jvd8/qCJ2p+ML0/XVkJ2q+Mr+UVdpJK5w==
 
 iconv-lite@0.6:
   version "0.6.3"

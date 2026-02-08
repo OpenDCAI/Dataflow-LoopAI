@@ -1,3 +1,6 @@
 {
-    "llamafactory_dir": ""
+    "llamafactory_dir": "",
+    "llamafactory_env_path": "",
+    "CUDA_VISIBLE_DEVICES": "",
+    "swanlab_api_key": ""
 }

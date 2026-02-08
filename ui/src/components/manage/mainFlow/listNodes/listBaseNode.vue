@@ -1,6 +1,6 @@
 <template>
     <div
-        class="df-flow-default-list-node"
+        class="lp-flow-default-list-node"
         :class="[{ selected: selected }]"
         :style="{
             '--node-background': thisData.background,
@@ -89,7 +89,7 @@ const thisData = computed(() => {
 </script>
 
 <style lang="scss">
-.df-flow-default-list-node {
+.lp-flow-default-list-node {
     --node-background: rgba(252, 252, 252, 0.8);
     --node-title-color: rgba(100, 108, 126, 1);
     --node-status-color: rgba(168, 170, 176, 1);

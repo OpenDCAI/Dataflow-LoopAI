@@ -739,7 +739,7 @@ class JudgerState(BaseModel):
     eval_format_type: str = Field(
         default=None,
         title="评估模型问题格式化类型",
-        description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"，格式化后的文件将存至output_dir定义的目录下",
+        description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"和\"mbpp\"，格式化后的文件将存至output_dir定义的目录下",
         json_schema_extra={"ui_type": "list", "ui_group": "评估模型", "allowed_values": ["human-eval"]}
     )
     eval_batch_size: int = Field(
@@ -787,13 +787,13 @@ class JudgerState(BaseModel):
     eval_vllm_env_path: str = Field(
         default="",
         title="vllm本地启动参数——启动环境",
-        description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动",
+        description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动。参数需要具体到python目录，格式应为<path>/miniconda3/envs/<env_name>/bin/python",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     output_dir: str = Field(
         default=None,
         title="评估模型输出文件目录",
-        description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果",
+        description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果。输出文件路径将会在judger参数output_result_path（评测结果）、output_case_path（评测样例集）、output_problem_path（评测格式化后问题集）中记录。",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型", "is_output": True}
     )
 
@@ -892,19 +892,32 @@ class AnalyzerState(BaseModel):
 
 
 class TrainerState(BaseModel):
-    train_dataset_path: str = Field(
+    train_framework: str = Field(
+        default="",
+        title="训练框架",
+        description="训练框架",
+        json_schema_extra={"ui_type": "list", "ui_group": "训练模型",
+                           "allowed_values": ["llamafactory", "verl"]}
+    )
+    llamafactory_dir: str = Field(
+        default="",
+        title="LlamaFactory 目录",
+        description="LlamaFactory 目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    train_input_dataset_path: str = Field(
         default="",
         title="训练数据集路径",
         description="训练数据集路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
-    train_task_description: str = Field(
+    train_input_task_description: str = Field(
         default="",
         title="训练任务描述",
         description="训练任务描述",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
-    train_config_template_path: str = Field(
+    train_input_config_template_path: str = Field(
         default="",
         title="训练配置模板路径",
         description="训练配置模板路径",
@@ -916,29 +929,29 @@ class TrainerState(BaseModel):
         description="训练配置输出路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
-    train_output_dir: str = Field(
-        default="",
-        title="训练输出目录",
-        description="训练输出目录",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
-    )
-    train_model_name: str = Field(
+    train_input_model_name: str = Field(
         default="",
         title="训练模型名称",
         description="训练模型名称",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
-    train_use_swanlab: bool = Field(
+    train_input_use_swanlab: bool = Field(
         default=True,
         title="是否使用 SwanLab",
         description="是否使用 SwanLab",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
-    train_swanlab_project: str = Field(
+    train_input_swanlab_project: str = Field(
         default="",
         title="SwanLab 项目名称",
         description="SwanLab 项目名称",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    output_dir: str = Field(
+        default="",
+        title="输出目录",
+        description="输出目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     data_check_passed: bool = Field(
         default=False,
@@ -1150,14 +1163,13 @@ class LoopAIState(MessagesState):
     # === WebCrawler (网页爬取模块) ===
     webcrawler: Annotated[Dict[str, Any], merge_dict]
 
-    # train_dataset_path: str
-    # train_task_description: str
-    # train_config_template_path: str
+    # train_input_dataset_path: str
+    # train_input_task_description: str
+    # train_input_config_template_path: str
     # train_config_output_path: str
-    # train_output_dir: str
-    # train_model_name: str
-    # train_use_swanlab: bool = True
-    # train_swanlab_project: str
+    # train_input_model_name: str
+    # train_input_use_swanlab: bool = True
+    # train_input_swanlab_project: str
     # data_check_passed: bool = False
     # data_check_result: dict = {}
     # data_check_report_path: str = ""

@@ -2,6 +2,7 @@ import os
 import signal
 from typing import Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+import shutil
 
 from ..models.task_models import TrainRequest, TrainResponse, TaskStatusResponse, LogResponse, TaskStatus, SwanLabLogResponse, AllSwanLabLogsResponse
 from ..utils.train import TaskManager, generate_task_id, save_yaml_config, read_log_file, validate_yaml_content
@@ -22,20 +23,26 @@ task_manager = TaskManager(CONFIGS_DIR, LOGS_DIR, RUNS_DIR)
 async def start_training(request: TrainRequest):
     """启动训练任务 - JSON配置方式"""
     try:
-        # 验证YAML配置
-        if not validate_yaml_content(request.config):
-            raise HTTPException(
-                status_code=400, detail="Invalid YAML configuration")
+        # # 验证YAML配置
+        # if not validate_yaml_content(request.config):
+        #     raise HTTPException(
+        #         status_code=400, detail="Invalid YAML configuration")
 
         # 生成任务ID
         task_id = generate_task_id()
 
-        # 保存配置文件
-        config_path = save_yaml_config(task_id, request.config, CONFIGS_DIR)
+        # # 保存配置文件
+        # config_path = save_yaml_config(task_id, request.config_path, CONFIGS_DIR)
+        # 把配置文件拷贝到CONFIG_DIR目录下
+        if request.framework == 'llamafactory':
+            config_copy_path = os.path.join(CONFIGS_DIR, f"{task_id}.yaml")
+        elif request.framework == 'verl':
+            config_copy_path = os.path.join(CONFIGS_DIR, f"{task_id}.sh")
+        shutil.copy(request.config_path, config_copy_path)
 
         # 创建训练任务
         task_info = task_manager.create_task(
-            task_id, config_path, request.task_name)
+            task_id, config_copy_path, request.framework, request.task_name)
 
         # 启动训练
         if task_manager.start_training(task_id):
@@ -81,7 +88,7 @@ async def start_training_upload(
         config_path = save_yaml_config(task_id, config_content, CONFIGS_DIR)
 
         # 创建训练任务
-        task_info = task_manager.create_task(task_id, config_path, task_name)
+        task_info = task_manager.create_task(task_id, config_path, 'llamafactory', task_name)
 
         # 启动训练
         if task_manager.start_training(task_id):

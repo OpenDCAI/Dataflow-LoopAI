@@ -114,7 +114,7 @@ def generate_sample_code(state):
                 "sample_save_path": test_case_path
             }
         ).json())
-    return state
+    return test_case_path
 
 def generate_sample_text2sql(state):
     judger_state = state.get("judger", {})
@@ -205,4 +205,4 @@ def generate_sample_text2sql(state):
                 "sample_save_path": test_case_path
             }
         ).json())
-    return state
+    return test_case_path
