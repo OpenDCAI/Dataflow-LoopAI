@@ -1,103 +1,39 @@
 <template>
     <div class="value-preview-row-item">
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
-        <p v-if="computedUIType === 'default'" class="none-value">{{ thisValue }}</p>
-        <fv-text-box
-            v-if="computedUIType === 'text'"
-            v-model="thisValue"
-            :placeholder="local(modelKey)"
-            border-radius="6"
-            :border-width="2"
-            :reveal-border="true"
-            :disabled="!lock"
-            :border-color="'rgba(120, 120, 120, 0.1)'"
-            :focus-border-color="foreground"
-            :is-box-shadow="true"
-            underline
-            style="height: 30px; margin-bottom: 3px"
-        ></fv-text-box>
-        <fv-toggle-switch
-            v-if="computedUIType === 'bool'"
-            v-model="thisValue"
-            :on="local('True')"
-            :off="local('False')"
-            :width="65"
-            :height="25"
-            :switch-on-background="foreground"
-            :inside-content="true"
-            :disabled="!lock"
-        ></fv-toggle-switch>
-        <fv-combobox
-            v-if="computedUIType === 'list'"
-            v-model="listValueModel"
-            :placeholder="modelKey"
-            :options="formatAllowedValues"
-        ></fv-combobox>
+        <span v-if="computedUIType === 'default'" class="none-value">{{ thisValue }}</span>
+        <fv-text-box v-if="computedUIType === 'text'" v-model="thisValue" :placeholder="local(modelKey)"
+            border-radius="6" :border-width="2" :reveal-border="true" :disabled="!lock"
+            :border-color="'rgba(120, 120, 120, 0.1)'" :focus-border-color="foreground" :is-box-shadow="true" underline
+            style="width: 100%; height: 30px; margin-bottom: 3px" readonly></fv-text-box>
+        <fv-toggle-switch v-if="computedUIType === 'bool'" v-model="thisValue" :on="local('True')" :off="local('False')"
+            :width="65" :height="25" :switch-on-background="foreground" :inside-content="true"
+            :disabled="!lock"></fv-toggle-switch>
+        <fv-combobox v-if="computedUIType === 'list'" v-model="listValueModel" :placeholder="modelKey"
+            :options="formatAllowedValues"></fv-combobox>
         <div v-if="computedUIType === 'slider'" class="value-preview-row-item">
-            <fv-slider
-                v-model="slideValueModel"
-                :showLabel="true"
-                :unit="1"
-                :color="foreground"
-                :disabled="!lock"
-                background="rgba(255, 255, 255, 0.8)"
-                style="margin: 5px 0px; flex: 1"
-            >
+            <fv-slider v-model="slideValueModel" :showLabel="true" :unit="1" :color="foreground" :disabled="!lock"
+                background="rgba(255, 255, 255, 0.8)" style="margin: 5px 0px; flex: 1">
                 <template v-slot="prop">
                     <span>{{ prop.modelValue / 100 }}</span>
                 </template>
             </fv-slider>
-            <fv-text-box
-                v-model="thisValue"
-                :placeholder="local(modelKey)"
-                border-radius="3"
-                :border-width="2"
-                :reveal-border="true"
-                :disabled="!lock"
-                :border-color="'rgba(120, 120, 120, 0.1)'"
-                :focus-border-color="foreground"
-                :is-box-shadow="true"
-                underline
-                style="width: 80px"
-            ></fv-text-box>
+            <fv-text-box v-model="thisValue" :placeholder="local(modelKey)" border-radius="3" :border-width="2"
+                :reveal-border="true" :disabled="!lock" :border-color="'rgba(120, 120, 120, 0.1)'"
+                :focus-border-color="foreground" :is-box-shadow="true" underline style="width: 80px" readonly></fv-text-box>
         </div>
         <div v-if="computedUIType === 'dir'" class="value-preview-row-item">
-            <fv-breadcrumb
-                v-model="dirModel"
-                :border-radius="6"
-                :font-size="'10px'"
-                :disabled="true"
-                :title="thisValue"
-                style="flex: 1; flex-shrink: 0"
-                @click="show.dir = true"
-            >
+            <fv-breadcrumb v-model="dirModel" :border-radius="6" :font-size="'10px'" :disabled="true" :title="thisValue"
+                style="flex: 1; flex-shrink: 0" @click="show.dir = true">
             </fv-breadcrumb>
-            <directory-selector
-                v-model="show.dir"
-                v-model:filePath="dirModel"
-                :readOnly="true"
-            ></directory-selector>
+            <component :is="dirComponent" v-model="show.dir" v-model:filePath="dirModel" :readOnly="true"></component>
         </div>
-        <fv-button
-            v-show="false"
-            theme="dark"
-            background="rgba(111, 92, 196, 1)"
-            border-radius="30"
-            style="width: 25px; height: 25px; flex-shrink: 0"
-            :title="local('Set as Default')"
-            @click="setDefault"
-        >
+        <fv-button v-show="false" theme="dark" background="rgba(111, 92, 196, 1)" border-radius="30"
+            style="width: 25px; height: 25px; flex-shrink: 0" :title="local('Set as Default')" @click="setDefault">
             <i class="ms-Icon ms-Icon--Leaf"></i>
         </fv-button>
-        <fv-button
-            v-show="false"
-            theme="dark"
-            background="rgba(200, 38, 45, 1)"
-            border-radius="30"
-            style="width: 25px; height: 25px; flex-shrink: 0"
-            :title="local('Clear as None')"
-            @click="clearNone"
-        >
+        <fv-button v-show="false" theme="dark" background="rgba(200, 38, 45, 1)" border-radius="30"
+            style="width: 25px; height: 25px; flex-shrink: 0" :title="local('Clear as None')" @click="clearNone">
             <i class="ms-Icon ms-Icon--Delete"></i>
         </fv-button>
     </div>
@@ -109,10 +45,12 @@ import { useAppConfig } from '@/stores/appConfig'
 import { useLoopAI } from '@/stores/loopAI'
 import { useTheme } from '@/stores/theme'
 
+import resPreviewPanel from './resPreviewPanel.vue'
 import directorySelector from '@/components/general/directorySelector.vue'
 
 export default {
     components: {
+        resPreviewPanel,
         directorySelector
     },
     props: {
@@ -206,6 +144,17 @@ export default {
             set(value) {
                 this.thisValue = value
             }
+        },
+        dirComponent() {
+            const allowedExts = ['csv', 'tsv', 'txt', 'md', 'json', 'jsonl', 'html']
+            let path = this.thisValue.split('/')
+            let fileName = path[path.length - 1]
+            let fileExt = fileName.split('.').pop()
+            if (allowedExts.includes(fileExt)) {
+                return resPreviewPanel
+            } else {
+                return directorySelector
+            }
         }
     },
     methods: {
@@ -230,15 +179,17 @@ export default {
     .none-value {
         @include HcenterVcenter;
 
-        width: auto;
-        height: 100%;
+        width: 100%;
+        height: auto;
         flex: 1;
-        padding: 5px 15px;
+        padding: 5px 5px;
         background: rgba(255, 255, 255, 0.8);
         font-size: 12px;
         color: rgba(120, 120, 120, 1);
         border-radius: 6px;
+        overflow-wrap: anywhere;
         user-select: none;
+        overflow: hidden;
     }
 }
 </style>

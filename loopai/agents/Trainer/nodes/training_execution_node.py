@@ -11,6 +11,7 @@ from loopai.schema.states import LoopAIState
 from loopai.schema.events import StreamEvent
 from loopai.agents.Trainer.utils.training_service_client import create_training_client
 from loopai.agents.Trainer.utils.insert_dataset import insert_dataset_to_llamafactory
+from loopai.agents.Trainer.utils.training_log_parser import parse_task_training_progress, TrainingLogParser
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -66,7 +67,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         if writer:
             writer(StreamEvent(
                 current=state['current'],
-                progress=0.05,
+                progress=0.0,
                 message="正在检查并注册数据集到LlamaFactory...",
                 data={"dataset_path": dataset_path, "llamafactory_dir": llamafactory_dir}
             ).json())
@@ -84,7 +85,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 if writer:
                     writer(StreamEvent(
                         current=state['current'],
-                        progress=0.08,
+                        progress=0.0,
                         message=f"数据集 '{dataset_name}' 已成功注册到LlamaFactory",
                         data={"dataset_name": dataset_name, "registered": True}
                     ).json())
@@ -112,7 +113,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         if writer:
             writer(StreamEvent(
                 current=state['current'],
-                progress=0.1,
+                progress=0.0,
                 message="正在连接训练服务...",
                 data={"service_url": service_url, "config_path": config_path}
             ).json())
@@ -131,7 +132,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         if writer:
             writer(StreamEvent(
                 current=state['current'],
-                progress=0.2,
+                progress=0.0,
                 message="训练服务连接成功，准备提交任务...",
                 data={"service_status": "connected"}
             ).json())        
@@ -142,7 +143,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         if writer:
             writer(StreamEvent(
                 current=state['current'],
-                progress=0.3,
+                progress=0.0,
                 message="正在提交训练任务到远程服务...",
                 data={"task_description": task_description}
             ).json())
@@ -164,12 +165,13 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         if writer:
             writer(StreamEvent(
                 current=state['current'],
-                progress=0.4,
+                progress=0.0,
                 message=f"训练任务提交成功，任务ID: {task_id}, 训练框架: {framework}",
                 data={"task_id": task_id, "start_time": start_time}
             ).json())
+
+        log_parser = TrainingLogParser()  # 创建日志解析器实例
         
-        # 等待训练完成并监控进度
         def progress_callback(tid, status_info, elapsed_time):
             status = status_info.get('status', 'unknown')
             logger.info(f"训练进度 - 任务ID: {tid}, 状态: {status}, 已用时: {int(elapsed_time)}秒")
@@ -177,22 +179,53 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             # 更新状态到state中
             state.setdefault('trainer', {})['trainer_current_training_status'] = status
             state.setdefault('trainer', {})['current_training_elapsed'] = elapsed_time
+
+            # 读取训练日志，解析当前进度
+            # output_dir = state.get('trainer', {}).get('output_dir', './output/trainer')
+            # log_output_dir = os.path.join('./api/logs') if framework == 'llamafactory' and llamafactory_dir else output_dir
+            training_progress = parse_task_training_progress(tid)
+            
+            # 计算实际进度
+            if training_progress:
+                # 从日志中解析出的实际训练进度
+                actual_progress = log_parser.get_progress_percentage(training_progress)
+                progress_val = actual_progress
+                progress_text = training_progress['progress_text']
+                time_text = training_progress['time_text']
+                
+                logger.info(f"训练进度详情: {progress_text} [{time_text}]")
+                
+                progress_message = f"训练进行中 - {progress_text} [{time_text}] - 状态: {status}"
+                progress_data = {
+                    "task_id": tid,
+                    "status": status,
+                    "elapsed_time": int(elapsed_time),
+                    "training_progress": progress_text,
+                    "training_time": time_text,
+                    "current_step": training_progress['current_step'],
+                    "total_steps": training_progress['total_steps'],
+                    "actual_progress": f"{int(actual_progress * 100)}%"
+                }
+            else:
+                # 如果无法解析日志，使用时间估算
+                progress_val = elapsed_time / 3600.0  # 假设最多1小时，进度从0.4到0.8
+                progress_val = min(progress_val, 1.0)
+                
+                progress_message = f"训练进行中 - 状态: {status}"
+                progress_data = {
+                    "task_id": tid,
+                    "status": status,
+                    "elapsed_time": int(elapsed_time),
+                    "estimated_progress": f"{int(progress_val * 100)}%"
+                }
             
             # 实时进度报告
             if writer:
-                progress_val = 0.4 + (elapsed_time / 3600.0) * 0.4  # 假设最多1小时，进度从0.4到0.8
-                progress_val = min(progress_val, 0.8)
-                
                 writer(StreamEvent(
                     current=state['current'],
                     progress=progress_val,
-                    message=f"训练进行中 - 状态: {status}",
-                    data={
-                        "task_id": tid,
-                        "status": status,
-                        "elapsed_time": int(elapsed_time),
-                        "estimated_progress": f"{int(progress_val * 100)}%"
-                    }
+                    message=progress_message,
+                    data=progress_data
                 ).json())        
         logger.info("⏳ 等待训练完成...")
         success, final_status, error = client.wait_for_completion(
@@ -210,7 +243,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         if writer:
             writer(StreamEvent(
                 current=state['current'],
-                progress=0.85,
+                progress=1.0,
                 message="训练完成，正在获取训练日志...",
                 data={
                     "training_time": int(training_time),
@@ -251,7 +284,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         if writer:
             writer(StreamEvent(
                 current=state['current'],
-                progress=0.9,
+                progress=1.0,
                 message="正在生成训练报告...",
                 data={
                     "log_retrieved": log_success, 

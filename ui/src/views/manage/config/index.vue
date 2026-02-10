@@ -62,8 +62,8 @@
                 </div>
             </div>
         </div>
-        <dataset-panel v-model="show.dataset" :title="local('Dataset')" mode="read"
-            @confirm="handleDatasetConfirm"></dataset-panel>
+        <resource-panel v-model="show.dataset" :title="local('Dataset')" mode="read"
+            @confirm="handleDatasetConfirm"></resource-panel>
     </div>
 </template>
 
@@ -74,12 +74,12 @@ import { useTheme } from '@/stores/theme'
 import { useLoopAI } from '@/stores/loopAI'
 
 import valueInput from '@/components/manage/config/valueInput.vue'
-import datasetPanel from '@/components/manage/mainFlow/panels/datasetPanel/index.vue'
+import resourcePanel from '@/components/manage/mainFlow/panels/resourcePanel/index.vue'
 
 export default {
     components: {
         valueInput,
-        datasetPanel
+        resourcePanel
     },
     data() {
         return {

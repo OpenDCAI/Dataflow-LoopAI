@@ -24,16 +24,16 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         })
     }
 
-    const datasets = ref([])
-    const getDatasets = async () => {
-        await proxy.$api.dataset.getDataset().then((res) => {
+    const resources = ref([])
+    const getResources = async () => {
+        await proxy.$api.resource.getResource().then((res) => {
             if (res.code === 200) {
-                let _datasets = res.data || []
-                _datasets.forEach((item) => {
+                let _resources = res.data || []
+                _resources.forEach((item) => {
                     item.showPreview = false
                     item.expanded = false
                 })
-                datasets.value = _datasets
+                resources.value = _resources
             } else {
                 proxy.$barWarning(res.message, {
                     status: 'warning'
@@ -199,8 +199,8 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         configId,
         config,
         getConfigs,
-        datasets,
-        getDatasets,
+        resources,
+        getResources,
         tasks,
         getTasks,
         taskStatus,
