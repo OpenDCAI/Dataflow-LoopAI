@@ -4,6 +4,7 @@ import socket
 import time
 import re
 import json
+import threading
 
 from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
@@ -57,117 +58,148 @@ def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         # 连接超时、被拒绝、端口未监听，均返回False
         return False
 
+# ========== 核心修复：后台线程持续消费缓冲区，避免阻塞 ==========
+def _consume_subprocess_output(proc, stop_event):
+    """
+    后台线程持续读取子进程输出，消费缓冲区（解决卡死核心）
+    不落地文件，仅输出到logger，兼容shell=True的字符串命令
+    """
+    try:
+        while not stop_event.is_set() and proc.poll() is None:
+            # 非阻塞读取（避免readline()阻塞）
+            # 先检查缓冲区是否有数据，再读取
+            import select
+            ready, _, _ = select.select([proc.stdout], [], [], 0.01)
+            if ready:
+                line = proc.stdout.readline()
+                if line:
+                    logger.info(f"VLLM输出: {line.strip()}")
+    except Exception as e:     
+        logger.warning(f"消费vllm输出时出现轻微异常（不影响运行）: {e}")
+    finally:
+        try:
+            proc.stdout.close()
+        except:
+            pass
+
 def start_vllm_openai_api_server(
     env_configs, 
-    vllm_env_path,  # 新增：指定环境的Python可执行文件路径（核心新增参数）
+    vllm_env_path,  # 新增：指定环境的Python可执行文件路径
     vllm_port, 
     vllm_tensor_parallel_size, 
     vllm_gpu_memory_utilization, 
     vllm_model,
     poll_interval: float = 2.0,
     max_timeout: float = 300.0
-) -> subprocess.Popen:
+) -> tuple[subprocess.Popen, threading.Event]:
     """
-    启动vllm openai兼容api服务（支持指定环境Python路径启动）
-    :env_configs: 评估模型vllm启动环境参数
-    :vllm_env_path: 指定环境的Python可执行文件路径（如/root/envs/vllm/bin/python）
-    :vllm_port: vllm启动参数——port
-    :vllm_tensor_parallel_size: vllm启动参数——tensor_parallel_size
-    :vllm_gpu_memory_utilization: vllm启动参数——gpu_memory_utilization
-    :param poll_interval: 端口轮询检测间隔（秒）
-    :param max_timeout: 最大等待超时时间（秒）
-    :return: vllm子进程对象
+    启动vllm openai兼容api服务（保留shell=True+字符串命令，解决卡死问题）
+    :return: (vllm子进程对象, 输出消费线程停止事件)
     """
-    # ========== 新增：校验指定环境Python路径的有效性 ==========
+    # 校验环境路径（原有逻辑不变）
     if not os.path.exists(vllm_env_path):
         raise Exception(f"指定的环境Python路径不存在：{vllm_env_path}")
     if not os.access(vllm_env_path, os.X_OK):
         raise Exception(f"指定的Python路径无执行权限：{vllm_env_path}")
     logger.info(f"已确认环境Python路径有效：{vllm_env_path}")
 
+    # ========== 保留你原有的字符串命令+shell=True ==========
     vllm_command = f"{vllm_env_path} -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {vllm_port} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes"
     env_configs = json.loads(env_configs)
-    process_pattern = "vllm.entrypoints.openai.api_server"
     port = parse_port_from_command_str(vllm_command)
     host = "localhost"
 
-    # 设置NCCL和CUDA环境变量（原有逻辑不变）
+    # 设置环境变量（优化：使用独立环境，避免覆盖全局）
+    process_env = os.environ.copy()
     for key, value in env_configs.items():
-        os.environ[key] = value
+        process_env[key] = value
     logger.info("已设置GPU和NCCL环境变量")
 
-    # 启动vllm子进程（原有逻辑不变）
+    # ========== 保留shell=True，仅优化缓冲区和进程参数 ==========
     proc = subprocess.Popen(
         vllm_command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         encoding='utf-8',
-        bufsize=1,  # 行缓冲，避免日志堆积，加快读取速度
-        shell=True
+        bufsize=1,  # 行缓冲
+        shell=True,  # 保留你需要的shell=True
+        env=process_env,  # 独立环境变量
+        start_new_session=True,  # 避免主进程影响vllm
+        close_fds=True  # 减少资源占用
     )
 
-    # 轮询检测端口可用性，判断服务是否就绪（原有逻辑不变）
+    # ========== 启动后台线程消费缓冲区（卡死的核心解决方案） ==========
+    stop_event = threading.Event()
+    consume_thread = threading.Thread(
+        target=_consume_subprocess_output,
+        args=(proc, stop_event),
+        daemon=True  # 守护线程，不影响主进程
+    )
+    consume_thread.start()
+    logger.info("VLLM输出消费线程已启动，解决缓冲区阻塞问题")
+
+    # 端口检测逻辑（完全保留你原有代码）
     logger.info(f"正在启动vllm服务，监听端口{port}，等待服务就绪（超时{max_timeout}秒）...")
     start_time = time.time()
 
     while True:
-        # 检查子进程是否已异常退出
         if proc.poll() is not None:
+            stop_event.set()
+            consume_thread.join(timeout=2.0)
             raise Exception(f"vllm服务启动失败，进程异常退出，退出码：{proc.returncode}")
         
-        # 检查是否超时
         elapsed_time = time.time() - start_time
         if elapsed_time > max_timeout:
-            proc.terminate()  # 超时终止子进程
+            proc.terminate()
+            stop_event.set()
+            consume_thread.join(timeout=2.0)
             raise Exception(f"vllm服务启动超时，超过{max_timeout}秒仍未监听端口{port}")
         
-        # 检测端口是否可用
         if is_port_open(host, port):
             logger.info(f"\n✅ vllm服务启动完成，端口{port}已就绪！")
             logger.info("🔛 函数即将返回，开始执行后续Python代码...")
             break
         
-        # 非阻塞读取子进程日志
-        try:
-            # 读取当前缓冲区所有可用数据，不等待新数据
-            line = proc.stdout.readline()
-            if line:
-                logger.info(line.strip())
-        except:
-            pass  # 无数据时直接跳过，不影响循环
-        
-        # 未就绪，等待轮询间隔后重试
         time.sleep(poll_interval)
 
-    # 直接返回子进程对象
-    return proc
+    # 返回子进程+停止事件（用于后续安全停止）
+    return proc, stop_event
 
-# # ========== 新增调用示例：传入环境路径启动vllm ==========
+# ========== 配套：安全停止vllm的函数 ==========
+def stop_vllm_server(proc: subprocess.Popen, stop_event: threading.Event):
+    """安全停止vllm，确保消费线程也退出"""
+    try:
+        proc.terminate()
+        proc.wait(timeout=10.0)
+        stop_event.set()
+        logger.info("vllm服务已安全停止")
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        logger.warning("vllm服务强制终止")
+    except Exception as e:
+        logger.error(f"停止vllm失败: {e}")
+
+# ========== 调用示例（和你原有调用方式几乎一致） ==========
 # if __name__ == "__main__":
-#     # 调用函数启动vllm服务（基于端口检测）
 #     try:
-#         # 替换为你服务器上的实际环境Python路径
-#         ENV_PYTHON_PATH = "/root/envs/vllm_env/bin/python"  # 示例：虚拟环境Python路径
-#         # ENV_PYTHON_PATH = "/usr/local/anaconda3/envs/vllm/bin/python"  # Anaconda环境示例
+#         # 替换为你的环境路径
+#         ENV_PYTHON_PATH = "/root/miniconda3/envs/brjl/bin/python"
 
-#         vllm_proc = start_vllm_openai_api_server(
+#         # 调用函数（仅返回值多了stop_event，其他参数完全不变）
+#         vllm_proc, stop_event = start_vllm_openai_api_server(
 #             env_configs='{"CUDA_VISIBLE_DEVICES": "0","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
-#             env_python_path=ENV_PYTHON_PATH,  # 传入指定的环境Python路径
+#             vllm_env_path=ENV_PYTHON_PATH,
 #             vllm_port="8911",
 #             vllm_tensor_parallel_size="1",
 #             vllm_gpu_memory_utilization="0.9",
 #             vllm_model="/root/brjverl/models/Qwen2.5-Coder-7B-Instruct/"
 #         )
 
-#         # 后续Python业务代码（服务已完全就绪，可安全调用API）
 #         logger.info("=" * 50)
-#         logger.info("vllm启动过程执行完毕")
-#         # 示例：调用vllm OpenAI兼容接口
-#         # import openai
-#         # openai.api_base = "http://localhost:8911/v1"
-#         # openai.api_key = "dummy_key"  # vllm无需真实密钥，填写任意值即可
-#         # models = openai.Model.list()
-#         # print(f"可用模型列表：{models}")
+#         logger.info("vllm启动完成，可正常调用model.batch接口")
+
+#         # 业务完成后停止vllm（按需调用）
+#         # stop_vllm_server(vllm_proc, stop_event)
 
 #     except Exception as e:
-#         logger.error(f"错误：{e}")  # 改为error级别更易识别错误
+#         logger.error(f"错误：{e}")
