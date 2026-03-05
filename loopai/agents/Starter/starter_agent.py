@@ -173,7 +173,7 @@ class StarterAgent(BaseAgent):
         builder.add_edge('query_node', 'llm_node')
         builder.add_edge('llm_node', 'feedback_node')
         builder.add_edge('evaluate_node', 'query_node')
-        builder.add_edge('train_node', 'query_node')
+        builder.add_edge('train_node', 'route_node')
         # Obtainer -> Constructor
         builder.add_edge('obtain_node', 'constructor_node')
         # Constructor -> Query

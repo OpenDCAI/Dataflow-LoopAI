@@ -317,7 +317,7 @@ class TrainerAgent(BaseAgent):
             # 进度：开始检查必需字段
             if writer:
                 writer(StreamEvent(
-                    current="Trainer.check_required_fields",
+                    current=state['current'],
                     progress=0.0,
                     message="正在检查训练所需的配置字段...",
                     data={"stage": "field_validation"}
@@ -345,7 +345,7 @@ class TrainerAgent(BaseAgent):
                 # 进度：发现缺失字段
                 if writer:
                     writer(StreamEvent(
-                        current="Trainer.check_required_fields",
+                        current=state['current'],
                         progress=0.5,
                         message=f"发现缺失字段，将转至配置补全: {', '.join(missing_fields)}",
                         data={
@@ -372,7 +372,7 @@ class TrainerAgent(BaseAgent):
                 # 进度：所有字段检查通过
                 if writer:
                     writer(StreamEvent(
-                        current="Trainer.check_required_fields",
+                        current=state['current'],
                         progress=1.0,
                         message="所有必需字段检查通过，开始训练流程",
                         data={
