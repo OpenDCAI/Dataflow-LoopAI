@@ -1,6 +1,6 @@
-@use "./dataflow.scss" as *;
+@use "./loopai.scss" as *;
 
-@forward "./dataflow.scss";
+@forward "./loopai.scss";
 
 @mixin app {
     position: absolute;

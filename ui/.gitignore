@@ -29,3 +29,6 @@ coverage
 *.sw?
 
 *.tsbuildinfo
+
+.yarn/
+.yarnrc.yml
