@@ -123,7 +123,7 @@ export default {
                 {
                     id: 'configer',
                     type: 'agent-node',
-                    position: { x: 0, y: 0 },
+                    position: { x: 1334, y: 683 },
                     data: {
                         label: 'Configer',
                         status: 'Agent',
@@ -141,7 +141,7 @@ export default {
                 {
                     id: 'trainer',
                     type: 'agent-node',
-                    position: { x: 350, y: 160 },
+                    position: { x: 381, y: 96 },
                     data: {
                         label: 'Trainer',
                         status: 'Agent',
@@ -159,7 +159,7 @@ export default {
                 {
                     id: 'obtainer',
                     type: 'agent-node',
-                    position: { x: 80, y: 801 },
+                    position: { x: -110, y: 637 },
                     data: {
                         label: 'Obtainer',
                         status: 'Agent',
@@ -175,7 +175,7 @@ export default {
                 {
                     id: 'webcrawler',
                     type: 'agent-node',
-                    position: { x: 80, y: 401 },
+                    position: { x: -105, y: 1127 },
                     data: {
                         label: 'Webcrawler',
                         status: 'Agent',
@@ -191,7 +191,7 @@ export default {
                 {
                     id: 'judger',
                     type: 'agent-node',
-                    position: { x: 700, y: 161 },
+                    position: { x: 824, y: 95 },
                     data: {
                         label: 'Judger',
                         status: 'Agent',
@@ -228,7 +228,7 @@ export default {
                 {
                     id: 'starter',
                     type: 'agent-node',
-                    position: { x: 500, y: 650 },
+                    position: { x: 1334, y: 889 },
                     data: {
                         label: 'Starter',
                         status: 'Agent',
@@ -255,23 +255,13 @@ export default {
 
             edges: [
                 {
-                    id: 'e1->2',
-                    type: 'base-edge',
-                    source: 'obtainer',
-                    target: 'trainer'
-                },
-                {
-                    id: 'e2->3',
+                    id: '0',
                     type: 'base-edge',
                     source: 'trainer',
-                    target: 'judger',
-                    animated: true,
-                    data: {
-                        label: 'node'
-                    }
+                    target: 'judger'
                 },
                 {
-                    id: 'e3->4',
+                    id: '1',
                     type: 'base-edge',
                     source: 'judger',
                     target: 'analyzer',
@@ -281,7 +271,7 @@ export default {
                     }
                 },
                 {
-                    id: 'e4->5',
+                    id: '2',
                     type: 'base-edge',
                     source: 'analyzer',
                     target: 'obtainer',
@@ -291,7 +281,17 @@ export default {
                     }
                 },
                 {
-                    id: 'e4->6',
+                    id: '3',
+                    type: 'base-edge',
+                    source: 'obtainer',
+                    target: 'trainer',
+                    animated: true,
+                    data: {
+                        label: 'node'
+                    }
+                },
+                {
+                    id: '4',
                     type: 'base-edge',
                     source: 'analyzer',
                     target: 'webcrawler',
