@@ -44,8 +44,6 @@ def agent_worker(cmd_q: Queue, state_q: Queue, sg_init_args: dict):
     sg = StarterAgent(**sg_init_args)
     sg.init_graph()
 
-    config = {"configurable": {"thread_id": "default"}}
-
     while True:
         try:
             cmd = cmd_q.get(timeout=0.1)
@@ -53,8 +51,24 @@ def agent_worker(cmd_q: Queue, state_q: Queue, sg_init_args: dict):
             continue
 
         if cmd["type"] == "START":
-            
-            sg.start(default_state=cmd["default_state"], config=config)
+            default_state = cmd["default_state"]
+
+            # 从 default_state 中读取 recursion_limit，如果没有则使用 100
+            recursion_limit = 100
+            try:
+                if isinstance(default_state, dict):
+                    recursion_limit = default_state.get("recursion_limit", 100)
+                else:
+                    recursion_limit = getattr(default_state, "recursion_limit", 100)
+            except Exception:
+                recursion_limit = 100
+
+            config = {
+                "recursion_limit": recursion_limit,
+                "configurable": {"thread_id": "default"},
+            }
+
+            sg.start(default_state=default_state, config=config)
             thread_states = sg.get_state(config)
 
             while thread_states.interrupts:

@@ -46,6 +46,10 @@ class WebPageDataSaver:
         if not self.db_path:
             return
         
+        if not aiosqlite:
+            logger.warning("aiosqlite is not installed, skipping DB initialization")
+            return
+
         if self._db_initialized:
             return
         
@@ -131,10 +135,13 @@ class WebPageDataSaver:
         
         # Save to database
         if self.db_path:
-            try:
-                await self.initialize_db()
-                async with aiosqlite.connect(self.db_path) as conn:
-                    await conn.execute("""
+            if not aiosqlite:
+                logger.warning("aiosqlite is not installed, skipping saving to DB")
+            else:
+                try:
+                    await self.initialize_db()
+                    async with aiosqlite.connect(self.db_path) as conn:
+                        await conn.execute("""
                         INSERT OR REPLACE INTO webpage_data 
                         (url, title, content, structured_data, timestamp, source, metadata)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -148,10 +155,10 @@ class WebPageDataSaver:
                         json.dumps(metadata) if metadata else None,
                     ))
                     await conn.commit()
-                logger.debug(f"[WebPageDataSaver] Saved to database: {url}")
-            except Exception as e:
-                logger.error(f"[WebPageDataSaver] Error saving to database: {e}")
-                success = False
+                    logger.debug(f"[WebPageDataSaver] Saved to database: {url}")
+                except Exception as e:
+                    logger.error(f"[WebPageDataSaver] Error saving to database: {e}")
+                    success = False
         
         return success
     
@@ -204,14 +211,17 @@ class WebPageDataSaver:
         
         # Count database entries
         if self.db_path and os.path.exists(self.db_path):
-            try:
-                await self.initialize_db()
-                async with aiosqlite.connect(self.db_path) as conn:
-                    async with conn.execute("SELECT COUNT(*) FROM webpage_data") as cursor:
-                        row = await cursor.fetchone()
-                        counts["database"] = row[0] if row else 0
-            except Exception as e:
-                logger.warning(f"[WebPageDataSaver] Error counting database: {e}")
+            if not aiosqlite:
+                logger.warning("aiosqlite is not installed, cannot count DB entries")
+            else:
+                try:
+                    await self.initialize_db()
+                    async with aiosqlite.connect(self.db_path) as conn:
+                        async with conn.execute("SELECT COUNT(*) FROM webpage_data") as cursor:
+                            row = await cursor.fetchone()
+                            counts["database"] = row[0] if row else 0
+                except Exception as e:
+                    logger.warning(f"[WebPageDataSaver] Error counting database: {e}")
         
         return counts
     

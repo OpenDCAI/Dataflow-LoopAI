@@ -67,8 +67,12 @@ def list_formats_node(state: LoopAIState, store: BaseStore = None) -> LoopAIStat
         state["messages"] = []
     state["messages"].append(AIMessage(content=message_content))
     
+    # 确保 constructor 字典存在
+    if "constructor" not in state:
+        state["constructor"] = {}
+    
     # 重置意图，让 inquiry_node 重新等待用户输入
-    state["obtainer_mapping_user_intent"] = ""
+    state["constructor"]["mapping_user_intent"] = ""
     
     # 保存到 store
     _save_to_store(state, store)
