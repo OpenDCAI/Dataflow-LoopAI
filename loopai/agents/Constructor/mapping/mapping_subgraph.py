@@ -15,7 +15,7 @@ Mapping Subgraph - 映射子图
 8. summary_node: 总结结果
 
 State 参数:
-- obtainer_default_mapping_format: 默认映射格式ID（如 "alpaca"），设置后跳过用户交互
+- constructor_default_mapping_format: 默认映射格式ID（如 "alpaca"），设置后跳过用户交互
   如果为空或不设置，则走用户交互流程
 """
 import os
@@ -232,28 +232,28 @@ class MappingSubgraph:
         """
         入口检查节点 - 检查是否有默认格式设置
         
-        如果设置了 obtainer.default_mapping_format，则跳过用户交互直接使用该格式
+        如果设置了 constructor.default_mapping_format，则跳过用户交互直接使用该格式
         """
         logger.info("=== Mapping Subgraph: Entry Check Node ===")
         current = state.get("current", "ConstructorAgent.mapping_subgraph")
         _emit_mapping_progress(current, "Constructor: 格式映射 - 入口检查", progress=0.02, data={"phase": "mapping"})
 
-        # 确保 obtainer 字典存在
-        if "obtainer" not in state:
-            state["obtainer"] = {}
-        obtainer_state = state["obtainer"]
+        # 确保 constructor 字典存在
+        if "constructor" not in state:
+            state["constructor"] = {}
+        constructor_state = state["constructor"]
         
         # 检查是否有默认格式设置；容错去除空格并统一小写
-        raw_default_format = obtainer_state.get("default_mapping_format", "")
+        raw_default_format = constructor_state.get("default_mapping_format", "")
         default_format = ""
         if raw_default_format:
             default_format = str(raw_default_format).strip().lower()
-            state["obtainer"]["default_mapping_format"] = default_format  # 回写标准化值
+            state["constructor"]["default_mapping_format"] = default_format  # 回写标准化值
         logger.info(
             f"Mapping entry check: raw_default='{raw_default_format}', "
             f"normalized='{default_format}', "
-            f"confirmed_format_exists={bool(obtainer_state.get('confirmed_format'))}, "
-            f"category='{obtainer_state.get('category', '')}'"
+            f"confirmed_format_exists={bool(constructor_state.get('confirmed_format'))}, "
+            f"category='{constructor_state.get('category', '')}'"
         )
         
         if default_format and default_format in PRESET_FORMATS:
@@ -261,7 +261,7 @@ class MappingSubgraph:
             
             # 设置格式选择相关的状态
             format_info = PRESET_FORMATS[default_format]
-            state["obtainer"]["confirmed_format"] = {
+            state["constructor"]["confirmed_format"] = {
                 "format_id": default_format,
                 "format_name": format_info.get("name", ""),
                 "description": format_info.get("description", ""),
@@ -269,18 +269,18 @@ class MappingSubgraph:
                 "example": format_info.get("example", {}),
                 "is_preset": True
             }
-            state["obtainer"]["confirmation_result"] = "confirmed"
-            state["obtainer"]["mapping_auto_mode"] = True  # 标记为自动模式
+            state["constructor"]["confirmation_result"] = "confirmed"
+            state["constructor"]["mapping_auto_mode"] = True  # 标记为自动模式
             
             logger.info(f"Auto-confirmed format: {default_format}")
         elif default_format:
             # 设置了默认格式但不在预设列表中
             logger.warning(f"Default format '{default_format}' not found in preset formats, falling back to user interaction")
-            state["obtainer"]["mapping_auto_mode"] = False
+            state["constructor"]["mapping_auto_mode"] = False
         else:
             # 没有设置默认格式，走用户交互流程
             logger.info("No default format specified, proceeding with user interaction")
-            state["obtainer"]["mapping_auto_mode"] = False
+            state["constructor"]["mapping_auto_mode"] = False
 
         _emit_mapping_progress(current, "Constructor: 格式映射 - 入口检查完成", progress=0.06, data={"phase": "mapping"})
         return state
@@ -300,11 +300,11 @@ class MappingSubgraph:
             logger.error(f"Exception in state: {state.get('exception')}")
             return "end_node"
         
-        obtainer_state = state.get("obtainer", {})
+        constructor_state = state.get("constructor", {})
         
         # 检查是否已经确认了格式（自动模式）
-        if obtainer_state.get("mapping_auto_mode") and obtainer_state.get("confirmed_format"):
-            confirmed_format = obtainer_state.get("confirmed_format", {})
+        if constructor_state.get("mapping_auto_mode") and constructor_state.get("confirmed_format"):
+            confirmed_format = constructor_state.get("confirmed_format", {})
             format_id = confirmed_format.get("format_id", "")
             
             if format_id in PRESET_FORMATS:
@@ -328,8 +328,8 @@ class MappingSubgraph:
             logger.error(f"Exception in state: {state.get('exception')}")
             return "end_node"
         
-        obtainer_state = state.get("obtainer", {})
-        intent = obtainer_state.get("mapping_user_intent", "")
+        constructor_state = state.get("constructor", {})
+        intent = constructor_state.get("mapping_user_intent", "")
         logger.info(f"Routing by intent: {intent}")
         
         if intent == "list_formats":
@@ -352,8 +352,8 @@ class MappingSubgraph:
         """
         检查预设格式是否选择成功
         """
-        obtainer_state = state.get("obtainer", {})
-        pending_format = obtainer_state.get("pending_format")
+        constructor_state = state.get("constructor", {})
+        pending_format = constructor_state.get("pending_format")
         if pending_format:
             return "confirmation_node"
         else:
@@ -364,8 +364,8 @@ class MappingSubgraph:
         """
         检查自定义格式是否生成成功
         """
-        obtainer_state = state.get("obtainer", {})
-        pending_format = obtainer_state.get("pending_format")
+        constructor_state = state.get("constructor", {})
+        pending_format = constructor_state.get("pending_format")
         if pending_format:
             return "confirmation_node"
         else:
@@ -376,12 +376,12 @@ class MappingSubgraph:
         """
         根据确认结果路由
         """
-        obtainer_state = state.get("obtainer", {})
-        result = obtainer_state.get("confirmation_result", "")
+        constructor_state = state.get("constructor", {})
+        result = constructor_state.get("confirmation_result", "")
         
         if result == "confirmed":
             # 确认后，根据格式类型选择映射节点
-            confirmed_format = obtainer_state.get("confirmed_format", {})
+            confirmed_format = constructor_state.get("confirmed_format", {})
             format_id = confirmed_format.get("format_id", "")
             is_preset = confirmed_format.get("is_preset", False)
             
@@ -399,7 +399,7 @@ class MappingSubgraph:
         
         elif result == "restart":
             # 重选，检查是否已经选择了新的预设格式
-            intent = obtainer_state.get("mapping_user_intent", "")
+            intent = constructor_state.get("mapping_user_intent", "")
             if intent == "preset_format":
                 # 用户在确认阶段选择了其他预设格式，直接路由到 preset_format_node
                 logger.info(f"User selected different preset format, routing to preset_format_node")
@@ -451,15 +451,15 @@ def mapping_node(state: LoopAIState) -> LoopAIState:
     """
     logger.warning("mapping_node called directly. Consider using MappingSubgraph for full functionality.")
     
-    obtainer_state = state.get("obtainer", {})
+    constructor_state = state.get("constructor", {})
     
     # 检查是否已经完成映射
-    if obtainer_state.get("mapping_results"):
+    if constructor_state.get("mapping_results"):
         logger.info("Mapping already completed")
         return state
     
     # 检查中间数据是否存在（使用嵌套结构）
-    intermediate_path = obtainer_state.get("intermediate_data_path", "")
+    intermediate_path = constructor_state.get("intermediate_data_path", "")
     if not intermediate_path or not os.path.exists(intermediate_path):
         logger.warning("No intermediate data found, skipping mapping")
         return state

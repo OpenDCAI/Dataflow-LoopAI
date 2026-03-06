@@ -74,62 +74,70 @@ class ConstructorAgent(BaseAgent):
             if not state.get("prompt_template_dir") and self.prompt_template_dir:
                 state["prompt_template_dir"] = self.prompt_template_dir
             
-            # 确保 obtainer 字典存在
-            if "obtainer" not in state:
-                state["obtainer"] = {}
-            
-            # 使用嵌套结构 state["obtainer"]["xxx"]，符合 states.py 中 ObtainerState 的定义
-            obtainer = state["obtainer"]
-            
-            # model_path: 优先使用 obtainer 中的值，其次使用 self.model_name
-            if not obtainer.get("model_path"):
+            # 确保 constructor 字典存在
+            if "constructor" not in state:
+                state["constructor"] = {}
+
+            # 兼容迁移：若 constructor 关键字段缺失，则从 obtainer 补齐
+            obtainer_state = state.get("obtainer", {})
+            constructor = state["constructor"]
+            fallback_keys = [
+                "model_path", "base_url", "api_key", "temperature",
+                "user_query", "datasets_background", "category", "subtasks",
+                "intermediate_data_path", "confirmed_format", "pending_format",
+                "mapping_auto_mode", "confirmation_result", "mapping_user_intent",
+                "mapping_selected_format_id", "mapping_custom_description",
+                "default_mapping_format", "llm_timeout", "max_retries",
+                "max_concurrent_mapping", "max_samples_before_cleaning", "debug",
+            ]
+            for key in fallback_keys:
+                if key not in constructor and key in obtainer_state:
+                    constructor[key] = obtainer_state.get(key)
+
+            # model_path: 优先使用 constructor 中的值，其次使用 self.model_name
+            if not constructor.get("model_path"):
                 if self.model_name:
-                    obtainer["model_path"] = self.model_name
+                    constructor["model_path"] = self.model_name
             
-            # base_url: 优先使用 obtainer 中的值，其次使用 self.base_url
-            if not obtainer.get("base_url"):
+            # base_url: 优先使用 constructor 中的值，其次使用 self.base_url
+            if not constructor.get("base_url"):
                 if self.base_url:
-                    obtainer["base_url"] = self.base_url
+                    constructor["base_url"] = self.base_url
             
-            # api_key: 优先使用 obtainer 中的值，其次使用 self.api_key
-            if not obtainer.get("api_key"):
+            # api_key: 优先使用 constructor 中的值，其次使用 self.api_key
+            if not constructor.get("api_key"):
                 if self.api_key:
-                    obtainer["api_key"] = self.api_key
+                    constructor["api_key"] = self.api_key
             
-            # temperature: 优先使用 obtainer 中的值，其次使用 self.temperature，默认 0.7
-            if obtainer.get("temperature") is None:
+            # temperature: 优先使用 constructor 中的值，其次使用 self.temperature，默认 0.7
+            if constructor.get("temperature") is None:
                 if hasattr(self, 'temperature') and self.temperature is not None:
-                    obtainer["temperature"] = self.temperature
+                    constructor["temperature"] = self.temperature
                 else:
-                    obtainer["temperature"] = 0.7
+                    constructor["temperature"] = 0.7
             
             # Ensure output_dir is set
             if not state.get("output_dir"):
                 state["output_dir"] = "./output"
             
-            # 确保 obtainer 字典存在
-            if "obtainer" not in state:
-                state["obtainer"] = {}
+            # Set default values for constructor-specific parameters
+            if "llm_timeout" not in constructor:
+                constructor["llm_timeout"] = 120.0
             
-            # Set default values for constructor-specific parameters if not in state (使用嵌套结构)
-            obtainer_state = state.get("obtainer", {})
-            if "llm_timeout" not in obtainer_state:
-                state["obtainer"]["llm_timeout"] = 120.0
+            if "max_retries" not in constructor:
+                constructor["max_retries"] = 3
             
-            if "max_retries" not in obtainer_state:
-                state["obtainer"]["max_retries"] = 3
-            
-            if "max_concurrent_mapping" not in obtainer_state:
-                state["obtainer"]["max_concurrent_mapping"] = 10
+            if "max_concurrent_mapping" not in constructor:
+                constructor["max_concurrent_mapping"] = 10
             
             # Mapping configuration
             # default_mapping_format: If set (e.g., "alpaca"), skip user interaction and use this format directly
             # If empty or not set, go through user interaction flow
-            if "default_mapping_format" not in obtainer_state:
-                state["obtainer"]["default_mapping_format"] = "alpaca"  # Default to alpaca format
+            if "default_mapping_format" not in constructor:
+                constructor["default_mapping_format"] = "alpaca"  # Default to alpaca format
             
             # Handle debug mode
-            debug_mode = obtainer_state.get("debug", False)
+            debug_mode = constructor.get("debug", False)
             if debug_mode:
                 # Set logger level to DEBUG
                 logger.setLevel(logging.DEBUG)
@@ -175,8 +183,8 @@ class ConstructorAgent(BaseAgent):
                     # Flush immediately to ensure the message is written
                     file_handler.flush()
 
-            logger.info(f"ConstructorAgent: Configuration set - model: {obtainer.get('model_path')}, "
-                       f"base_url: {obtainer.get('base_url')}, "
+            logger.info(f"ConstructorAgent: Configuration set - model: {constructor.get('model_path')}, "
+                       f"base_url: {constructor.get('base_url')}, "
                        f"debug: {debug_mode}")
             
             if writer:
@@ -186,8 +194,8 @@ class ConstructorAgent(BaseAgent):
                     progress=1.0,
                     data={
                         "phase": "constructor_config",
-                        "model": obtainer.get("model_path"),
-                        "base_url": obtainer.get("base_url"),
+                        "model": constructor.get("model_path"),
+                        "base_url": constructor.get("base_url"),
                         "debug_mode": debug_mode,
                     },
                 ).json())
@@ -217,26 +225,26 @@ class ConstructorAgent(BaseAgent):
         # Generate summary of results for LLM
         summary_parts = []
         
-        # 获取 obtainer 状态
-        obtainer_state = state.get("obtainer", {})
+        # 获取 constructor 状态
+        constructor_state = state.get("constructor", {})
         
         # Check for exceptions
         if state.get("exception"):
             summary_parts.append(f"执行过程中出现错误: {state.get('exception')}")
         else:
             # Summarize post-process results
-            postprocess_results = obtainer_state.get("postprocess_results", {})
+            postprocess_results = constructor_state.get("postprocess_results", {})
             if postprocess_results:
                 total_records = postprocess_results.get("total_records_processed", 0)
                 if total_records > 0:
-                    category = obtainer_state.get("category", "PT")
+                    category = constructor_state.get("category", "PT")
                     summary_parts.append(f"后处理完成: 共处理 {total_records} 条 {category} 数据记录")
                     output_dir = postprocess_results.get("output_dir", "")
                     if output_dir:
                         summary_parts.append(f"中间格式输出目录: {output_dir}")
             
             # Summarize mapping results
-            mapping_results = obtainer_state.get("mapping_results", {})
+            mapping_results = constructor_state.get("mapping_results", {})
             if mapping_results:
                 final_output_dir = mapping_results.get("final_output_dir", "")
                 total_mapped_records = mapping_results.get("total_mapped_records", 0)
@@ -260,8 +268,8 @@ class ConstructorAgent(BaseAgent):
         logger.info(f"ConstructorAgent: Added summary to messages: {summary_text[:100]}...")
         
         if writer:
-            postprocess_results = obtainer_state.get("postprocess_results", {})
-            mapping_results = obtainer_state.get("mapping_results", {})
+            postprocess_results = constructor_state.get("postprocess_results", {})
+            mapping_results = constructor_state.get("mapping_results", {})
             writer(StreamEvent(
                 current=state['current'],
                 message="Constructor: 任务完成",
@@ -307,7 +315,7 @@ class ConstructorAgent(BaseAgent):
                     data={"error": str(e), "phase": "postprocess"},
                 ).json())
         if writer:
-            res = state.get("obtainer", {}).get("postprocess_results", {})
+            res = state.get("constructor", {}).get("postprocess_results", {})
             writer(StreamEvent(
                 current=state['current'],
                 message="Constructor: 后处理完成",
@@ -326,7 +334,7 @@ class ConstructorAgent(BaseAgent):
     @BaseAgent.set_current
     def data_cleaning_start(state: LoopAIState):
         """
-        Start node for data_cleaning subgraph with StreamEvent
+        Start node for data_cleaning subgraph with StreamEvent.
         """
         writer = get_stream_writer()
         state['current'] = "ConstructorAgent.data_cleaning"
@@ -337,6 +345,7 @@ class ConstructorAgent(BaseAgent):
                 progress=0.0,
                 data={"phase": "data_cleaning"},
             ).json())
+
         return state
 
     @staticmethod
@@ -347,7 +356,7 @@ class ConstructorAgent(BaseAgent):
         """
         writer = get_stream_writer()
         if writer:
-            cleaning_results = state.get("obtainer", {}).get("cleaning_results", {})
+            cleaning_results = state.get("constructor", {}).get("cleaning_results", {})
             tools_executed = cleaning_results.get("tools_executed", [])
             has_exception = bool(state.get("exception"))
             writer(StreamEvent(
@@ -388,7 +397,7 @@ class ConstructorAgent(BaseAgent):
         """
         writer = get_stream_writer()
         if writer:
-            mapping_results = state.get("obtainer", {}).get("mapping_results", {})
+            mapping_results = state.get("constructor", {}).get("mapping_results", {})
             has_exception = bool(state.get("exception"))
             writer(StreamEvent(
                 current=state.get('current', 'ConstructorAgent.mapping_subgraph'),
@@ -411,8 +420,8 @@ class ConstructorAgent(BaseAgent):
         Returns:
             "postprocess_node" if there are successful downloads, "end_node" otherwise
         """
-        obtainer_state = state.get("obtainer", {})
-        subtasks = obtainer_state.get("subtasks", [])
+        constructor_state = state.get("constructor", {})
+        subtasks = constructor_state.get("subtasks", [])
         successful_downloads = [
             task for task in subtasks 
             if task.get("type") == "download" and task.get("status") == "completed_successfully"
@@ -447,11 +456,10 @@ class ConstructorAgent(BaseAgent):
         Returns:
             "mapping_subgraph_start" if intermediate data exists and format not confirmed, "end_node" otherwise
         """
-        # 使用嵌套结构访问 obtainer 状态，符合 states.py 中 ObtainerState 的定义
-        obtainer_state = state.get("obtainer", {})
-        intermediate_path = obtainer_state.get("intermediate_data_path", "")
+        constructor_state = state.get("constructor", {})
+        intermediate_path = constructor_state.get("intermediate_data_path", "")
         if intermediate_path and os.path.exists(intermediate_path):
-            confirmed_format = obtainer_state.get("confirmed_format")
+            confirmed_format = constructor_state.get("confirmed_format")
             if not confirmed_format:
                 logger.info("Intermediate data found, routing to mapping_subgraph_start for format selection")
                 return "mapping_subgraph_start"

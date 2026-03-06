@@ -1,7 +1,8 @@
 starter:
-  model_name: "gpt-4o"
-  base_url: "https://api.apiyi.com/v1"
-  api_key: "sk-TT9Kba21wl6m7nxi986aC34d00E24b299446Fe7f4eD8E066" # API key (leave empty if not needed)
+  model_path: "gpt-4o" # if empty, will use starter model
+  model_name: "gpt-4o" # if empty, will use starter model
+  base_url: "http://172.96.160.199:3000/v1" # if empty, will use starter base_url
+  api_key: "sk-..." # if empty, will use starter api_key
   tavily_api_key: "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" # Tavily API key (leave empty if not needed)
   kaggle_username: "binrxu" # Kaggle username (leave empty if not needed)
   kaggle_key: "8c120e3a3c8d45f71ace8b4981f829ac" # Kaggle API key (leave empty if not needed)
@@ -11,7 +12,7 @@ rag:
   reset: false # whether to reset RAG database
   embed_model: "text-embedding-3-large" # RAG embedding model (default: "text-embedding-3-large", leave empty to use default)
   collection_name: "rag_collection" # RAG collection name
-  api_base_url: "https://api.apiyi.com/v1" # RAG API base URL (if empty, will use obtainer's base_url)
+  api_base_url: "http://172.96.160.199:3000/v1" # RAG API base URL (if empty, will use obtainer's base_url)
   api_key_path: "./rag_api_key.txt" # RAG API key file path (if empty, will use obtainer's api_key)
 
 default_states:
@@ -45,14 +46,14 @@ default_states:
   # Obtainer agent configuration (nested structure for ObtainerAgent)
   obtainer:
     model_path: "gpt-4o" # if empty, will use starter model
-    base_url: "https://api.apiyi.com/v1" # if empty, will use starter base_url
-    api_key: "sk-TT9Kba21wl6m7nxi986aC34d00E24b299446Fe7f4eD8E066" # if empty, will use starter api_key
+    base_url: "http://172.96.160.199:3000/v1" # if empty, will use starter base_url
+    api_key: "sk-..." # if empty, will use starter api_key
     temperature: 0.7
     search_engine: "tavily" # tavily, duckduckgo, jina
     max_urls: 6
     max_download_subtasks: null # null means no limit
     category: "SFT" # PT or SFT
-    proxy: "http://127.0.0.1:9090"
+    proxy: "http://127.0.0.1:7890"
     # default_mapping_format: "alpaca"  # default mapping format to auto-skip interaction
     # Webpage collect node configuration
     max_exploration_depth: 2 # Maximum depth for Playwright exploration

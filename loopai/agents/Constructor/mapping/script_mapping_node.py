@@ -297,12 +297,12 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
     """
     logger.info("=== Script Mapping Node: Starting ===")
     
-    # 确保 obtainer 字典存在
-    if "obtainer" not in state:
-        state["obtainer"] = {}
+    # 确保 constructor 字典存在
+    if "constructor" not in state:
+        state["constructor"] = {}
     
-    obtainer_state = state.get("obtainer", {})
-    confirmed_format = obtainer_state.get("confirmed_format", {})
+    constructor_state = state.get("constructor", {})
+    confirmed_format = constructor_state.get("confirmed_format", {})
     format_id = confirmed_format.get("format_id", "")
     
     if not format_id or format_id not in FORMAT_MAPPERS:
@@ -310,7 +310,7 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
         state["exception"] = f"Invalid format ID: {format_id}"
         return state
     
-    intermediate_path = obtainer_state.get("intermediate_data_path", "")
+    intermediate_path = constructor_state.get("intermediate_data_path", "")
     if not intermediate_path or not os.path.exists(intermediate_path):
         logger.error(f"Intermediate data path not found: {intermediate_path}")
         state["exception"] = f"Intermediate data path does not exist: {intermediate_path}"
@@ -327,7 +327,7 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
         
         if not records:
             logger.warning("No records found in intermediate data")
-            state["obtainer"]["mapping_results"] = {
+            state["constructor"]["mapping_results"] = {
                 "total_records": 0,
                 "mapped_records": 0,
                 "output_dir": mapping_output_dir,
@@ -337,7 +337,7 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
         
         logger.info(f"Read {len(records)} records from intermediate data")
         
-        category = obtainer_state.get("category", "PT")
+        category = constructor_state.get("category", "PT")
         output_file = os.path.join(mapping_output_dir, f"mapped_{format_id}_{category}.jsonl")
         
         mapped_count = 0
@@ -364,7 +364,7 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
         
         logger.info(f"Script mapping completed: {mapped_count} records mapped, {failed_count} failed")
         
-        state["obtainer"]["mapping_results"] = {
+        state["constructor"]["mapping_results"] = {
             "total_records": len(records),
             "mapped_records": mapped_count,
             "failed_records": failed_count,
@@ -374,7 +374,7 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
             "mapping_type": "script"
         }
         
-        _save_to_store(state, store, state["obtainer"]["mapping_results"])
+        _save_to_store(state, store, state["constructor"]["mapping_results"])
         
     except Exception as e:
         logger.error(f"Error in script mapping: {e}", exc_info=True)

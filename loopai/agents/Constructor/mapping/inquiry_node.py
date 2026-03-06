@@ -26,7 +26,7 @@ def inquiry_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState:
     """
     logger.info("=== Inquiry Node: Starting ===")
     
-    intermediate_path = state.get("obtainer", {}).get("intermediate_data_path", "")
+    intermediate_path = state.get("constructor", {}).get("intermediate_data_path", "")
     if not intermediate_path:
         logger.warning("No intermediate data path found")
         state["exception"] = "Intermediate data path not found"
@@ -79,42 +79,42 @@ def _analyze_user_intent(state: LoopAIState, user_input: str, store: BaseStore =
     """Analyze user intent"""
     logger.info(f"Analyzing user intent: {user_input}")
     
-    # 确保 obtainer 字典存在
-    if "obtainer" not in state:
-        state["obtainer"] = {}
+    # 确保 constructor 字典存在
+    if "constructor" not in state:
+        state["constructor"] = {}
     
     if not user_input or not user_input.strip():
-        state["obtainer"]["mapping_user_intent"] = "unclear"
+        state["constructor"]["mapping_user_intent"] = "unclear"
         logger.info("Empty input, intent: unclear")
         return state
     
     user_input_lower = user_input.lower().strip()
     
     if user_input_lower == "list":
-        state["obtainer"]["mapping_user_intent"] = "list_formats"
+        state["constructor"]["mapping_user_intent"] = "list_formats"
         logger.info("Quick match: list_formats")
         _save_to_store(state, store)
         return state
     
     if user_input_lower in PRESET_FORMATS:
-        state["obtainer"]["mapping_user_intent"] = "preset_format"
-        state["obtainer"]["mapping_selected_format_id"] = user_input_lower
+        state["constructor"]["mapping_user_intent"] = "preset_format"
+        state["constructor"]["mapping_selected_format_id"] = user_input_lower
         logger.info(f"Quick match: preset_format ({user_input_lower})")
         _save_to_store(state, store)
         return state
     
     for format_id in PRESET_FORMATS.keys():
         if format_id in user_input_lower:
-            state["obtainer"]["mapping_user_intent"] = "preset_format"
-            state["obtainer"]["mapping_selected_format_id"] = format_id
+            state["constructor"]["mapping_user_intent"] = "preset_format"
+            state["constructor"]["mapping_selected_format_id"] = format_id
             logger.info(f"Found preset format in input: {format_id}")
             _save_to_store(state, store)
             return state
     
-    obtainer = state.get("obtainer", {})
-    model_name = obtainer.get("model_path")
-    base_url = obtainer.get("base_url")
-    api_key = obtainer.get("api_key")
+    constructor = state.get("constructor", {})
+    model_name = constructor.get("model_path")
+    base_url = constructor.get("base_url")
+    api_key = constructor.get("api_key")
     
     if not model_name or not base_url or not api_key:
         logger.warning("No LLM config, using simple rules")
@@ -151,23 +151,23 @@ Available preset format IDs: {preset_format_ids}"""
             format_id = result.get("format_id", "")
             custom_desc = result.get("custom_description", "")
             
-            state["obtainer"]["mapping_user_intent"] = action
+            state["constructor"]["mapping_user_intent"] = action
             
             if action == "preset_format" and format_id:
-                state["obtainer"]["mapping_selected_format_id"] = format_id.lower()
+                state["constructor"]["mapping_selected_format_id"] = format_id.lower()
             elif action == "custom_format":
-                state["obtainer"]["mapping_custom_description"] = custom_desc or user_input
+                state["constructor"]["mapping_custom_description"] = custom_desc or user_input
             
             logger.info(f"LLM analysis result: action={action}, format_id={format_id}")
         else:
-            state["obtainer"]["mapping_user_intent"] = "custom_format"
-            state["obtainer"]["mapping_custom_description"] = user_input
+            state["constructor"]["mapping_user_intent"] = "custom_format"
+            state["constructor"]["mapping_custom_description"] = user_input
             logger.info("LLM response parse failed, defaulting to custom_format")
         
     except Exception as e:
         logger.error(f"LLM analysis failed: {e}")
-        state["obtainer"]["mapping_user_intent"] = "custom_format"
-        state["obtainer"]["mapping_custom_description"] = user_input
+        state["constructor"]["mapping_user_intent"] = "custom_format"
+        state["constructor"]["mapping_custom_description"] = user_input
     
     _save_to_store(state, store)
     logger.info("=== Inquiry Node: Completed ===")
@@ -178,21 +178,21 @@ def _simple_intent_analysis(state: LoopAIState, user_input: str, store: BaseStor
     """Simple intent analysis (fallback when no LLM)"""
     logger.info("Using simple intent analysis")
     
-    # 确保 obtainer 字典存在
-    if "obtainer" not in state:
-        state["obtainer"] = {}
+    # 确保 constructor 字典存在
+    if "constructor" not in state:
+        state["constructor"] = {}
     
     user_input_lower = user_input.lower().strip()
     
     list_keywords = ["list", "view", "show", "available", "options"]
     if any(kw in user_input_lower for kw in list_keywords):
-        state["obtainer"]["mapping_user_intent"] = "list_formats"
+        state["constructor"]["mapping_user_intent"] = "list_formats"
         logger.info("Simple match: list_formats")
         _save_to_store(state, store)
         return state
     
-    state["obtainer"]["mapping_user_intent"] = "custom_format"
-    state["obtainer"]["mapping_custom_description"] = user_input
+    state["constructor"]["mapping_user_intent"] = "custom_format"
+    state["constructor"]["mapping_custom_description"] = user_input
     logger.info(f"Simple match: custom_format")
     _save_to_store(state, store)
     return state
@@ -235,13 +235,13 @@ def _save_to_store(state: LoopAIState, store: BaseStore):
         import datetime
         thread_id = state.get("task_id", "default")
         
-        obtainer_state = state.get("obtainer", {})
+        constructor_state = state.get("constructor", {})
         data = {
             "event_type": "inquiry_completed",
             "timestamp": datetime.datetime.now().isoformat(),
-            "user_intent": obtainer_state.get("mapping_user_intent", ""),
-            "selected_format_id": obtainer_state.get("mapping_selected_format_id", ""),
-            "custom_description": obtainer_state.get("mapping_custom_description", "")[:200]
+            "user_intent": constructor_state.get("mapping_user_intent", ""),
+            "selected_format_id": constructor_state.get("mapping_selected_format_id", ""),
+            "custom_description": constructor_state.get("mapping_custom_description", "")[:200]
         }
         
         namespace = ("mapping", thread_id)

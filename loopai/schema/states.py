@@ -354,32 +354,6 @@ class ObtainerState(BaseModel):
         json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "数据清洗"}
     )
 
-    # --- Constructor 配置参数 ---
-    llm_timeout: float = Field(
-        default=120.0,
-        title="LLM 超时时间",
-        description="LLM 调用超时时间（秒）",
-        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
-    )
-    max_retries: int = Field(
-        default=3,
-        title="最大重试次数",
-        description="操作失败时的最大重试次数",
-        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
-    )
-    max_concurrent_mapping: int = Field(
-        default=10,
-        title="最大并发映射数",
-        description="数据映射的最大并发数",
-        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
-    )
-    debug: bool = Field(
-        default=False,
-        title="调试模式",
-        description="是否启用调试模式",
-        json_schema_extra={"ui_type": "switch", "ui_group": "构造配置"}
-    )
-
     # --- Sub-node: Webpage Collect (网页收集节点参数) ---
     webpage_collect_summary: str = Field(
         default="",
@@ -436,6 +410,210 @@ class ObtainerState(BaseModel):
         title="最终 JSONL 路径",
         description="最终数据集 JSONL 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "数据集生成"}
+    )
+
+
+class ConstructorState(BaseModel):
+    """
+    Constructor 模块专用状态管理类
+    独立于 ObtainerState，用于数据后处理、清洗与映射流程
+    """
+    # --- Agent 配置 ---
+    model_path: Optional[str] = Field(
+        default=None,
+        title="模型路径",
+        description="Constructor 使用的大模型路径或名称",
+        json_schema_extra={"ui_type": "text", "ui_group": "Agent配置"}
+    )
+    base_url: Optional[str] = Field(
+        default=None,
+        title="API Base URL",
+        description="Constructor 模型 API Base URL",
+        json_schema_extra={"ui_type": "text", "ui_group": "Agent配置"}
+    )
+    api_key: Optional[str] = Field(
+        default=None,
+        title="API Key",
+        description="Constructor 模型 API Key",
+        json_schema_extra={"ui_type": "password", "ui_group": "Agent配置"}
+    )
+    temperature: float = Field(
+        default=0.7,
+        title="采样温度",
+        description="Constructor 模型采样温度",
+        ge=0.0, le=1.0,
+        json_schema_extra={"ui_type": "slider", "step": 0.1, "max": 1, "ui_group": "Agent配置"}
+    )
+    top_p: float = Field(
+        default=0.95,
+        title="Top-p 采样",
+        description="Constructor 模型 nucleus sampling 参数",
+        ge=0.0, le=1.0,
+        json_schema_extra={"ui_type": "slider", "step": 0.01, "max": 1, "ui_group": "Agent配置"}
+    )
+    max_completion_tokens: int = Field(
+        default=4096,
+        title="最大输出 Token",
+        description="Constructor LLM 调用的最大生成 token 数",
+        ge=1,
+        json_schema_extra={"ui_type": "number", "ui_group": "Agent配置"}
+    )
+
+    # --- 基础输入 ---
+    user_query: str = Field(
+        default="",
+        title="用户需求",
+        description="用于清洗/映射规划的用户需求",
+        json_schema_extra={"ui_type": "textarea", "ui_group": "基础输入"}
+    )
+    datasets_background: str = Field(
+        default="",
+        title="数据集背景",
+        description="用于后处理文件筛选的背景信息",
+        json_schema_extra={"ui_type": "textarea", "ui_group": "基础输入"}
+    )
+    category: str = Field(
+        default="",
+        title="数据类别",
+        description="数据类别（PT/SFT）",
+        json_schema_extra={"ui_type": "text", "ui_group": "基础输入"}
+    )
+    output_dir: str = Field(
+        default="",
+        title="输出目录",
+        description="Constructor 输出目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "基础输入"}
+    )
+    download_dir: str = Field(
+        default="",
+        title="下载目录",
+        description="待处理下载数据目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "基础输入"}
+    )
+    prompt_template_dir: str = Field(
+        default="",
+        title="Prompt 模板目录",
+        description="Prompt 模板目录路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "基础输入"}
+    )
+
+    # --- 构造配置 ---
+    max_samples_before_cleaning: int = Field(
+        default=1000,
+        title="基础清洗后最大采样数",
+        description="基础清洗后最大样本数量，0 表示不限制",
+        ge=0,
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    llm_timeout: float = Field(
+        default=120.0,
+        title="LLM 超时时间",
+        description="LLM 调用超时时间（秒）",
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    max_retries: int = Field(
+        default=3,
+        title="最大重试次数",
+        description="LLM 或映射失败时最大重试次数",
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    max_concurrent_mapping: int = Field(
+        default=10,
+        title="最大并发映射数",
+        description="映射阶段最大并发任务数",
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    default_mapping_format: str = Field(
+        default="alpaca",
+        title="默认映射格式",
+        description="非空时可直接自动映射",
+        json_schema_extra={"ui_type": "text", "ui_group": "构造配置"}
+    )
+    debug: bool = Field(
+        default=False,
+        title="调试模式",
+        description="是否开启 Constructor 调试日志",
+        json_schema_extra={"ui_type": "switch", "ui_group": "构造配置"}
+    )
+
+    # --- 运行结果 ---
+    postprocess_results: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="后处理结果",
+        description="后处理阶段输出统计",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "运行结果"}
+    )
+    intermediate_data_path: str = Field(
+        default="",
+        title="中间数据路径",
+        description="清洗和映射的输入数据路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "运行结果"}
+    )
+    cleaning_tool_plan: Optional[List[str]] = Field(
+        default=None,
+        title="清洗工具计划",
+        description="清洗子图工具执行顺序",
+        json_schema_extra={"ui_type": "tags_input", "ui_group": "运行结果"}
+    )
+    cleaning_results: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="清洗结果",
+        description="清洗子图执行结果",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "运行结果"}
+    )
+    confirmed_format: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="已确认格式",
+        description="映射阶段最终确认格式",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "运行结果"}
+    )
+    pending_format: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="待确认格式",
+        description="映射阶段待确认格式",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "运行结果"}
+    )
+    mapping_auto_mode: bool = Field(
+        default=False,
+        title="自动映射模式",
+        description="是否启用自动映射模式",
+        json_schema_extra={"ui_type": "switch", "ui_group": "运行结果"}
+    )
+    confirmation_result: str = Field(
+        default="",
+        title="确认结果",
+        description="格式确认结果",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "运行结果"}
+    )
+    mapping_user_intent: str = Field(
+        default="",
+        title="映射用户意图",
+        description="用户在映射流程中的意图",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "运行结果"}
+    )
+    mapping_selected_format_id: str = Field(
+        default="",
+        title="映射格式ID",
+        description="用户选择的预设格式 ID",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "运行结果"}
+    )
+    mapping_custom_description: str = Field(
+        default="",
+        title="自定义映射描述",
+        description="用户输入的自定义映射描述",
+        json_schema_extra={"ui_type": "textarea", "ui_group": "运行结果"}
+    )
+    mapping_results: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="映射结果",
+        description="映射阶段执行结果",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "运行结果"}
+    )
+    subtasks: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        title="下载子任务",
+        description="从 Obtainer 同步的下载子任务，用于决定是否进入后处理流程",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "运行结果"}
     )
 
 # ==========================================
@@ -1109,6 +1287,7 @@ def get_state_config_schema():
         "analyzer": get_field_statement(AnalyzerState),
         "trainer": get_field_statement(TrainerState),
         "obtainer": get_field_statement(ObtainerState),
+        "constructor": get_field_statement(ConstructorState),
         "webcrawler": get_field_statement(WebCrawlerState),
     }
 
@@ -1141,6 +1320,7 @@ class LoopAIState(MessagesState):
     # 使用 merge_dict 处理更新
     # 这里的 Dict[str, Any] 实际上就是 ObtainerState 转换后的字典
     obtainer: Annotated[Dict[str, Any], merge_dict]
+    constructor: Annotated[Dict[str, Any], merge_dict]
 
     # === Configer (保持原样) ===
     configer: Annotated[Dict[str, Any], merge_dict]

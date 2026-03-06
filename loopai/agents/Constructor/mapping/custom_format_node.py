@@ -28,14 +28,14 @@ def custom_format_node(state: LoopAIState, store: BaseStore = None) -> LoopAISta
     """
     logger.info("=== Custom Format Node: Starting ===")
     
-    # 确保 obtainer 字典存在
-    if "obtainer" not in state:
-        state["obtainer"] = {}
+    # 确保 constructor 字典存在
+    if "constructor" not in state:
+        state["constructor"] = {}
     
-    obtainer_state = state.get("obtainer", {})
-    description = obtainer_state.get("mapping_custom_description", "")
+    constructor_state = state.get("constructor", {})
+    description = constructor_state.get("mapping_custom_description", "")
     
-    previous_format = obtainer_state.get("confirmed_format") or obtainer_state.get("pending_format")
+    previous_format = constructor_state.get("confirmed_format") or constructor_state.get("pending_format")
     is_modification = previous_format is not None and description
     
     if is_modification:
@@ -73,7 +73,7 @@ Please describe the fields and data structure you need:"""
         
         if user_input:
             description = str(user_input)
-            state["obtainer"]["mapping_custom_description"] = description
+            state["constructor"]["mapping_custom_description"] = description
             state["messages"].append(HumanMessage(content=description))
             logger.info(f"User provided description: {description}")
         else:
@@ -81,11 +81,11 @@ Please describe the fields and data structure you need:"""
             state["exception"] = "No custom format description provided"
             return state
     
-    obtainer = state.get("obtainer", {})
-    model_name = obtainer.get("model_path")
-    base_url = obtainer.get("base_url")
-    api_key = obtainer.get("api_key")
-    temperature = obtainer.get("temperature", 0.7)
+    constructor = state.get("constructor", {})
+    model_name = constructor.get("model_path")
+    base_url = constructor.get("base_url")
+    api_key = constructor.get("api_key")
+    temperature = constructor.get("temperature", 0.7)
     
     if not model_name or not base_url or not api_key:
         logger.error("Missing LLM configuration")
@@ -154,9 +154,9 @@ Generate corresponding schema and example data. Only output JSON object."""
             "example": format_config.get("example", {}),
             "is_preset": False
         }
-        state["obtainer"]["pending_format"] = pending_format
+        state["constructor"]["pending_format"] = pending_format
         
-        state["obtainer"]["confirmed_format"] = None
+        state["constructor"]["confirmed_format"] = None
         
         logger.info("Custom format generated successfully")
         
@@ -171,8 +171,8 @@ Generate corresponding schema and example data. Only output JSON object."""
             content=f"Error generating custom format: {str(e)}\n\nPlease try describing your format more clearly, or select a preset format."
         ))
         
-        state["obtainer"]["mapping_user_intent"] = ""
-        state["obtainer"]["mapping_custom_description"] = ""
+        state["constructor"]["mapping_user_intent"] = ""
+        state["constructor"]["mapping_custom_description"] = ""
     
     logger.info("=== Custom Format Node: Completed ===")
     return state

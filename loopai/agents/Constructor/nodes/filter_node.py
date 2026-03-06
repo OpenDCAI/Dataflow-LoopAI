@@ -9,6 +9,7 @@ Data Cleaning Subgraph - 数据清洗子图
 import os
 import json
 import re
+import random
 from typing import Dict, Any, List, Optional
 
 from langgraph.graph import StateGraph
@@ -52,6 +53,65 @@ TOOL_MAP = {
     "normal_data": domain_normal_data_cleaner,
     "benchmark_cleaner": benchmark_data_cleaner,
 }
+
+
+def _sample_intermediate_data(data_path: str, max_samples: int) -> None:
+    """
+    对基础清洗后的中间数据执行采样。
+    当记录数超过 max_samples 时，随机采样到 max_samples 条并覆写原文件。
+    支持单个 JSONL 文件或包含多个 JSONL 文件的目录。
+    """
+    if not data_path or not os.path.exists(data_path):
+        return
+
+    jsonl_files: List[str] = []
+    if os.path.isfile(data_path) and data_path.endswith(".jsonl"):
+        jsonl_files = [data_path]
+    elif os.path.isdir(data_path):
+        jsonl_files = [
+            os.path.join(data_path, f)
+            for f in os.listdir(data_path)
+            if f.endswith(".jsonl") and os.path.isfile(os.path.join(data_path, f))
+        ]
+
+    if not jsonl_files:
+        return
+
+    file_records: Dict[str, List[str]] = {}
+    total = 0
+    for fp in jsonl_files:
+        lines: List[str] = []
+        with open(fp, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    lines.append(line.rstrip("\n"))
+        file_records[fp] = lines
+        total += len(lines)
+
+    if total <= max_samples:
+        logger.info(
+            f"Post-basic-cleaning sampling: {total} records <= {max_samples}, no sampling needed"
+        )
+        return
+
+    logger.info(
+        f"Post-basic-cleaning sampling: {total} records > {max_samples}, "
+        f"sampling down to {max_samples}"
+    )
+
+    for fp, lines in file_records.items():
+        share = max(1, int(max_samples * len(lines) / total)) if lines else 0
+        share = min(share, len(lines))
+        if len(lines) > share:
+            file_records[fp] = random.sample(lines, share)
+
+    for fp, lines in file_records.items():
+        with open(fp, "w", encoding="utf-8") as f:
+            for line in lines:
+                f.write(line + "\n")
+
+    sampled_total = sum(len(v) for v in file_records.values())
+    logger.info(f"Post-basic-cleaning sampling complete: {total} -> {sampled_total}")
 
 
 def _read_jsonl_file(filepath: str) -> List[Dict[str, Any]]:
@@ -160,35 +220,35 @@ def planner_node(state: LoopAIState) -> LoopAIState:
         # 1. 初始化 tool_plan，先添加基础工具 basic_data_flitter（始终执行，用于基础数据过滤）
         tool_plan: List[str] = ["basic_data_flitter"]
         
-        # 2. 获取输入数据（从 state.obtainer 中获取）
-        obtainer_state = state.get("obtainer", {})
-        intermediate_data_path = obtainer_state.get("intermediate_data_path", "")
+        # 2. 获取输入数据（从 state.constructor 中获取）
+        constructor_state = state.get("constructor", {})
+        intermediate_data_path = constructor_state.get("intermediate_data_path", "")
         if not intermediate_data_path:
             logger.warning("No intermediate data path found, skipping domain tool planning")
-            if "obtainer" not in state:
-                state["obtainer"] = {}
-            state["obtainer"]["cleaning_tool_plan"] = tool_plan
+            if "constructor" not in state:
+                state["constructor"] = {}
+            state["constructor"]["cleaning_tool_plan"] = tool_plan
             return state
         
         if not os.path.exists(intermediate_data_path):
             logger.warning(f"Intermediate data path does not exist: {intermediate_data_path}")
-            if "obtainer" not in state:
-                state["obtainer"] = {}
-            state["obtainer"]["cleaning_tool_plan"] = tool_plan
+            if "constructor" not in state:
+                state["constructor"] = {}
+            state["constructor"]["cleaning_tool_plan"] = tool_plan
             return state
         
-        # 获取 user_query 和 category（从 state.obtainer 中获取）
+        # 获取 user_query 和 category（从 state.constructor 中获取）
         user_query = _extract_user_query(state)
-        category = obtainer_state.get("category", "PT").upper()
+        category = constructor_state.get("category", "PT").upper()
         
         logger.info(f"Planning tools for data path: {intermediate_data_path}")
         logger.info(f"User query: {user_query[:100] if user_query else 'N/A'}...")
         logger.info(f"Category: {category}")
         
         # 3. 基于 user_query 和 datasets_background 使用LLM判断领域工具
-        # 从 state.obtainer 中获取 user_query 和 datasets_background（obtainer_state 已在上面获取）
-        user_query_from_state = obtainer_state.get("user_query", "")
-        datasets_background = obtainer_state.get("datasets_background", "")
+        # 从 state.constructor 中获取 user_query 和 datasets_background（constructor_state 已在上面获取）
+        user_query_from_state = constructor_state.get("user_query", "")
+        datasets_background = constructor_state.get("datasets_background", "")
         
         # 如果 user_query 为空，尝试从其他地方获取
         if not user_query_from_state:
@@ -256,31 +316,31 @@ def planner_node(state: LoopAIState) -> LoopAIState:
             tool_plan.append("normal_data")
             logger.info("Using default normal_data tool due to LLM error")
         
-        # 4. 更新State（确保 tool_plan 被正确设置到 state.obtainer 中）
-        if "obtainer" not in state:
-            state["obtainer"] = {}
-        state["obtainer"]["cleaning_tool_plan"] = tool_plan
+        # 4. 更新State（确保 tool_plan 被正确设置到 state.constructor 中）
+        if "constructor" not in state:
+            state["constructor"] = {}
+        state["constructor"]["cleaning_tool_plan"] = tool_plan
         logger.info(f"Final tool_plan: {tool_plan}")
-        logger.debug(f"State after planner_node: cleaning_tool_plan = {state.get('obtainer', {}).get('cleaning_tool_plan')}")
+        logger.debug(f"State after planner_node: cleaning_tool_plan = {state.get('constructor', {}).get('cleaning_tool_plan')}")
         
     except Exception as e:
         logger.error(f"Error in planner_node: {e}", exc_info=True)
         # 发生错误时，至少保证基础工具被执行
-        if "obtainer" not in state:
-            state["obtainer"] = {}
-        state["obtainer"]["cleaning_tool_plan"] = ["basic_data_flitter"]
+        if "constructor" not in state:
+            state["constructor"] = {}
+        state["constructor"]["cleaning_tool_plan"] = ["basic_data_flitter"]
         state["exception"] = f"Error in planner_node: {str(e)}"
     
     logger.info("=== Cleaning Subgraph: Planner Node Completed ===")
     if writer:
-        tool_plan = state.get("obtainer", {}).get("cleaning_tool_plan", [])
+        tool_plan = state.get("constructor", {}).get("cleaning_tool_plan", [])
         writer(StreamEvent(
             current=current,
             message=f"Constructor: 数据清洗 - 规划完成，将执行 {len(tool_plan)} 个工具",
             progress=0.2,
             data={"phase": "data_cleaning", "node": "planner", "tool_plan": tool_plan},
         ).json())
-    logger.debug(f"Returning state with cleaning_tool_plan: {state.get('obtainer', {}).get('cleaning_tool_plan')}")
+    logger.debug(f"Returning state with cleaning_tool_plan: {state.get('constructor', {}).get('cleaning_tool_plan')}")
     return state
 
 
@@ -306,24 +366,24 @@ def process_node(state: LoopAIState) -> LoopAIState:
         ).json())
 
     try:
-        # 1. 获取 tool_plan（从 state.obtainer 中获取）
-        obtainer_state = state.get("obtainer", {})
-        tool_plan = obtainer_state.get("cleaning_tool_plan", [])
+        # 1. 获取 tool_plan（从 state.constructor 中获取）
+        constructor_state = state.get("constructor", {})
+        tool_plan = constructor_state.get("cleaning_tool_plan", [])
         logger.debug(f"Process node received state with cleaning_tool_plan: {tool_plan}")
         logger.debug(f"Full state keys: {list(state.keys())}")
-        logger.debug(f"Obtainer state keys: {list(obtainer_state.keys())}")
+        logger.debug(f"Constructor state keys: {list(constructor_state.keys())}")
         
         if not tool_plan:
             logger.warning("No tool_plan found, skipping process node")
             logger.warning(f"Available state keys: {list(state.keys())}")
-            logger.warning(f"Obtainer state: {obtainer_state}")
+            logger.warning(f"Constructor state: {constructor_state}")
             return state
         
         logger.info(f"Executing tool_plan: {tool_plan}")
         
-        # 2. 获取数据路径（从 state.obtainer 中获取）
-        obtainer_state = state.get("obtainer", {})
-        current_data_path = obtainer_state.get("intermediate_data_path", "")
+        # 2. 获取数据路径（从 state.constructor 中获取）
+        constructor_state = state.get("constructor", {})
+        current_data_path = constructor_state.get("intermediate_data_path", "")
         if not current_data_path:
             logger.warning("No intermediate data path found, skipping tool execution")
             return state
@@ -340,6 +400,8 @@ def process_node(state: LoopAIState) -> LoopAIState:
         }
         
         total_tools = len(tool_plan)
+        max_samples = int(constructor_state.get("max_samples_before_cleaning", 1000) or 0)
+        sampling_done_after_basic = False
         for tool_idx, tool_name in enumerate(tool_plan):
             try:
                 if writer:
@@ -386,6 +448,16 @@ def process_node(state: LoopAIState) -> LoopAIState:
                 if new_data_path != current_data_path:
                     logger.info(f"Tool {tool_name} updated data path: {current_data_path} -> {new_data_path}")
                     current_data_path = new_data_path
+
+                # 在基础清洗成功后执行采样，减少后续领域工具处理的数据量。
+                if (
+                    tool_name == "basic_data_flitter"
+                    and not sampling_done_after_basic
+                    and max_samples > 0
+                    and current_data_path
+                ):
+                    _sample_intermediate_data(current_data_path, max_samples)
+                    sampling_done_after_basic = True
                 
                 # 记录执行结果
                 cleaning_results["tools_executed"].append({
@@ -403,11 +475,11 @@ def process_node(state: LoopAIState) -> LoopAIState:
                 })
                 # 继续执行下一个工具，不中断流程
         
-        # 4. 更新State（更新 state.obtainer 中的数据路径和清洗结果）
-        if "obtainer" not in state:
-            state["obtainer"] = {}
-        state["obtainer"]["intermediate_data_path"] = current_data_path
-        state["obtainer"]["cleaning_results"] = cleaning_results
+        # 4. 更新State（更新 state.constructor 中的数据路径和清洗结果）
+        if "constructor" not in state:
+            state["constructor"] = {}
+        state["constructor"]["intermediate_data_path"] = current_data_path
+        state["constructor"]["cleaning_results"] = cleaning_results
         
         logger.info(f"Process node completed. Final data path: {current_data_path}")
         logger.info(f"Tools executed: {len(cleaning_results['tools_executed'])}, "
@@ -470,9 +542,9 @@ def benchmark_cleaner_node(state: LoopAIState) -> LoopAIState:
             logger.warning(f"Benchmark path does not exist: {benchmark_path}, skipping benchmark cleaning")
             return state
         
-        # 2. 获取当前数据路径（从 state.obtainer 中获取）
-        obtainer_state = state.get("obtainer", {})
-        current_data_path = obtainer_state.get("intermediate_data_path", "")
+        # 2. 获取当前数据路径（从 state.constructor 中获取）
+        constructor_state = state.get("constructor", {})
+        current_data_path = constructor_state.get("intermediate_data_path", "")
         if not current_data_path:
             logger.warning("No intermediate data path found, skipping benchmark cleaning")
             return state
@@ -494,16 +566,16 @@ def benchmark_cleaner_node(state: LoopAIState) -> LoopAIState:
         if not tool_success:
             logger.warning(f"Benchmark cleaner failed: {error_message}")
             # 工具失败时，记录错误但不中断流程
-            if "obtainer" not in state:
-                state["obtainer"] = {}
-            cleaning_results = state["obtainer"].get("cleaning_results", {})
+            if "constructor" not in state:
+                state["constructor"] = {}
+            cleaning_results = state["constructor"].get("cleaning_results", {})
             if "tools_failed" not in cleaning_results:
                 cleaning_results["tools_failed"] = []
             cleaning_results["tools_failed"].append({
                 "tool": "benchmark_cleaner",
                 "error": error_message or "Tool returned success=False"
             })
-            state["obtainer"]["cleaning_results"] = cleaning_results
+            state["constructor"]["cleaning_results"] = cleaning_results
             return state
         
         # 5. 更新数据路径（链式调用）
@@ -512,12 +584,12 @@ def benchmark_cleaner_node(state: LoopAIState) -> LoopAIState:
             logger.info(f"Benchmark cleaner updated data path: {current_data_path} -> {new_data_path}")
         
         # 6. 更新 State
-        if "obtainer" not in state:
-            state["obtainer"] = {}
-        state["obtainer"]["intermediate_data_path"] = new_data_path
+        if "constructor" not in state:
+            state["constructor"] = {}
+        state["constructor"]["intermediate_data_path"] = new_data_path
         
         # 更新清洗结果统计
-        cleaning_results = state["obtainer"].get("cleaning_results", {})
+        cleaning_results = state["constructor"].get("cleaning_results", {})
         if "tools_executed" not in cleaning_results:
             cleaning_results["tools_executed"] = []
         cleaning_results["tools_executed"].append({
@@ -538,7 +610,7 @@ def benchmark_cleaner_node(state: LoopAIState) -> LoopAIState:
             "records_kept": result.valid_records
         }
         
-        state["obtainer"]["cleaning_results"] = cleaning_results
+        state["constructor"]["cleaning_results"] = cleaning_results
         
         logger.info(f"Benchmark cleaner completed - "
                    f"total: {result.total_records}, "
@@ -560,16 +632,16 @@ def benchmark_cleaner_node(state: LoopAIState) -> LoopAIState:
     except Exception as e:
         logger.error(f"Error in benchmark_cleaner_node: {e}", exc_info=True)
         # 发生错误时，记录异常但不中断流程
-        if "obtainer" not in state:
-            state["obtainer"] = {}
-        cleaning_results = state["obtainer"].get("cleaning_results", {})
+        if "constructor" not in state:
+            state["constructor"] = {}
+        cleaning_results = state["constructor"].get("cleaning_results", {})
         if "tools_failed" not in cleaning_results:
             cleaning_results["tools_failed"] = []
         cleaning_results["tools_failed"].append({
             "tool": "benchmark_cleaner",
             "error": str(e)
         })
-        state["obtainer"]["cleaning_results"] = cleaning_results
+        state["constructor"]["cleaning_results"] = cleaning_results
         if writer:
             writer(StreamEvent(
                 current=current,
@@ -658,14 +730,14 @@ class CleaningSubgraph(BaseAgent):
         Returns:
             ChatOpenAI 实例，如果配置不完整则返回 None
         """
-        # 从 state.obtainer 中获取配置
-        obtainer_state = state.get("obtainer", {})
-        model_name = obtainer_state.get("model_path") or state.get("analyze_model_path")
-        base_url = obtainer_state.get("base_url") or state.get("analyze_base_url")
-        api_key = obtainer_state.get("api_key") or state.get("analyze_api_key")
-        temperature = obtainer_state.get("temperature", self.temperature)
-        top_p = obtainer_state.get("top_p", self.top_p)
-        max_completion_tokens = obtainer_state.get("max_completion_tokens", self.max_completion_tokens)
+        # 从 state.constructor 中获取配置
+        constructor_state = state.get("constructor", {})
+        model_name = constructor_state.get("model_path") or state.get("analyze_model_path")
+        base_url = constructor_state.get("base_url") or state.get("analyze_base_url")
+        api_key = constructor_state.get("api_key") or state.get("analyze_api_key")
+        temperature = constructor_state.get("temperature", self.temperature)
+        top_p = constructor_state.get("top_p", self.top_p)
+        max_completion_tokens = constructor_state.get("max_completion_tokens", self.max_completion_tokens)
         
         if not (model_name and base_url and api_key):
             return None
