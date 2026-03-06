@@ -2,50 +2,101 @@
     <div class="lp-default-container" :class="[{ 'show-pipeline': show.pipeline }]">
         <page-loading :model-value="!currentTask || !currentTask.task_id" :z-index="3" acrylic>
             <h1>{{ local('Start with a new Task') }}</h1>
-            <fv-button theme="dark" icon="OpenPaneMirrored" :background="gradient" border-radius="12" font-size="16"
-                style="width: 150px; height: 45px; margin-top: 25px" @click="show.taskNav = true">{{ local('Open Tasks')
-                }}</fv-button>
+            <fv-button
+                theme="dark"
+                icon="OpenPaneMirrored"
+                :background="gradient"
+                border-radius="12"
+                font-size="16"
+                style="width: 150px; height: 45px; margin-top: 25px"
+                @click="show.taskNav = true"
+                >{{ local('Open Tasks') }}</fv-button
+            >
         </page-loading>
-        <task-nav v-model="show.taskNav" class="lp-task-container" v-model:task="currentTask"></task-nav>
+        <task-nav
+            v-model="show.taskNav"
+            class="lp-task-container"
+            v-model:task="currentTask"
+        ></task-nav>
         <div class="lp-flow-container">
-            <mainFlow :id="flowId" v-model:nodes="nodes" v-model:edges="edges" @click="show.taskNav = false"></mainFlow>
+            <mainFlow
+                :id="flowId"
+                v-model:nodes="nodes"
+                v-model:edges="edges"
+                @click="show.taskNav = false"
+            ></mainFlow>
             <div class="control-menu-block">
-                <fv-command-bar v-model="value" :options="options" :item-border-radius="30"
-                    background="rgba(250, 250, 250, 0.8)" class="command-bar">
+                <fv-command-bar
+                    v-model="value"
+                    :options="options"
+                    :item-border-radius="30"
+                    background="rgba(250, 250, 250, 0.8)"
+                    class="command-bar"
+                >
                     <template v-slot:optionItem="x">
                         <div class="command-bar-item-wrapper">
                             <fv-img v-if="x.item.img" class="option-img" :src="x.item.img" alt="" />
-                            <i v-else class="ms-Icon icon" :class="[`ms-Icon--${x.valueTrigger(x.item.icon)}`]"
-                                :style="{ color: x.valueTrigger(x.item.foreground) }"></i>
-                            <p class="option-name" :style="{ color: x.valueTrigger(x.item.foreground) }">
+                            <i
+                                v-else
+                                class="ms-Icon icon"
+                                :class="[`ms-Icon--${x.valueTrigger(x.item.icon)}`]"
+                                :style="{ color: x.valueTrigger(x.item.foreground) }"
+                            ></i>
+                            <p
+                                class="option-name"
+                                :style="{ color: x.valueTrigger(x.item.foreground) }"
+                            >
                                 {{ x.valueTrigger(x.item.name) }}
                             </p>
-                            <i v-show="x.item.secondary.length > 0" class="ms-Icon ms-Icon--ChevronDown icon"></i>
+                            <i
+                                v-show="x.item.secondary.length > 0"
+                                class="ms-Icon ms-Icon--ChevronDown icon"
+                            ></i>
                         </div>
                     </template>
                     <template v-slot:right-space>
                         <div class="command-bar-right-space">
-                            <fv-button theme="dark" background="linear-gradient(
+                            <fv-button
+                                theme="dark"
+                                background="linear-gradient(
                                     90deg,
                                     rgba(129, 208, 246, 1),
                                     rgba(146, 156, 218, 1)
-                                )" foreground="rgba(255, 255, 255, 1)" border-color="rgba(255, 255, 255, 0.3)"
-                                border-radius="30" :disabled="(!currentTask || !currentTask.task_id) && !isRunning"
+                                )"
+                                foreground="rgba(255, 255, 255, 1)"
+                                border-color="rgba(255, 255, 255, 0.3)"
+                                border-radius="30"
+                                :disabled="(!currentTask || !currentTask.task_id) && !isRunning"
                                 :reveal-background-color="[
                                     'rgba(255, 255, 255, 0.5)',
                                     'rgba(103, 105, 251, 0.6)'
-                                ]" @click="handleExecute">
-                                <i class="ms-Icon" :class="[`ms-Icon--${isRunning ? 'CheckboxFill' : 'Play'}`]"
-                                    style="margin-right: 5px"></i>
-                                <fv-progress-ring v-show="!lock.loading" loading="true" :r="10" :border-width="2"
-                                    background="rgba(200, 200, 200, 1)" :color="'white'"
-                                    style="margin-right: 5px"></fv-progress-ring>
+                                ]"
+                                @click="handleExecute"
+                            >
+                                <i
+                                    class="ms-Icon"
+                                    :class="[`ms-Icon--${isRunning ? 'CheckboxFill' : 'Play'}`]"
+                                    style="margin-right: 5px"
+                                ></i>
+                                <fv-progress-ring
+                                    v-show="!lock.loading"
+                                    loading="true"
+                                    :r="10"
+                                    :border-width="2"
+                                    background="rgba(200, 200, 200, 1)"
+                                    :color="'white'"
+                                    style="margin-right: 5px"
+                                ></fv-progress-ring>
                                 <p>{{ isRunning ? this.local('Stop') : this.local('Run') }}</p>
                             </fv-button>
-                            <i class="ms-Icon ms-Icon--FullCircleMask status-coin" :class="[
-                                { ready: taskStatus.running && !taskStatus.waiting_llm },
-                                { running: taskStatus.running && taskStatus.waiting_llm }
-                            ]" style="margin-left: 5px"></i>
+                            <i
+                                class="ms-Icon ms-Icon--FullCircleMask status-coin"
+                                :class="[
+                                    { ready: taskStatus.running && !taskStatus.waiting_llm },
+                                    { running: taskStatus.running && taskStatus.waiting_llm }
+                                ]"
+                                style="margin-left: 5px"
+                            ></i>
                         </div>
                     </template>
                 </fv-command-bar>
@@ -159,7 +210,7 @@ export default {
                 {
                     id: 'obtainer',
                     type: 'agent-node',
-                    position: { x: -110, y: 637 },
+                    position: { x: 360, y: 637 },
                     data: {
                         label: 'Obtainer',
                         status: 'Agent',
@@ -175,7 +226,7 @@ export default {
                 {
                     id: 'webcrawler',
                     type: 'agent-node',
-                    position: { x: -105, y: 1127 },
+                    position: { x: 360, y: 1127 },
                     data: {
                         label: 'Webcrawler',
                         status: 'Agent',
@@ -185,6 +236,23 @@ export default {
                         icon: 'GiftboxOpen',
                         nodeInfo: 'Webcrawler',
                         iconColor: 'rgba(134, 127, 163, 1)',
+                        reverseHandle: true
+                    }
+                },
+                {
+                    id: 'constructor',
+                    type: 'agent-node',
+                    position: { x: -110, y: 800 },
+                    data: {
+                        label: 'Constructor',
+                        status: 'Agent',
+                        stateKey: 'constructor',
+                        graphClsPrefix: 'ConstructorAgent',
+                        include_nodes: ['constructor_node'],
+                        icon: 'OEM',
+                        nodeInfo:
+                            'Constructor Agent for post proceesing the data obtained by Obtainer and WebCrawler.',
+                        iconColor: 'rgba(135, 127, 163, 1)',
                         reverseHandle: true
                     }
                 },
@@ -258,7 +326,11 @@ export default {
                     id: '0',
                     type: 'base-edge',
                     source: 'trainer',
-                    target: 'judger'
+                    target: 'judger',
+                    animated: true,
+                    data: {
+                        label: 'next to'
+                    }
                 },
                 {
                     id: '1',
@@ -267,7 +339,7 @@ export default {
                     target: 'analyzer',
                     animated: true,
                     data: {
-                        label: 'node'
+                        label: 'next to'
                     }
                 },
                 {
@@ -277,27 +349,47 @@ export default {
                     target: 'obtainer',
                     animated: true,
                     data: {
-                        label: 'node'
+                        label: 'next to'
                     }
                 },
                 {
                     id: '3',
                     type: 'base-edge',
-                    source: 'obtainer',
-                    target: 'trainer',
+                    source: 'analyzer',
+                    target: 'webcrawler',
                     animated: true,
                     data: {
-                        label: 'node'
+                        label: 'next to'
                     }
                 },
                 {
                     id: '4',
                     type: 'base-edge',
-                    source: 'analyzer',
-                    target: 'webcrawler',
+                    source: 'obtainer',
+                    target: 'constructor',
                     animated: true,
                     data: {
-                        label: 'node'
+                        label: 'next to'
+                    }
+                },
+                {
+                    id: '5',
+                    type: 'base-edge',
+                    source: 'webcrawler',
+                    target: 'constructor',
+                    animated: true,
+                    data: {
+                        label: 'next to'
+                    }
+                },
+                {
+                    id: '6',
+                    type: 'base-edge',
+                    source: 'constructor',
+                    target: 'trainer',
+                    animated: true,
+                    data: {
+                        label: 'next to'
                     }
                 }
             ],
@@ -319,8 +411,7 @@ export default {
             if (val) this.getStatus()
         },
         'currentTask.task_id'(val, oldVal) {
-            if (oldVal !== null && val !== oldVal)
-                this.stop()
+            if (oldVal !== null && val !== oldVal) this.stop()
         }
     },
     computed: {
@@ -356,15 +447,15 @@ export default {
         },
         recoverTask() {
             try {
-                let running = this.taskStatus.running;
+                let running = this.taskStatus.running
                 if (running && !this.taskStatus.state && !this.currentTask) {
                     this.stop()
                     this.$barWarning('Detect running task without task id, stop it.', {
                         status: 'default'
                     })
-                    return;
+                    return
                 }
-                let task_id = this.taskStatus.state.task_id;
+                let task_id = this.taskStatus.state.task_id
                 if (running && task_id && !this.currentTask) {
                     this.$barWarning('Detect running task, obtaining task info.', {
                         status: 'default'
@@ -375,8 +466,7 @@ export default {
                             this.$barWarning('Running task info obtained', {
                                 status: 'correct'
                             })
-                        }
-                        else {
+                        } else {
                             this.stop()
                             this.$barWarning(res.message, {
                                 status: 'warning'
@@ -384,10 +474,9 @@ export default {
                         }
                     })
                 }
-            }
-            catch (e) { }
+            } catch (e) {}
         },
-        handleSaveClick() { },
+        handleSaveClick() {},
         handleExecute() {
             if (this.isRunning) this.stop()
             else this.execute()
