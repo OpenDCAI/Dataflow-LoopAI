@@ -24,7 +24,7 @@ def extract_state(sg, config, running=True) -> dict:
     return {
         "running": running,
         "event_streaming": event_streaming, # the agent is yielding event_streaming messages
-        "waiting_llm": stream_message is not None, # the agent is waiting for the LLM response, in starter_agent, when the update event is trigger, the stream_message is set as None. This attribute is used to check if the agent is ready for next input.
+        "waiting_llm": stream_message is not None, # whether the starter agent is waiting for the LLM response, in starter_agent, when the update event is trigger, the stream_message is set as None. In general, this attribute is used to check if the agent is ready for next input, however, if the subgraph also enable a llm_node for user query, and its inside stream_message will not be seen from the outside starter, and this attribute may be still as true. 
         "current": current,
         "running_tasks": agent_event.running_tasks,
         "interrupt_value": interrupt_value,
