@@ -126,7 +126,7 @@ def webpage_dataset_node(state: LoopAIState) -> LoopAIState:
                 writer = get_stream_writer()
                 if writer:
                     writer(StreamEvent(
-                        current=state.get('current', 'webpage_dataset_node'),
+                        current=state['current'],
                         message="WebPage Dataset node completed",
                         data={
                             'user_query': user_query,

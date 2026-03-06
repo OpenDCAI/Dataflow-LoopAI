@@ -31,7 +31,7 @@ class MCPConnectionManager:
         self.server_args = server_args or ["-y", "@playwright/mcp@latest"]
         self._read = None
         self._write = None
-        self._session: Optional[ClientSession] = None
+        self._session: Optional[Any] = None # Changed type hint to Any to avoid NameError
         self._stdio_context_manager = None
         self._session_context_manager = None
         self._connected = False
@@ -161,7 +161,7 @@ class MCPConnectionManager:
         await self.disconnect()
     
     @property
-    def session(self) -> Optional[ClientSession]:
+    def session(self) -> Optional[Any]: # Changed to Any
         """Get current session"""
         return self._session if self._connected else None
     
@@ -229,7 +229,7 @@ class PlaywrightActionTools:
                 logger.error(f"[PlaywrightTools] Error initializing tools: {e}")
                 raise
     
-    async def _create_tools_from_mcp(self, mcp_tools: List, session: ClientSession) -> List:
+    async def _create_tools_from_mcp(self, mcp_tools: List, session: Any) -> List: # Changed ClientSession to Any
         """Create langchain tools from MCP tools, filtering to only essential tools"""
         
         # Define allowed tool names (case-insensitive matching)
@@ -255,7 +255,7 @@ class PlaywrightActionTools:
         
         tools = []
         
-        def create_tool_func(tool_name: str, tool_description: str, mcp_session: ClientSession):
+        def create_tool_func(tool_name: str, tool_description: str, mcp_session: Any): # Changed ClientSession to Any
             """Create a tool function with proper closure"""
             async def async_tool_func(**kwargs):
                 """Execute MCP tool (async)"""

@@ -167,7 +167,7 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
                     writer = get_stream_writer()
                     if writer:
                         writer(StreamEvent(
-                            current=state.get('current', 'postprocess_node'),
+                            current=state['current'],
                             message="Post-process node completed",
                             data={
                                 'category': category,
