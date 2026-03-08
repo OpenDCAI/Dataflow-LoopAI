@@ -61,3 +61,10 @@ class AllSwanLabLogsResponse(BaseModel):
     """所有SwanLab日志响应模型"""
     total: int
     logs: List[SwanLabLogFolder]
+
+
+class MetricsResponse(BaseModel):
+    """训练指标响应模型"""
+    task_id: str
+    summary: Dict[str, Any]
+    latest_metrics: List[Dict[str, Any]]
