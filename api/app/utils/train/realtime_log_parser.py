@@ -180,7 +180,7 @@ class RealTimeLogParser:
                 new_metrics = self._parse_new_lines()
                 if new_metrics:
                     self._save_metrics(new_metrics)
-                    print(f"解析到 {len(new_metrics)} 条新指标")
+                    # print(f"解析到 {len(new_metrics)} 条新指标")
                 
                 # 等待一段时间后继续监控
                 time.sleep(1)  # 每秒检查一次
