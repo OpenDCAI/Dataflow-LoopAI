@@ -188,9 +188,6 @@ class TaskManager:
                 
                 print(f"训练命令: {' '.join(cmd)}")
                 
-                # 启动实时日志解析
-                log_parser.start_monitoring()
-                
                 # 启动训练进程
                 with open(log_path, 'w', encoding='utf-8') as log_file:
                     process = subprocess.Popen(
@@ -203,6 +200,10 @@ class TaskManager:
                     )
                     
                     task_info['process'] = process
+                    try:
+                        log_parser.start_monitoring()
+                    except Exception as e:
+                        print(f"启动日志监控失败: {e}")
                     
                     # 等待进程完成
                     return_code = process.wait()

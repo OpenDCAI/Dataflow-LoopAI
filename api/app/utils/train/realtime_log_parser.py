@@ -110,11 +110,11 @@ class RealTimeLogParser:
 
         # 确保指标文件目录存在
         os.makedirs(os.path.dirname(metrics_file), exist_ok=True)
-        while not self.if_total_steps_recorded:
-            self._find_total_steps()
-            time.sleep(1)
-        self._initialize_metrics_file()
-        self.extractor = MetricsExtractor(total_steps=self.total_steps, total_epochs=self.total_epochs)
+        # while not self.if_total_steps_recorded:
+        #     self._find_total_steps()
+        #     time.sleep(1)
+        # self._initialize_metrics_file()
+        # self.extractor = MetricsExtractor(total_steps=self.total_steps, total_epochs=self.total_epochs)
 
     def _find_total_steps(self) -> Optional[int]:
         """尝试从日志文件中找到训练的总步数"""
@@ -228,6 +228,11 @@ class RealTimeLogParser:
             return
         
         self.running = True
+        while not self.if_total_steps_recorded:
+            self._find_total_steps()
+            time.sleep(1)
+        self._initialize_metrics_file()
+        self.extractor = MetricsExtractor(total_steps=self.total_steps, total_epochs=self.total_epochs)
         self.thread = threading.Thread(target=self._monitoring_loop, daemon=True)
         self.thread.start()
         print(f"开始监控日志文件: {self.log_path}")
