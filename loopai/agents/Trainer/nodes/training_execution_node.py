@@ -153,6 +153,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         success, task_id_or_error, error_detail = client.start_training(
             framework=framework,
             config_path=config_path,
+            output_dir=state.get('trainer', {}).get('output_dir'),
             task_name=f"trainer_agent_{int(start_time)}"
         )
         

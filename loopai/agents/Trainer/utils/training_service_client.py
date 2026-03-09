@@ -16,7 +16,7 @@ logger = get_logger()
 class TrainingServiceClient:
     """训练服务客户端"""
     
-    def __init__(self, task_id: str, output_dir: str, base_url: str = "http://localhost:8000"):
+    def __init__(self, task_id: str, base_url: str = "http://localhost:8000"):
         """
         初始化客户端
         
@@ -26,7 +26,6 @@ class TrainingServiceClient:
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
         self.task_id = task_id
-        self.output_dir = output_dir
 
     def check_service_health(self) -> bool:
         """
@@ -42,15 +41,16 @@ class TrainingServiceClient:
             logger.error(f"检查服务健康状态失败: {str(e)}")
             return False
 
-    def start_training(self, framework: str, config_path: str, task_name: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
+    def start_training(self, framework: str, config_path: str, output_dir: str, task_name: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
         """
         启动训练任务
         
         Args:
             framework: 训练框架
             config_path: 配置文件路径
+            output_dir: 输出目录
             task_name: 任务名称
-            
+
         Returns:
             (成功标志, 任务ID或错误信息, 错误详情)
         """
@@ -72,7 +72,7 @@ class TrainingServiceClient:
                 "framework": framework,
                 "config_path": config_path,
                 "task_id": self.task_id,
-                "output_dir": self.output_dir
+                "output_dir": output_dir
                 # "config_path": yaml_content
             }
             
