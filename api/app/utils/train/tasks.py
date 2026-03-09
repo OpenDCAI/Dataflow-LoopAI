@@ -35,10 +35,6 @@ class TaskManager:
         # 实时日志解析器字典，按任务ID索引
         self.log_parsers: Dict[str, RealTimeLogParser] = {}
         
-        # 指标文件存储目录
-        self.metrics_dir = os.path.join(BASE_DIR, "metrics")
-        ensure_directory_exists(self.metrics_dir)
-        
         # 确保目录存在
         for directory in [configs_dir, logs_dir, runs_dir, self.llamafactory_dir]:
             ensure_directory_exists(directory)
@@ -68,8 +64,8 @@ class TaskManager:
         # 按创建时间排序，返回最新的任务
         sorted_tasks = sorted(self.tasks.values(), key=lambda x: x['created_at'], reverse=True)
         return sorted_tasks[0]
-    
-    def start_training(self, task_id: str) -> bool:
+
+    def start_training(self, task_id: str, output_dir: str) -> bool:
         """启动训练任务"""
         if task_id not in self.tasks:
             return False
@@ -82,6 +78,8 @@ class TaskManager:
         # 更新任务状态
         task_info['status'] = TaskStatus.RUNNING
         task_info['started_at'] = get_current_timestamp()
+        self.metrics_dir = os.path.join(output_dir, "metrics")
+        ensure_directory_exists(self.metrics_dir)
         
         # 在线程池中异步执行训练
         future = self.executor.submit(self._run_training, task_id)
@@ -121,7 +119,7 @@ class TaskManager:
         framework = task_info['framework']
         
         # 创建实时日志解析器
-        metrics_file = os.path.join(self.metrics_dir, f"{task_id}_metrics.json")
+        metrics_file = os.path.join(self.metrics_dir, f"metrics.json")
         log_parser = RealTimeLogParser(log_path, metrics_file)
         self.log_parsers[task_id] = log_parser
         

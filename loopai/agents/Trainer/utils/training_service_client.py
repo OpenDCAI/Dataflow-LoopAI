@@ -16,7 +16,7 @@ logger = get_logger()
 class TrainingServiceClient:
     """训练服务客户端"""
     
-    def __init__(self, task_id: str, base_url: str = "http://localhost:8000"):
+    def __init__(self, task_id: str, output_dir: str, base_url: str = "http://localhost:8000"):
         """
         初始化客户端
         
@@ -26,6 +26,7 @@ class TrainingServiceClient:
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
         self.task_id = task_id
+        self.output_dir = output_dir
 
     def check_service_health(self) -> bool:
         """
@@ -70,7 +71,8 @@ class TrainingServiceClient:
             request_data = {
                 "framework": framework,
                 "config_path": config_path,
-                "task_id": self.task_id
+                "task_id": self.task_id,
+                "output_dir": self.output_dir
                 # "config_path": yaml_content
             }
             
