@@ -16,6 +16,8 @@ class TrainRequest(BaseModel):
     """训练请求模型"""
     framework: str
     config_path: str
+    task_id: str
+    output_dir: str
     task_name: Optional[str] = None
 
 

@@ -14,8 +14,10 @@ from datetime import datetime
 
 class MetricsExtractor:
     """指标提取器，负责从日志行中提取各种训练指标"""
-    
-    def __init__(self):
+
+    def __init__(self, total_steps: int = 0, total_epochs: int = 0):
+        self.total_steps = total_steps
+        self.total_epochs = total_epochs
         # JSON格式指标的正则表达式，匹配像 {'loss': 0.1469, 'epoch': 2.92} 这样的内容
         self.json_pattern = re.compile(r'\{[^}]*\}')
         
@@ -53,6 +55,9 @@ class MetricsExtractor:
                     for key, value in parsed.items():
                         if isinstance(value, (int, float)):
                             metrics[key] = value
+                            # 如果又epoch和total_steps且没有step,计算step
+                            if 'epoch' in metrics and 'step' not in metrics:
+                                metrics['step'] = int(metrics['epoch'] * self.total_steps / self.total_epochs) if self.total_epochs > 0 else None
             except json.JSONDecodeError:
                 continue
         
@@ -94,23 +99,51 @@ class RealTimeLogParser:
     def __init__(self, log_path: str, metrics_file: str):
         self.log_path = log_path
         self.metrics_file = metrics_file
-        self.extractor = MetricsExtractor()
         self.metrics_data = []
         self.running = False
         self.thread = None
         self.file_position = 0
-        
+        self.total_steps = 0
+        self.if_total_steps_recorded = False
+        self.total_epochs = 0
+        self.if_total_epochs_recorded = False
+
         # 确保指标文件目录存在
         os.makedirs(os.path.dirname(metrics_file), exist_ok=True)
+        # while not self.if_total_steps_recorded:
+        #     self._find_total_steps()
+        #     time.sleep(1)
+        # self._initialize_metrics_file()
+        # self.extractor = MetricsExtractor(total_steps=self.total_steps, total_epochs=self.total_epochs)
+
+    def _find_total_steps(self) -> Optional[int]:
+        """尝试从日志文件中找到训练的总步数"""
+        try:
+            if not os.path.exists(self.log_path):
+                return None
+            
+            with open(self.log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    step_match = re.search(r'Total optimization steps = (\d+)', line)
+                    epoch_match = re.search(r'Num Epochs = (\d+)', line)
+                    if step_match:
+                        self.total_steps = int(step_match.group(1))
+                        self.if_total_steps_recorded = True
+                    if epoch_match:
+                        self.total_epochs = int(epoch_match.group(1))
+                        self.if_total_epochs_recorded = True
+        except Exception as e:
+            print(f"读取日志文件以获取总步数时出错: {e}")
         
-        # 初始化指标文件
-        self._initialize_metrics_file()
+        return None
     
     def _initialize_metrics_file(self):
         """初始化指标文件"""
         initial_data = {
             "task_info": {
                 "log_path": self.log_path,
+                "total_steps": self.total_steps,
+                "total_epochs": self.total_epochs,
                 "start_time": datetime.now().isoformat(),
                 "last_updated": datetime.now().isoformat()
             },
@@ -195,6 +228,11 @@ class RealTimeLogParser:
             return
         
         self.running = True
+        while not self.if_total_steps_recorded:
+            self._find_total_steps()
+            time.sleep(1)
+        self._initialize_metrics_file()
+        self.extractor = MetricsExtractor(total_steps=self.total_steps, total_epochs=self.total_epochs)
         self.thread = threading.Thread(target=self._monitoring_loop, daemon=True)
         self.thread.start()
         print(f"开始监控日志文件: {self.log_path}")

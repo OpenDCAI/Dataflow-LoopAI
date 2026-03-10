@@ -29,7 +29,9 @@ async def start_training(request: TrainRequest):
         #         status_code=400, detail="Invalid YAML configuration")
 
         # 生成任务ID
-        task_id = generate_task_id()
+        # task_id = generate_task_id()
+        task_id = request.task_id
+        output_dir = request.output_dir
 
         # # 保存配置文件
         # config_path = save_yaml_config(task_id, request.config_path, CONFIGS_DIR)
@@ -45,7 +47,7 @@ async def start_training(request: TrainRequest):
             task_id, config_copy_path, request.framework, request.task_name)
 
         # 启动训练
-        if task_manager.start_training(task_id):
+        if task_manager.start_training(task_id, output_dir):
             return TrainResponse(
                 task_id=task_id,
                 status=TaskStatus.RUNNING,
