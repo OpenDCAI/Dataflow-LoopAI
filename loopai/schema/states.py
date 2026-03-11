@@ -984,6 +984,24 @@ class JudgerState(BaseModel):
         description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果。输出文件路径将会在judger参数output_result_path（评测结果）、output_case_path（评测样例集）、output_problem_path（评测格式化后问题集）中记录。",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型", "is_output": True}
     )
+    output_result_path: str = Field(
+        default="",
+        title="评测结果文件保存路径",
+        description="评测结果文件保存路径，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    output_case_path: str = Field(
+        default="",
+        title="评测样例集文件保存路径",
+        description="评测样例集文件保存路径，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    output_problem_path: str = Field(
+        default="",
+        title="评测格式化后问题集保存路径",
+        description="评测格式化后问题集，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成，如未使用格式化模版该路径即为原始问题文件的路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
 
 class AnalyzerState(BaseModel):
     analyze_task_type: str = Field(

@@ -27,18 +27,7 @@ class TaskManager:
         self.runs_dir = runs_dir
         self.tasks: Dict[str, Dict] = {}
         self.executor = ThreadPoolExecutor(max_workers=4)
-
-        # 尝试加载配置文件，如果不存在则使用空配置
-        try:
-            config_path = os.path.join(BASE_DIR, "app_config.json")
-            if os.path.exists(config_path):
-                self.app_config = json.load(open(config_path))
-            else:
-                self.app_config = {}
-        except Exception as e:
-            print(f"Warning: Failed to load app_config.json: {e}")
-            self.app_config = {}
-
+        self.app_config = json.load(open(os.path.join(BASE_DIR, "app_config.json")))
         self.llamafactory_dir = self.app_config.get("llamafactory_dir")
         self.verl_dir = self.app_config.get("verl_dir")
         # self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
