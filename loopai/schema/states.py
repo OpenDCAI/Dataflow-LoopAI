@@ -1080,6 +1080,12 @@ class AnalyzerState(BaseModel):
 
 
 class TrainerState(BaseModel):
+    trainer_task_id: str = Field(
+        default="",
+        title="训练任务 ID",
+        description="训练任务 ID",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
     train_framework: str = Field(
         default="",
         title="训练框架",

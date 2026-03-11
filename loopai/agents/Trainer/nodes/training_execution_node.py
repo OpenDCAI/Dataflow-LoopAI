@@ -53,6 +53,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         # 获取参数
         task_description = state.get('trainer', {}).get('train_input_task_description', '未指定任务描述')
         service_url = state.get('trainer', {}).get('training_service_url', 'http://localhost:8000')
+        trainer_task_id = state.get('trainer', {}).get('trainer_task_id')
         dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
         llamafactory_dir = state.get('trainer', {}).get('llamafactory_dir')
         
@@ -120,8 +121,8 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         
         # 创建训练服务客户端
         logger.info("连接训练服务...")
-        client = create_training_client(service_url)
-        
+        client = create_training_client(trainer_task_id, service_url)
+
         # 检查服务健康状态
         if not client.check_service_health():
             raise RuntimeError(f"训练服务不可用: {service_url}")
@@ -152,6 +153,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         success, task_id_or_error, error_detail = client.start_training(
             framework=framework,
             config_path=config_path,
+            output_dir=state.get('trainer', {}).get('output_dir'),
             task_name=f"trainer_agent_{int(start_time)}"
         )
         

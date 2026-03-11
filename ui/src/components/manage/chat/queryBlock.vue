@@ -87,7 +87,7 @@ export default {
             return this.local(`Ask me anything (Press Ctrl + Enter)`)
         },
         holdon() {
-            return !this.taskStatus.running || this.taskStatus.waiting_llm || !this.lock.submit
+            return !this.taskStatus.running || this.msgStreamModel.loading || !this.lock.submit
         },
         runningLLM() {
             try {
