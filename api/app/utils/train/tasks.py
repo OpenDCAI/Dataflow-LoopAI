@@ -26,14 +26,26 @@ class TaskManager:
         self.runs_dir = runs_dir
         self.tasks: Dict[str, Dict] = {}
         self.executor = ThreadPoolExecutor(max_workers=4)
-        self.app_config = json.load(open(os.path.join(BASE_DIR, "app_config.json")))
+
+        # 尝试加载配置文件，如果不存在则使用空配置
+        try:
+            config_path = os.path.join(BASE_DIR, "app_config.json")
+            if os.path.exists(config_path):
+                self.app_config = json.load(open(config_path))
+            else:
+                self.app_config = {}
+        except Exception as e:
+            print(f"Warning: Failed to load app_config.json: {e}")
+            self.app_config = {}
+
         self.llamafactory_dir = self.app_config.get("llamafactory_dir")
         self.verl_dir = self.app_config.get("verl_dir")
-        # self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
-        
-        # 确保目录存在
-        for directory in [configs_dir, logs_dir, runs_dir, self.llamafactory_dir]:
+
+        # 确保目录存在（只检查非空目录）
+        for directory in [configs_dir, logs_dir, runs_dir]:
             ensure_directory_exists(directory)
+        if self.llamafactory_dir:
+            ensure_directory_exists(self.llamafactory_dir)
 
     def create_task(self, task_id: str, config_path: str, framework: str, task_name: Optional[str] = None) -> Dict:
         """创建新的训练任务"""

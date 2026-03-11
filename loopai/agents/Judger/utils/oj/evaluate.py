@@ -71,7 +71,7 @@ def write_evaluate_log(pass_at_k, result_path, test_case_path, problem_path):
         f.write("\nResult:" + result_path)
         f.write("\n" + pass_at_k_text)
 
-def evaluate_sample_text2sql(state):
+def evaluate_sample_sql(state):
     """
     Evaluates the functional correctness of generated samples, and writes
     results to f"{test_case_path}_results.jsonl.gz"
@@ -163,7 +163,7 @@ def evaluate_sample_text2sql(state):
 
     return {"pass_at_k": pass_at_k, "result_path": result_path}
 
-def evaluate_sample_code(state):
+def evaluate_sample(state):
     """
     Evaluates the functional correctness of generated samples, and writes
     results to f"{test_case_path}_results.jsonl.gz"

@@ -4,7 +4,6 @@ import socket
 import time
 import re
 import json
-import threading  # 新增：引入线程相关模块
 
 from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
@@ -50,27 +49,19 @@ def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
 
 def kill_vllm_openai_api_server(
     port,
-    stop_event: threading.Event = None,  # 新增：接收启动时返回的线程停止事件
     process_kill_wait: float = 10.0  # 旧进程终止等待超时时间
 ) -> bool:
     """
-    关闭vllm openai兼容api服务（适配后台消费线程，彻底关闭）
+    关闭vllm openai兼容api服务（彻底关闭）
     :port: vllm服务启动服务端口
-    :stop_event: 启动vllm时返回的消费线程停止事件（新增参数）
+    :param poll_interval: 端口轮询检测间隔（秒）
     :param process_kill_wait: 旧进程终止等待超时时间（秒）
-    :return: 终止成功返回True，否则返回False
+    :return: vllm子进程对象
     """
     process_pattern = "vllm.entrypoints.openai.api_server"
     host = "localhost"
 
-    # ========== 新增：第一步先停止后台消费线程 ==========
-    if stop_event and not stop_event.is_set():
-        stop_event.set()
-        logger.info("已发送vllm输出消费线程停止信号")
-        # 短暂等待线程退出，避免资源竞争
-        time.sleep(0.5)
-
-    # ========== 保留你原有核心逻辑：终止vllm进程 ==========
+    # 终止已存在的vllm api server进程（增强版，确保彻底终止）
     logger.info("开始终止旧的vllm进程...")
     try:
         # 发送普通终止信号（pkill）
@@ -88,8 +79,7 @@ def kill_vllm_openai_api_server(
                 logger.info("旧的vllm进程已彻底终止")
                 break
 
-            elapsed_time = time.time() - start_kill_time
-            if elapsed_time > process_kill_wait:
+            if time.time() - start_kill_time > process_kill_wait:
                 # 普通终止失败，发送强制终止信号（pkill -9）
                 logger.warning("普通终止失败，发送强制终止信号...")
                 subprocess.run(
@@ -98,28 +88,23 @@ def kill_vllm_openai_api_server(
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
-                # 强制终止后再次检查
-                if not is_process_running(process_pattern):
-                    logger.info("强制终止vllm进程成功")
-                    break
+
+            # 等待一段时间后重试校验
+            time.sleep(1.0)
 
             # 超出等待时间，抛出异常
             if time.time() - start_kill_time > process_kill_wait:
                 raise Exception(f"旧vllm进程终止超时，超过{process_kill_wait}秒仍未终止")
 
-            # 等待一段时间后重试校验
-            time.sleep(1.0)
-
-        # ========== 保留你原有逻辑：等待端口释放 ==========
+        # 等待端口释放（避免端口占用，增加额外缓冲）
         logger.info(f"等待端口{port}释放...")
-        while is_port_open(host, int(port)):
+        while is_port_open(host, port):
             time.sleep(0.5)
         logger.info(f"端口{port}已释放")
         return True
-
     except FileNotFoundError:
-        logger.error("系统中未找到pkill/pgrep命令，该功能仅支持Linux/macOS环境")
+        raise Exception("系统中未找到pkill/pgrep命令，该功能仅支持Linux/macOS环境")
         return False
     except Exception as e:
-        logger.error(f"终止旧vllm进程失败：{str(e)}")
+        raise Exception(f"终止旧vllm进程失败：{str(e)}")
         return False

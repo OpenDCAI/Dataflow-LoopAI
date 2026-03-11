@@ -499,14 +499,14 @@ class ConstructorState(BaseModel):
 
     # --- 构造配置 ---
     max_samples_before_cleaning: int = Field(
-        default=1000,
+        default=5000,
         title="基础清洗后最大采样数",
         description="基础清洗后最大样本数量，0 表示不限制",
         ge=0,
         json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
     )
     llm_timeout: float = Field(
-        default=120.0,
+        default=300.0,
         title="LLM 超时时间",
         description="LLM 调用超时时间（秒）",
         json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
@@ -534,6 +534,16 @@ class ConstructorState(BaseModel):
         title="调试模式",
         description="是否开启 Constructor 调试日志",
         json_schema_extra={"ui_type": "switch", "ui_group": "构造配置"}
+    )
+    postprocess_version: str = Field(
+        default="legacy",
+        title="后处理版本",
+        description="后处理实现版本: legacy 使用原有流程, agent_v2 使用新版子 Agent 流程",
+        json_schema_extra={
+            "ui_type": "text",
+            "ui_group": "构造配置",
+            "options": ["legacy", "agent_v2(建设中)"],
+        }
     )
 
     # --- 运行结果 ---
@@ -973,24 +983,6 @@ class JudgerState(BaseModel):
         title="评估模型输出文件目录",
         description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果。输出文件路径将会在judger参数output_result_path（评测结果）、output_case_path（评测样例集）、output_problem_path（评测格式化后问题集）中记录。",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型", "is_output": True}
-    )
-    output_result_path: str = Field(
-        default="",
-        title="评测结果文件保存路径",
-        description="评测结果文件保存路径，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    )
-    output_case_path: str = Field(
-        default="",
-        title="评测样例集文件保存路径",
-        description="评测样例集文件保存路径，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    )
-    output_problem_path: str = Field(
-        default="",
-        title="评测格式化后问题集保存路径",
-        description="评测格式化后问题集，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成，如未使用格式化模版该路径即为原始问题文件的路径",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
 
 class AnalyzerState(BaseModel):

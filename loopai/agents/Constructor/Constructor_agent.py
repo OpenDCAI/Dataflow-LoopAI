@@ -122,7 +122,7 @@ class ConstructorAgent(BaseAgent):
             
             # Set default values for constructor-specific parameters
             if "llm_timeout" not in constructor:
-                constructor["llm_timeout"] = 120.0
+                constructor["llm_timeout"] = 300.0
             
             if "max_retries" not in constructor:
                 constructor["max_retries"] = 3
@@ -292,19 +292,30 @@ class ConstructorAgent(BaseAgent):
     @BaseAgent.set_current
     def postprocess_node_wrapper(state: LoopAIState):
         """
-        Wrapper for postprocess_node with StreamEvent
+        Wrapper for postprocess_node with StreamEvent.
+
+        Supports two versions controlled by ``constructor.postprocess_version``:
+          - ``legacy`` (default): calls the original ``postprocess_node``
+          - ``agent_v2``: calls the new Postprocess sub-agent system
         """
         writer = get_stream_writer()
         state['current'] = "ConstructorAgent.postprocess_node"
+        constructor = state.get("constructor", {})
+        version = constructor.get("postprocess_version", "legacy")
+
         if writer:
             writer(StreamEvent(
                 current=state['current'],
-                message="Constructor: 后处理开始",
+                message=f"Constructor: 后处理开始 (version={version})",
                 progress=0.0,
-                data={"phase": "postprocess"},
+                data={"phase": "postprocess", "version": version},
             ).json())
+
         try:
-            state = postprocess_node(state)
+            if version == "agent_v2":
+                state = ConstructorAgent._run_postprocess_v2(state)
+            else:
+                state = postprocess_node(state)
         except Exception as e:
             logger.error(f"Constructor postprocess_node error: {e}", exc_info=True)
             state["exception"] = f"Postprocess error: {str(e)}"
@@ -314,6 +325,7 @@ class ConstructorAgent(BaseAgent):
                     message=f"Constructor: 后处理异常: {str(e)[:200]}",
                     data={"error": str(e), "phase": "postprocess"},
                 ).json())
+
         if writer:
             res = state.get("constructor", {}).get("postprocess_results", {})
             writer(StreamEvent(
@@ -328,6 +340,69 @@ class ConstructorAgent(BaseAgent):
                     "has_exception": bool(state.get("exception")),
                 },
             ).json())
+        return state
+
+    @staticmethod
+    def _run_postprocess_v2(state: LoopAIState) -> LoopAIState:
+        """Delegate to the new Postprocess sub-agent system (agent_v2)."""
+        from loopai.agents.Postprocess import run_postprocess_agent_v2
+
+        constructor = state.get("constructor", {})
+
+        download_dir = os.getenv("DOWNLOAD_DIR")
+        if not download_dir:
+            download_dir = state.get("download_dir")
+            if not download_dir:
+                output_dir = state.get("output_dir", "./output")
+                download_dir = os.path.join(output_dir, "downloads")
+
+        user_query = state.get("automated_query", "")
+        if not user_query and state.get("messages"):
+            from langchain_core.messages import HumanMessage
+            for msg in reversed(state["messages"]):
+                if isinstance(msg, HumanMessage) and hasattr(msg, "content"):
+                    user_query = msg.content
+                    break
+
+        category = constructor.get("category", "PT").upper()
+        if category not in ("PT", "SFT"):
+            category = "PT"
+
+        tavily_api_key = (
+            state.get("obtainer", {}).get("tavily_api_key", "")
+            or os.getenv("TAVILY_API_KEY", "")
+        )
+
+        result = run_postprocess_agent_v2(
+            download_dir=download_dir,
+            user_query=user_query,
+            category=category,
+            model_name=constructor.get("model_path", ""),
+            base_url=constructor.get("base_url", ""),
+            api_key=constructor.get("api_key", ""),
+            temperature=constructor.get("temperature", 0.0),
+            datasets_background=constructor.get("datasets_background", ""),
+            tavily_api_key=tavily_api_key if tavily_api_key else None,
+            store=None,
+            thread_id=state.get("task_id", "default"),
+            event_name=state.get("current", "ConstructorAgent.postprocess_node"),
+        )
+
+        if "exception" in result:
+            state["exception"] = result["exception"]
+        else:
+            if "constructor" not in state:
+                state["constructor"] = {}
+            state["constructor"]["postprocess_results"] = {
+                "total_records_processed": result.get("total_records_processed", 0),
+                "processed_sources_count": result.get("processed_sources_count", 0),
+                "output_dir": result.get("output_dir", ""),
+            }
+            out_dir = result.get("output_dir", "")
+            if out_dir and os.path.exists(out_dir):
+                state["constructor"]["intermediate_data_path"] = out_dir
+                logger.info(f"Postprocess v2: intermediate data at {out_dir}")
+
         return state
 
     @staticmethod

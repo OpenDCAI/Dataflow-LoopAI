@@ -8,9 +8,6 @@ import platform
 import signal
 import tempfile
 from typing import Dict, Optional, List
-from loopai.logger import get_logger
-
-logger = get_logger()
 
 """提取python代码"""
 def filter_code(solution_str: str):
@@ -18,7 +15,7 @@ def filter_code(solution_str: str):
     matches = list(re.finditer(python_pattern, solution_str, re.DOTALL))
     
     if not matches:
-        logger.error("[Error] No valid PYTHON tags found")
+        logger.error("[Error] No valid SQL tags found")
         return solution_str
     
     # logger.info(f"[Parsed SQL]: {matches[-1].group(1).strip()}")
@@ -156,6 +153,7 @@ def swallow_io():
         with contextlib.redirect_stderr(stream):
             with redirect_stdin(stream):
                 yield
+
 
 @contextlib.contextmanager
 def create_tempdir():

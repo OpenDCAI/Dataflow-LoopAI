@@ -52,11 +52,16 @@ async def init_manager(task_id):
     with open(os.path.join(LoopAI_DIR, config['starter']['api_key_path']), 'r') as f:
         api_key = f.read().strip()
 
-    # Read Tavily API key
-    tavily_api_key = None
-    if 'tavily_api_key_path' in config['starter']:
-        with open(os.path.join(LoopAI_DIR, config['starter']['tavily_api_key_path']), 'r') as f:
-            tavily_api_key = f.read().strip()
+    # Read Tavily API key: config value > file path > env variable
+    tavily_api_key = config['starter'].get('tavily_api_key', '') or ''
+    if not tavily_api_key and 'tavily_api_key_path' in config['starter']:
+        try:
+            with open(os.path.join(LoopAI_DIR, config['starter']['tavily_api_key_path']), 'r') as f:
+                tavily_api_key = f.read().strip()
+        except Exception:
+            pass
+    if not tavily_api_key:
+        tavily_api_key = os.environ.get('TAVILY_API_KEY', '')
 
 
     rag_api_key = None

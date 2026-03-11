@@ -11,7 +11,7 @@ from pathlib import Path
 from loopai.schema.states import LoopAIState, RuntimeContext, get_missing_fields
 from loopai.agents import BaseAgent
 from .utils.oj.generate import generate_sample_code, generate_sample_text2sql
-from .utils.oj.evaluate import evaluate_sample_code, evaluate_sample_text2sql
+from .utils.oj.evaluate import evaluate_sample, evaluate_sample_sql
 from .utils.oj.format import data_format
 from .utils.oj.data import check_file
 from .utils.oj.vllm_starter import start_vllm_openai_api_server
@@ -290,7 +290,7 @@ class JudgerAgent(BaseAgent):
             case "code":  # code
                 res = generate_sample_code(state)
             case "text2sql":
-                res = generate_sample_text2sql(state)
+                res = generate_sample_sql(state)
         state["judger"]["output_case_path"] = res
         return state
 
@@ -311,9 +311,9 @@ class JudgerAgent(BaseAgent):
             ).json())
         match task_type:
             case "code":  # code
-                res = evaluate_sample_code(state)
+                res = evaluate_sample(state)
             case "text2sql":
-                res = evaluate_sample_text2sql(state)
+                res = evaluate_sample_sql(state)
         if writer:
             writer(StreamEvent(
                 current=state['current'],
@@ -375,11 +375,13 @@ class JudgerAgent(BaseAgent):
         builder.add_node("vllm_start", self.vllm_start_node)
         builder.add_node("data_format", self.data_format_node)
         builder.add_node("generate_code", self.generate_node)
+        builder.add_node("generate_text2sql", generate_sample_text2sql)
         builder.add_node("evaluate", self.evaluate_node)
         builder.add_edge("check_required_fields", "check_param_type")
         builder.add_edge("vllm_start", "data_format")
         builder.add_edge("data_format", "generate_code")
         builder.add_edge("generate_code", "evaluate")
+        builder.add_edge("generate_text2sql", "evaluate")
         builder.set_entry_point("check_required_fields")
 
         builder.add_conditional_edges(

@@ -2,7 +2,7 @@ starter:
   model_name: "deepseek-chat"
   base_url: "https://api.deepseek.com"
   api_key_path: "./api_key.txt"
-  tavily_api_key_path: "./tavily_api_key.txt"
+  tavily_api_key: "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" # Tavily API key (leave empty to fallback to env/txt)
   kaggle_username: "binrxu" # Kaggle username (leave empty if not needed)
   kaggle_key: "8c120e3a3c8d45f71ace8b4981f829ac" # Kaggle API key (leave empty if not needed)
 
@@ -64,7 +64,7 @@ default_states:
   webcrawler:
     # API 配置
     deepseek_api_key: "" # 从 starter.api_key_path 读取
-    tavily_api_key: "" # 从 starter.tavily_api_key_path 读取
+    tavily_api_key: "" # 从 starter.tavily_api_key 读取
     deepseek_api_base: "https://api.deepseek.com/v1"
     # 模型配置
     model: "deepseek-chat"
