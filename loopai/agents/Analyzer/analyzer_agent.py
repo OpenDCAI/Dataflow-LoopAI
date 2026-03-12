@@ -42,10 +42,21 @@ class AnalyzerAgent(BaseAgent):
                     "output_brief", "analyze_task_type",  "analyze_sampling_top_k", "output_suggestion", "analyze_batch_size","analyze_max_concurrency",
                     "analyze_chunk_size","quick_brief","quick_brief_limit"
                 ],
-                "judger": ["eval_result_path"],
                 "default": ["output_dir"]
             }
             missing_fields = get_missing_fields(required_fields, state)
+
+            judger_cfg = state.get("judger", {}) or {}
+            analyzer_cfg = state.get("analyzer", {}) or {}
+
+            if task_type in {"code", "text2sql"}:
+                has_result_path = (
+                    bool(judger_cfg.get("out_result_path"))
+                    or bool(analyzer_cfg.get("eval_result_path"))
+                )
+                if not has_result_path:
+                    missing_fields.setdefault("analyzer", []).append("eval_result_path")
+
             if missing_fields:
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
