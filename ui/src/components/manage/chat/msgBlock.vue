@@ -70,6 +70,7 @@
                     <span
                         v-for="(item, index) in computedToolContent"
                         class="tool-msg-item"
+                        :class="[{ long: computeLength(item.value) > 20 }]"
                         :key="index"
                     >
                         <p class="tool-msg-key">{{ item.key }}</p>
@@ -290,6 +291,16 @@ export default {
                     this.copyIcon = 'Copy'
                 }, 1000)
             })
+        },
+        computeLength(obj) {
+            if (!obj) return 0
+            if (typeof obj === 'string') return obj.length
+            try {
+                obj = JSON.stringify(obj)
+                return obj.length
+            } catch (e) {
+                return 0
+            }
         }
     }
 }
@@ -633,6 +644,15 @@ export default {
                 font-weight: bold;
                 border-radius: 999px;
                 box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.1);
+
+                &.long {
+                    border-radius: 8px;
+                    flex-direction: column;
+
+                    .tool-msg-value {
+                        border-radius: 8px;
+                    }
+                }
 
                 .tool-msg-key {
                     @include Vcenter;

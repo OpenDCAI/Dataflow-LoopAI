@@ -79,6 +79,10 @@ export default {
         height: 100%;
         max-height: 100%;
 
+        .node-info {
+            max-width: 100%;
+        }
+
         .remain-content-block {
             .col-wrapper {
                 flex: 1;

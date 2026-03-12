@@ -205,7 +205,6 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             outline 0.2s ease-in-out;
         backdrop-filter: blur(6px);
         -webkit-backdrop-filter: blur(6px);
-        overflow: hidden;
         box-shadow:
             0px 0px 1px var(--node-shadow-color),
             3px 6px 16px transparent,
@@ -324,6 +323,7 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             max-width: 170px;
             height: auto;
             margin: 3px 10px;
+            flex-shrink: 0;
             font-size: 8px;
             font-weight: 400;
             color: var(--node-status-color);
@@ -336,6 +336,7 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             height: auto;
             margin-top: 5px;
             gap: 5px;
+            flex: 1;
             background: var(--node-group-background);
             border-radius: var(--border-radius);
             font-family:
