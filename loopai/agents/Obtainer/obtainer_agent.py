@@ -288,23 +288,20 @@ class ObtainerAgent(BaseAgent):
             if "kaggle_key" not in state.get("obtainer", {}):
                 state.setdefault("obtainer", {})["kaggle_key"] = ""
             
-            if "tavily_api_key" not in state.get("obtainer", {}):
-                # Try to read from state first, then environment variable, then from file
-                tavily_api_key = state.get("obtainer", {}).get("tavily_api_key", "")
-                if not tavily_api_key:
-                    tavily_api_key = os.getenv("TAVILY_API_KEY", "")
-                if not tavily_api_key:
-                    # Try to read from examples/scripts/tavily_api_key.txt
-                    script_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "examples", "scripts")
-                    tavily_api_key_file = os.path.join(script_dir, "tavily_api_key.txt")
-                    if os.path.exists(tavily_api_key_file):
-                        try:
-                            with open(tavily_api_key_file, 'r', encoding='utf-8') as f:
-                                tavily_api_key = f.read().strip()
-                                logger.info(f"Loaded Tavily API key from {tavily_api_key_file}")
-                        except Exception as e:
-                            logger.debug(f"Failed to read Tavily API key from file: {e}")
-                state.setdefault("obtainer", {})["tavily_api_key"] = tavily_api_key
+            tavily_api_key = state.get("obtainer", {}).get("tavily_api_key", "")
+            if not tavily_api_key:
+                tavily_api_key = os.getenv("TAVILY_API_KEY", "")
+            if not tavily_api_key:
+                script_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "examples", "scripts")
+                tavily_api_key_file = os.path.join(script_dir, "tavily_api_key.txt")
+                if os.path.exists(tavily_api_key_file):
+                    try:
+                        with open(tavily_api_key_file, 'r', encoding='utf-8') as f:
+                            tavily_api_key = f.read().strip()
+                            logger.info(f"Loaded Tavily API key from {tavily_api_key_file}")
+                    except Exception as e:
+                        logger.debug(f"Failed to read Tavily API key from file: {e}")
+            state.setdefault("obtainer", {})["tavily_api_key"] = tavily_api_key
             
             # Mapping configuration
             # default_mapping_format: If set (e.g., "alpaca"), skip user interaction and use this format directly

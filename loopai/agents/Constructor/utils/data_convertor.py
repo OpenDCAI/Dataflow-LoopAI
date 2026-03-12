@@ -97,7 +97,7 @@ class DataConvertor:
         max_sample_length: int = 200,
         num_sample_records: int = 3,
         prompt_loader: Optional[PromptLoader] = None,
-        timeout: float = 120.0,
+        timeout: float = 300.0,
         max_retries: int = 3,
     ):
         """Initialize Data Convertor

@@ -65,7 +65,7 @@ default_states:
   webcrawler:
     # API 配置
     deepseek_api_key: "" # 从 starter.api_key_path 读取
-    tavily_api_key: "" # 从 starter.tavily_api_key_path 读取
+    tavily_api_key: "" # 从 starter.tavily_api_key 读取
     deepseek_api_base: "https://api.deepseek.com/v1"
     # 模型配置
     model: "deepseek-chat"

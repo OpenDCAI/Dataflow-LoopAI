@@ -38,6 +38,8 @@ class TaskManager:
         # 确保目录存在
         for directory in [configs_dir, logs_dir, runs_dir, self.llamafactory_dir]:
             ensure_directory_exists(directory)
+        if self.llamafactory_dir:
+            ensure_directory_exists(self.llamafactory_dir)
 
     def create_task(self, task_id: str, config_path: str, framework: str, task_name: Optional[str] = None) -> Dict:
         """创建新的训练任务"""
