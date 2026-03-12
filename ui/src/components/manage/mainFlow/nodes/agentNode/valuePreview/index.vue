@@ -1,5 +1,8 @@
 <template>
     <div class="value-preview-row-item">
+        <div class="not-overflow">
+
+        </div>
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
         <span v-if="computedUIType === 'default'" class="none-value">{{ thisValue }}</span>
         <fv-text-box v-if="computedUIType === 'text'" v-model="thisValue" :placeholder="local(modelKey)"

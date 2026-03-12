@@ -1,21 +1,29 @@
 <template>
-    <div class="lp-flow-default-node" :class="[{ selected: selected }]" :style="{
-        '--node-background': thisData.background,
-        '--node-icon-color': thisData.iconColor,
-        '--node-border-color': thisData.borderColor,
-        '--node-shadow-color': thisData.shadowColor,
-        '--node-group-background': thisData.groupBackground,
-        '--node-title-color': thisData.titleColor,
-        '--node-status-color': thisData.statusColor,
-        '--node-info-title-color': thisData.infoTitleColor,
-        '--default-handle-color': thisData.defaultHandleColor,
-        '--default-handle-shadow-color': thisData.defaultHandleShadowColor
-    }">
+    <div
+        class="lp-flow-default-node"
+        :class="[{ selected: selected }]"
+        :style="{
+            '--node-background': thisData.background,
+            '--node-icon-color': thisData.iconColor,
+            '--node-border-color': thisData.borderColor,
+            '--node-shadow-color': thisData.shadowColor,
+            '--node-group-background': thisData.groupBackground,
+            '--node-title-color': thisData.titleColor,
+            '--node-status-color': thisData.statusColor,
+            '--node-info-title-color': thisData.infoTitleColor,
+            '--default-handle-color': thisData.defaultHandleColor,
+            '--default-handle-shadow-color': thisData.defaultHandleShadowColor
+        }"
+    >
         <div class="lp-flow-node-shadow" :class="[{ 'running-shadow': running }]"></div>
         <div class="lp-flow-node-container" :class="[{ 'row-mode': rowLayoutContent }]">
             <div class="node-banner" :title="id">
                 <div class="icon-block" :style="{ background: thisData.iconBackground }">
-                    <i v-if="!thisData.img" class="ms-Icon" :class="[`ms-Icon--${thisData.icon}`]"></i>
+                    <i
+                        v-if="!thisData.img"
+                        class="ms-Icon"
+                        :class="[`ms-Icon--${thisData.icon}`]"
+                    ></i>
                     <fv-img v-else class="icon-img" :src="thisData.img"></fv-img>
                 </div>
                 <div class="content-block">
@@ -23,14 +31,33 @@
                     <p class="main-title" :title="thisData.label">{{ thisData.label }}</p>
                 </div>
                 <div class="control-block" @mousedown.stop @click.stop>
-                    <fv-button v-if="thisData.enableDelete" theme="dark" border-radius="8" :font-size="12"
-                        background="rgba(215, 95, 95, 1)" border-color="rgba(255, 255, 255, 0.1)"
-                        style="width: 25px; height: 25px" @click="
+                    <fv-button
+                        v-if="thisData.enableDetail"
+                        border-radius="8"
+                        :font-size="12"
+                        :is-box-shadow="true"
+                        style="width: 25px; height: 25px; cursor: pointer"
+                        @mousedown.stop
+                        @click.stop
+                        @click="$emit('show-node-detail', $props)"
+                    >
+                        <i class="ms-Icon ms-Icon--View"></i>
+                    </fv-button>
+                    <fv-button
+                        v-if="thisData.enableDelete"
+                        theme="dark"
+                        border-radius="8"
+                        :font-size="12"
+                        background="rgba(215, 95, 95, 1)"
+                        border-color="rgba(255, 255, 255, 0.1)"
+                        style="width: 25px; height: 25px"
+                        @click="
                             $emit('delete-node', {
                                 id: id,
                                 data: thisData
                             })
-                            ">
+                        "
+                    >
                         <i class="ms-Icon ms-Icon--Cancel"></i>
                     </fv-button>
                 </div>
@@ -38,7 +65,7 @@
             <div class="node-info">
                 <p>{{ thisData.nodeInfo }}</p>
             </div>
-            <div class="remain-content-block" :class="[{ 'row': rowLayoutContent }]">
+            <div class="remain-content-block" :class="[{ row: rowLayoutContent }]">
                 <slot>
                     <div class="node-group-item">
                         <div class="node-row-item">
@@ -50,20 +77,32 @@
                     </div>
                 </slot>
             </div>
-            <Handle v-if="thisData.useTargetHandle" :id="`node::target::node`" type="target" class="handle-item default"
-                :position="!thisData.reverseHandle ? Position.Left : Position.Right" :style="{
+            <Handle
+                v-if="thisData.useTargetHandle"
+                :id="`node::target::node`"
+                type="target"
+                class="handle-item default"
+                :position="!thisData.reverseHandle ? Position.Left : Position.Right"
+                :style="{
                     top: thisData.defaultTargetTop
-                }" />
-            <Handle v-if="thisData.useSourceHandle" :id="`node::source::node`" type="source" class="handle-item default"
-                :position="!thisData.reverseHandle ? Position.Right : Position.Left" :style="{
+                }"
+            />
+            <Handle
+                v-if="thisData.useSourceHandle"
+                :id="`node::source::node`"
+                type="source"
+                class="handle-item default"
+                :position="!thisData.reverseHandle ? Position.Right : Position.Left"
+                :style="{
                     top: thisData.defaultSourceHandleTop
-                }" />
+                }"
+            />
         </div>
     </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Position, Handle } from '@vue-flow/core'
 
 const props = defineProps({
@@ -110,6 +149,7 @@ const defaultData = {
     defaultHandleShadowColor: '',
     groupBackground: '',
     enableDelete: true,
+    enableDetail: true,
     defaultSourceHandleTop: '',
     defaultTargetHandleTop: '',
     useSourceHandle: true,
@@ -128,6 +168,7 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
 
 <style lang="scss">
 .lp-flow-default-node {
+    --border-radius: 12px;
     --node-background: rgba(252, 252, 252, 0.8);
     --node-title-color: rgba(100, 108, 126, 1);
     --node-status-color: rgba(168, 170, 176, 1);
@@ -135,18 +176,27 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
     --node-shadow-color: rgba(122, 124, 206, 0.3);
     --node-border-color: rgba(163, 164, 236, 1);
     --node-icon-color: rgba(100, 108, 126, 1);
-    --node-group-background: rgba(245, 245, 245, 0.8);
+    --node-group-background: rgba(246, 246, 246, 0.8);
     --default-handle-color: rgba(163, 164, 236, 1);
     --default-handle-shadow-color: rgba(122, 124, 206, 0.3);
+
+    border-radius: var(--border-radius);
+    outline: 2px solid transparent;
+    transition: outline 0.2s ease-in-out;
+
+    &.selected {
+        outline-color: var(--node-border-color);
+    }
 
     .lp-flow-node-container {
         position: relative;
         width: 250px;
+        height: 460px;
         padding: 5px 0px;
-        background: var(--node-background);
+        background: rgba(255, 255, 255, 0.9);
         border: 1px solid rgba(120, 120, 120, 0.2);
-        border-radius: 8px;
-        outline: 1.5px solid transparent;
+        border-radius: var(--border-radius);
+        outline: 2px solid transparent;
         display: flex;
         flex-direction: column;
         transition:
@@ -154,6 +204,7 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             outline 0.2s ease-in-out;
         backdrop-filter: blur(6px);
         -webkit-backdrop-filter: blur(6px);
+        overflow: hidden;
         box-shadow:
             0px 0px 1px var(--node-shadow-color),
             3px 6px 16px transparent,
@@ -161,6 +212,7 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
 
         &.row-mode {
             width: auto;
+            padding: 10px;
         }
 
         &:hover {
@@ -178,7 +230,7 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
         }
 
         &.selected {
-            outline: 1.5px solid var(--node-border-color);
+            outline-color: var(--node-border-color);
         }
 
         .node-banner {
@@ -193,10 +245,10 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
                 position: relative;
                 width: 35px;
                 height: 35px;
-                background: rgba(253, 253, 253, 1);
+                background: var(--node-icon-color);
                 border: 1px solid rgba(120, 120, 120, 0.1);
                 border-radius: 8px;
-                color: var(--node-icon-color);
+                color: rgba(253, 253, 253, 1);
                 display: flex;
                 flex-direction: row;
                 justify-content: center;
@@ -270,8 +322,7 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             width: calc(100% - 20px);
             max-width: 170px;
             height: auto;
-            margin-top: 5px;
-            margin-left: 10px;
+            margin: 3px 10px;
             font-size: 8px;
             font-weight: 400;
             color: var(--node-status-color);
@@ -283,8 +334,25 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             width: 100%;
             height: auto;
             margin-top: 5px;
+            gap: 5px;
+            background: var(--node-group-background);
+            border-radius: var(--border-radius);
+            font-family:
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                'Segoe UI',
+                Roboto,
+                Oxygen,
+                Ubuntu,
+                Cantarell,
+                'Open Sans',
+                'Helvetica Neue',
+                sans-serif;
             display: flex;
             flex-direction: column;
+            box-shadow: inset 0px 1px 3px rgba(120, 120, 120, 0.1);
+            overflow: overlay;
 
             &.row {
                 flex-direction: row;
@@ -296,19 +364,29 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
                 height: auto;
                 display: flex;
                 flex-direction: column;
+
+                &:nth-child(2) {
+                    background: rgba(245, 245, 245, 1);
+                    border: 1px solid rgba(235, 235, 235, 1);
+                    border-top: none;
+                    border-bottom: none;
+                }
             }
 
             .node-group-item {
                 position: relative;
-                width: calc(100% - 20px);
+                width: 100%;
                 height: auto;
-                margin-left: 10px;
                 margin-bottom: 5px;
                 padding: 5px;
-                background: var(--node-group-background);
                 font-weight: 400;
                 border-radius: 6px;
                 line-height: 1.5;
+                overflow-x: hidden;
+
+                &.no-pad {
+                    padding: 0px;
+                }
 
                 .node-row-item {
                     width: 100%;
@@ -423,7 +501,6 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
         z-index: -1;
 
         &.running-shadow {
-
             &:before,
             &:after {
                 content: '';
@@ -432,19 +509,21 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
                 left: -2px;
                 width: calc(100% + 4px);
                 height: calc(100% + 4px);
-                background: linear-gradient(45deg,
-                        rgba(226, 121, 162, 1),
-                        rgba(146, 156, 218, 1),
-                        rgba(129, 208, 246, 1),
-                        rgba(239, 192, 48, 1),
-                        rgba(246, 100, 100, 1),
-                        rgba(226, 121, 162, 1),
-                        rgba(146, 156, 218, 1),
-                        rgba(129, 208, 246, 1),
-                        rgba(239, 192, 48, 1),
-                        rgba(246, 100, 100, 1));
+                background: linear-gradient(
+                    45deg,
+                    rgba(226, 121, 162, 1),
+                    rgba(146, 156, 218, 1),
+                    rgba(129, 208, 246, 1),
+                    rgba(239, 192, 48, 1),
+                    rgba(246, 100, 100, 1),
+                    rgba(226, 121, 162, 1),
+                    rgba(146, 156, 218, 1),
+                    rgba(129, 208, 246, 1),
+                    rgba(239, 192, 48, 1),
+                    rgba(246, 100, 100, 1)
+                );
                 background-size: 400%;
-                border-radius: 8px;
+                border-radius: var(--border-radius);
                 z-index: -1;
                 animation: shadow 20s linear infinite;
             }

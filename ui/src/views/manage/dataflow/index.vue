@@ -24,6 +24,7 @@
                 v-model:nodes="nodes"
                 v-model:edges="edges"
                 @click="show.taskNav = false"
+                @show-node-detail="showDetailNode"
             ></mainFlow>
             <div class="control-menu-block">
                 <fv-command-bar
@@ -109,6 +110,11 @@
         </div>
         <page-loading :model-value="!lock.loading" title="Loading..."></page-loading>
         <resourcePanel v-model="show.dataset" :title="local('Resources')"></resourcePanel>
+        <detail-node-panel
+            v-if="detailNodeProps"
+            v-model="show.detailNode"
+            :node-props="detailNodeProps"
+        ></detail-node-panel>
     </div>
 </template>
 
@@ -126,6 +132,7 @@ import queryBlock from '@/components/manage/chat/queryBlock.vue'
 import msgList from '@/components/manage/chat/msgList.vue'
 import resourcePanel from '@/components/manage/mainFlow/panels/resourcePanel/index.vue'
 import currentTaskBlock from '@/components/manage/mainFlow/tools/currentTaskBlock.vue'
+import detailNodePanel from '@/components/manage/mainFlow/panels/detailNodePanel.vue'
 
 import resourceIcon from '@/assets/flow/resources.svg'
 import pipelineIcon from '@/assets/flow/pipeline.svg'
@@ -139,7 +146,8 @@ export default {
         queryBlock,
         msgList,
         resourcePanel,
-        currentTaskBlock
+        currentTaskBlock,
+        detailNodePanel
     },
     data() {
         return {
@@ -183,7 +191,7 @@ export default {
                         include_nodes: ['config_node'],
                         icon: 'Settings',
                         nodeInfo: 'Trainer Agent for Training',
-                        iconColor: 'rgba(149, 91, 120, 1)',
+                        iconColor: 'rgba(45, 45, 45, 1)',
                         background:
                             'linear-gradient(130deg, rgba(201, 122, 162, 0.8), rgba(252, 252, 252, 0.8))',
                         borderColor: 'rgba(201, 122, 162, 0.8)'
@@ -192,7 +200,7 @@ export default {
                 {
                     id: 'trainer',
                     type: 'agent-node',
-                    position: { x: 381, y: 96 },
+                    position: { x: 230, y: 96 },
                     data: {
                         label: 'Trainer',
                         status: 'Agent',
@@ -201,16 +209,16 @@ export default {
                         include_nodes: ['train_node'],
                         icon: 'Library',
                         nodeInfo: 'Trainer Agent for Training',
-                        iconColor: 'rgba(207, 150, 12, 1)',
+                        iconColor: 'rgba(234, 167, 35, 1)',
                         background:
                             'linear-gradient(130deg, rgba(239, 192, 40, 0.8), rgba(252, 252, 252, 0.8))',
-                        borderColor: 'rgba(239, 192, 40, 0.8)'
+                        borderColor: 'rgba(234, 167, 35, 0.8)'
                     }
                 },
                 {
                     id: 'obtainer',
                     type: 'agent-node',
-                    position: { x: 360, y: 637 },
+                    position: { x: 230, y: 637 },
                     data: {
                         label: 'Obtainer',
                         status: 'Agent',
@@ -219,14 +227,15 @@ export default {
                         include_nodes: ['obtain_node'],
                         icon: 'GiftboxOpen',
                         nodeInfo: 'Trainer Agent for Training',
-                        iconColor: 'rgba(135, 127, 163, 1)',
-                        reverseHandle: true
+                        iconColor: 'rgba(90, 45, 133, 1)',
+                        reverseHandle: true,
+                        borderColor: 'rgba(90, 45, 133, 0.8)'
                     }
                 },
                 {
                     id: 'webcrawler',
                     type: 'agent-node',
-                    position: { x: 360, y: 1127 },
+                    position: { x: 230, y: 1127 },
                     data: {
                         label: 'Webcrawler',
                         status: 'Agent',
@@ -235,14 +244,15 @@ export default {
                         include_nodes: ['webcrawler_dataset_node'],
                         icon: 'GiftboxOpen',
                         nodeInfo: 'Webcrawler',
-                        iconColor: 'rgba(134, 127, 163, 1)',
-                        reverseHandle: true
+                        iconColor: 'rgba(207, 85, 128, 1)',
+                        reverseHandle: true,
+                        borderColor: 'rgba(207, 85, 128, 0.8)'
                     }
                 },
                 {
                     id: 'constructor',
                     type: 'agent-node',
-                    position: { x: -110, y: 800 },
+                    position: { x: -190, y: 800 },
                     data: {
                         label: 'Constructor',
                         status: 'Agent',
@@ -252,8 +262,9 @@ export default {
                         icon: 'OEM',
                         nodeInfo:
                             'Constructor Agent for post proceesing the data obtained by Obtainer and WebCrawler.',
-                        iconColor: 'rgba(135, 127, 163, 1)',
-                        reverseHandle: true
+                        iconColor: 'rgba(56, 78, 205, 1)',
+                        reverseHandle: true,
+                        borderColor: 'rgba(56, 78, 205, 0.8)'
                     }
                 },
                 {
@@ -271,7 +282,7 @@ export default {
                         iconColor: 'rgba(89, 169, 133, 1)',
                         background:
                             'linear-gradient(130deg, rgba(116, 220, 175, 0.8), rgba(252, 252, 252, 0.8))',
-                        borderColor: 'rgba(116, 220, 175, 0.8)'
+                        borderColor: 'rgba(89, 169, 133, 0.8)'
                     }
                 },
                 {
@@ -286,7 +297,7 @@ export default {
                         include_nodes: ['analyze_node'],
                         icon: 'AreaChart',
                         nodeInfo: 'Trainer Agent for Training',
-                        iconColor: 'rgba(139, 145, 177, 1)',
+                        iconColor: 'rgba(98, 84, 191, 1)',
                         background:
                             'linear-gradient(130deg, rgba(150, 167, 222, 0.8), rgba(252, 252, 252, 0.8))',
                         reverseHandle: true,
@@ -312,11 +323,11 @@ export default {
                         include_nodes: ['query_node', 'feedback_node'],
                         icon: 'Robot',
                         nodeInfo: 'Starter Agent for Supervision',
-                        iconColor: 'rgba(139, 165, 191, 1)',
+                        iconColor: 'rgba(45, 45, 45, 1)',
                         background:
                             'linear-gradient(130deg, rgba(129, 208, 246, 0.8), rgba(252, 252, 252, 0.8))',
                         reverseHandle: true,
-                        borderColor: 'rgba(129, 208, 246, 0.8)'
+                        borderColor: 'rgba(45, 45, 45, 0.8)'
                     }
                 }
             ],
@@ -393,12 +404,14 @@ export default {
                     }
                 }
             ],
+            detailNodeProps: null,
             timer: {
                 healthCheck: null
             },
             show: {
                 taskNav: false,
                 dataset: false,
+                detailNode: true,
                 fullScreen: false
             },
             lock: {
@@ -514,6 +527,10 @@ export default {
                         status: 'error'
                     })
                 })
+        },
+        showDetailNode(props) {
+            this.detailNodeProps = props
+            this.show.detailNode = true
         }
     },
     beforeUnmount() {

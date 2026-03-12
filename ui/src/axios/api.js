@@ -860,6 +860,59 @@ export class task {
       })
     })
   }
+ 
+  /**
+  * @summary 获取训练状态
+  * @param {String} [output_dir] 
+  * @param {String} [task_id] 
+  * @param {String} [train_task_id] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async getTrainStatus(output_dir,task_id,train_task_id,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/task/train_status',
+        data:{},
+        params:{output_dir,task_id,train_task_id},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
 }
 
 // class task static method properties bind
@@ -903,6 +956,14 @@ task.delTask.fullPath=`${axios.defaults.baseURL}/task/task/{id}`
 * @description delTask url链接，不包含baseURL
 */
 task.delTask.path=`/task/task/{id}`
+/**
+* @description getTrainStatus url链接，包含baseURL
+*/
+task.getTrainStatus.fullPath=`${axios.defaults.baseURL}/task/train_status`
+/**
+* @description getTrainStatus url链接，不包含baseURL
+*/
+task.getTrainStatus.path=`/task/train_status`
 
 export class train {
  
@@ -1312,6 +1373,160 @@ export class train {
       })
     })
   }
+ 
+  /**
+  * @summary Get Task Metrics
+  * @param {String} [pathtask_id] 
+  * @param {undefined} [count] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async get_task_metrics_train_metrics__task_id__get(pathtask_id,count,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/train/metrics/'+pathtask_id+'',
+        data:{},
+        params:{count},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
+  * @summary Delete Task Metrics
+  * @param {String} [pathtask_id] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async delete_task_metrics_train_metrics__task_id__delete(pathtask_id,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'delete',
+        url:'/train/metrics/'+pathtask_id+'',
+        data:{},
+        params:{},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
+  * @summary Get Task Metrics File
+  * @param {String} [pathtask_id] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async get_task_metrics_file_train_metrics__task_id__file_get(pathtask_id,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/train/metrics/'+pathtask_id+'/file',
+        data:{},
+        params:{},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
 }
 
 // class train static method properties bind
@@ -1379,6 +1594,30 @@ train.get_all_swanlab_logs_train_swanlab_logs_get.fullPath=`${axios.defaults.bas
 * @description get_all_swanlab_logs_train_swanlab_logs_get url链接，不包含baseURL
 */
 train.get_all_swanlab_logs_train_swanlab_logs_get.path=`/train/swanlab-logs`
+/**
+* @description get_task_metrics_train_metrics__task_id__get url链接，包含baseURL
+*/
+train.get_task_metrics_train_metrics__task_id__get.fullPath=`${axios.defaults.baseURL}/train/metrics/{task_id}`
+/**
+* @description get_task_metrics_train_metrics__task_id__get url链接，不包含baseURL
+*/
+train.get_task_metrics_train_metrics__task_id__get.path=`/train/metrics/{task_id}`
+/**
+* @description delete_task_metrics_train_metrics__task_id__delete url链接，包含baseURL
+*/
+train.delete_task_metrics_train_metrics__task_id__delete.fullPath=`${axios.defaults.baseURL}/train/metrics/{task_id}`
+/**
+* @description delete_task_metrics_train_metrics__task_id__delete url链接，不包含baseURL
+*/
+train.delete_task_metrics_train_metrics__task_id__delete.path=`/train/metrics/{task_id}`
+/**
+* @description get_task_metrics_file_train_metrics__task_id__file_get url链接，包含baseURL
+*/
+train.get_task_metrics_file_train_metrics__task_id__file_get.fullPath=`${axios.defaults.baseURL}/train/metrics/{task_id}/file`
+/**
+* @description get_task_metrics_file_train_metrics__task_id__file_get url链接，不包含baseURL
+*/
+train.get_task_metrics_file_train_metrics__task_id__file_get.path=`/train/metrics/{task_id}/file`
 
 export class resource {
  

@@ -4,40 +4,50 @@
             <div class="title-block">
                 <p class="main-title">{{ local('Global Config') }}</p>
                 <div class="right-block">
-                    <fv-button theme="dark" icon="Go" :is-box-shadow="true" :background="gradient"
-                        :disabled="!lock.update" border-radius="6" style="width: 90px" @click="updateConfig">
+                    <fv-button
+                        theme="dark"
+                        icon="Go"
+                        :is-box-shadow="true"
+                        :background="gradient"
+                        :disabled="!lock.update"
+                        border-radius="6"
+                        style="width: 90px"
+                        @click="updateConfig"
+                    >
                         {{ local('Update') }}
                     </fv-button>
-                    <fv-button icon="Refresh" :is-box-shadow="true" border-radius="6" :disabled="!lock.update"
-                        style="width: 90px" @click="reset">
+                    <fv-button
+                        icon="Refresh"
+                        :is-box-shadow="true"
+                        border-radius="6"
+                        :disabled="!lock.update"
+                        style="width: 90px"
+                        @click="reset"
+                    >
                         {{ local('Reset') }}
                     </fv-button>
                 </div>
             </div>
             <div class="content-block">
-                <fv-Collapse :model-value="true" class="serving-item" icon="DialShape3" :title="local('Starter')"
-                    :content="local('Starter Config.')" :max-height="'auto'">
+                <fv-Collapse
+                    :model-value="true"
+                    class="serving-item"
+                    icon="DialShape3"
+                    :title="local('System')"
+                    :content="local('System Config.')"
+                    :max-height="'auto'"
+                >
                     <template v-slot:default>
                         <hr />
-                        <div v-if="config.system.starter" v-for="(val, key) in config.system.starter">
+                        <div v-if="config.system" v-for="(val, key) in config.system">
                             <div class="serving-item-row column">
                                 <p class="serving-item-light-title">{{ local(key) }}</p>
-                                <value-input :model-value="val" :name="key" :lock="lock.update"
-                                    @select-dataset="handleSelectDataset(val)"></value-input>
-                            </div>
-                            <hr />
-                        </div>
-                    </template>
-                </fv-Collapse>
-                <fv-Collapse :model-value="true" class="serving-item" icon="DialShape3" :title="local('RAG')"
-                    :content="local('RAG Config.')" :max-height="'auto'">
-                    <template v-slot:default>
-                        <hr />
-                        <div v-if="config.system.rag" v-for="(val, key) in config.system.rag">
-                            <div class="serving-item-row column">
-                                <p class="serving-item-light-title">{{ local(key) }}</p>
-                                <value-input :model-value="val" :name="key" :lock="lock.update"
-                                    @select-dataset="handleSelectDataset(val)"></value-input>
+                                <value-input
+                                    :model-value="val"
+                                    :name="key"
+                                    :lock="lock.update"
+                                    @select-dataset="handleSelectDataset(val)"
+                                ></value-input>
                             </div>
                             <hr />
                         </div>
@@ -45,15 +55,45 @@
                 </fv-Collapse>
                 <p class="lp-serving-title">{{ local('States') }}</p>
                 <div v-for="(state_val, state_key) in config.states">
-                    <fv-Collapse :model-value="true" class="serving-item" icon="DialShape3" :title="state_key"
-                        :content="local('State Config')" :max-height="'auto'">
+                    <fv-Collapse
+                        :model-value="true"
+                        class="serving-item"
+                        icon="DialShape3"
+                        :title="state_key"
+                        :content="local('State Config')"
+                        :max-height="'auto'"
+                    >
                         <template v-slot:default>
                             <hr />
                             <div v-for="(val, key) in state_val">
                                 <div class="serving-item-row column">
-                                    <p class="serving-item-light-title">{{ local(key) }}</p>
-                                    <value-input :model-value="val" :name="key" :lock="lock.update"
-                                        @select-dataset="handleSelectDataset(val)"></value-input>
+                                    <div class="serving-item-row no-pad" style="gap: 5px">
+                                        <p class="serving-item-light-title">
+                                            {{ local(key) }}
+                                        </p>
+                                        <fv-callout
+                                            v-if="val.description"
+                                            effect="hover"
+                                            position="bottomLeft"
+                                        >
+                                            <fv-button
+                                                :font-size="10"
+                                                borderRadius="30"
+                                                style="width: 18px; height: 18px"
+                                            >
+                                                <i class="ms-Icon ms-Icon--Help"></i>
+                                            </fv-button>
+                                            <template v-slot:main>
+                                                <p style="font-size: 13px">{{ val.description }}</p>
+                                            </template>
+                                        </fv-callout>
+                                    </div>
+                                    <value-input
+                                        :model-value="val"
+                                        :name="key"
+                                        :lock="lock.update"
+                                        @select-dataset="handleSelectDataset(val)"
+                                    ></value-input>
                                 </div>
                                 <hr />
                             </div>
@@ -62,8 +102,12 @@
                 </div>
             </div>
         </div>
-        <resource-panel v-model="show.dataset" :title="local('Dataset')" mode="read"
-            @confirm="handleDatasetConfirm"></resource-panel>
+        <resource-panel
+            v-model="show.dataset"
+            :title="local('Dataset')"
+            mode="read"
+            @confirm="handleDatasetConfirm"
+        ></resource-panel>
     </div>
 </template>
 
@@ -112,7 +156,7 @@ export default {
             this.currentSelectItem = item
         },
         handleDatasetConfirm(event) {
-            if (this.currentSelectItem === null) return;
+            if (this.currentSelectItem === null) return
             this.currentSelectItem.value = event.path
             this.show.dataset = false
         },
@@ -221,7 +265,7 @@ export default {
                 margin: 10px 0px;
                 font-size: 18px;
                 font-weight: 500;
-                color: rgba(50, 49,47, 1);
+                color: rgba(50, 49, 47, 1);
             }
 
             .serving-item {
