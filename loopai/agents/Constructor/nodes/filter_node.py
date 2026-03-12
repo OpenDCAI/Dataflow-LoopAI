@@ -400,7 +400,7 @@ def process_node(state: LoopAIState) -> LoopAIState:
         }
         
         total_tools = len(tool_plan)
-        max_samples = int(constructor_state.get("max_samples_before_cleaning", 1000) or 0)
+        max_samples = int(constructor_state.get("max_samples_before_cleaning", 5000) or 0)
         sampling_done_after_basic = False
         for tool_idx, tool_name in enumerate(tool_plan):
             try:

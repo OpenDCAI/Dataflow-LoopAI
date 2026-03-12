@@ -13,10 +13,9 @@ def config_format(config: dict, task_id: str):
     system_config = config.get('system', {})
     states_config = config.get('states', {})
     result = {}
-    for series_key in system_config:
-        for key in system_config[series_key]:
-            format_item = format_value(system_config[series_key][key])
-            result.setdefault(series_key, {})[key] = format_item["value"]
+    for key in system_config:
+        format_item = format_value(system_config[key])
+        result.setdefault('system', {})[key] = format_item["value"]
     for series_key in states_config:
         if series_key == 'default':
             for key in states_config[series_key]:

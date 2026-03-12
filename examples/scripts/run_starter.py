@@ -13,15 +13,16 @@ from rich.text import Text
 
 console = Console()
 
-cfg = OmegaConf.load("./examples/config/starter.yaml")
+cfg = OmegaConf.load("./starter.yaml")
+system_config = cfg.get('system', {})
 
 # Read starter configuration
-starter_model_name = getattr(cfg.starter, 'model_name', 'deepseek-chat') or 'deepseek-chat'
-starter_base_url = getattr(cfg.starter, 'base_url', 'https://api.deepseek.com') or 'https://api.deepseek.com'
-starter_api_key = getattr(cfg.starter, 'api_key', '') or ''
-starter_tavily_api_key = getattr(cfg.starter, 'tavily_api_key', '') or ''
-starter_kaggle_username = getattr(cfg.starter, 'kaggle_username', '') or ''
-starter_kaggle_key = getattr(cfg.starter, 'kaggle_key', '') or ''
+starter_model_name = system_config.get('starter_model_name', 'deepseek-chat')
+starter_base_url = system_config.get('starter_base_url', 'https://api.deepseek.com')
+starter_api_key = system_config.get('starter_api_key', '')
+starter_tavily_api_key = system_config.get('tavily_api_key', '')
+starter_kaggle_username = system_config.get('kaggle_username', '')
+starter_kaggle_key = system_config.get('kaggle_key', '')
 
 sg = StarterAgent(tools=[check_motivation],
                   model_name=starter_model_name,
@@ -43,6 +44,17 @@ merged_states_dict = {
 if hasattr(cfg.default_states, 'obtainer') and cfg.default_states.obtainer:
     obtainer_cfg = cfg.default_states.obtainer
     merged_states_dict['obtainer'] = OmegaConf.to_container(obtainer_cfg, resolve=True) or {}
+
+# Inject starter-level tavily_api_key into obtainer state (config-first, env/txt fallback in ObtainerAgent)
+if starter_tavily_api_key:
+    merged_states_dict.setdefault('obtainer', {})['tavily_api_key'] = starter_tavily_api_key
+
+# Handle webcrawler tavily_api_key injection
+if 'webcrawler' not in merged_states_dict:
+    if hasattr(cfg.default_states, 'webcrawler') and cfg.default_states.webcrawler:
+        merged_states_dict['webcrawler'] = OmegaConf.to_container(cfg.default_states.webcrawler, resolve=True) or {}
+if starter_tavily_api_key:
+    merged_states_dict.setdefault('webcrawler', {})['tavily_api_key'] = starter_tavily_api_key
 
 # Handle obtainer_debug separately if it exists
 if hasattr(cfg.default_states, 'obtainer_debug'):

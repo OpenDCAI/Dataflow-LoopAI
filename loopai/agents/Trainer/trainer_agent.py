@@ -58,7 +58,6 @@ class TrainerAgent(BaseAgent):
     def data_check_node_wrapper(state: LoopAIState) -> LoopAIState:
         """数据检查节点包装器"""
         writer = get_stream_writer()
-        
         # 开始数据检查
         if writer:
             writer(StreamEvent(
@@ -329,7 +328,7 @@ class TrainerAgent(BaseAgent):
                     'train_input_dataset_path',
                     'train_input_task_description',
                     'train_input_config_template_path',
-                    'output_dir',
+                    # 'output_dir',
                     'train_input_model_name'
                 ]
             }

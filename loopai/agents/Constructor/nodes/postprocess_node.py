@@ -157,7 +157,7 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             return state
         
         # Get additional configuration from constructor nested config
-        llm_timeout = constructor.get("llm_timeout", 120.0)
+        llm_timeout = constructor.get("llm_timeout", 300.0)
         max_retries = constructor.get("max_retries", 3)
         max_concurrent_mapping = constructor.get("max_concurrent_mapping", 10)
         
@@ -239,7 +239,7 @@ async def _postprocess_workflow(
     api_key: str,
     temperature: float,
     prompt_loader: Optional[PromptLoader] = None,
-    llm_timeout: float = 120.0,
+    llm_timeout: float = 300.0,
     max_retries: int = 3,
     max_concurrent_mapping: int = 10,
     dataset_background: str = "",

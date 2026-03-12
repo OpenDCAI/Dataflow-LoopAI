@@ -11,6 +11,9 @@ import sqlite3
 import re
 import asyncio
 import ast
+import hashlib
+import time
+import copy
 from typing import Dict, Any, List, Tuple, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -22,6 +25,26 @@ from pydantic import BaseModel, Field
 from loopai.agents.BaseAgent.base_agent import BaseAgent
 
 logger = get_logger()
+
+DEFAULT_LLM_TIMEOUT_SECONDS = 300.0
+
+
+async def _await_llm_with_timeout(
+    llm,
+    messages,
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS,
+    op_name: str = "llm_call"
+):
+    """
+    对 LLM 调用增加统一超时保护，避免单个请求长期挂起拖死整批任务。
+    """
+    timeout = float(timeout_seconds) if timeout_seconds else DEFAULT_LLM_TIMEOUT_SECONDS
+    if timeout <= 0:
+        timeout = DEFAULT_LLM_TIMEOUT_SECONDS
+    try:
+        return await asyncio.wait_for(llm.ainvoke(messages), timeout=timeout)
+    except asyncio.TimeoutError as e:
+        raise TimeoutError(f"{op_name} timed out after {timeout:.1f}s") from e
 
 # 导入 pyflakes
 from pyflakes.api import check
@@ -143,7 +166,13 @@ class Text2SQLRepairAgent(BaseAgent):
     def __call__(self):
         pass
 
-    async def prebuild_schema(self, schema: str, user_query: str, assistant_sql: str) -> str:
+    async def prebuild_schema(
+        self,
+        schema: str,
+        user_query: str,
+        assistant_sql: str,
+        timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
+    ) -> str:
         """
         Schema预构建：在进入建库验证之前，使用LLM对schema进行初步修改。
         确保schema不包含最终答案SQL，保留或补充外键，评估与user需求的匹配度。
@@ -220,7 +249,9 @@ class Text2SQLRepairAgent(BaseAgent):
                 SystemMessage(content="You are a SQLite schema expert. Output only valid DDL statements."),
                 HumanMessage(content=prompt)
             ]
-            response = await self.llm.ainvoke(messages)
+            response = await _await_llm_with_timeout(
+                self.llm, messages, timeout_seconds, "text2sql_prebuild_schema"
+            )
             content = response.content
             content = re.sub(r'^```sql\s*', '', content, flags=re.MULTILINE)
             content = re.sub(r'^```\s*', '', content, flags=re.MULTILINE)
@@ -230,7 +261,15 @@ class Text2SQLRepairAgent(BaseAgent):
             logger.error(f"Error in schema prebuild: {e}")
             return schema
 
-    async def repair_schema(self, schema: str, error_msg: str, user_query: str, sql: str, alignment_hint: str = "") -> str:
+    async def repair_schema(
+        self,
+        schema: str,
+        error_msg: str,
+        user_query: str,
+        sql: str,
+        alignment_hint: str = "",
+        timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
+    ) -> str:
         """
         修复Schema。当 alignment_hint 非空时，表示 schema 需要补充缺失字段以满足查询意图。
         """
@@ -297,7 +336,9 @@ class Text2SQLRepairAgent(BaseAgent):
                 SystemMessage(content="You are a helpful SQL expert assistant who fixes broken SQLite schemas."),
                 HumanMessage(content=prompt)
             ]
-            response = await self.llm.ainvoke(messages)
+            response = await _await_llm_with_timeout(
+                self.llm, messages, timeout_seconds, "text2sql_repair_schema"
+            )
             content = response.content
             # 清理可能的Markdown标记
             content = re.sub(r'^```sql\s*', '', content, flags=re.MULTILINE)
@@ -339,7 +380,8 @@ class Text2SQLExecutionRepairAgent(BaseAgent):
         error_msg: str,
         user_query: str,
         expected_operation: str = "",
-        evidence_text: str = ""
+        evidence_text: str = "",
+        timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
     ) -> str:
         """
         修复执行失败的SQL语句。
@@ -412,7 +454,9 @@ class Text2SQLExecutionRepairAgent(BaseAgent):
                 SystemMessage(content="You are a helpful SQL expert assistant who fixes broken SQL queries based on database schema and error messages."),
                 HumanMessage(content=prompt)
             ]
-            response = await self.llm.ainvoke(messages)
+            response = await _await_llm_with_timeout(
+                self.llm, messages, timeout_seconds, "text2sql_execution_repair"
+            )
             content = response.content
             content = re.sub(r'^```sql\s*', '', content, flags=re.MULTILINE)
             content = re.sub(r'^```\s*', '', content, flags=re.MULTILINE)
@@ -491,7 +535,9 @@ class CodeGenDomainAgent(BaseAgent):
                 SystemMessage(content=self.compute_prompt()),
                 HumanMessage(content=prompt)
             ]
-            response = await self.llm.ainvoke(messages_list)
+            response = await _await_llm_with_timeout(
+                self.llm, messages_list, DEFAULT_LLM_TIMEOUT_SECONDS, "codegen_analyze_record"
+            )
             content = response.content.strip()
             
             # 清理可能的 markdown 标记
@@ -565,7 +611,9 @@ class CodeGenRepairAgent(BaseAgent):
                 SystemMessage(content="You are an expert in code generation datasets. Determine if data belongs to code generation domain."),
                 HumanMessage(content=domain_check_prompt)
             ]
-            domain_response = await self.llm.ainvoke(domain_messages)
+            domain_response = await _await_llm_with_timeout(
+                self.llm, domain_messages, DEFAULT_LLM_TIMEOUT_SECONDS, "codegen_domain_check"
+            )
             domain_content = domain_response.content.strip()
             domain_content = re.sub(r'^```json\s*', '', domain_content, flags=re.MULTILINE)
             domain_content = re.sub(r'^```\s*', '', domain_content, flags=re.MULTILINE)
@@ -627,7 +675,9 @@ class CodeGenRepairAgent(BaseAgent):
                 SystemMessage(content=f"You are a helpful {lang_name} expert assistant who fixes broken {lang_name} code."),
                 HumanMessage(content=prompt)
             ]
-            response = await self.llm.ainvoke(messages)
+            response = await _await_llm_with_timeout(
+                self.llm, messages, DEFAULT_LLM_TIMEOUT_SECONDS, "codegen_repair_code"
+            )
             content = response.content
             # 清理可能的Markdown标记
             content = re.sub(rf'^```{re.escape(language)}\s*', '', content, flags=re.MULTILINE)
@@ -707,7 +757,9 @@ class NormalDomainAgent(BaseAgent):
                 SystemMessage(content=self.compute_prompt()),
                 HumanMessage(content=prompt)
             ]
-            response = await self.llm.ainvoke(messages_list)
+            response = await _await_llm_with_timeout(
+                self.llm, messages_list, DEFAULT_LLM_TIMEOUT_SECONDS, "normal_domain_analyze_record"
+            )
             content = response.content.strip()
             
             # 清理可能的 markdown 标记
@@ -792,7 +844,9 @@ class NormalRepairAgent(BaseAgent):
                 SystemMessage(content="You are an expert assistant who improves dialogue responses and validates their quality."),
                 HumanMessage(content=improve_and_validate_prompt)
             ]
-            response = await self.llm.ainvoke(messages)
+            response = await _await_llm_with_timeout(
+                self.llm, messages, DEFAULT_LLM_TIMEOUT_SECONDS, "normal_improve_and_validate"
+            )
             content = response.content.strip()
             
             # 清理可能的 markdown 标记
@@ -1244,7 +1298,8 @@ async def _is_sql_semantically_synchronized(
     constraints: Dict[str, Any],
     schema_sql: str,
     user_query: str,
-    llm
+    llm,
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
 ) -> Tuple[bool, str]:
     """
     用 LLM 审核最终 SQL 是否落实了诊断约束。
@@ -1281,7 +1336,9 @@ async def _is_sql_semantically_synchronized(
             SystemMessage(content="You are a strict SQL label quality auditor. Output valid JSON only."),
             HumanMessage(content=prompt)
         ]
-        response = await llm.ainvoke(messages)
+        response = await _await_llm_with_timeout(
+            llm, messages, timeout_seconds, "sql_semantic_sync_check"
+        )
         content = response.content.strip()
         content = re.sub(r'^```json\s*', '', content, flags=re.MULTILINE)
         content = re.sub(r'^```\s*', '', content, flags=re.MULTILINE)
@@ -1430,7 +1487,8 @@ async def _llm_validate_text2sql_semantics(
     user_query: str,
     schema_sql: str,
     assistant_sql: str,
-    llm
+    llm,
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
 ) -> Dict[str, Any]:
     """
     统一 LLM 语义审核器，替代高误报规则判定。
@@ -1496,7 +1554,9 @@ async def _llm_validate_text2sql_semantics(
             SystemMessage(content="You are a Text-to-SQL data quality auditor for BIRD benchmark. Output valid JSON only."),
             HumanMessage(content=prompt)
         ]
-        response = await llm.ainvoke(messages)
+        response = await _await_llm_with_timeout(
+            llm, messages, timeout_seconds, "text2sql_semantic_audit"
+        )
         content = response.content.strip()
         content = re.sub(r'^```json\s*', '', content, flags=re.MULTILINE)
         content = re.sub(r'^```\s*', '', content, flags=re.MULTILINE)
@@ -1515,7 +1575,8 @@ async def _check_schema_query_alignment(
     user_query: str,
     schema_sql: str,
     assistant_sql: str,
-    llm
+    llm,
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
 ) -> Dict[str, Any]:
     """
     用 LLM 判断 schema 是否能完整覆盖 user query 的语义意图。
@@ -1582,7 +1643,9 @@ async def _check_schema_query_alignment(
             SystemMessage(content="You are a Text-to-SQL schema completeness auditor. Output valid JSON only."),
             HumanMessage(content=prompt)
         ]
-        response = await llm.ainvoke(messages)
+        response = await _await_llm_with_timeout(
+            llm, messages, timeout_seconds, "schema_query_alignment_check"
+        )
         content = response.content.strip()
         content = re.sub(r'^```json\s*', '', content, flags=re.MULTILINE)
         content = re.sub(r'^```\s*', '', content, flags=re.MULTILINE)
@@ -1601,7 +1664,8 @@ async def _generate_evidence_for_gaps(
     user_query: str,
     schema_sql: str,
     evidence_gaps: List[str],
-    llm
+    llm,
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
 ) -> str:
     """
     对 evidence_gaps 中列出的模糊概念，用 LLM 生成明确的 Evidence 文本
@@ -1631,7 +1695,9 @@ async def _generate_evidence_for_gaps(
             SystemMessage(content="You are a domain knowledge assistant. Output plain-text evidence definitions only."),
             HumanMessage(content=prompt)
         ]
-        response = await llm.ainvoke(messages)
+        response = await _await_llm_with_timeout(
+            llm, messages, timeout_seconds, "generate_evidence_for_gaps"
+        )
         return response.content.strip()
     except Exception as e:
         logger.warning(f"Evidence generation failed: {e}")
@@ -1643,7 +1709,8 @@ async def _regenerate_compliant_sql(
     user_query: str,
     original_sql: str,
     issue_description: str,
-    llm
+    llm,
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
 ) -> str:
     """
     当 assistant SQL 不合规（非 SELECT/WITH、含 mutation 操作等）时，
@@ -1700,7 +1767,9 @@ async def _regenerate_compliant_sql(
             SystemMessage(content="You are a SQL expert for BIRD benchmark. Output only valid SQLite SELECT queries."),
             HumanMessage(content=prompt)
         ]
-        response = await llm.ainvoke(messages)
+        response = await _await_llm_with_timeout(
+            llm, messages, timeout_seconds, "regenerate_compliant_sql"
+        )
         content = response.content
         content = re.sub(r'^```sql\s*', '', content, flags=re.MULTILINE)
         content = re.sub(r'^```\s*', '', content, flags=re.MULTILINE)
@@ -1709,6 +1778,199 @@ async def _regenerate_compliant_sql(
     except Exception as e:
         logger.warning(f"SQL regeneration failed: {e}")
         return original_sql
+
+
+# =====================================================================
+# Text2SQL Checkpoint / Resume Infrastructure
+# =====================================================================
+
+_TEXT2SQL_STAGES = [
+    "load_data",
+    "schema_prebuild",
+    "schema_verify",
+    "schema_repair",
+    "alignment_check",
+    "alignment_regen",
+    "sql_audit",
+    "sql_regen",
+    "sql_exec_verify",
+    "sql_repair",
+    "semantic_sync",
+    "finalize",
+]
+
+
+def _ckpt_paths(file_path: str) -> Dict[str, str]:
+    """Derive checkpoint / partial / state-snapshot paths from input file."""
+    base, ext = os.path.splitext(file_path)
+    return {
+        "progress": f"{base}_text2sql_progress.json",
+        "partial": f"{base}_text2sql_cleaned.partial.jsonl",
+        "state": f"{base}_text2sql_state.snapshot.json",
+    }
+
+
+def _file_signature(file_path: str) -> Dict[str, Any]:
+    """Lightweight file identity: path + size + mtime + head-hash."""
+    stat = os.stat(file_path)
+    head_hash = hashlib.md5()
+    with open(file_path, "rb") as f:
+        head_hash.update(f.read(8192))
+    return {
+        "path": os.path.abspath(file_path),
+        "size": stat.st_size,
+        "mtime": stat.st_mtime,
+        "head_md5": head_hash.hexdigest(),
+    }
+
+
+def _safe_serialize(obj: Any) -> Any:
+    """Best-effort JSON-safe conversion for state snapshots."""
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+    if isinstance(obj, (list, tuple)):
+        return [_safe_serialize(v) for v in obj]
+    if isinstance(obj, dict):
+        return {str(k): _safe_serialize(v) for k, v in obj.items()}
+    try:
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError, OverflowError):
+        return str(obj)
+
+
+def _atomic_json_write(path: str, data: Any) -> None:
+    """Write JSON atomically via tmp + rename + fsync."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def _save_text2sql_checkpoint(
+    file_path: str,
+    stage: str,
+    batch_index: int,
+    file_diag: Dict[str, Any],
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Overwrite the progress checkpoint for *file_path*."""
+    paths = _ckpt_paths(file_path)
+    payload: Dict[str, Any] = {
+        "version": 1,
+        "file_signature": _file_signature(file_path),
+        "stage": stage,
+        "batch_index": batch_index,
+        "file_diag": copy.deepcopy(file_diag),
+        "ts": time.time(),
+    }
+    if extra:
+        payload["extra"] = _safe_serialize(extra)
+    _atomic_json_write(paths["progress"], payload)
+    logger.debug(
+        f"[checkpoint] saved stage={stage} batch={batch_index} -> {paths['progress']}"
+    )
+
+
+def _save_partial_records(file_path: str, records: List[Dict]) -> None:
+    """Overwrite the partial-cleaned JSONL for *file_path*."""
+    paths = _ckpt_paths(file_path)
+    tmp = paths["partial"] + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        for rec in records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, paths["partial"])
+    logger.debug(f"[checkpoint] saved {len(records)} partial records -> {paths['partial']}")
+
+
+def _save_state_snapshot(file_path: str, state: Any) -> None:
+    """Persist a JSON-safe snapshot of the LoopAI state dict."""
+    paths = _ckpt_paths(file_path)
+    payload = {
+        "version": 1,
+        "ts": time.time(),
+        "state": _safe_serialize(dict(state) if hasattr(state, "items") else state),
+    }
+    _atomic_json_write(paths["state"], payload)
+    logger.debug(f"[checkpoint] state snapshot -> {paths['state']}")
+
+
+def _load_checkpoint(file_path: str) -> Optional[Dict[str, Any]]:
+    """Load checkpoint if it exists and matches the current input file."""
+    paths = _ckpt_paths(file_path)
+    prog_path = paths["progress"]
+    if not os.path.exists(prog_path):
+        return None
+    try:
+        with open(prog_path, "r", encoding="utf-8") as f:
+            ckpt = json.load(f)
+    except Exception as e:
+        logger.warning(f"[checkpoint] failed to read {prog_path}: {e}")
+        return None
+
+    saved_sig = ckpt.get("file_signature", {})
+    try:
+        cur_sig = _file_signature(file_path)
+    except Exception:
+        return None
+
+    if (
+        saved_sig.get("path") != cur_sig["path"]
+        or saved_sig.get("size") != cur_sig["size"]
+        or saved_sig.get("head_md5") != cur_sig["head_md5"]
+    ):
+        backup = prog_path + f".bak.{int(time.time())}"
+        logger.warning(
+            f"[checkpoint] file signature mismatch – backing up old checkpoint to {backup}"
+        )
+        os.replace(prog_path, backup)
+        return None
+
+    return ckpt
+
+
+def _load_partial_records(file_path: str) -> Optional[List[Dict]]:
+    """Load previously saved partial-cleaned records."""
+    paths = _ckpt_paths(file_path)
+    partial_path = paths["partial"]
+    if not os.path.exists(partial_path):
+        return None
+    records: List[Dict] = []
+    try:
+        with open(partial_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    records.append(json.loads(line))
+        return records
+    except Exception as e:
+        logger.warning(f"[checkpoint] failed to read partial file {partial_path}: {e}")
+        return None
+
+
+def _stage_gte(a: str, b: str) -> bool:
+    """Return True if stage *a* >= stage *b* in the pipeline ordering."""
+    try:
+        return _TEXT2SQL_STAGES.index(a) >= _TEXT2SQL_STAGES.index(b)
+    except ValueError:
+        return False
+
+
+def _cleanup_checkpoint_files(file_path: str) -> None:
+    """Remove checkpoint / partial files after successful completion."""
+    for p in _ckpt_paths(file_path).values():
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+# =====================================================================
+# End checkpoint infrastructure
+# =====================================================================
 
 
 def domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
@@ -1745,6 +2007,11 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
     # === 配置部分 ===
     BATCH_SIZE = 64  # 设置并发 Batch 大小
     agent_config = state.get("constructor", {}) or {}
+    llm_timeout = float(agent_config.get("llm_timeout", DEFAULT_LLM_TIMEOUT_SECONDS) or DEFAULT_LLM_TIMEOUT_SECONDS)
+    if llm_timeout <= 0:
+        llm_timeout = DEFAULT_LLM_TIMEOUT_SECONDS
+    llm_audit_batch_size = max(1, int(agent_config.get("llm_audit_batch_size", BATCH_SIZE) or BATCH_SIZE))
+    sync_check_batch_size = max(1, int(agent_config.get("sync_check_batch_size", BATCH_SIZE) or BATCH_SIZE))
     
     # 初始化修复 Agent
     repair_agent = None
@@ -1814,7 +2081,7 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
         except Exception as e:
             return False, str(e)
 
-    async def _repair_single_item(item):
+    async def _repair_single_item(item, file_diag):
         """
         处理单条数据的修复逻辑：调用Agent -> 验证 -> 更新记录
         支持 alignment_hint 用于语义对齐修复场景。
@@ -1831,7 +2098,8 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
                 error_msg=item["error"],
                 user_query=item["user_content"],
                 sql=item["assistant_content"],
-                alignment_hint=item.get("alignment_hint", "")
+                alignment_hint=item.get("alignment_hint", ""),
+                timeout_seconds=llm_timeout
             )
             
             success, error_msg = _test_schema_creation(new_schema)
@@ -1875,9 +2143,11 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
     # === 内部函数：处理单个文件 ===
     async def _process_single_file(file_path: str) -> Tuple[List[Dict], int, int, int, Dict[str, Any]]:
         """
-        处理单个JSONL文件，返回 (有效记录列表, 总数, 有效数, 无效数)
+        处理单个JSONL文件，返回 (有效记录列表, 总数, 有效数, 无效数, diagnostics)。
+        支持 checkpoint/resume：每个 batch 完成后落盘，中断后自动续跑。
         """
-        file_diag = {
+        basename = os.path.basename(file_path)
+        _DIAG_DEFAULTS = {
             "schema_prebuild_count": 0,
             "leakage_fixed_count": 0,
             "evidence_injected_count": 0,
@@ -1899,78 +2169,151 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
             "sqlite_dialect_warning_count": 0,
             "final_drop_reasons": {}
         }
-        all_records = []
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        all_records.append(json.loads(line))
-                    except:
-                        pass
-        
+        file_diag = dict(_DIAG_DEFAULTS)
+
+        alignment_llm = repair_agent.llm
+
+        # ------------------------------------------------------------------
+        # Checkpoint / Resume setup
+        # ------------------------------------------------------------------
+        ckpt = _load_checkpoint(file_path)
+        completed_stages: set = set()
+        all_records: Optional[List[Dict]] = None
+        resumed = False
+
+        if ckpt:
+            completed_stages = set(ckpt.get("extra", {}).get("completed_stages", []))
+            saved_diag = ckpt.get("file_diag")
+            if saved_diag and isinstance(saved_diag, dict):
+                merged = dict(_DIAG_DEFAULTS)
+                merged.update(saved_diag)
+                file_diag = merged
+            partial = _load_partial_records(file_path)
+            if partial is not None:
+                all_records = partial
+                resumed = True
+                logger.info(
+                    f"[{basename}] RESUMED from checkpoint: "
+                    f"completed_stages={sorted(completed_stages)}, records={len(all_records)}"
+                )
+
+        if all_records is None:
+            all_records = []
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.strip():
+                        try:
+                            all_records.append(json.loads(line))
+                        except Exception:
+                            pass
+
         file_total = len(all_records)
-        
-        # 第一步：LLM Schema 预构建 + 建库验证
-        # 1a) 规则预处理：快速剥离明显泄露
+
+        def _ckpt_save(stage: str, batch_idx: int = 0) -> None:
+            """Persist checkpoint + partial records after every batch."""
+            _save_text2sql_checkpoint(
+                file_path, stage, batch_idx, file_diag,
+                extra={"completed_stages": sorted(completed_stages)},
+            )
+            _save_partial_records(file_path, all_records)
+
+        # ==================================================================
+        # Stage: load_data — rule preprocessing (leakage stripping)
+        # ==================================================================
+        if "load_data" not in completed_stages:
+            for record in all_records:
+                system_content = _extract_message_content(record, "system")
+                assistant_content = _strip_sql_markdown(
+                    _extract_message_content(record, "assistant")
+                )
+                sanitized_schema, leakage_detected, leakage_reason = (
+                    _sanitize_schema_and_detect_leakage(
+                        schema_sql=system_content,
+                        assistant_sql=assistant_content,
+                    )
+                )
+                if leakage_detected:
+                    file_diag["leakage_fixed_count"] += 1
+                    _upsert_message_content(record, "system", sanitized_schema)
+                    record.setdefault("diagnostics", {})
+                    record["diagnostics"]["leakage_detected"] = True
+                    record["diagnostics"]["leakage_reason"] = leakage_reason
+
+            completed_stages.add("load_data")
+            _ckpt_save("load_data")
+            logger.info(f"[{basename}] Stage load_data complete ({file_total} records)")
+        else:
+            logger.info(f"[{basename}] Skipping load_data (resumed)")
+
+        # Build prebuild_items from (possibly resumed) records
         prebuild_items = []
         for record in all_records:
-            system_content = _extract_message_content(record, "system")
-            user_content = _extract_message_content(record, "user")
-            assistant_content = _strip_sql_markdown(_extract_message_content(record, "assistant"))
-
-            sanitized_schema, leakage_detected, leakage_reason = _sanitize_schema_and_detect_leakage(
-                schema_sql=system_content,
-                assistant_sql=assistant_content
-            )
-            if leakage_detected:
-                file_diag["leakage_fixed_count"] += 1
-                system_content = sanitized_schema
-                _upsert_message_content(record, "system", system_content)
-                record.setdefault("diagnostics", {})
-                record["diagnostics"]["leakage_detected"] = True
-                record["diagnostics"]["leakage_reason"] = leakage_reason
-
             prebuild_items.append({
                 "record": record,
-                "system_content": system_content,
-                "user_content": user_content,
-                "assistant_content": assistant_content,
+                "system_content": _extract_message_content(record, "system"),
+                "user_content": _extract_message_content(record, "user"),
+                "assistant_content": _strip_sql_markdown(
+                    _extract_message_content(record, "assistant")
+                ),
             })
 
-        # 1b) LLM Schema 预构建（去答案泄露、补外键、对齐user需求）
-        logger.info(
-            f"[{os.path.basename(file_path)}] LLM Schema Prebuild: {len(prebuild_items)} items"
-        )
-
-        async def _prebuild_single(item):
-            try:
-                return await repair_agent.prebuild_schema(
-                    schema=item["system_content"],
-                    user_query=item["user_content"],
-                    assistant_sql=item["assistant_content"]
-                )
-            except Exception as e:
-                logger.warning(f"Schema prebuild failed, keeping original: {e}")
-                return item["system_content"]
-
-        total_pb = len(prebuild_items)
-        for i in range(0, total_pb, BATCH_SIZE):
-            batch = prebuild_items[i : i + BATCH_SIZE]
+        # ==================================================================
+        # Stage: schema_prebuild — LLM Schema prebuild (batched)
+        # ==================================================================
+        if "schema_prebuild" not in completed_stages:
             logger.info(
-                f"  > Prebuild batch {i // BATCH_SIZE + 1}/"
-                f"{(total_pb + BATCH_SIZE - 1) // BATCH_SIZE} (size: {len(batch)})"
+                f"[{basename}] LLM Schema Prebuild: {len(prebuild_items)} items"
             )
-            prebuild_tasks = [_prebuild_single(it) for it in batch]
-            prebuild_results = await asyncio.gather(*prebuild_tasks, return_exceptions=True)
-            for it, pb_result in zip(batch, prebuild_results):
-                if isinstance(pb_result, Exception):
-                    logger.warning(f"Schema prebuild exception, keeping original: {pb_result}")
-                else:
-                    it["system_content"] = pb_result
-                    _upsert_message_content(it["record"], "system", pb_result)
-                    file_diag["schema_prebuild_count"] += 1
 
-        # 1c) 建库验证 + Evidence 构建
+            async def _prebuild_single(item):
+                try:
+                    return await repair_agent.prebuild_schema(
+                        schema=item["system_content"],
+                        user_query=item["user_content"],
+                        assistant_sql=item["assistant_content"],
+                    )
+                except Exception as e:
+                    logger.warning(f"Schema prebuild failed, keeping original: {e}")
+                    return item["system_content"]
+
+            total_pb = len(prebuild_items)
+            for i in range(0, total_pb, BATCH_SIZE):
+                batch = prebuild_items[i : i + BATCH_SIZE]
+                batch_num = i // BATCH_SIZE + 1
+                total_batches = (total_pb + BATCH_SIZE - 1) // BATCH_SIZE
+                logger.info(
+                    f"  > Prebuild batch {batch_num}/{total_batches} "
+                    f"(size: {len(batch)})"
+                )
+                prebuild_tasks = [_prebuild_single(it) for it in batch]
+                prebuild_results = await asyncio.gather(
+                    *prebuild_tasks, return_exceptions=True
+                )
+                for it, pb_result in zip(batch, prebuild_results):
+                    if isinstance(pb_result, Exception):
+                        logger.warning(
+                            f"Schema prebuild exception, keeping original: {pb_result}"
+                        )
+                    else:
+                        it["system_content"] = pb_result
+                        _upsert_message_content(it["record"], "system", pb_result)
+                        file_diag["schema_prebuild_count"] += 1
+                _ckpt_save("schema_prebuild", batch_num)
+
+            completed_stages.add("schema_prebuild")
+            _ckpt_save("schema_prebuild")
+            logger.info(f"[{basename}] Stage schema_prebuild complete")
+        else:
+            logger.info(f"[{basename}] Skipping schema_prebuild (resumed)")
+            for item in prebuild_items:
+                item["system_content"] = _extract_message_content(
+                    item["record"], "system"
+                )
+
+        # ==================================================================
+        # Stage: schema_verify — fast sqlite tests + evidence construction
+        # Always rebuild (deterministic & fast)
+        # ==================================================================
         processed_records = []
         for item in prebuild_items:
             record = item["record"]
@@ -1979,7 +2322,7 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
             assistant_content = item["assistant_content"]
 
             evidence_prefix = _build_evidence_prefix(user_content, system_content)
-            if evidence_prefix:
+            if evidence_prefix and "schema_verify" not in completed_stages:
                 file_diag["evidence_injected_count"] += 1
             user_query_with_evidence = (
                 f"{evidence_prefix}\nQuestion: {user_content}".strip()
@@ -1999,7 +2342,7 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
                     "user_content": user_query_with_evidence,
                     "assistant_content": assistant_content,
                     "expected_operation": expected_operation,
-                    "evidence_prefix": evidence_prefix
+                    "evidence_prefix": evidence_prefix,
                 })
             else:
                 processed_records.append({
@@ -2010,358 +2353,531 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
                     "user_content": user_query_with_evidence,
                     "assistant_content": assistant_content,
                     "expected_operation": expected_operation,
-                    "evidence_prefix": evidence_prefix
+                    "evidence_prefix": evidence_prefix,
                 })
 
-        # 第二步：并发循环修复
-        max_retries = 3
-        
-        for attempt in range(max_retries):
-            to_repair = [
-                item for item in processed_records 
-                if not item["valid"] and item["retry_count"] < max_retries
-            ]
-            
-            if not to_repair:
-                break
-                
-            logger.info(f"[{os.path.basename(file_path)}] Schema Repair Attempt {attempt + 1}/{max_retries}, items to repair: {len(to_repair)}")
-            
-            total_items = len(to_repair)
-            for i in range(0, total_items, BATCH_SIZE):
-                batch = to_repair[i : i + BATCH_SIZE]
-                logger.info(f"  > Processing batch {i//BATCH_SIZE + 1}/{(total_items + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
-                
-                tasks = []
-                for item in batch:
-                    item["retry_count"] += 1
-                    tasks.append(_repair_single_item(item))
-                
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-                success_count = sum(1 for r in results if r is True)
-                logger.info(f"  > Batch finished. Success: {success_count}/{len(batch)}")
+        if "schema_verify" not in completed_stages:
+            completed_stages.add("schema_verify")
+            _ckpt_save("schema_verify")
+            logger.info(f"[{basename}] Stage schema_verify complete")
 
-        # 第 2.5 步：Schema-Query 语义对齐检查 + Schema 回退重生成 + Evidence 注入
-        ALIGNMENT_MAX_ROUNDS = 2
-        alignment_llm = repair_agent.llm
+        # ==================================================================
+        # Stage: schema_repair — batched LLM repair (3 retries)
+        # ==================================================================
+        if "schema_repair" not in completed_stages:
+            max_retries = 3
+            for attempt in range(max_retries):
+                to_repair = [
+                    item for item in processed_records
+                    if not item["valid"]
+                    and item.get("retry_count", 0) < max_retries
+                ]
+                if not to_repair:
+                    break
 
-        for alignment_round in range(ALIGNMENT_MAX_ROUNDS):
-            items_to_check = [item for item in processed_records if item["valid"]]
-            if not items_to_check:
-                break
-
-            logger.info(
-                f"[{os.path.basename(file_path)}] Schema-Query Alignment Check round "
-                f"{alignment_round + 1}/{ALIGNMENT_MAX_ROUNDS}, items: {len(items_to_check)}"
-            )
-
-            ALIGNMENT_BATCH_SIZE = 128
-            alignment_results = []
-            total_align = len(items_to_check)
-            for ai in range(0, total_align, ALIGNMENT_BATCH_SIZE):
-                batch = items_to_check[ai : ai + ALIGNMENT_BATCH_SIZE]
                 logger.info(
-                    f"  > Alignment batch {ai // ALIGNMENT_BATCH_SIZE + 1}/"
-                    f"{(total_align + ALIGNMENT_BATCH_SIZE - 1) // ALIGNMENT_BATCH_SIZE} "
+                    f"[{basename}] Schema Repair Attempt {attempt + 1}/{max_retries}, "
+                    f"items to repair: {len(to_repair)}"
+                )
+
+                total_items = len(to_repair)
+                for i in range(0, total_items, BATCH_SIZE):
+                    batch = to_repair[i : i + BATCH_SIZE]
+                    batch_num = i // BATCH_SIZE + 1
+                    total_batches = (total_items + BATCH_SIZE - 1) // BATCH_SIZE
+                    logger.info(
+                        f"  > Processing batch {batch_num}/{total_batches} "
+                        f"(size: {len(batch)})"
+                    )
+
+                    tasks = []
+                    for item in batch:
+                        item["retry_count"] = item.get("retry_count", 0) + 1
+                        tasks.append(_repair_single_item(item, file_diag))
+
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                    success_count = sum(1 for r in results if r is True)
+                    logger.info(
+                        f"  > Batch finished. Success: {success_count}/{len(batch)}"
+                    )
+                    _ckpt_save("schema_repair", attempt * 1000 + batch_num)
+
+            completed_stages.add("schema_repair")
+            _ckpt_save("schema_repair")
+            logger.info(f"[{basename}] Stage schema_repair complete")
+        else:
+            logger.info(f"[{basename}] Skipping schema_repair (resumed)")
+            for item in processed_records:
+                if not item["valid"]:
+                    sc = _extract_message_content(item["record"], "system")
+                    if sc.strip():
+                        ok, err = _test_schema_creation(sc)
+                        if ok:
+                            item["valid"] = True
+                            item.pop("error", None)
+
+        # ==================================================================
+        # Stage: alignment — Schema-Query alignment check + regen (batched)
+        # ==================================================================
+        if "alignment" not in completed_stages:
+            ALIGNMENT_MAX_ROUNDS = 2
+
+            for alignment_round in range(ALIGNMENT_MAX_ROUNDS):
+                items_to_check = [
+                    item for item in processed_records if item["valid"]
+                ]
+                if not items_to_check:
+                    break
+
+                logger.info(
+                    f"[{basename}] Schema-Query Alignment Check round "
+                    f"{alignment_round + 1}/{ALIGNMENT_MAX_ROUNDS}, "
+                    f"items: {len(items_to_check)}"
+                )
+
+                ALIGNMENT_BATCH_SIZE = 128
+                alignment_results = []
+                total_align = len(items_to_check)
+                for ai in range(0, total_align, ALIGNMENT_BATCH_SIZE):
+                    batch = items_to_check[ai : ai + ALIGNMENT_BATCH_SIZE]
+                    ab_num = ai // ALIGNMENT_BATCH_SIZE + 1
+                    ab_total = (
+                        (total_align + ALIGNMENT_BATCH_SIZE - 1) // ALIGNMENT_BATCH_SIZE
+                    )
+                    logger.info(
+                        f"  > Alignment batch {ab_num}/{ab_total} "
+                        f"(size: {len(batch)})"
+                    )
+                    batch_tasks = []
+                    for item in batch:
+                        record = item["record"]
+                        schema_now = _extract_message_content(record, "system")
+                        user_now = _extract_message_content(record, "user")
+                        asst_now = _strip_sql_markdown(
+                            _extract_message_content(record, "assistant")
+                        )
+                        batch_tasks.append(
+                            _check_schema_query_alignment(
+                                user_now,
+                                schema_now,
+                                asst_now,
+                                alignment_llm,
+                                timeout_seconds=llm_timeout,
+                            )
+                        )
+                    batch_results = await asyncio.gather(
+                        *batch_tasks, return_exceptions=True
+                    )
+                    alignment_results.extend(batch_results)
+                    _ckpt_save(
+                        "alignment_check",
+                        alignment_round * 1000 + ab_num,
+                    )
+
+                items_needing_regen = []
+                for item, aresult in zip(items_to_check, alignment_results):
+                    if isinstance(aresult, Exception):
+                        logger.warning(
+                            f"Alignment check exception, skipping: {aresult}"
+                        )
+                        continue
+                    if aresult.get("aligned", True):
+                        continue
+
+                    record = item["record"]
+                    missing = aresult.get("missing_fields", [])
+                    gaps = aresult.get("evidence_gaps", [])
+                    regen_hint = aresult.get("regen_hint", "")
+
+                    record.setdefault("diagnostics", {})
+                    record["diagnostics"]["schema_user_mismatch"] = True
+                    mismatch_reasons = []
+                    if missing:
+                        mismatch_reasons.append(f"missing_fields: {missing}")
+                    if gaps:
+                        mismatch_reasons.append(f"evidence_gaps: {gaps}")
+                    if regen_hint:
+                        mismatch_reasons.append(f"regen_hint: {regen_hint}")
+                    record["diagnostics"]["schema_user_mismatch_reason"] = (
+                        "; ".join(mismatch_reasons)
+                    )
+
+                    if missing and regen_hint:
+                        item["valid"] = False
+                        item["error"] = f"Schema incomplete: {regen_hint}"
+                        item["alignment_hint"] = regen_hint
+                        item["retry_count"] = 0
+                        item.setdefault("alignment_round", 0)
+                        item["alignment_round"] += 1
+                        items_needing_regen.append(item)
+                        file_diag["schema_alignment_regen_count"] += 1
+                        record["diagnostics"]["alignment_missing_fields"] = missing
+                        record["diagnostics"]["alignment_regen_hint"] = regen_hint
+                    elif missing:
+                        item["valid"] = False
+                        item["error"] = (
+                            f"Schema-user mismatch: missing {missing}"
+                        )
+                        item["alignment_hint"] = (
+                            f"Add missing fields: {', '.join(missing)}"
+                        )
+                        item["retry_count"] = 0
+                        item.setdefault("alignment_round", 0)
+                        item["alignment_round"] += 1
+                        items_needing_regen.append(item)
+                        file_diag["schema_alignment_regen_count"] += 1
+                        record["diagnostics"]["alignment_missing_fields"] = missing
+
+                    if gaps:
+                        user_now = _extract_message_content(record, "user")
+                        schema_now = _extract_message_content(record, "system")
+                        extra_evidence = await _generate_evidence_for_gaps(
+                            user_now,
+                            schema_now,
+                            gaps,
+                            alignment_llm,
+                            timeout_seconds=llm_timeout,
+                        )
+                        if extra_evidence:
+                            old_evidence = item.get("evidence_prefix", "")
+                            item["evidence_prefix"] = (
+                                old_evidence + " " + extra_evidence
+                            ).strip()
+                            new_user = (
+                                f"{item['evidence_prefix']}\n"
+                                f"Question: {user_now}"
+                            ).strip()
+                            item["user_content"] = new_user
+                            file_diag["evidence_gap_injected_count"] += 1
+                            record.setdefault("diagnostics", {})
+                            record["diagnostics"]["evidence_gaps_filled"] = gaps
+                            record["diagnostics"][
+                                "generated_evidence"
+                            ] = extra_evidence
+
+                if not items_needing_regen:
+                    logger.info(
+                        f"[{basename}] All items aligned after round "
+                        f"{alignment_round + 1}"
+                    )
+                    break
+
+                logger.info(
+                    f"[{basename}] {len(items_needing_regen)} items need "
+                    f"schema regen (round {alignment_round + 1})"
+                )
+
+                max_retries = 3
+                for regen_attempt in range(max_retries):
+                    to_regen = [
+                        it
+                        for it in items_needing_regen
+                        if not it["valid"]
+                        and it.get("retry_count", 0) < max_retries
+                    ]
+                    if not to_regen:
+                        break
+                    logger.info(
+                        f"  > Alignment-driven Schema Repair attempt "
+                        f"{regen_attempt + 1}/{max_retries}, "
+                        f"items: {len(to_regen)}"
+                    )
+                    total_regen = len(to_regen)
+                    for i in range(0, total_regen, BATCH_SIZE):
+                        batch = to_regen[i : i + BATCH_SIZE]
+                        regen_tasks = []
+                        for it in batch:
+                            it["retry_count"] = it.get("retry_count", 0) + 1
+                            regen_tasks.append(_repair_single_item(it, file_diag))
+                        regen_results = await asyncio.gather(
+                            *regen_tasks, return_exceptions=True
+                        )
+                        s_count = sum(1 for r in regen_results if r is True)
+                        logger.info(
+                            f"  > Regen batch done. Success: "
+                            f"{s_count}/{len(batch)}"
+                        )
+                        _ckpt_save(
+                            "alignment_regen",
+                            alignment_round * 10000
+                            + regen_attempt * 1000
+                            + i // BATCH_SIZE
+                            + 1,
+                        )
+
+            for item in processed_records:
+                ar = item.get("alignment_round", 0)
+                if ar > 0 and not item["valid"]:
+                    file_diag["schema_alignment_final_drop_count"] += 1
+                    reason = (
+                        item.get("error", "alignment_regen_exhausted")
+                        or "alignment_regen_exhausted"
+                    )
+                    reason_key = f"alignment_drop:{reason[:60]}"
+                    file_diag["final_drop_reasons"][reason_key] = (
+                        file_diag["final_drop_reasons"].get(reason_key, 0) + 1
+                    )
+
+            completed_stages.add("alignment")
+            _ckpt_save("alignment")
+            logger.info(f"[{basename}] Stage alignment complete")
+        else:
+            logger.info(f"[{basename}] Skipping alignment (resumed)")
+
+        # ==================================================================
+        # Stage: sql_audit — SQL compliance + LLM semantic audit (batched)
+        # ==================================================================
+        schema_valid_items = [
+            item for item in processed_records if item["valid"]
+        ]
+
+        if "sql_audit" not in completed_stages:
+            SQL_REGEN_MAX_RETRIES = 3
+            items_needing_sql_regen = []
+            compliant_items = []
+            for item in schema_valid_items:
+                record = item["record"]
+                assistant_content = _strip_sql_markdown(
+                    _extract_message_content(record, "assistant")
+                )
+                sql_op = _sql_op_type(assistant_content)
+                if sql_op not in ("SELECT", "UNKNOWN"):
+                    file_diag["sql_preprocess_regen_count"] += 1
+                    record.setdefault("diagnostics", {})
+                    record["diagnostics"]["original_sql_op"] = sql_op
+                    items_needing_sql_regen.append({
+                        "item": item,
+                        "issue": (
+                            f"SQL is {sql_op}, not a query. "
+                            f"BIRD requires SELECT-only."
+                        ),
+                        "regen_retry": 0,
+                    })
+                else:
+                    compliant_items.append(item)
+
+            llm_audit_results = []
+            total_audit = len(compliant_items)
+            for i in range(0, total_audit, llm_audit_batch_size):
+                batch = compliant_items[i : i + llm_audit_batch_size]
+                ab_num = i // llm_audit_batch_size + 1
+                ab_total = (
+                    (total_audit + llm_audit_batch_size - 1) // llm_audit_batch_size
+                )
+                logger.info(
+                    f"  > SQL semantic audit batch {ab_num}/{ab_total} "
                     f"(size: {len(batch)})"
                 )
                 batch_tasks = []
                 for item in batch:
                     record = item["record"]
-                    schema_now = _extract_message_content(record, "system")
-                    user_now = _extract_message_content(record, "user")
-                    asst_now = _strip_sql_markdown(_extract_message_content(record, "assistant"))
+                    system_content = _extract_message_content(record, "system")
+                    assistant_content = _strip_sql_markdown(
+                        _extract_message_content(record, "assistant")
+                    )
+                    user_content = _extract_message_content(record, "user")
                     batch_tasks.append(
-                        _check_schema_query_alignment(user_now, schema_now, asst_now, alignment_llm)
+                        _llm_validate_text2sql_semantics(
+                            user_content,
+                            system_content,
+                            assistant_content,
+                            alignment_llm,
+                            timeout_seconds=llm_timeout,
+                        )
                     )
-                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-                alignment_results.extend(batch_results)
-
-            items_needing_regen = []
-            for item, aresult in zip(items_to_check, alignment_results):
-                if isinstance(aresult, Exception):
-                    logger.warning(f"Alignment check exception, skipping: {aresult}")
-                    continue
-                if aresult.get("aligned", True):
-                    continue
-
-                record = item["record"]
-                missing = aresult.get("missing_fields", [])
-                gaps = aresult.get("evidence_gaps", [])
-                regen_hint = aresult.get("regen_hint", "")
-
-                record.setdefault("diagnostics", {})
-                record["diagnostics"]["schema_user_mismatch"] = True
-                mismatch_reasons = []
-                if missing:
-                    mismatch_reasons.append(f"missing_fields: {missing}")
-                if gaps:
-                    mismatch_reasons.append(f"evidence_gaps: {gaps}")
-                if regen_hint:
-                    mismatch_reasons.append(f"regen_hint: {regen_hint}")
-                record["diagnostics"]["schema_user_mismatch_reason"] = "; ".join(mismatch_reasons)
-
-                if missing and regen_hint:
-                    item["valid"] = False
-                    item["error"] = f"Schema incomplete: {regen_hint}"
-                    item["alignment_hint"] = regen_hint
-                    item["retry_count"] = 0
-                    item.setdefault("alignment_round", 0)
-                    item["alignment_round"] += 1
-                    items_needing_regen.append(item)
-                    file_diag["schema_alignment_regen_count"] += 1
-                    record["diagnostics"]["alignment_missing_fields"] = missing
-                    record["diagnostics"]["alignment_regen_hint"] = regen_hint
-                elif missing:
-                    item["valid"] = False
-                    item["error"] = f"Schema-user mismatch: missing {missing}"
-                    item["alignment_hint"] = f"Add missing fields: {', '.join(missing)}"
-                    item["retry_count"] = 0
-                    item.setdefault("alignment_round", 0)
-                    item["alignment_round"] += 1
-                    items_needing_regen.append(item)
-                    file_diag["schema_alignment_regen_count"] += 1
-                    record["diagnostics"]["alignment_missing_fields"] = missing
-
-                if gaps:
-                    user_now = _extract_message_content(record, "user")
-                    schema_now = _extract_message_content(record, "system")
-                    extra_evidence = await _generate_evidence_for_gaps(
-                        user_now, schema_now, gaps, alignment_llm
-                    )
-                    if extra_evidence:
-                        old_evidence = item.get("evidence_prefix", "")
-                        item["evidence_prefix"] = (old_evidence + " " + extra_evidence).strip()
-                        new_user = f"{item['evidence_prefix']}\nQuestion: {user_now}".strip()
-                        item["user_content"] = new_user
-                        file_diag["evidence_gap_injected_count"] += 1
-                        record.setdefault("diagnostics", {})
-                        record["diagnostics"]["evidence_gaps_filled"] = gaps
-                        record["diagnostics"]["generated_evidence"] = extra_evidence
-
-            if not items_needing_regen:
-                logger.info(
-                    f"[{os.path.basename(file_path)}] All items aligned after round {alignment_round + 1}"
+                batch_results = await asyncio.gather(
+                    *batch_tasks, return_exceptions=True
                 )
-                break
+                llm_audit_results.extend(batch_results)
+                _ckpt_save("sql_audit", ab_num)
+            file_diag["llm_semantic_checked_count"] += len(compliant_items)
 
-            logger.info(
-                f"[{os.path.basename(file_path)}] {len(items_needing_regen)} items need schema regen "
-                f"(round {alignment_round + 1})"
-            )
+            query_only_items = []
+            for item, audit in zip(compliant_items, llm_audit_results):
+                record = item["record"]
+                record.setdefault("diagnostics", {})
 
-            for regen_attempt in range(max_retries):
+                if isinstance(audit, Exception):
+                    logger.warning(f"LLM audit exception, skipping: {audit}")
+                    record["diagnostics"]["llm_audit_error"] = str(audit)
+                    query_only_items.append(item)
+                    continue
+
+                needs_regen = False
+                regen_issues = []
+
+                if not audit.get("is_query_sql", True):
+                    file_diag["non_query_sql_dropped_count"] += 1
+                    record["diagnostics"]["llm_non_query_flag"] = True
+                    needs_regen = True
+                    regen_issues.append(
+                        "LLM audit: SQL is not a pure query (SELECT/WITH)"
+                    )
+
+                if audit.get("has_leakage", False):
+                    file_diag["llm_leakage_flagged_count"] += 1
+                    record["diagnostics"]["llm_leakage_flagged"] = True
+                    record["diagnostics"]["llm_leakage_issues"] = audit.get(
+                        "issues", []
+                    )
+                    needs_regen = True
+                    regen_issues.append(
+                        "LLM audit: schema leakage detected, SQL needs regeneration"
+                    )
+
+                if not audit.get("join_alignment_ok", True):
+                    file_diag["llm_join_misalignment_count"] += 1
+                    record["diagnostics"]["llm_join_misalignment"] = True
+                    record["diagnostics"]["llm_join_issues"] = audit.get(
+                        "issues", []
+                    )
+                    needs_regen = True
+                    regen_issues.append(
+                        "LLM audit: JOIN misalignment with schema FK"
+                    )
+
+                dialect_issues = audit.get("dialect_issues", [])
+                if dialect_issues:
+                    file_diag["sqlite_dialect_warning_count"] += 1
+                    record["diagnostics"]["sqlite_dialect_warnings"] = (
+                        dialect_issues
+                    )
+
+                if needs_regen:
+                    file_diag["sql_preprocess_regen_count"] += 1
+                    items_needing_sql_regen.append({
+                        "item": item,
+                        "issue": "; ".join(regen_issues),
+                        "regen_retry": 0,
+                    })
+                else:
+                    query_only_items.append(item)
+
+            # SQL 重生循环
+            if items_needing_sql_regen:
+                logger.info(
+                    f"[{basename}] SQL Preprocess: "
+                    f"{len(items_needing_sql_regen)} items need SQL regeneration"
+                )
+
+            async def _do_sql_regen(regen_info):
+                it = regen_info["item"]
+                rec = it["record"]
+                schema_sql = _extract_message_content(rec, "system")
+                user_q = _extract_message_content(rec, "user")
+                old_sql = _strip_sql_markdown(
+                    _extract_message_content(rec, "assistant")
+                )
+                new_sql = await _regenerate_compliant_sql(
+                    schema_sql=schema_sql,
+                    user_query=user_q,
+                    original_sql=old_sql,
+                    issue_description=regen_info["issue"],
+                    llm=alignment_llm,
+                    timeout_seconds=llm_timeout,
+                )
+                new_sql = _strip_sql_markdown(new_sql)
+                new_op = _sql_op_type(new_sql)
+                if new_op in ("SELECT", "UNKNOWN"):
+                    _upsert_message_content(rec, "assistant", new_sql)
+                    return True
+                else:
+                    regen_info["issue"] = (
+                        f"Regenerated SQL is still {new_op}, not SELECT. "
+                        f"Previous issue: {regen_info['issue']}"
+                    )
+                    return False
+
+            for regen_attempt in range(SQL_REGEN_MAX_RETRIES):
                 to_regen = [
-                    it for it in items_needing_regen
-                    if not it["valid"] and it["retry_count"] < max_retries
+                    r
+                    for r in items_needing_sql_regen
+                    if r["regen_retry"] < SQL_REGEN_MAX_RETRIES
+                    and r["item"].get("valid", True)
                 ]
                 if not to_regen:
                     break
+
                 logger.info(
-                    f"  > Alignment-driven Schema Repair attempt {regen_attempt + 1}/{max_retries}, "
-                    f"items: {len(to_regen)}"
+                    f"  > SQL Regen attempt {regen_attempt + 1}/"
+                    f"{SQL_REGEN_MAX_RETRIES}, items: {len(to_regen)}"
                 )
+
                 total_regen = len(to_regen)
                 for i in range(0, total_regen, BATCH_SIZE):
                     batch = to_regen[i : i + BATCH_SIZE]
                     regen_tasks = []
-                    for it in batch:
-                        it["retry_count"] += 1
-                        regen_tasks.append(_repair_single_item(it))
-                    regen_results = await asyncio.gather(*regen_tasks, return_exceptions=True)
+                    for ri in batch:
+                        ri["regen_retry"] += 1
+                        regen_tasks.append(_do_sql_regen(ri))
+                    regen_results = await asyncio.gather(
+                        *regen_tasks, return_exceptions=True
+                    )
                     s_count = sum(1 for r in regen_results if r is True)
-                    logger.info(f"  > Regen batch done. Success: {s_count}/{len(batch)}")
+                    logger.info(
+                        f"  > SQL Regen batch done. "
+                        f"Success: {s_count}/{len(batch)}"
+                    )
+                    _ckpt_save(
+                        "sql_regen",
+                        regen_attempt * 1000 + i // BATCH_SIZE + 1,
+                    )
 
-        for item in processed_records:
-            ar = item.get("alignment_round", 0)
-            if ar > 0 and not item["valid"]:
-                file_diag["schema_alignment_final_drop_count"] += 1
-                reason = item.get("error", "alignment_regen_exhausted") or "alignment_regen_exhausted"
-                reason_key = f"alignment_drop:{reason[:60]}"
-                file_diag["final_drop_reasons"][reason_key] = file_diag["final_drop_reasons"].get(reason_key, 0) + 1
-
-        # 第三步：SQL 预处理审核 + 重生 + SQL 执行验证 + Strict Grouping + 语义同步
-        schema_valid_items = [item for item in processed_records if item["valid"]]
-        sql_items = []
-
-        # 3a+3b) SQL 预处理：审核合规性，不合规者 LLM 重生（不直接丢弃）
-        SQL_REGEN_MAX_RETRIES = 3
-
-        # 3a) 收集需要重生的项（非 SELECT/WITH 的 DML/DDL）
-        items_needing_sql_regen = []
-        compliant_items = []
-        for item in schema_valid_items:
-            record = item["record"]
-            assistant_content = _strip_sql_markdown(_extract_message_content(record, "assistant"))
-            sql_op = _sql_op_type(assistant_content)
-            if sql_op not in ("SELECT", "UNKNOWN"):
-                file_diag["sql_preprocess_regen_count"] += 1
-                record.setdefault("diagnostics", {})
-                record["diagnostics"]["original_sql_op"] = sql_op
-                items_needing_sql_regen.append({
-                    "item": item,
-                    "issue": f"SQL is {sql_op}, not a query. BIRD requires SELECT-only.",
-                    "regen_retry": 0,
-                })
-            else:
-                compliant_items.append(item)
-
-        # 3b) LLM 语义审核（泄露 / JOIN / 方言），并行批量
-        llm_audit_tasks = []
-        for item in compliant_items:
-            record = item["record"]
-            system_content = _extract_message_content(record, "system")
-            assistant_content = _strip_sql_markdown(_extract_message_content(record, "assistant"))
-            user_content = _extract_message_content(record, "user")
-            llm_audit_tasks.append(
-                _llm_validate_text2sql_semantics(user_content, system_content, assistant_content, alignment_llm)
-            )
-
-        llm_audit_results = await asyncio.gather(*llm_audit_tasks, return_exceptions=True)
-        file_diag["llm_semantic_checked_count"] += len(compliant_items)
-
-        query_only_items = []
-        for item, audit in zip(compliant_items, llm_audit_results):
-            record = item["record"]
-            record.setdefault("diagnostics", {})
-
-            if isinstance(audit, Exception):
-                logger.warning(f"LLM audit exception, skipping: {audit}")
-                record["diagnostics"]["llm_audit_error"] = str(audit)
-                query_only_items.append(item)
-                continue
-
-            needs_regen = False
-            regen_issues = []
-
-            if not audit.get("is_query_sql", True):
-                file_diag["non_query_sql_dropped_count"] += 1
-                record["diagnostics"]["llm_non_query_flag"] = True
-                needs_regen = True
-                regen_issues.append("LLM audit: SQL is not a pure query (SELECT/WITH)")
-
-            if audit.get("has_leakage", False):
-                file_diag["llm_leakage_flagged_count"] += 1
-                record["diagnostics"]["llm_leakage_flagged"] = True
-                record["diagnostics"]["llm_leakage_issues"] = audit.get("issues", [])
-                needs_regen = True
-                regen_issues.append("LLM audit: schema leakage detected, SQL needs regeneration")
-
-            if not audit.get("join_alignment_ok", True):
-                file_diag["llm_join_misalignment_count"] += 1
-                record["diagnostics"]["llm_join_misalignment"] = True
-                record["diagnostics"]["llm_join_issues"] = audit.get("issues", [])
-                needs_regen = True
-                regen_issues.append("LLM audit: JOIN misalignment with schema FK")
-
-            dialect_issues = audit.get("dialect_issues", [])
-            if dialect_issues:
-                file_diag["sqlite_dialect_warning_count"] += 1
-                record["diagnostics"]["sqlite_dialect_warnings"] = dialect_issues
-
-            if needs_regen:
-                file_diag["sql_preprocess_regen_count"] += 1
-                items_needing_sql_regen.append({
-                    "item": item,
-                    "issue": "; ".join(regen_issues),
-                    "regen_retry": 0,
-                })
-            else:
-                query_only_items.append(item)
-
-        # SQL 重生循环
-        if items_needing_sql_regen:
-            logger.info(
-                f"[{os.path.basename(file_path)}] SQL Preprocess: {len(items_needing_sql_regen)} items "
-                f"need SQL regeneration"
-            )
-
-        async def _do_sql_regen(regen_info):
-            it = regen_info["item"]
-            rec = it["record"]
-            schema_sql = _extract_message_content(rec, "system")
-            user_q = _extract_message_content(rec, "user")
-            old_sql = _strip_sql_markdown(_extract_message_content(rec, "assistant"))
-            new_sql = await _regenerate_compliant_sql(
-                schema_sql=schema_sql,
-                user_query=user_q,
-                original_sql=old_sql,
-                issue_description=regen_info["issue"],
-                llm=alignment_llm
-            )
-            new_sql = _strip_sql_markdown(new_sql)
-            new_op = _sql_op_type(new_sql)
-            if new_op in ("SELECT", "UNKNOWN"):
-                _upsert_message_content(rec, "assistant", new_sql)
-                return True
-            else:
-                regen_info["issue"] = (
-                    f"Regenerated SQL is still {new_op}, not SELECT. "
-                    f"Previous issue: {regen_info['issue']}"
+            for regen_info in items_needing_sql_regen:
+                it = regen_info["item"]
+                rec = it["record"]
+                final_sql = _strip_sql_markdown(
+                    _extract_message_content(rec, "assistant")
                 )
-                return False
+                final_op = _sql_op_type(final_sql)
+                if final_op in ("SELECT", "UNKNOWN"):
+                    file_diag["sql_preprocess_regen_success_count"] += 1
+                    query_only_items.append(it)
+                else:
+                    file_diag["non_query_sql_dropped_count"] += 1
+                    rk = f"non_query_sql_regen_exhausted:{final_op}"
+                    file_diag["final_drop_reasons"][rk] = (
+                        file_diag["final_drop_reasons"].get(rk, 0) + 1
+                    )
+                    rec.setdefault("diagnostics", {})
+                    rec["diagnostics"]["non_query_regen_exhausted"] = True
+                    it["valid"] = False
 
-        for regen_attempt in range(SQL_REGEN_MAX_RETRIES):
-            to_regen = [
-                r for r in items_needing_sql_regen
-                if r["regen_retry"] < SQL_REGEN_MAX_RETRIES
-                and r["item"].get("valid", True)
-            ]
-            if not to_regen:
-                break
-
-            logger.info(
-                f"  > SQL Regen attempt {regen_attempt + 1}/{SQL_REGEN_MAX_RETRIES}, "
-                f"items: {len(to_regen)}"
-            )
-
-            total_regen = len(to_regen)
-            for i in range(0, total_regen, BATCH_SIZE):
-                batch = to_regen[i : i + BATCH_SIZE]
-                regen_tasks = []
-                for ri in batch:
-                    ri["regen_retry"] += 1
-                    regen_tasks.append(_do_sql_regen(ri))
-                regen_results = await asyncio.gather(*regen_tasks, return_exceptions=True)
-                s_count = sum(1 for r in regen_results if r is True)
+            if items_needing_sql_regen:
+                regen_success = file_diag["sql_preprocess_regen_success_count"]
+                regen_total = file_diag["sql_preprocess_regen_count"]
                 logger.info(
-                    f"  > SQL Regen batch done. Success: {s_count}/{len(batch)}"
+                    f"[{basename}] SQL Preprocess regen summary: "
+                    f"{regen_success}/{regen_total} regenerated successfully"
                 )
 
-        for regen_info in items_needing_sql_regen:
-            it = regen_info["item"]
-            rec = it["record"]
-            final_sql = _strip_sql_markdown(_extract_message_content(rec, "assistant"))
-            final_op = _sql_op_type(final_sql)
-            if final_op in ("SELECT", "UNKNOWN"):
-                file_diag["sql_preprocess_regen_success_count"] += 1
-                query_only_items.append(it)
-            else:
-                file_diag["non_query_sql_dropped_count"] += 1
-                file_diag["final_drop_reasons"][f"non_query_sql_regen_exhausted:{final_op}"] = \
-                    file_diag["final_drop_reasons"].get(f"non_query_sql_regen_exhausted:{final_op}", 0) + 1
-                rec.setdefault("diagnostics", {})
-                rec["diagnostics"]["non_query_regen_exhausted"] = True
-                it["valid"] = False
+            completed_stages.add("sql_audit")
+            _ckpt_save("sql_audit")
+            logger.info(f"[{basename}] Stage sql_audit complete")
+        else:
+            logger.info(f"[{basename}] Skipping sql_audit (resumed)")
+            query_only_items = list(schema_valid_items)
 
-        if items_needing_sql_regen:
-            regen_success = file_diag["sql_preprocess_regen_success_count"]
-            regen_total = file_diag["sql_preprocess_regen_count"]
-            logger.info(
-                f"[{os.path.basename(file_path)}] SQL Preprocess regen summary: "
-                f"{regen_success}/{regen_total} regenerated successfully"
-            )
-
-        # 3c) SQL 执行验证 + Strict Grouping
-        valid_query_items = [item for item in query_only_items if item.get("valid", True)]
+        # ==================================================================
+        # Stage: sql_exec_verify — fast SQL execution tests + grouping
+        # Always rebuild (deterministic sqlite operations)
+        # ==================================================================
+        sql_items = []
+        valid_query_items = [
+            item for item in query_only_items if item.get("valid", True)
+        ]
 
         for item in valid_query_items:
             record = item["record"]
             system_content = _extract_message_content(record, "system")
-            assistant_content = _strip_sql_markdown(_extract_message_content(record, "assistant"))
+            assistant_content = _strip_sql_markdown(
+                _extract_message_content(record, "assistant")
+            )
             user_content = _extract_message_content(record, "user")
-            expected_operation = item.get("expected_operation", _classify_user_intent(user_content))
+            expected_operation = item.get(
+                "expected_operation", _classify_user_intent(user_content)
+            )
             evidence_prefix = item.get("evidence_prefix", "")
 
             constraints = _extract_alignment_constraints(record, evidence_prefix)
@@ -2369,17 +2885,22 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
             sql_ok = True
             sql_err = ""
 
-            exec_ok, exec_err = _test_sql_execution(system_content, assistant_content)
+            exec_ok, exec_err = _test_sql_execution(
+                system_content, assistant_content
+            )
             if not exec_ok:
                 sql_ok = False
                 sql_err = exec_err
 
             if sql_ok:
-                grouping_bad, grouping_detail = _violates_strict_grouping(assistant_content)
+                grouping_bad, grouping_detail = _violates_strict_grouping(
+                    assistant_content
+                )
                 if grouping_bad:
                     sql_ok = False
                     sql_err = f"strict_grouping_violation: {grouping_detail}"
-                    file_diag["strict_grouping_fixed_count"] += 1
+                    if "sql_exec_verify" not in completed_stages:
+                        file_diag["strict_grouping_fixed_count"] += 1
 
             sql_items.append({
                 "record": record,
@@ -2389,127 +2910,267 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
                 "schema": system_content,
                 "current_sql": assistant_content,
                 "user_content": user_content,
-                "user_query_with_evidence": item.get("user_content", user_content),
+                "user_query_with_evidence": item.get(
+                    "user_content", user_content
+                ),
                 "expected_operation": expected_operation,
                 "evidence_prefix": evidence_prefix,
                 "alignment_constraints": constraints,
             })
 
-        sql_to_repair = [it for it in sql_items if not it["sql_valid"]]
-        if sql_to_repair:
-            logger.info(f"[{os.path.basename(file_path)}] SQL execution: {len(schema_valid_items) - len(sql_to_repair)} passed, {len(sql_to_repair)} failed -> entering repair loop")
+        if "sql_exec_verify" not in completed_stages:
+            completed_stages.add("sql_exec_verify")
+            _ckpt_save("sql_exec_verify")
+            logger.info(f"[{basename}] Stage sql_exec_verify complete")
 
-        async def _repair_single_sql(item):
-            """修复单条SQL的执行错误，含 strict grouping 与 LLM 语义复检"""
-            try:
-                new_sql = await sql_repair_agent.repair_sql(
-                    schema=item["schema"],
-                    sql=item["current_sql"],
-                    error_msg=item["sql_error"],
-                    user_query=item["user_query_with_evidence"],
-                    expected_operation=item.get("expected_operation", ""),
-                    evidence_text=item.get("evidence_prefix", "")
-                )
-                sql_ok, sql_err = _test_sql_execution(item["schema"], new_sql)
-
-                if sql_ok:
-                    grouping_bad, grouping_detail = _violates_strict_grouping(new_sql)
-                    if grouping_bad:
-                        sql_ok, sql_err = False, f"strict_grouping_violation_after_repair: {grouping_detail}"
-
-                if sql_ok:
-                    _upsert_message_content(item["record"], "assistant", new_sql)
-                    item["current_sql"] = new_sql
-                    item["sql_valid"] = True
-                    item["sql_error"] = ""
-                    return True
-                else:
-                    item["current_sql"] = new_sql
-                    item["sql_error"] = sql_err
-                    return False
-            except Exception as e:
-                item["sql_error"] = f"Agent Error: {str(e)}"
-                return False
-
-        sql_max_retries = 3
-        for sql_attempt in range(sql_max_retries):
-            to_fix = [it for it in sql_items if not it["sql_valid"] and it["sql_retry_count"] < sql_max_retries]
-            if not to_fix:
-                break
-
-            logger.info(f"[{os.path.basename(file_path)}] SQL Repair Attempt {sql_attempt + 1}/{sql_max_retries}, items to repair: {len(to_fix)}")
-
-            total_fix = len(to_fix)
-            for i in range(0, total_fix, BATCH_SIZE):
-                batch = to_fix[i : i + BATCH_SIZE]
-                logger.info(f"  > Processing SQL repair batch {i//BATCH_SIZE + 1}/{(total_fix + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
-
-                tasks = []
-                for it in batch:
-                    it["sql_retry_count"] += 1
-                    tasks.append(_repair_single_sql(it))
-
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                success_count = sum(1 for r in results if r is True)
-                logger.info(f"  > SQL repair batch finished. Success: {success_count}/{len(batch)}")
-
-        # 第 3.5 步：语义同步终检（Label Desynchronization 硬约束）
-        # SQL 通过执行但可能未落实诊断约束 -> LLM 审核 -> 不通过则 hard_drop
-        items_needing_sync_check = [
-            it for it in sql_items
-            if it["sql_valid"] and it.get("alignment_constraints", {}).get("has_constraints", False)
-        ]
-        if items_needing_sync_check:
-            logger.info(
-                f"[{os.path.basename(file_path)}] Semantic sync check on "
-                f"{len(items_needing_sync_check)} items with alignment constraints"
-            )
-            sync_tasks = []
-            for it in items_needing_sync_check:
-                sync_tasks.append(
-                    _is_sql_semantically_synchronized(
-                        sql=it["current_sql"],
-                        constraints=it["alignment_constraints"],
-                        schema_sql=it["schema"],
-                        user_query=it["user_content"],
-                        llm=alignment_llm
-                    )
-                )
-            sync_results = await asyncio.gather(*sync_tasks, return_exceptions=True)
-
-            desync_count = 0
-            for it, sr in zip(items_needing_sync_check, sync_results):
-                if isinstance(sr, Exception):
-                    logger.warning(f"Semantic sync check exception, keeping item: {sr}")
-                    continue
-                synced, reason = sr
-                if not synced:
-                    it["sql_valid"] = False
-                    it["sql_error"] = f"semantic_desync_after_repair: {reason}"
-                    file_diag["semantic_desync_flagged_count"] += 1
-                    desync_count += 1
-                    it["record"].setdefault("diagnostics", {})
-                    it["record"]["diagnostics"]["semantic_desync_reason"] = reason
-
-            if desync_count > 0:
+        # ==================================================================
+        # Stage: sql_repair — batched LLM SQL repair (3 retries)
+        # ==================================================================
+        if "sql_repair" not in completed_stages:
+            sql_to_repair = [it for it in sql_items if not it["sql_valid"]]
+            if sql_to_repair:
                 logger.info(
-                    f"[{os.path.basename(file_path)}] Semantic desync hard-drop: "
-                    f"{desync_count} items failed sync check"
+                    f"[{basename}] SQL execution: "
+                    f"{len(sql_items) - len(sql_to_repair)} passed, "
+                    f"{len(sql_to_repair)} failed -> entering repair loop"
                 )
-                file_diag["semantic_desync_final_drop_count"] += desync_count
 
-        # 收集最终有效记录
-        final_valid_records = [it["record"] for it in sql_items if it["sql_valid"]]
+            async def _repair_single_sql(item):
+                try:
+                    new_sql = await sql_repair_agent.repair_sql(
+                        schema=item["schema"],
+                        sql=item["current_sql"],
+                        error_msg=item["sql_error"],
+                        user_query=item["user_query_with_evidence"],
+                        expected_operation=item.get("expected_operation", ""),
+                        evidence_text=item.get("evidence_prefix", ""),
+                        timeout_seconds=llm_timeout,
+                    )
+                    sql_ok, sql_err = _test_sql_execution(
+                        item["schema"], new_sql
+                    )
+
+                    if sql_ok:
+                        grouping_bad, grouping_detail = (
+                            _violates_strict_grouping(new_sql)
+                        )
+                        if grouping_bad:
+                            sql_ok = False
+                            sql_err = (
+                                "strict_grouping_violation_after_repair: "
+                                + grouping_detail
+                            )
+
+                    if sql_ok:
+                        _upsert_message_content(
+                            item["record"], "assistant", new_sql
+                        )
+                        item["current_sql"] = new_sql
+                        item["sql_valid"] = True
+                        item["sql_error"] = ""
+                        return True
+                    else:
+                        item["current_sql"] = new_sql
+                        item["sql_error"] = sql_err
+                        return False
+                except Exception as e:
+                    item["sql_error"] = f"Agent Error: {str(e)}"
+                    return False
+
+            sql_max_retries = 3
+            for sql_attempt in range(sql_max_retries):
+                to_fix = [
+                    it
+                    for it in sql_items
+                    if not it["sql_valid"]
+                    and it["sql_retry_count"] < sql_max_retries
+                ]
+                if not to_fix:
+                    break
+
+                logger.info(
+                    f"[{basename}] SQL Repair Attempt "
+                    f"{sql_attempt + 1}/{sql_max_retries}, "
+                    f"items to repair: {len(to_fix)}"
+                )
+
+                total_fix = len(to_fix)
+                for i in range(0, total_fix, BATCH_SIZE):
+                    batch = to_fix[i : i + BATCH_SIZE]
+                    batch_num = i // BATCH_SIZE + 1
+                    total_batches = (
+                        (total_fix + BATCH_SIZE - 1) // BATCH_SIZE
+                    )
+                    logger.info(
+                        f"  > Processing SQL repair batch "
+                        f"{batch_num}/{total_batches} (size: {len(batch)})"
+                    )
+
+                    tasks = []
+                    for it in batch:
+                        it["sql_retry_count"] += 1
+                        tasks.append(_repair_single_sql(it))
+
+                    results = await asyncio.gather(
+                        *tasks, return_exceptions=True
+                    )
+                    success_count = sum(1 for r in results if r is True)
+                    logger.info(
+                        f"  > SQL repair batch finished. "
+                        f"Success: {success_count}/{len(batch)}"
+                    )
+                    _ckpt_save(
+                        "sql_repair",
+                        sql_attempt * 1000 + batch_num,
+                    )
+
+            completed_stages.add("sql_repair")
+            _ckpt_save("sql_repair")
+            logger.info(f"[{basename}] Stage sql_repair complete")
+        else:
+            logger.info(f"[{basename}] Skipping sql_repair (resumed)")
+            for it in sql_items:
+                if not it["sql_valid"]:
+                    ok, err = _test_sql_execution(
+                        it["schema"], it["current_sql"]
+                    )
+                    if ok:
+                        it["sql_valid"] = True
+                        it["sql_error"] = ""
+
+        # ==================================================================
+        # Stage: semantic_sync — final LLM semantic sync check (batched)
+        # ==================================================================
+        if "semantic_sync" not in completed_stages:
+            items_needing_sync_check = [
+                it
+                for it in sql_items
+                if it["sql_valid"]
+                and it.get("alignment_constraints", {}).get(
+                    "has_constraints", False
+                )
+            ]
+            if items_needing_sync_check:
+                logger.info(
+                    f"[{basename}] Semantic sync check on "
+                    f"{len(items_needing_sync_check)} items with "
+                    f"alignment constraints"
+                )
+                sync_results = []
+                total_sync = len(items_needing_sync_check)
+                for i in range(0, total_sync, sync_check_batch_size):
+                    batch = items_needing_sync_check[
+                        i : i + sync_check_batch_size
+                    ]
+                    sb_num = i // sync_check_batch_size + 1
+                    sb_total = (
+                        (total_sync + sync_check_batch_size - 1)
+                        // sync_check_batch_size
+                    )
+                    logger.info(
+                        f"  > Semantic sync batch {sb_num}/{sb_total} "
+                        f"(size: {len(batch)})"
+                    )
+                    sync_tasks = []
+                    for it in batch:
+                        sync_tasks.append(
+                            _is_sql_semantically_synchronized(
+                                sql=it["current_sql"],
+                                constraints=it["alignment_constraints"],
+                                schema_sql=it["schema"],
+                                user_query=it["user_content"],
+                                llm=alignment_llm,
+                                timeout_seconds=llm_timeout,
+                            )
+                        )
+                    batch_results = await asyncio.gather(
+                        *sync_tasks, return_exceptions=True
+                    )
+                    sync_results.extend(batch_results)
+                    _ckpt_save("semantic_sync", sb_num)
+
+                desync_count = 0
+                for it, sr in zip(items_needing_sync_check, sync_results):
+                    if isinstance(sr, Exception):
+                        logger.warning(
+                            f"Semantic sync check exception, keeping item: {sr}"
+                        )
+                        continue
+                    synced, reason = sr
+                    if not synced:
+                        it["sql_valid"] = False
+                        it["sql_error"] = (
+                            f"semantic_desync_after_repair: {reason}"
+                        )
+                        file_diag["semantic_desync_flagged_count"] += 1
+                        desync_count += 1
+                        it["record"].setdefault("diagnostics", {})
+                        it["record"]["diagnostics"][
+                            "semantic_desync_reason"
+                        ] = reason
+
+                if desync_count > 0:
+                    logger.info(
+                        f"[{basename}] Semantic desync hard-drop: "
+                        f"{desync_count} items failed sync check"
+                    )
+                    file_diag[
+                        "semantic_desync_final_drop_count"
+                    ] += desync_count
+
+            completed_stages.add("semantic_sync")
+            _ckpt_save("semantic_sync")
+            logger.info(f"[{basename}] Stage semantic_sync complete")
+        else:
+            logger.info(f"[{basename}] Skipping semantic_sync (resumed)")
+
+        # ==================================================================
+        # Finalize — collect valid records + clean up checkpoint
+        # ==================================================================
+        final_valid_records = [
+            it["record"] for it in sql_items if it["sql_valid"]
+        ]
         for it in sql_items:
             if not it["sql_valid"]:
-                reason = it.get("sql_error", "unknown_sql_failure") or "unknown_sql_failure"
+                reason = (
+                    it.get("sql_error", "unknown_sql_failure")
+                    or "unknown_sql_failure"
+                )
                 reason_key = reason.split(":")[0][:80]
-                file_diag["final_drop_reasons"][reason_key] = file_diag["final_drop_reasons"].get(reason_key, 0) + 1
+                file_diag["final_drop_reasons"][reason_key] = (
+                    file_diag["final_drop_reasons"].get(reason_key, 0) + 1
+                )
 
         file_valid = len(final_valid_records)
         file_invalid = file_total - file_valid
-        
+
+        logger.info(
+            f"[{basename}] All stages complete: "
+            f"total={file_total}, valid={file_valid}, invalid={file_invalid}"
+        )
+
         return final_valid_records, file_total, file_valid, file_invalid, file_diag
+
+    # === Helper: aggregate file diagnostics into the run-level summary ===
+    _DIAG_KEYS = (
+        "schema_prebuild_count", "leakage_fixed_count", "evidence_injected_count",
+        "intent_mismatch_fixed_count", "hardcode_flagged_count",
+        "schema_alignment_regen_count", "evidence_gap_injected_count",
+        "schema_alignment_final_drop_count", "semantic_desync_flagged_count",
+        "semantic_desync_final_drop_count", "schema_pollution_blocked_count",
+        "strict_grouping_fixed_count", "llm_semantic_checked_count",
+        "llm_leakage_flagged_count", "llm_join_misalignment_count",
+        "non_query_sql_dropped_count", "sql_preprocess_regen_count",
+        "sql_preprocess_regen_success_count", "sqlite_dialect_warning_count",
+    )
+
+    def _merge_diag(file_diag: Dict[str, Any]) -> None:
+        for key in _DIAG_KEYS:
+            aggregate_diag[key] += file_diag.get(key, 0)
+        for k, v in file_diag.get("final_drop_reasons", {}).items():
+            aggregate_diag["final_drop_reasons"][k] = (
+                aggregate_diag["final_drop_reasons"].get(k, 0) + v
+            )
 
     # === 数据读取与预处理 ===
     if not os.path.exists(data_path):
@@ -2525,31 +3186,23 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
             result.success = False
             result.error_message = f"Unsupported file format (expect .jsonl): {data_path}"
             return result
-        
-        final_valid_records, file_total, file_valid, file_invalid, file_diag = await _process_single_file(data_path)
-        
+
+        _save_state_snapshot(data_path, state)
+
+        final_valid_records, file_total, file_valid, file_invalid, file_diag = (
+            await _process_single_file(data_path)
+        )
+
         result.total_records = file_total
         result.valid_records = file_valid
         result.invalid_records = file_invalid
-        for key in ("schema_prebuild_count",
-                     "leakage_fixed_count", "evidence_injected_count", "intent_mismatch_fixed_count",
-                     "hardcode_flagged_count", "schema_alignment_regen_count",
-                     "evidence_gap_injected_count", "schema_alignment_final_drop_count",
-                     "semantic_desync_flagged_count", "semantic_desync_final_drop_count",
-                     "schema_pollution_blocked_count", "strict_grouping_fixed_count",
-                     "llm_semantic_checked_count", "llm_leakage_flagged_count",
-                     "llm_join_misalignment_count", "non_query_sql_dropped_count",
-                     "sql_preprocess_regen_count", "sql_preprocess_regen_success_count",
-                     "sqlite_dialect_warning_count"):
-            aggregate_diag[key] += file_diag.get(key, 0)
-        for k, v in file_diag.get("final_drop_reasons", {}).items():
-            aggregate_diag["final_drop_reasons"][k] = aggregate_diag["final_drop_reasons"].get(k, 0) + v
+        _merge_diag(file_diag)
 
         base_dir = os.path.dirname(data_path)
         base_name = os.path.basename(data_path)
         name, ext = os.path.splitext(base_name)
         cleaned_path = os.path.join(base_dir, f"{name}_text2sql_cleaned{ext}")
-        
+
         try:
             with open(cleaned_path, 'w', encoding='utf-8') as f:
                 for record in final_valid_records:
@@ -2559,6 +3212,11 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
         except Exception as e:
             logger.error(f"Error saving cleaned data: {e}")
             result.cleaned_data_path = data_path
+
+        logger.info(
+            f"domain_text2sql_cleaner: Checkpoint files kept at "
+            f"{_ckpt_paths(data_path)['progress']} for audit/re-run"
+        )
 
     # 处理目录
     elif os.path.isdir(data_path):
@@ -2579,33 +3237,32 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
         for filename in jsonl_files:
             input_path = os.path.join(data_path, filename)
             output_path = os.path.join(cleaned_dir, filename)
-            
+
             try:
-                final_valid_records, file_total, file_valid, file_invalid, file_diag = await _process_single_file(input_path)
-                
+                _save_state_snapshot(input_path, state)
+
+                final_valid_records, file_total, file_valid, file_invalid, file_diag = (
+                    await _process_single_file(input_path)
+                )
+
                 result.total_records += file_total
                 result.valid_records += file_valid
                 result.invalid_records += file_invalid
-                for key in ("schema_prebuild_count",
-                             "leakage_fixed_count", "evidence_injected_count", "intent_mismatch_fixed_count",
-                             "hardcode_flagged_count", "schema_alignment_regen_count",
-                             "evidence_gap_injected_count", "schema_alignment_final_drop_count",
-                             "semantic_desync_flagged_count", "semantic_desync_final_drop_count",
-                             "schema_pollution_blocked_count", "strict_grouping_fixed_count",
-                             "llm_semantic_checked_count", "llm_leakage_flagged_count",
-                             "llm_join_misalignment_count", "non_query_sql_dropped_count",
-                             "sql_preprocess_regen_count", "sql_preprocess_regen_success_count",
-                             "sqlite_dialect_warning_count"):
-                    aggregate_diag[key] += file_diag.get(key, 0)
-                for k, v in file_diag.get("final_drop_reasons", {}).items():
-                    aggregate_diag["final_drop_reasons"][k] = aggregate_diag["final_drop_reasons"].get(k, 0) + v
+                _merge_diag(file_diag)
 
                 if file_valid > 0:
                     any_valid = True
                     with open(output_path, 'w', encoding='utf-8') as f:
                         for record in final_valid_records:
                             f.write(json.dumps(record, ensure_ascii=False) + '\n')
-                    logger.info(f"domain_text2sql_cleaner: Cleaned {filename} -> {output_path}")
+                    logger.info(
+                        f"domain_text2sql_cleaner: Cleaned {filename} -> {output_path}"
+                    )
+
+                logger.info(
+                    f"domain_text2sql_cleaner: Checkpoint files kept at "
+                    f"{_ckpt_paths(input_path)['progress']} for audit/re-run"
+                )
             except Exception as e:
                 logger.warning(f"Error processing file {input_path}: {e}")
                 continue
@@ -2650,7 +3307,7 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
         f"sqlite_dialect_warnings={aggregate_diag['sqlite_dialect_warning_count']}, "
         f"drop_reasons={aggregate_diag['final_drop_reasons']}"
     )
-    
+
     return result
 
 def _test_syntax_with_treesitter(code: str, language: str) -> Tuple[bool, str]:

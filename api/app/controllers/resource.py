@@ -80,6 +80,8 @@ async def preview_resource(resource_id: str, offset: int = 0, limit: int = 15):
             return response_body(code=404, message="resource not found")()
         path = ds_model.path
     ext = os.path.splitext(path)[1]
+    if not os.path.exists(path):
+        return response_body(code=404, message="file not found")()
     if ext == '.jsonl' or ext == '.json':
         samples, count = preview_json(path, offset, limit)
     elif ext in ['.csv', '.tsv']:

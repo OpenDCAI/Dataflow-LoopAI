@@ -7,15 +7,18 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import glob
 import json
+from omegaconf import OmegaConf
 
 from ...models.task_models import TaskStatus
 from .tools import ensure_directory_exists, get_current_timestamp
+from .realtime_log_parser import RealTimeLogParser
 
 from dotenv import load_dotenv
 load_dotenv()
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(CURRENT_DIR)))
+LoopAI_DIR = os.path.dirname(BASE_DIR)
 
 class TaskManager:
     """训练任务管理器"""
@@ -26,14 +29,20 @@ class TaskManager:
         self.runs_dir = runs_dir
         self.tasks: Dict[str, Dict] = {}
         self.executor = ThreadPoolExecutor(max_workers=4)
-        self.app_config = json.load(open(os.path.join(BASE_DIR, "app_config.json")))
+        self.app_config = OmegaConf.load(os.path.join(LoopAI_DIR, "starter.yaml"))
+        self.app_config = self.app_config.get('system', {})
         self.llamafactory_dir = self.app_config.get("llamafactory_dir")
         self.verl_dir = self.app_config.get("verl_dir")
         # self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
         
+        # 实时日志解析器字典，按任务ID索引
+        self.log_parsers: Dict[str, RealTimeLogParser] = {}
+        
         # 确保目录存在
         for directory in [configs_dir, logs_dir, runs_dir, self.llamafactory_dir]:
             ensure_directory_exists(directory)
+        if self.llamafactory_dir:
+            ensure_directory_exists(self.llamafactory_dir)
 
     def create_task(self, task_id: str, config_path: str, framework: str, task_name: Optional[str] = None) -> Dict:
         """创建新的训练任务"""
@@ -60,8 +69,8 @@ class TaskManager:
         # 按创建时间排序，返回最新的任务
         sorted_tasks = sorted(self.tasks.values(), key=lambda x: x['created_at'], reverse=True)
         return sorted_tasks[0]
-    
-    def start_training(self, task_id: str) -> bool:
+
+    def start_training(self, task_id: str, output_dir: str) -> bool:
         """启动训练任务"""
         if task_id not in self.tasks:
             return False
@@ -74,6 +83,8 @@ class TaskManager:
         # 更新任务状态
         task_info['status'] = TaskStatus.RUNNING
         task_info['started_at'] = get_current_timestamp()
+        self.metrics_dir = os.path.join(output_dir, "metrics")
+        ensure_directory_exists(self.metrics_dir)
         
         # 在线程池中异步执行训练
         future = self.executor.submit(self._run_training, task_id)
@@ -111,6 +122,12 @@ class TaskManager:
         config_path = task_info['config_path']
         log_path = os.path.join(self.logs_dir, f"{task_id}.log")
         framework = task_info['framework']
+        
+        # 创建实时日志解析器
+        metrics_file = os.path.join(self.metrics_dir, f"metrics.json")
+        log_parser = RealTimeLogParser(log_path, metrics_file)
+        self.log_parsers[task_id] = log_parser
+        
         try:
             if framework == 'llamafactory':
                 # 构建训练命令
@@ -186,6 +203,10 @@ class TaskManager:
                     )
                     
                     task_info['process'] = process
+                    try:
+                        log_parser.start_monitoring()
+                    except Exception as e:
+                        print(f"启动日志监控失败: {e}")
                     
                     # 等待进程完成
                     return_code = process.wait()
@@ -214,6 +235,9 @@ class TaskManager:
                 cmd = ["bash", config_path]
                 print(f"训练命令: {' '.join(cmd)}")
 
+                # 启动实时日志解析
+                log_parser.start_monitoring()
+
                 # 启动训练进程
                 with open(log_path, 'w', encoding='utf-8') as log_file:
                     process = subprocess.Popen(
@@ -239,7 +263,7 @@ class TaskManager:
                 task_info['status'] = TaskStatus.FAILED
                 task_info['error_message'] = f"Unsupported training framework: {framework}" 
                 with open(log_path, 'a', encoding='utf-8') as log_file:
-                    log_file.write(f"\n\nError: {str(e)}\n")
+                    log_file.write(f"\n\nError: Unsupported training framework: {framework}\n")
 
                 
         except Exception as e:
@@ -251,6 +275,11 @@ class TaskManager:
                 log_file.write(f"\n\nError: {str(e)}\n")
         
         finally:
+            # 停止实时日志解析
+            if task_id in self.log_parsers:
+                self.log_parsers[task_id].stop_monitoring()
+                # 保留解析器实例，以便后续查询指标
+            
             task_info['completed_at'] = get_current_timestamp()
             task_info['process'] = None
     
@@ -370,3 +399,54 @@ class TaskManager:
             print(f"Error listing SwanLab log folders: {e}")
         
         return log_folders
+    
+    def get_task_metrics(self, task_id: str, count: int = 100) -> Optional[Dict]:
+        """获取任务的训练指标数据"""
+        if task_id not in self.log_parsers:
+            # 如果解析器不存在，尝试从文件加载
+            metrics_file = os.path.join(self.metrics_dir, f"{task_id}_metrics.json")
+            if os.path.exists(metrics_file):
+                try:
+                    with open(metrics_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                except Exception as e:
+                    print(f"读取指标文件失败: {e}")
+                    return None
+            return None
+        
+        try:
+            # 获取最新指标
+            latest_metrics = self.log_parsers[task_id].get_latest_metrics(count)
+            summary = self.log_parsers[task_id].get_metrics_summary()
+            
+            return {
+                "task_id": task_id,
+                "summary": summary,
+                "latest_metrics": latest_metrics
+            }
+        except Exception as e:
+            print(f"获取任务指标失败: {e}")
+            return None
+    
+    def get_task_metrics_file_path(self, task_id: str) -> Optional[str]:
+        """获取任务指标文件路径"""
+        metrics_file = os.path.join(self.metrics_dir, f"{task_id}_metrics.json")
+        return metrics_file if os.path.exists(metrics_file) else None
+    
+    def cleanup_task_metrics(self, task_id: str) -> bool:
+        """清理任务的指标数据"""
+        try:
+            # 停止解析器
+            if task_id in self.log_parsers:
+                self.log_parsers[task_id].stop_monitoring()
+                del self.log_parsers[task_id]
+            
+            # 删除指标文件
+            metrics_file = os.path.join(self.metrics_dir, f"{task_id}_metrics.json")
+            if os.path.exists(metrics_file):
+                os.remove(metrics_file)
+            
+            return True
+        except Exception as e:
+            print(f"清理任务指标失败: {e}")
+            return False
