@@ -191,7 +191,8 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
     .lp-flow-node-container {
         position: relative;
         width: 250px;
-        height: 460px;
+        height: auto;
+        max-height: 460px;
         padding: 5px 0px;
         background: rgba(255, 255, 255, 0.9);
         border: 1px solid rgba(120, 120, 120, 0.2);

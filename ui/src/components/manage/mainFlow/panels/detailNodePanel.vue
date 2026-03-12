@@ -77,6 +77,7 @@ export default {
 
     .lp-flow-node-container {
         height: 100%;
+        max-height: 100%;
 
         .remain-content-block {
             .col-wrapper {
