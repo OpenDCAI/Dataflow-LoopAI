@@ -5,7 +5,7 @@ from langgraph.graph import StateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt, Command
 
-from loopai.schema.states import LoopAIState, RuntimeContext
+from loopai.schema.states import LoopAIState, RuntimeContext, get_missing_fields
 from loopai.agents import BaseAgent
 from .nodes import eval_model_node, analyze_result_node, draw_conclusion_node
 
@@ -45,20 +45,7 @@ class AnalyzerAgent(BaseAgent):
                 "judger": ["eval_result_path"],
                 "default": ["output_dir"]
             }
-
-            # ⭐ 只有非 code / text2sql 才需要 metric_config（通用文本评测）
-            if task_type not in {"code", "text2sql"}:
-                required_fields["analyzer"].append("metric_config")
-
-            missing_fields = {}
-            for key in required_fields:
-                for field in required_fields[key]:
-                    if key == 'default':
-                        if field not in state:
-                            missing_fields.setdefault(key, []).append(field)
-                    else:
-                        if field not in state.get(key, {}):
-                            missing_fields.setdefault(key, []).append(field)
+            missing_fields = get_missing_fields(required_fields, state)
             if missing_fields:
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'

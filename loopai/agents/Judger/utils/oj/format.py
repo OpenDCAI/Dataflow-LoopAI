@@ -2,6 +2,8 @@ import json
 import os
 import shutil
 import tempfile
+import re
+from pathlib import Path
 from typing import Optional, Callable
 
 from langgraph.config import get_stream_writer
@@ -13,35 +15,114 @@ from loopai.agents import BaseAgent
 from loopai.logger import get_logger
 logger = get_logger()
 
+"""
+问题集标准目标json格式
+{
+    "task_id": "test/0",          # 题号:{问题集名}/{序号}
+    "prompt": "def return1():\n    \"\"\"This function has no input parameters, and your task is to make it return the integer 1.\n    \"\"\"", # 函数定义+问题描述提示（以多行注释形式写在函数定义下），为了减少处理过程，需保证大模型生成的结果为完整函数，不包含其他文本内容
+    "entry_point": "return1",     # 函数名
+    "canonical_solution": "def return1():\n    return 1", # 标准程序，需要完整的(包含函数定义)代码
+    "test_list":["assert return1() == 1"] # 测试用例列表，其中的函数名需要和entry_point一致
+}
+
+样例集标准目标json格式
+{
+    "task_id": "test/0",          # 题号:{问题集名}/{序号}
+    "completion":"def return1():\n    \"\"\"This function has no input parameters, and your task is to make it return the integer 1.\n    \"\"\"\n    return 1" # 完整的样例代码
+}
+"""
+
 def data_format(state):
+    """
+    选择适配器
+    """
+
     judger_state = state.get("judger", {})
-    """选择适配器"""
+    
     method = judger_state['eval_format_type']
+    state_task_id = state.get("task_id")
+    problem_path = judger_state['eval_problem_path']
+    output_dir = Path(judger_state['output_dir'])
+
+    problem_file_name = str(Path(problem_path).stem)
+    target_format_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_format.jsonl"))
+
     if(method is None):
         method = "human-eval"
     match method:
         case "human-eval":  # human-eval
-            return preprocess_json_file(state, judger_state['eval_problem_path'], judger_state['eval_problem_format_path'], human_eval_format)
+            return preprocess_json_file(state, problem_path, target_format_path, human_eval_format)
+        case "mbpp":  # human-eval
+            return preprocess_json_file(state, problem_path, target_format_path, mbpp_format)
         case _:  # 通配符（类似 switch 的 default）
-            return preprocess_json_file(state, judger_state['eval_problem_path'], judger_state['eval_problem_format_path'], human_eval_format)
+            return preprocess_json_file(state, problem_path, target_format_path, human_eval_format)
 
+def extract_function_names(code_text):
+    """
+    从Python代码文本中提取所有函数定义的函数名
+    :param code_text: 包含Python函数定义的文本字符串
+    :return: 提取到的函数名列表（去重，保持首次出现顺序）
+    """
+    pattern = r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\('
+    
+    # 全局匹配所有符合规则的函数名
+    func_names = re.findall(pattern, code_text, re.MULTILINE)
+    
+    # 去重并保留首次出现的顺序（避免重复定义的函数名重复输出）
+    unique_func_names = list(dict.fromkeys(func_names))
+    
+    if unique_func_names:  # 列表非空
+        return unique_func_names[0]
+    else:  # 列表为空
+        return ""
+
+def extract_before_and_func_def(code_text):
+    """
+    提取代码文本中「第一个函数定义行及之前的所有内容」（保留原始换行/空格格式，冒号后无多余空格）
+    :param code_text: 包含Python代码的文本字符串（支持\r\n/\n换行）
+    :return: 提取结果（字符串）；无函数定义返回空字符串
+    """
+    # 核心：.*? 兼容def开头无前置内容的场景
+    pattern = r'^(.*?def\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\(.*?\)\s*:)'
+    match = re.search(pattern, code_text, re.DOTALL | re.MULTILINE)
+    
+    if match:
+        # 只去除结果末尾的多余空白（空格/制表符/换行），保留冒号本身
+        result = match.group(1).rstrip()
+        # 移除补空格的逻辑，直接返回清理后的结果
+        return result
+    return ""
+
+def mbpp_format(line):
+    """
+    mbpp行处理
+    """
+
+    if not isinstance(line, dict):
+        """验证是否为字典（避免非 JSON 对象格式，比如数组、字符串"""
+        logger.error(f"警告：行数据不是 JSON 对象（是 {type(line).__name__}），返回空字典")
+        return {}
+    line["canonical_solution"] = line["code"]
+    logger.info("已处理")
+    # 划分测试用例
+    line["test_list"] = list(dict.fromkeys(line["test_list"] + line["challenge_test_list"]))
+
+    # 提示词
+    line["prompt"] = extract_before_and_func_def(line["code"]) + "\n    \"\"\"" + line["text"] + "\n    \"\"\""
+
+    # entry_point
+    line["entry_point"] = extract_function_names(line["code"])
+
+    del line["challenge_test_list"]
+    del line["code"]
+    del line["text"]
+    del line["test_setup_code"]
+
+    return line
 
 def human_eval_format(line):
     """
-    问题集标准目标json格式
-    {
-        "task_id": "test/0",          # 题号:{问题集名}/{序号}
-        "prompt": "def return1():\n    \"\"\"This function has no input parameters, and your task is to make it return the integer 1.\n    \"\"\"", # 函数定义+问题描述提示（以多行注释形式写在函数定义下），为了减少处理过程，需保证大模型生成的结果为完整函数，不包含其他文本内容
-        "entry_point": "return1",     # 函数名
-        "canonical_solution": "def return1():\n    return 1", # 标准程序，需要完整的(包含函数定义)代码
-        "test_list":["assert return1() == 1"] # 测试用例列表，其中的函数名需要和entry_point一致
-    }
-
-    样例集标准目标json格式
-    {
-        "task_id": "test/0",          # 题号:{问题集名}/{序号}
-        "completion":"def return1():\n    \"\"\"This function has no input parameters, and your task is to make it return the integer 1.\n    \"\"\"\n    return 1" # 完整的样例代码
-    }
+    human_eval行处理
     """
     if not isinstance(line, dict):
         """验证是否为字典（避免非 JSON 对象格式，比如数组、字符串"""
@@ -94,6 +175,9 @@ def preprocess_json_file(
         line_processor: 自定义行处理函数（可选），接收每行解析后的dict，返回处理后的dict；
                        返回None则过滤该行数据（不写入输出文件
     """
+    dir_path = Path(output_path)
+    (dir_path.parent).mkdir(parents=True, exist_ok=True)
+
     # 统计变量
     total_lines = 0
     success_lines = 0

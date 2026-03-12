@@ -10,6 +10,7 @@ from .controllers.config import router as config_router
 from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
 from .controllers.train import router as train_router
+from .controllers.resource import router as resource_router
 
 import os
 import signal
@@ -51,7 +52,7 @@ app.add_middleware(
 register_tortoise(
     app,
     db_url=f"sqlite://{DB_PATH}",
-    modules={"models": ["app.models.db_models"]},
+    modules={"models": ["api.app.models.db_models"]},
     generate_schemas=True,
     add_exception_handlers=True,
 )
@@ -60,6 +61,7 @@ app.include_router(config_router, prefix="/config", tags=["config"])
 app.include_router(starter_router, prefix="/starter", tags=["starter"])
 app.include_router(task_router, prefix="/task", tags=["task"])
 app.include_router(train_router, prefix="/train", tags=["train"])
+app.include_router(resource_router, prefix="/resource", tags=["resource"])
 
 
 @app.get("/")
@@ -95,4 +97,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8855)

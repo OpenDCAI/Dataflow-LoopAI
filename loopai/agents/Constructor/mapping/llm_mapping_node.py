@@ -32,7 +32,12 @@ def llm_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState
     """
     logger.info("=== LLM Mapping Node: Starting ===")
     
-    confirmed_format = state.get("obtainer_confirmed_format", {})
+    # 确保 constructor 字典存在
+    if "constructor" not in state:
+        state["constructor"] = {}
+    
+    constructor = state.get("constructor", {})
+    confirmed_format = constructor.get("confirmed_format", {})
     schema = confirmed_format.get("schema", {})
     example = confirmed_format.get("example", {})
     description = confirmed_format.get("description", "")
@@ -42,16 +47,16 @@ def llm_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState
         state["exception"] = "No schema in confirmed format"
         return state
     
-    intermediate_path = state.get("obtainer_intermediate_data_path", "")
+    intermediate_path = constructor.get("intermediate_data_path", "")
     if not intermediate_path or not os.path.exists(intermediate_path):
         logger.error(f"Intermediate data path not found: {intermediate_path}")
         state["exception"] = f"Intermediate data path does not exist: {intermediate_path}"
         return state
     
-    model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
-    base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
-    api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
-    temperature = state.get("obtainer_temperature", 0.0)
+    model_name = constructor.get("model_path")
+    base_url = constructor.get("base_url")
+    api_key = constructor.get("api_key")
+    temperature = constructor.get("temperature", 0.0)
     
     if not model_name or not base_url or not api_key:
         logger.error("Missing LLM configuration")
@@ -67,7 +72,7 @@ def llm_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState
         
         if not records:
             logger.warning("No records found in intermediate data")
-            state["obtainer_mapping_results"] = {
+            state["constructor"]["mapping_results"] = {
                 "total_records": 0,
                 "mapped_records": 0,
                 "output_dir": mapping_output_dir,
@@ -107,7 +112,7 @@ def llm_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState
         logger.info("Mapping function generated and verified successfully")
         
         logger.info("Step 2: Batch processing all records...")
-        category = state.get("obtainer_category", "PT")
+        category = constructor.get("category", "PT")
         output_file = os.path.join(mapping_output_dir, f"mapped_custom_{category}.jsonl")
         
         mapped_count = 0
@@ -144,7 +149,7 @@ def llm_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState
             "mapping_type": "llm"
         }
         
-        state["obtainer_mapping_results"] = result
+        state["constructor"]["mapping_results"] = result
         _save_to_store(state, store, result)
         
     except Exception as e:

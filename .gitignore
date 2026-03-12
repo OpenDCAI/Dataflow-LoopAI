@@ -11,3 +11,11 @@ rag_api_key.txt
 examples/scripts/test_mcp_tools.py
 examples/scripts/list_mcp_tools.py
 .gitattributes
+examples/scripts/deepseek_api_key.txt
+examples/scripts/tavily_api_key.txt
+examples/scripts/api_key.txt
+examples/config/starter.yaml
+ai/
+api/vite.config.js
+app_config.json
+starter.yaml

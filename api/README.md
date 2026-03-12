@@ -117,31 +117,25 @@ pip install llamafactory-cli
 
 ### 安装步骤
 
-1. **克隆项目**
-```bash
-cd api/
+1. **配置 LLaMA Factory**
+
+从`examples/config`拷贝`starter.yaml`至项目根目录并指定`llamafactory_dir`和`llamafactory_env_path`
+
+```yaml
+llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/"
+llamafactory_env_path: "/home/lpc/miniconda3/envs/lmf/bin/"
 ```
 
-2. **安装依赖**
+1. **启动服务**
 ```bash
-pip install -r requirements.txt
-```
-
-3. **验证 LLaMA Factory 安装**
-```bash
-llamafactory-cli --help
-```
-
-4. **启动服务**
-```bash
-python start.py
+python cpi/start.py
 ```
 或者：
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn api.app.main:app --host 0.0.0.0 --port 8000
 ```
 
-5. **验证服务**
+1. **验证服务**
 ```bash
 # 健康检查
 curl http://localhost:8000/health

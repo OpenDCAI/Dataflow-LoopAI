@@ -42,7 +42,7 @@
                 background: `linear-gradient(${edgeColors.join(',')})`,
                 transform: `translate(-50%, -50%) translate(${path[1]}px,${path[2]}px)`
             }"
-            class="nodrag nopan df-flow-default-edge-label"
+            class="nodrag nopan lp-flow-default-edge-label"
         >
             {{ thisData.label }}
         </div>
@@ -87,7 +87,7 @@ const props = defineProps({
 const path = computed(() => getBezierPath(props))
 const defaultData = {
     label: '',
-    colors: ['rgba(229, 123, 67, 1)', 'rgba(225, 107, 56, 1)']
+    colors: ['rgba(171, 140, 191, 1)', 'rgba(199, 123, 163, 1)']
 }
 const thisData = computed(() => {
     return {
@@ -111,7 +111,7 @@ export default {
 </script>
 
 <style lang="scss">
-.df-flow-default-edge-label {
+.lp-flow-default-edge-label {
     height: 20px;
     padding: 10px;
     font-size: 12px;

@@ -3,10 +3,26 @@ import faulthandler
 import io
 import multiprocessing
 import os
+import re
 import platform
 import signal
 import tempfile
 from typing import Dict, Optional, List
+from loopai.logger import get_logger
+
+logger = get_logger()
+
+"""提取python代码"""
+def filter_code(solution_str: str):
+    python_pattern = r'```python(.*?)```'
+    matches = list(re.finditer(python_pattern, solution_str, re.DOTALL))
+    
+    if not matches:
+        logger.error("[Error] No valid PYTHON tags found")
+        return solution_str
+    
+    # logger.info(f"[Parsed SQL]: {matches[-1].group(1).strip()}")
+    return matches[-1].group(1).strip()
 
 """s1为生成代码，s2为提示词"""
 def add_import(s1, s2):
@@ -42,6 +58,7 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[
         """Disable functionalities that can make destructive changes to the test."""
         reliability_guard()
         """被测试代码"""
+        completion = filter_code(completion)
         test_script = f"{add_import(completion, problem['prompt'])}\n\n"
 
         """进入口"""
@@ -139,7 +156,6 @@ def swallow_io():
         with contextlib.redirect_stderr(stream):
             with redirect_stdin(stream):
                 yield
-
 
 @contextlib.contextmanager
 def create_tempdir():

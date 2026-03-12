@@ -52,6 +52,7 @@ def merge_dict(current: Dict[str, Any], new: Union[Dict[str, Any], BaseModel]) -
 # 2. 定义 Obtainer 模块的状态类 (Pydantic)
 # ==========================================
 
+
 class ObtainerState(BaseModel):
     """
     Obtainer 模块的专用状态管理类
@@ -140,6 +141,13 @@ class ObtainerState(BaseModel):
     )
 
     # --- Task Logic (任务逻辑 - 通常由系统生成，前端设为只读或JSON视图) ---
+    user_query: str = Field(
+        default="",
+        title="用户需求",
+        description="原始用户需求语句",
+        json_schema_extra={"ui_type": "textarea",
+                           "readOnly": True, "ui_group": "任务状态"}
+    )
     intent_type: str = Field(
         default="",
         title="意图类型",
@@ -285,6 +293,66 @@ class ObtainerState(BaseModel):
         json_schema_extra={"ui_type": "code_editor",
                            "language": "json", "ui_group": "数据映射"}
     )
+    confirmed_format: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="确认的目标格式",
+        description="确认的目标格式信息，包含 format_id, format_name, schema, example, is_preset 等",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "数据映射"}
+    )
+    pending_format: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="待确认的格式",
+        description="待用户确认的格式信息",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "数据映射"}
+    )
+    mapping_auto_mode: bool = Field(
+        default=False,
+        title="自动映射模式",
+        description="是否启用自动映射模式（跳过用户交互）",
+        json_schema_extra={"ui_type": "switch", "ui_group": "数据映射"}
+    )
+    confirmation_result: str = Field(
+        default="",
+        title="确认结果",
+        description="格式确认结果: confirmed/restart/modify",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "数据映射"}
+    )
+    mapping_user_intent: str = Field(
+        default="",
+        title="用户意图",
+        description="用户在映射流程中的意图: preset_format/custom_format 等",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "数据映射"}
+    )
+    mapping_selected_format_id: str = Field(
+        default="",
+        title="选择的格式ID",
+        description="用户选择的预设格式ID",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "数据映射"}
+    )
+    mapping_custom_description: str = Field(
+        default="",
+        title="自定义格式描述",
+        description="用户自定义格式的描述",
+        json_schema_extra={"ui_type": "textarea", "ui_group": "数据映射"}
+    )
+    mapping_results: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="映射结果",
+        description="数据映射执行结果",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "数据映射"}
+    )
+    cleaning_tool_plan: Optional[List[str]] = Field(
+        default=None,
+        title="清洗工具计划",
+        description="数据清洗工具执行计划列表",
+        json_schema_extra={"ui_type": "tags_input", "ui_group": "数据清洗"}
+    )
+    cleaning_results: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="清洗结果",
+        description="数据清洗执行结果",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "数据清洗"}
+    )
 
     # --- Sub-node: Webpage Collect (网页收集节点参数) ---
     webpage_collect_summary: str = Field(
@@ -310,6 +378,12 @@ class ObtainerState(BaseModel):
         title="JSONL 路径",
         description="网页收集结果 JSONL 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "网页收集"}
+    )
+    banckmark_jsonl_path: str = Field(
+        default="",
+        title="测试使用的banchmark的JSONL 路径",
+        description="测试使用的banchmark的JSONL 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "banchmark"}
     )
     webpage_collect_db_path: str = Field(
         default="",
@@ -339,9 +413,476 @@ class ObtainerState(BaseModel):
     )
 
 
+class ConstructorState(BaseModel):
+    """
+    Constructor 模块专用状态管理类
+    独立于 ObtainerState，用于数据后处理、清洗与映射流程
+    """
+    # --- Agent 配置 ---
+    model_path: Optional[str] = Field(
+        default=None,
+        title="模型路径",
+        description="Constructor 使用的大模型路径或名称",
+        json_schema_extra={"ui_type": "text", "ui_group": "Agent配置"}
+    )
+    base_url: Optional[str] = Field(
+        default=None,
+        title="API Base URL",
+        description="Constructor 模型 API Base URL",
+        json_schema_extra={"ui_type": "text", "ui_group": "Agent配置"}
+    )
+    api_key: Optional[str] = Field(
+        default=None,
+        title="API Key",
+        description="Constructor 模型 API Key",
+        json_schema_extra={"ui_type": "password", "ui_group": "Agent配置"}
+    )
+    temperature: float = Field(
+        default=0.7,
+        title="采样温度",
+        description="Constructor 模型采样温度",
+        ge=0.0, le=1.0,
+        json_schema_extra={"ui_type": "slider", "step": 0.1, "max": 1, "ui_group": "Agent配置"}
+    )
+    top_p: float = Field(
+        default=0.95,
+        title="Top-p 采样",
+        description="Constructor 模型 nucleus sampling 参数",
+        ge=0.0, le=1.0,
+        json_schema_extra={"ui_type": "slider", "step": 0.01, "max": 1, "ui_group": "Agent配置"}
+    )
+    max_completion_tokens: int = Field(
+        default=4096,
+        title="最大输出 Token",
+        description="Constructor LLM 调用的最大生成 token 数",
+        ge=1,
+        json_schema_extra={"ui_type": "number", "ui_group": "Agent配置"}
+    )
+
+    # --- 基础输入 ---
+    user_query: str = Field(
+        default="",
+        title="用户需求",
+        description="用于清洗/映射规划的用户需求",
+        json_schema_extra={"ui_type": "textarea", "ui_group": "基础输入"}
+    )
+    datasets_background: str = Field(
+        default="",
+        title="数据集背景",
+        description="用于后处理文件筛选的背景信息",
+        json_schema_extra={"ui_type": "textarea", "ui_group": "基础输入"}
+    )
+    category: str = Field(
+        default="",
+        title="数据类别",
+        description="数据类别（PT/SFT）",
+        json_schema_extra={"ui_type": "text", "ui_group": "基础输入"}
+    )
+    output_dir: str = Field(
+        default="",
+        title="输出目录",
+        description="Constructor 输出目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "基础输入"}
+    )
+    download_dir: str = Field(
+        default="",
+        title="下载目录",
+        description="待处理下载数据目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "基础输入"}
+    )
+    prompt_template_dir: str = Field(
+        default="",
+        title="Prompt 模板目录",
+        description="Prompt 模板目录路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "基础输入"}
+    )
+
+    # --- 构造配置 ---
+    max_samples_before_cleaning: int = Field(
+        default=5000,
+        title="基础清洗后最大采样数",
+        description="基础清洗后最大样本数量，0 表示不限制",
+        ge=0,
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    llm_timeout: float = Field(
+        default=300.0,
+        title="LLM 超时时间",
+        description="LLM 调用超时时间（秒）",
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    max_retries: int = Field(
+        default=3,
+        title="最大重试次数",
+        description="LLM 或映射失败时最大重试次数",
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    max_concurrent_mapping: int = Field(
+        default=10,
+        title="最大并发映射数",
+        description="映射阶段最大并发任务数",
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    default_mapping_format: str = Field(
+        default="alpaca",
+        title="默认映射格式",
+        description="非空时可直接自动映射",
+        json_schema_extra={"ui_type": "text", "ui_group": "构造配置"}
+    )
+    debug: bool = Field(
+        default=False,
+        title="调试模式",
+        description="是否开启 Constructor 调试日志",
+        json_schema_extra={"ui_type": "switch", "ui_group": "构造配置"}
+    )
+    postprocess_version: str = Field(
+        default="legacy",
+        title="后处理版本",
+        description="后处理实现版本: legacy 使用原有流程, agent_v2 使用新版子 Agent 流程",
+        json_schema_extra={
+            "ui_type": "text",
+            "ui_group": "构造配置",
+            "options": ["legacy", "agent_v2(建设中)"],
+        }
+    )
+
+    # --- 运行结果 ---
+    postprocess_results: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="后处理结果",
+        description="后处理阶段输出统计",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "运行结果"}
+    )
+    intermediate_data_path: str = Field(
+        default="",
+        title="中间数据路径",
+        description="清洗和映射的输入数据路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "运行结果"}
+    )
+    cleaning_tool_plan: Optional[List[str]] = Field(
+        default=None,
+        title="清洗工具计划",
+        description="清洗子图工具执行顺序",
+        json_schema_extra={"ui_type": "tags_input", "ui_group": "运行结果"}
+    )
+    cleaning_results: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="清洗结果",
+        description="清洗子图执行结果",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "运行结果"}
+    )
+    confirmed_format: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="已确认格式",
+        description="映射阶段最终确认格式",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "运行结果"}
+    )
+    pending_format: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="待确认格式",
+        description="映射阶段待确认格式",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "运行结果"}
+    )
+    mapping_auto_mode: bool = Field(
+        default=False,
+        title="自动映射模式",
+        description="是否启用自动映射模式",
+        json_schema_extra={"ui_type": "switch", "ui_group": "运行结果"}
+    )
+    confirmation_result: str = Field(
+        default="",
+        title="确认结果",
+        description="格式确认结果",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "运行结果"}
+    )
+    mapping_user_intent: str = Field(
+        default="",
+        title="映射用户意图",
+        description="用户在映射流程中的意图",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "运行结果"}
+    )
+    mapping_selected_format_id: str = Field(
+        default="",
+        title="映射格式ID",
+        description="用户选择的预设格式 ID",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "运行结果"}
+    )
+    mapping_custom_description: str = Field(
+        default="",
+        title="自定义映射描述",
+        description="用户输入的自定义映射描述",
+        json_schema_extra={"ui_type": "textarea", "ui_group": "运行结果"}
+    )
+    mapping_results: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="映射结果",
+        description="映射阶段执行结果",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "运行结果"}
+    )
+    subtasks: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        title="下载子任务",
+        description="从 Obtainer 同步的下载子任务，用于决定是否进入后处理流程",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "运行结果"}
+    )
+
+# ==========================================
+# 定义 WebCrawlerState 模块的状态类 
+# ==========================================
+
+
+class WebCrawlerState(BaseModel):
+    """
+    WebCrawler 模块的专用状态管理类
+    用于网页爬取、内容提取和数据集生成
+    """
+    # === API 配置 (API密钥) ===
+    deepseek_api_key: str = Field(
+        default="",
+        title="DeepSeek API Key",
+        description="DeepSeek API 密钥，用于 LLM 调用",
+        json_schema_extra={"ui_type": "password", "ui_group": "API配置"}
+    )
+    tavily_api_key: str = Field(
+        default="",
+        title="Tavily API Key",
+        description="Tavily API 密钥，用于网页搜索",
+        json_schema_extra={"ui_type": "password", "ui_group": "API配置"}
+    )
+    deepseek_api_base: str = Field(
+        default="https://api.deepseek.com/v1",
+        title="DeepSeek API Base URL",
+        description="DeepSeek API 的基础 URL",
+        json_schema_extra={"ui_type": "text", "ui_group": "API配置"}
+    )
+
+    # === 模型配置 (Model Config) ===
+    model: str = Field(
+        default="deepseek-chat",
+        title="模型名称",
+        description="使用的模型名称",
+        json_schema_extra={"ui_type": "text", "ui_group": "模型配置"}
+    )
+    temperature: float = Field(
+        default=0.7,
+        title="采样温度",
+        description="LLM 采样温度 (0.0 - 1.0)",
+        ge=0.0, le=1.0,
+        json_schema_extra={"ui_type": "slider", "step": 0.1, "max": 1, "ui_group": "模型配置"}
+    )
+
+    # === 查询生成配置 (Query Generation) ===
+    num_queries: int = Field(
+        default=1,
+        title="查询数量",
+        description="生成的搜索查询数量",
+        json_schema_extra={"ui_type": "number", "ui_group": "查询设置"}
+    )
+
+    # === 爬取策略配置 (Crawl Strategy) ===
+    max_pages: int = Field(
+        default=10,
+        title="最大页面数",
+        description="最大爬取页面数量",
+        json_schema_extra={"ui_type": "number", "ui_group": "爬取策略"}
+    )
+    crawl_depth: int = Field(
+        default=1,
+        title="爬取深度",
+        description="最大爬取深度",
+        json_schema_extra={"ui_type": "number", "ui_group": "爬取策略"}
+    )
+    max_links_per_page: int = Field(
+        default=2,
+        title="每页最大链接数",
+        description="每个页面最大跟踪链接数量",
+        json_schema_extra={"ui_type": "number", "ui_group": "爬取策略"}
+    )
+    concurrent_pages: int = Field(
+        default=2,
+        title="并发页面数",
+        description="并发爬取的页面数量",
+        json_schema_extra={"ui_type": "number", "ui_group": "爬取策略"}
+    )
+
+    # === 内容过滤配置 (Content Filter) ===
+    min_text_length: int = Field(
+        default=500,
+        title="最小文本长度",
+        description="内容过滤的最小文本长度（字符）",
+        json_schema_extra={"ui_type": "number", "ui_group": "内容过滤"}
+    )
+    min_code_length: int = Field(
+        default=50,
+        title="最小代码长度",
+        description="内容过滤的最小代码长度（字符）",
+        json_schema_extra={"ui_type": "number", "ui_group": "内容过滤"}
+    )
+    min_relevance_score: int = Field(
+        default=6,
+        title="最小相关性分数",
+        description="内容过滤的最小相关性分数 (0-10)",
+        ge=0, le=10,
+        json_schema_extra={"ui_type": "slider", "step": 1, "max": 10, "ui_group": "内容过滤"}
+    )
+    url_patterns: Optional[str] = Field(
+        default=None,
+        title="URL 模式",
+        description="URL 匹配模式规则，用于过滤特定链接",
+        json_schema_extra={"ui_type": "text", "ui_group": "内容过滤"}
+    )
+
+    # === 运行时配置 (Runtime Config) ===
+    request_delay: float = Field(
+        default=2.0,
+        title="请求延迟",
+        description="请求之间的延迟时间（秒）",
+        json_schema_extra={"ui_type": "number", "ui_group": "运行配置"}
+    )
+    timeout: int = Field(
+        default=30,
+        title="超时时间",
+        description="请求超时时间（秒）",
+        json_schema_extra={"ui_type": "number", "ui_group": "运行配置"}
+    )
+    max_retries: int = Field(
+        default=3,
+        title="最大重试次数",
+        description="请求失败时的最大重试次数",
+        json_schema_extra={"ui_type": "number", "ui_group": "运行配置"}
+    )
+
+    # === 输出配置 (Output Config) ===
+    output_format: str = Field(
+        default="jsonl",
+        title="输出格式",
+        description="输出文件格式",
+        json_schema_extra={
+            "ui_type": "select",
+            "options": ["jsonl", "json"],
+            "ui_group": "输出设置"
+        }
+    )
+    save_html: bool = Field(
+        default=False,
+        title="保存 HTML",
+        description="是否保存原始 HTML 内容",
+        json_schema_extra={"ui_type": "switch", "ui_group": "输出设置"}
+    )
+    output_dir: str = Field(
+        default="",
+        title="输出目录",
+        description="爬取结果的输出目录路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "输出设置"}
+    )
+    output_run_id: str = Field(
+        default="",
+        title="运行 ID",
+        description="本次爬取会话的运行 ID",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "输出结果"}
+    )
+    output_result: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="爬取结果",
+        description="完整的爬取结果数据",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "输出结果"}
+    )
+
+    # === 数据集生成配置 (Dataset Generation) ===
+    max_records_per_page: int = Field(
+        default=10,
+        title="每页最大记录数",
+        description="每个网页最多生成的数据记录数",
+        json_schema_extra={"ui_type": "number", "ui_group": "数据集生成"}
+    )
+    dataset_concurrent_limit: int = Field(
+        default=5,
+        title="数据集生成并发数",
+        description="数据集生成的并发限制",
+        json_schema_extra={"ui_type": "number", "ui_group": "数据集生成"}
+    )
+    max_content_length: int = Field(
+        default=50000,
+        title="最大内容长度",
+        description="LLM 处理的每页内容最大字符数",
+        json_schema_extra={"ui_type": "number", "ui_group": "数据集生成"}
+    )
+    debug: bool = Field(
+        default=False,
+        title="调试模式",
+        description="是否启用调试模式",
+        json_schema_extra={"ui_type": "switch", "ui_group": "数据集生成"}
+    )
+
+    # === 数据集生成输出 (Dataset Output) ===
+    dataset_summary: str = Field(
+        default="",
+        title="数据集生成摘要",
+        description="数据集生成的摘要信息",
+        json_schema_extra={"ui_type": "textarea", "readOnly": True, "ui_group": "数据集输出"}
+    )
+    dataset_sft_count: int = Field(
+        default=0,
+        title="SFT 记录数",
+        description="生成的 SFT 格式记录数量",
+        json_schema_extra={"ui_type": "number", "readOnly": True, "ui_group": "数据集输出"}
+    )
+    dataset_pt_count: int = Field(
+        default=0,
+        title="PT 记录数",
+        description="生成的 PT 格式记录数量",
+        json_schema_extra={"ui_type": "number", "readOnly": True, "ui_group": "数据集输出"}
+    )
+    dataset_sft_path: str = Field(
+        default="",
+        title="SFT 文件路径",
+        description="SFT 格式 JSONL 文件保存路径",
+        json_schema_extra={"ui_type": "file_path", "readOnly": True, "ui_group": "数据集输出"}
+    )
+    dataset_pt_path: str = Field(
+        default="",
+        title="PT 文件路径",
+        description="PT 格式 JSONL 文件保存路径",
+        json_schema_extra={"ui_type": "file_path", "readOnly": True, "ui_group": "数据集输出"}
+    )
+
+    # === 数据集映射配置 (Dataset Mapping - 使用 Obtainer.mapping) ===
+    sft_mapping_format: str = Field(
+        default="jsonl_sft",
+        title="SFT 映射格式",
+        description="SFT 中间数据的目标格式 (FORMAT_MAPPERS key)",
+        json_schema_extra={"ui_type": "text", "ui_group": "数据集映射"}
+    )
+    pt_mapping_format: str = Field(
+        default="jsonl_pt",
+        title="PT 映射格式",
+        description="PT 中间数据的目标格式 (FORMAT_MAPPERS key)",
+        json_schema_extra={"ui_type": "text", "ui_group": "数据集映射"}
+    )
+    dataset_sft_mapped_path: str = Field(
+        default="",
+        title="SFT 映射路径",
+        description="映射后的 SFT 数据集文件路径",
+        json_schema_extra={"ui_type": "file_path", "readOnly": True, "ui_group": "数据集映射"}
+    )
+    dataset_pt_mapped_path: str = Field(
+        default="",
+        title="PT 映射路径",
+        description="映射后的 PT 数据集文件路径",
+        json_schema_extra={"ui_type": "file_path", "readOnly": True, "ui_group": "数据集映射"}
+    )
+    dataset_mapping_results: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="映射结果",
+        description="SFT/PT 数据集映射结果详情",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "数据集映射"}
+    )
+
+
+
 class JudgerState(BaseModel):
     eval_model_path: str = Field(
-        default="",
+        default=None,
         title="评估模型路径",
         description="评估模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
@@ -354,9 +895,9 @@ class JudgerState(BaseModel):
                            "allowed_values": ["code", "text2sql"]}
     )
     eval_base_url: str = Field(
-        default="",
+        default=None,
         title="评估模型 Base URL",
-        description="评估模型 Base URL",
+        description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
     eval_api_key: str = Field(
@@ -377,35 +918,17 @@ class JudgerState(BaseModel):
         description="评估模型 Top P",
         json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
-    eval_test_case_path: str = Field(
-        default="",
-        title="评估模型测试用例路径",
-        description="评估模型测试用例路径",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    )
     eval_problem_path: str = Field(
-        default="",
+        default=None,
         title="评估模型问题路径",
         description="评估模型问题路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
-    eval_problem_format_path: str = Field(
-        default="",
-        title="评估模型问题格式化路径",
-        description="评估模型问题格式化路径，如果为空将不进入格式化节点，如果和问题路径一样，则格式化后将覆盖原问题文件",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    )
     eval_format_type: str = Field(
-        default="human-eval",
+        default=None,
         title="评估模型问题格式化类型",
-        description="评估模型问题格式化类型，如果为空将不进入格式化节点，改格式化方式可以用户自由定义",
-        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
-    )
-    eval_result_path: str = Field(
-        default="",
-        title="评估模型结果路径",
-        description="评估模型结果路径",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+        description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"和\"mbpp\"，格式化后的文件将存至output_dir定义的目录下",
+        json_schema_extra={"ui_type": "list", "ui_group": "评估模型", "allowed_values": ["human-eval"]}
     )
     eval_batch_size: int = Field(
         default=10,
@@ -413,7 +936,72 @@ class JudgerState(BaseModel):
         description="评估模型批量大小，也是问题生成样例数量大小",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
-
+    eval_case_num: int = Field(
+        default=10,
+        title="评估模型样例生成数量",
+        description="评估模型每个问题的样例生成数量",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
+    eval_text2sql_dir: str = Field(
+        default=None,
+        title="评估模型text2sql数据库目录",
+        description="评估模型text2sql数据库目录，仅text2sql任务下生效，并且数据文件中需要以字段db_id标注出相应的数据库文件夹至路径目录下",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    eval_env_configs: str = Field(
+        default='{"CUDA_VISIBLE_DEVICES": "0,1","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
+        title="评估模型vllm启动环境参数",
+        description="评估模型vllm启动环境参数，需要完整字符串配置，为空则认为已启动vllm将会跳过启动vllm的过程",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+    )
+    eval_vllm_port: int = Field(
+        default=8911,
+        title="vllm本地启动参数——port",
+        description="vllm本地启动参数——port，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
+    eval_vllm_tensor_parallel_size: int = Field(
+        default=2,
+        title="vllm本地启动参数——tensor_parallel_size",
+        description="vllm本地启动参数——tensor_parallel_size，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
+    eval_vllm_gpu_memory_utilization: float = Field(
+        default=0.9,
+        title="vllm本地启动参数——gpu_memory_utilization",
+        description="vllm本地启动参数——gpu_memory_utilization，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
+        json_schema_extra={"ui_type": "slider", "ui_group": "评估模型"}
+    )
+    eval_vllm_env_path: str = Field(
+        default="",
+        title="vllm本地启动参数——启动环境",
+        description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动。参数需要具体到python目录，格式应为<path>/miniconda3/envs/<env_name>/bin/python",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    output_dir: str = Field(
+        default=None,
+        title="评估模型输出文件目录",
+        description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果。输出文件路径将会在judger参数output_result_path（评测结果）、output_case_path（评测样例集）、output_problem_path（评测格式化后问题集）中记录。",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型", "is_output": True}
+    )
+    output_result_path: str = Field(
+        default="",
+        title="评测结果文件保存路径",
+        description="评测结果文件保存路径，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    output_case_path: str = Field(
+        default="",
+        title="评测样例集文件保存路径",
+        description="评测样例集文件保存路径，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    output_problem_path: str = Field(
+        default="",
+        title="评测格式化后问题集保存路径",
+        description="评测格式化后问题集，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成，如未使用格式化模版该路径即为原始问题文件的路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
 
 class AnalyzerState(BaseModel):
     out_result_path: str = Field(
@@ -516,19 +1104,38 @@ class AnalyzerState(BaseModel):
 
 
 class TrainerState(BaseModel):
-    train_dataset_path: str = Field(
+    trainer_task_id: str = Field(
+        default="",
+        title="训练任务 ID",
+        description="训练任务 ID",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    train_framework: str = Field(
+        default="",
+        title="训练框架",
+        description="训练框架",
+        json_schema_extra={"ui_type": "list", "ui_group": "训练模型",
+                           "allowed_values": ["llamafactory", "verl"]}
+    )
+    llamafactory_dir: str = Field(
+        default="",
+        title="LlamaFactory 目录",
+        description="LlamaFactory 目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    train_input_dataset_path: str = Field(
         default="",
         title="训练数据集路径",
         description="训练数据集路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
-    train_task_description: str = Field(
+    train_input_task_description: str = Field(
         default="",
         title="训练任务描述",
         description="训练任务描述",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
-    train_config_template_path: str = Field(
+    train_input_config_template_path: str = Field(
         default="",
         title="训练配置模板路径",
         description="训练配置模板路径",
@@ -540,29 +1147,29 @@ class TrainerState(BaseModel):
         description="训练配置输出路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
-    train_output_dir: str = Field(
-        default="",
-        title="训练输出目录",
-        description="训练输出目录",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
-    )
-    train_model_name: str = Field(
+    train_input_model_name: str = Field(
         default="",
         title="训练模型名称",
         description="训练模型名称",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
-    train_use_swanlab: bool = Field(
+    train_input_use_swanlab: bool = Field(
         default=True,
         title="是否使用 SwanLab",
         description="是否使用 SwanLab",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"}
     )
-    train_swanlab_project: str = Field(
+    train_input_swanlab_project: str = Field(
         default="",
         title="SwanLab 项目名称",
         description="SwanLab 项目名称",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    output_dir: str = Field(
+        default="",
+        title="输出目录",
+        description="输出目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     data_check_passed: bool = Field(
         default=False,
@@ -672,6 +1279,12 @@ class TrainerState(BaseModel):
         description="SwanLab URL",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
+    train_output_swanlab_log_path: str = Field(
+        default="",
+        title="SwanLab 日志路径",
+        description="SwanLab 日志路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
 
 
 class ConfigerState(BaseModel):
@@ -696,6 +1309,8 @@ def get_state_config_schema():
         "analyzer": get_field_statement(AnalyzerState),
         "trainer": get_field_statement(TrainerState),
         "obtainer": get_field_statement(ObtainerState),
+        "constructor": get_field_statement(ConstructorState),
+        "webcrawler": get_field_statement(WebCrawlerState),
     }
 
     return fields_statement
@@ -706,10 +1321,10 @@ def get_missing_fields(required_fields, state: dict):
     for key in required_fields:
         for field in required_fields[key]:
             if key == 'default':
-                if field not in state or not state.get(field):
+                if field not in state or state.get(field) is None:
                     missing_fields.setdefault(key, []).append(field)
             else:
-                if field not in state.get(key, {}) or not state.get(key, {}).get(field):
+                if field not in state.get(key, {}) or state.get(key, {}).get(field) is None:
                     missing_fields.setdefault(key, []).append(field)
     return missing_fields
 # ==========================================
@@ -727,6 +1342,7 @@ class LoopAIState(MessagesState):
     # 使用 merge_dict 处理更新
     # 这里的 Dict[str, Any] 实际上就是 ObtainerState 转换后的字典
     obtainer: Annotated[Dict[str, Any], merge_dict]
+    constructor: Annotated[Dict[str, Any], merge_dict]
 
     # === Configer (保持原样) ===
     configer: Annotated[Dict[str, Any], merge_dict]
@@ -763,14 +1379,17 @@ class LoopAIState(MessagesState):
 
     # === Trainer (保持原样) ===
     trainer: Annotated[Dict[str, Any], merge_dict]
-    # train_dataset_path: str
-    # train_task_description: str
-    # train_config_template_path: str
+
+    # === WebCrawler (网页爬取模块) ===
+    webcrawler: Annotated[Dict[str, Any], merge_dict]
+
+    # train_input_dataset_path: str
+    # train_input_task_description: str
+    # train_input_config_template_path: str
     # train_config_output_path: str
-    # train_output_dir: str
-    # train_model_name: str
-    # train_use_swanlab: bool = True
-    # train_swanlab_project: str
+    # train_input_model_name: str
+    # train_input_use_swanlab: bool = True
+    # train_input_swanlab_project: str
     # data_check_passed: bool = False
     # data_check_result: dict = {}
     # data_check_report_path: str = ""
@@ -788,6 +1407,8 @@ class LoopAIState(MessagesState):
     # training_service_url: str = "http://localhost:8000"
     # current_training_status: str = ""
     # update_model_path: str
+    # swanlab_url: str
+    # train_output_swanlab_log_path: str
 
     # === Graph Control (图控制属性) ===
     current: str

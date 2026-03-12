@@ -112,3 +112,15 @@ async def del_task(id: str):
         return response_body(code=404, status='error', message='任务项不存在')()
     await task.delete()
     return response_body(code=200, status='success', message='任务项删除成功')()
+
+@router.get("/train_status", operation_id='getTrainStatus', summary='获取训练状态')
+async def get_train_status(output_dir: str, task_id: str, train_task_id: str):
+    """获取训练状态"""
+    watch_path = os.path.join(output_dir, task_id, 'trainer', train_task_id)
+    final_path = os.path.join(watch_path, 'metrics', 'metrics.json')
+    if os.path.exists(final_path):
+        with open(final_path, 'r') as f:
+            metrics = json.load(f)
+            return response_body(data=metrics)()
+    else:
+        return response_body(code=404, status='error', message='训练状态文件不存在:' + final_path)()

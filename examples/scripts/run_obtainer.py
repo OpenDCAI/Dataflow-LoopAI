@@ -26,7 +26,6 @@ tavily_api_key_file = Path(__file__).parent / 'tavily_api_key.txt'
 if tavily_api_key_file.exists():
     with open(tavily_api_key_file, 'r') as f:
         tavily_api_key = f.read().strip()
-        os.environ['TAVILY_API_KEY'] = tavily_api_key
 
 # Read Kaggle credentials if exists
 kaggle_username = os.getenv('KAGGLE_USERNAME', '')

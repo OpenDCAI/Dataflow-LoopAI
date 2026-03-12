@@ -103,8 +103,17 @@ Dataflow-LoopAI/
 pip install -e .
 ```
 
+## ✅ 快速使用指南 (终端)
 
-## ✅ 快速测试指南
+1. Copy `config/starter.yaml` to `./starter.yaml` and modify it to configure the `system` parameters.
+
+2. Run the `run_starter.py` script to start LoopAI.
+
+```bash
+python examples/scripts/run_starter.py
+```
+
+## ✅ 快速Dev指南
 
 ### 1️⃣ 启动 vLLM 服务
 
@@ -139,7 +148,7 @@ python examples/scripts/run_judger.py
 
 ### Configuration
 
-1. **Model Configuration**: Modify `config/starter.yaml` to configure the Obtainer-related model paths and parameters.
+1. **Model Configuration**: Copy `config/starter.yaml` to `./starter.yaml` and modify it to configure the Obtainer-related model paths and parameters.
    - Note: RAG currently supports only API-based embedding models.
 
 2. **Required API Keys**:

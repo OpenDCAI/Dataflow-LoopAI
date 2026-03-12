@@ -3,7 +3,7 @@
         <div class="d-1">
             <div class="left-block" @click="$Go('/')">
                 <img
-                    src="@/assets/logo/logo.png"
+                    src="@/assets/logo/LoopAI_logo.svg"
                     class="logo"
                     draggable="false"
                     width="110"
@@ -242,7 +242,7 @@
 import { mapState } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
-import defaultAvatar from '@/assets/logo/logo.png'
+import defaultAvatar from '@/assets/logo/LoopAI_logo.svg'
 
 export default {
     components: {},

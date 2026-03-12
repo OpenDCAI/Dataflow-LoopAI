@@ -1,5 +1,6 @@
 import os
 import json
+from pathlib import Path
 from typing import List, Dict, Tuple, Iterable
 import gzip
 
@@ -25,6 +26,8 @@ def stream_jsonl(filename: str) -> Iterable[Dict]:
 
 
 def write_jsonl(filename: str, data: Iterable[Dict], append: bool = False):
+    dir_path = Path(filename)
+    (dir_path.parent).mkdir(parents=True, exist_ok=True)
     """
     Writes an iterable of dictionaries to jsonl
     """
@@ -89,7 +92,7 @@ def is_valid_jsonl_file_path(file_path: str, allow_empty: bool = False) -> bool:
     if not isinstance(file_path, str) or len(file_path.strip()) == 0:
         #print("错误：文件路径不能为空或非字符串类型")
         return False
-
+    
     # 判断文件后缀是否为.jsonl（忽略大小写，兼容.JSONL、.JsonL等格式）
     file_suffix = os.path.splitext(file_path)[1].lower()
     if file_suffix != '.jsonl':
@@ -100,22 +103,21 @@ def is_valid_jsonl_file_path(file_path: str, allow_empty: bool = False) -> bool:
     return True
 
 def check_file(state):
-    problem_format_path = state.get("judger", {}).get("eval_problem_format_path", "")
+    # problem_format_path = state.get("judger", {}).get("eval_problem_format_path", "")
     problem_path = state.get("judger", {}).get("eval_problem_path", "")
-    test_case_path = state.get("judger", {}).get("eval_test_case_path", "")
-    result_path = state.get("judger", {}).get("eval_result_path", "")
+    # test_case_path = state.get("judger", {}).get("eval_test_case_path", "")
+    # result_path = state.get("judger", {}).get("eval_result_path", "")
 
     # 检测problem_path是否可打开
     problem_path_check_res = check_problem_path_accessible(problem_path)
-    problem_format_path_check_res = is_valid_jsonl_file_path(problem_format_path, allow_empty=True)
-    test_case_path_check_res = is_valid_jsonl_file_path(test_case_path, allow_empty=False)
+    # problem_format_path_check_res = is_valid_jsonl_file_path(problem_format_path, allow_empty=True)
+    # test_case_path_check_res = is_valid_jsonl_file_path(test_case_path, allow_empty=False)
     # 检测problem_format_path、test_case_path、result_path是否为jsonl文件的路径，其中problem_format_path可为空
-    result_path_check_res = is_valid_jsonl_file_path(result_path, allow_empty=False)
+    # result_path_check_res = is_valid_jsonl_file_path(result_path, allow_empty=False)
     
     return {
         "eval_problem_path":problem_path_check_res,
-        "eval_problem_format_path":problem_format_path_check_res,
-        "eval_test_case_path":test_case_path_check_res,
-        "eval_result_path":result_path_check_res
+        # "eval_problem_format_path":problem_format_path_check_res,
+        # "eval_test_case_path":test_case_path_check_res,
+        # "eval_result_path":result_path_check_res
     }
-    

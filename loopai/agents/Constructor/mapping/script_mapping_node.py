@@ -93,6 +93,8 @@ def _map_to_alpaca(record: Dict[str, Any]) -> Dict[str, Any]:
     Map to Alpaca format
     
     Target: {"instruction": "...", "input": "...", "output": "..."}
+    
+    For WebCrawler: system message (schema) content goes to "input" field
     """
     messages = _extract_messages_from_intermediate(record)
     
@@ -101,6 +103,9 @@ def _map_to_alpaca(record: Dict[str, Any]) -> Dict[str, Any]:
         instruction = ""
         output = ""
         input_text = ""  # 默认将 system 填入 Alpaca input
+        
+        # Extract system message content (schema) for input field
+        system_content = _get_system_prompt(record)
         
         for msg in messages:
             role = msg.get("role", "")
@@ -292,7 +297,12 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
     """
     logger.info("=== Script Mapping Node: Starting ===")
     
-    confirmed_format = state.get("obtainer_confirmed_format", {})
+    # 确保 constructor 字典存在
+    if "constructor" not in state:
+        state["constructor"] = {}
+    
+    constructor_state = state.get("constructor", {})
+    confirmed_format = constructor_state.get("confirmed_format", {})
     format_id = confirmed_format.get("format_id", "")
     
     if not format_id or format_id not in FORMAT_MAPPERS:
@@ -300,7 +310,7 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
         state["exception"] = f"Invalid format ID: {format_id}"
         return state
     
-    intermediate_path = state.get("obtainer_intermediate_data_path", "")
+    intermediate_path = constructor_state.get("intermediate_data_path", "")
     if not intermediate_path or not os.path.exists(intermediate_path):
         logger.error(f"Intermediate data path not found: {intermediate_path}")
         state["exception"] = f"Intermediate data path does not exist: {intermediate_path}"
@@ -317,7 +327,7 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
         
         if not records:
             logger.warning("No records found in intermediate data")
-            state["obtainer_mapping_results"] = {
+            state["constructor"]["mapping_results"] = {
                 "total_records": 0,
                 "mapped_records": 0,
                 "output_dir": mapping_output_dir,
@@ -327,7 +337,7 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
         
         logger.info(f"Read {len(records)} records from intermediate data")
         
-        category = state.get("obtainer_category", "PT")
+        category = constructor_state.get("category", "PT")
         output_file = os.path.join(mapping_output_dir, f"mapped_{format_id}_{category}.jsonl")
         
         mapped_count = 0
@@ -354,7 +364,7 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
         
         logger.info(f"Script mapping completed: {mapped_count} records mapped, {failed_count} failed")
         
-        state["obtainer_mapping_results"] = {
+        state["constructor"]["mapping_results"] = {
             "total_records": len(records),
             "mapped_records": mapped_count,
             "failed_records": failed_count,
@@ -364,7 +374,7 @@ def script_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAISt
             "mapping_type": "script"
         }
         
-        _save_to_store(state, store, state["obtainer_mapping_results"])
+        _save_to_store(state, store, state["constructor"]["mapping_results"])
         
     except Exception as e:
         logger.error(f"Error in script mapping: {e}", exc_info=True)

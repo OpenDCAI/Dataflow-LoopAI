@@ -1,5 +1,5 @@
 <template>
-    <div class="df-main-flow-container">
+    <div class="lp-main-flow-container">
         <VueFlow
             class="main-flow"
             :id="id"
@@ -25,20 +25,11 @@
             <template #node-base-node="nodeProps">
                 <baseNode v-bind="nodeProps" @delete-node="deleteNode" />
             </template>
-            <template #node-database-node="nodeProps">
-                <databaseNode
+            <template #node-agent-node="nodeProps">
+                <agentNode
                     v-bind="nodeProps"
                     @delete-node="deleteNode"
-                    @switch-database="switchDatabase"
-                    @update-node-data="updateNodeData"
-                />
-            </template>
-            <template #node-operator-node="nodeProps">
-                <operatorNode
-                    v-bind="nodeProps"
-                    @delete-node="deleteNode"
-                    @update-node-data="updateNodeData"
-                    @update-run-value="updateRunValue"
+                    @show-node-detail="$emit('show-node-detail', $event)"
                 />
             </template>
 
@@ -59,9 +50,8 @@ import { useGlobal } from '@/hooks/general/useGlobal'
 import { useAppConfig } from '@/stores/appConfig'
 import { Background } from '@vue-flow/background'
 import baseNode from './nodes/baseNode.vue'
+import agentNode from './nodes/agentNode/index.vue'
 import baseEdge from './edges/baseEdge.vue'
-import databaseNode from './nodes/databaseNode.vue'
-import operatorNode from './nodes/operatorNode.vue'
 import baseConnectionLine from './edges/baseConnectionLine.vue'
 
 const { $Guid, $infoBox } = useGlobal()
@@ -73,7 +63,8 @@ const emits = defineEmits([
     'connect',
     'connect-end',
     'connect-start',
-    'update-run-value'
+    'update-run-value',
+    'show-node-detail'
 ])
 
 const props = defineProps({
@@ -189,7 +180,7 @@ const deleteNode = (nodeInfo) => {
 /* import the default theme, this is optional but generally recommended */
 @import '@vue-flow/core/dist/theme-default.css';
 
-.df-main-flow-container {
+.lp-main-flow-container {
     position: relative;
     width: 100%;
     height: 100%;

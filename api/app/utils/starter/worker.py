@@ -24,8 +24,9 @@ def extract_state(sg, config, running=True) -> dict:
     return {
         "running": running,
         "event_streaming": event_streaming, # the agent is yielding event_streaming messages
-        "waiting_llm": stream_message is not None, # the agent is waiting for the LLM response, in starter_agent, when the update event is trigger, the stream_message is set as None. This attribute is used to check if the agent is ready for next input.
+        "waiting_llm": stream_message is not None, # whether the starter agent is waiting for the LLM response, in starter_agent, when the update event is trigger, the stream_message is set as None. In general, this attribute is used to check if the agent is ready for next input, however, if the subgraph also enable a llm_node for user query, and its inside stream_message will not be seen from the outside starter, and this attribute may be still as true. 
         "current": current,
+        "running_tasks": agent_event.running_tasks,
         "interrupt_value": interrupt_value,
         "state": state,
         "custom_info": agent_event.custom_info,
@@ -43,8 +44,6 @@ def agent_worker(cmd_q: Queue, state_q: Queue, sg_init_args: dict):
     sg = StarterAgent(**sg_init_args)
     sg.init_graph()
 
-    config = {"configurable": {"thread_id": "default"}}
-
     while True:
         try:
             cmd = cmd_q.get(timeout=0.1)
@@ -52,8 +51,24 @@ def agent_worker(cmd_q: Queue, state_q: Queue, sg_init_args: dict):
             continue
 
         if cmd["type"] == "START":
-            
-            sg.start(default_state=cmd["default_state"], config=config)
+            default_state = cmd["default_state"]
+
+            # 从 default_state 中读取 recursion_limit，如果没有则使用 100
+            recursion_limit = 100
+            try:
+                if isinstance(default_state, dict):
+                    recursion_limit = default_state.get("recursion_limit", 100)
+                else:
+                    recursion_limit = getattr(default_state, "recursion_limit", 100)
+            except Exception:
+                recursion_limit = 100
+
+            config = {
+                "recursion_limit": recursion_limit,
+                "configurable": {"thread_id": "default"},
+            }
+
+            sg.start(default_state=default_state, config=config)
             thread_states = sg.get_state(config)
 
             while thread_states.interrupts:
@@ -71,8 +86,11 @@ def agent_worker(cmd_q: Queue, state_q: Queue, sg_init_args: dict):
                     config=config
                 ):
                     state_q.put(extract_state(sg, config, True))
+                print('finished a round of query')
                 
                 thread_states = sg.get_state(config)
+            
+            print('jump out of the while loop')
 
             state_q.put(extract_state(sg, config, False))
 

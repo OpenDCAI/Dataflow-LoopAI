@@ -1,36 +1,31 @@
-# Obtainer Agent 使用指南
+# Constructor Agent 使用指南
 
-Obtainer Agent 是 Dataflow-LoopAI 框架中负责数据获取的智能代理。它能够自动化完成从查询理解到数据下载、格式转换的完整流程，支持多种数据源和智能格式映射。
+Constructor Agent 是 Dataflow-LoopAI 框架中负责数据构造与格式映射的智能代理。它能够自动化完成从下载结果后处理到清洗、格式映射的完整流程。
 
 ## 🏗️ 架构设计
 
-Obtainer Agent 采用多阶段顺序执行架构：
+Constructor Agent 采用多阶段顺序执行架构：
 
 ```
-查询规范化 → 网络搜索 → 下载执行 → 后处理 → 格式映射(可选) → 结束
+后处理 → 数据清洗 → 格式映射(可选) → 结束
     ↓           ↓          ↓         ↓          ↓           ↓
-  结束        结束       结束      结束       结束        结束
+   结束         结束        结束          结束
 ```
 
 ### 1. 启动节点 (Start Node)
 
-**功能：** 初始化配置参数，智能分类任务类型，规范化用户查询
+**功能：** 初始化构造配置，准备后处理/清洗/映射所需参数
 
 **主要特性：**
 
-- **智能查询规范化：** 自动识别评估式查询并转换为数据集请求
-  - 例如："评估模型需要什么数据" → "获取用于模型评估的数据集"
-  
-- **自动任务分类：** 使用 LLM 智能判断任务类型
-  - **PT (Pre-training)：** 预训练任务，用于语言模型预训练
-  - **SFT (Supervised Fine-tuning)：** 监督微调任务，用于指令微调、问答等
-
-- **配置初始化：** 自动设置默认参数和 API 密钥
+- **参数兼容同步：** 当 `state["constructor"]` 缺失时，自动从 `state["obtainer"]` 补齐关键字段
+- **默认值初始化：** 自动设置 `llm_timeout/max_retries/max_concurrent_mapping/default_mapping_format` 等默认参数
+- **调试能力：** 支持 debug 日志落盘
 
 **输出：**
-- `obtainer_category`: 任务类别（PT/SFT）
-- `obtainer_normalized_query`: 规范化后的查询
-- `obtainer_intent_type`: 查询意图类型
+- `constructor_category`: 任务类别（PT/SFT）
+- `constructor_model_path/base_url/api_key`: 模型配置
+- `constructor_default_mapping_format`: 默认映射格式
 
 ### 2. 网络搜索节点 (Web Search Node)
 
@@ -57,9 +52,9 @@ Obtainer Agent 采用多阶段顺序执行架构：
   - 识别网页数据源
 
 **输出：**
-- `obtainer_subtasks`: 下载任务列表
-- `obtainer_research_summary`: 研究摘要
-- `obtainer_urls_visited`: 访问的 URL 列表
+- `constructor_subtasks`: 下载任务列表（用于判断是否进入后处理）
+- `constructor_postprocess_results`: 后处理结果统计
+- `constructor_intermediate_data_path`: 中间数据路径
 
 ### 3. 下载节点 (Download Node)
 
@@ -85,8 +80,8 @@ Obtainer Agent 采用多阶段顺序执行架构：
 **智能决策：** 使用 LLM 自动选择最佳下载方法
 
 **输出：**
-- `obtainer_subtasks`: 更新任务状态（completed_successfully/failed_to_download）
-- `obtainer_download_results`: 下载结果详情
+- `constructor_intermediate_data_path`: 中间数据路径
+- `constructor_cleaning_results`: 清洗结果
 
 ### 4. 后处理节点 (Post-process Node)
 
@@ -105,8 +100,8 @@ Obtainer Agent 采用多阶段顺序执行架构：
 - **中间数据保存：** 保存转换后的中间格式数据
 
 **输出：**
-- `obtainer_intermediate_data_path`: 中间数据文件路径
-- `obtainer_postprocess_results`: 后处理结果统计
+- `constructor_intermediate_data_path`: 中间数据文件路径
+- `constructor_postprocess_results`: 后处理结果统计
 
 ### 5. 格式映射子图 (Mapping Subgraph)
 
@@ -130,19 +125,19 @@ Obtainer Agent 采用多阶段顺序执行架构：
 - 更多格式可扩展
 
 **输出：**
-- `obtainer_confirmed_format`: 确认的目标格式
-- `obtainer_final_data_path`: 最终数据文件路径
+- `constructor_confirmed_format`: 确认的目标格式
+- `constructor_final_data_path`: 最终数据文件路径
 
 ## 📝 使用方法
 
 ### 基本用法
 
 ```python
-from loopai.agents import ObtainerAgent
+from loopai.agents import ConstructorAgent
 from loopai.memory import checkpointer, store
 
-# 创建 ObtainerAgent 实例
-obtainer = ObtainerAgent(
+# 创建 ConstructorAgent 实例
+constructor = ConstructorAgent(
     checkpointer=checkpointer,
     store=store,
     model_name="qwen2.5-7b-instruct",
@@ -150,60 +145,45 @@ obtainer = ObtainerAgent(
     api_key="your-api-key"
 )
 
-# 准备获取状态
-obtainer_state = {
+# 准备构造状态
+constructor_state = {
     # 必需字段
     'automated_query': '获取用于训练中文对话模型的数据集',
     
     # 可选字段
-    'obtainer_category': 'SFT',  # 或 'PT'，不设置则自动分类
-    'obtainer_model_path': 'qwen2.5-7b-instruct',
-    'obtainer_base_url': 'http://localhost:8000/v1',
-    'obtainer_api_key': 'your-api-key',
-    'obtainer_search_engine': 'tavily',
-    'obtainer_max_urls': 10,
-    'output_dir': './output/obtainer'
+    'constructor_category': 'SFT',  # 或 'PT'
+    'constructor_model_path': 'qwen2.5-7b-instruct',
+    'constructor_base_url': 'http://localhost:8000/v1',
+    'constructor_api_key': 'your-api-key',
+    'constructor_default_mapping_format': 'alpaca',
+    'output_dir': './output/constructor'
 }
 
 # 构建并执行图
-config = {"configurable": {"thread_id": "my_obtainer_task"}}
-graph = obtainer()
-result = graph.invoke(obtainer_state, config=config)
+config = {"configurable": {"thread_id": "my_constructor_task"}}
+graph = constructor()
+result = graph.invoke(constructor_state, config=config)
 ```
 
 ### 高级配置
 
 ```python
-# 使用自定义 RAG 配置
-obtainer_state = {
+# Constructor 配置
+constructor_state = {
     'automated_query': '获取数学推理数据集',
-    'obtainer_category': 'SFT',
-    'obtainer_reset_rag': True,  # 重置 RAG 数据库
-    'obtainer_rag_embed_model': 'text-embedding-3-large',
-    'obtainer_rag_collection_name': 'math_datasets',
-    'obtainer_rag_api_base_url': 'http://localhost:8000/v1',
-    'obtainer_rag_api_key': 'your-embedding-api-key',
-    
-    # 深度探索配置
-    'obtainer_max_depth': 3,
-    'obtainer_concurrent_limit': 5,
-    'obtainer_topk_urls': 10,
-    'obtainer_url_timeout': 120,
-    
-    # 格式映射配置
-    'obtainer_default_mapping_format': 'alpaca',  # 跳过用户交互，直接使用 Alpaca 格式
+    'constructor_category': 'SFT',
+    'constructor_model_path': 'qwen2.5-7b-instruct',
+    'constructor_base_url': 'http://localhost:8000/v1',
+    'constructor_api_key': 'your-api-key',
+    'constructor_llm_timeout': 120,
+    'constructor_max_retries': 3,
+    'constructor_max_concurrent_mapping': 10,
+    'constructor_default_mapping_format': 'alpaca',  # 跳过用户交互，直接使用 Alpaca 格式
 }
 
-# Kaggle 配置
-obtainer_state.update({
-    'obtainer_kaggle_username': 'your-kaggle-username',
-    'obtainer_kaggle_key': 'your-kaggle-key',
-})
-
-# Tavily API 配置
-obtainer_state.update({
-    'obtainer_tavily_api_key': 'your-tavily-api-key',
-    # 或设置环境变量 TAVILY_API_KEY
+# 可选调试配置
+constructor_state.update({
+    'constructor_debug': True,
 })
 ```
 
@@ -214,131 +194,48 @@ obtainer_state.update({
 | 字段名 | 类型 | 必需 | 默认值 | 说明 |
 |-------|------|-----|--------|-----|
 | `automated_query` | str | ✅ | - | 用户查询或任务描述 |
-| `obtainer_category` | str | ❌ | 自动检测 | 任务类别：PT 或 SFT |
-| `obtainer_model_path` | str | ✅ | - | LLM 模型名称 |
-| `obtainer_base_url` | str | ✅ | - | LLM API 基础 URL |
-| `obtainer_api_key` | str | ✅ | - | LLM API 密钥 |
-| `obtainer_temperature` | float | ❌ | 0.7 | LLM 温度参数 |
-| `obtainer_search_engine` | str | ❌ | tavily | 搜索引擎类型 |
-| `obtainer_max_urls` | int | ❌ | 10 | 最大搜索 URL 数量 |
-| `obtainer_max_depth` | int | ❌ | 4 | 深度探索最大深度 |
-| `obtainer_concurrent_limit` | int | ❌ | 3 | 并发探索限制 |
-| `obtainer_topk_urls` | int | ❌ | 5 | 每页选择 Top-K URL |
-| `obtainer_url_timeout` | int | ❌ | 60 | URL 探索超时时间（秒） |
-| `obtainer_tavily_api_key` | str | ✅ | - | Tavily API 密钥 |
-| `obtainer_kaggle_username` | str | ✅ | - | Kaggle 用户名 |
-| `obtainer_kaggle_key` | str | ✅ | - | Kaggle API 密钥 |
-| `obtainer_reset_rag` | bool | ❌ | False | 是否重置 RAG 数据库 |
-| `obtainer_rag_embed_model` | str | ✅ | - | RAG 嵌入模型名称 |
-| `obtainer_rag_collection_name` | str | ❌ | rag_collection | RAG 集合名称 |
-| `obtainer_rag_api_base_url` | str | ✅ | - | RAG API 基础 URL |
-| `obtainer_rag_api_key` | str | ✅ | - | RAG API 密钥 |
-| `obtainer_default_mapping_format` | str | ❌ | alpaca | 默认映射格式（空则用户交互） |
-| `obtainer_debug` | bool | ❌ | False | 是否启用调试模式 |
+| `constructor_category` | str | ❌ | 自动检测 | 任务类别：PT 或 SFT |
+| `constructor_model_path` | str | ✅ | - | LLM 模型名称 |
+| `constructor_base_url` | str | ✅ | - | LLM API 基础 URL |
+| `constructor_api_key` | str | ✅ | - | LLM API 密钥 |
+| `constructor_temperature` | float | ❌ | 0.7 | LLM 温度参数 |
+| `constructor_llm_timeout` | float | ❌ | 120.0 | LLM 超时时间（秒） |
+| `constructor_max_retries` | int | ❌ | 3 | 最大重试次数 |
+| `constructor_max_concurrent_mapping` | int | ❌ | 10 | 最大并发映射数 |
+| `constructor_max_samples_before_cleaning` | int | ❌ | 20000 | 清洗后最大采样数（0 不限制） |
+| `constructor_default_mapping_format` | str | ❌ | alpaca | 默认映射格式（空则用户交互） |
+| `constructor_debug` | bool | ❌ | False | 是否启用调试模式 |
 | `output_dir` | str | ❌ | ./output | 输出目录 |
 
 ### 输出字段
 
 | 字段名 | 类型 | 说明 |
 |-------|------|-----|
-| `obtainer_category` | str | 检测到的任务类别 |
-| `obtainer_normalized_query` | str | 规范化后的查询 |
-| `obtainer_intent_type` | str | 查询意图类型 |
-| `obtainer_subtasks` | list | 下载任务列表 |
-| `obtainer_research_summary` | str | 研究摘要 |
-| `obtainer_urls_visited` | list | 访问的 URL 列表 |
-| `obtainer_download_results` | dict | 下载结果详情 |
-| `obtainer_intermediate_data_path` | str | 中间数据文件路径 |
-| `obtainer_postprocess_results` | dict | 后处理结果统计 |
-| `obtainer_confirmed_format` | str | 确认的目标格式 |
-|✳✳ `obtainer_final_data_path` | str | 最终数据文件路径 |
+| `constructor_category` | str | 检测到的任务类别 |
+| `constructor_subtasks` | list | 下载任务列表 |
+| `constructor_intermediate_data_path` | str | 中间数据文件路径 |
+| `constructor_postprocess_results` | dict | 后处理结果统计 |
+| `constructor_cleaning_results` | dict | 数据清洗结果 |
+| `constructor_confirmed_format` | str | 确认的目标格式 |
+| `constructor_mapping_results` | dict | 映射结果详情 |
+| `constructor_final_data_path` | str | 最终数据文件路径（见 mapping 结果） |
 
-## 🛠️ 工具类
+## 🛠️ 关键模块
 
-### CategoryClassifier
+### postprocess_node
 
-```python
-from loopai.agents.Obtainer.utils import CategoryClassifier
+- 位置：`loopai/agents/Constructor/nodes/postprocess_node.py`
+- 作用：把下载结果转换成中间标准格式，写入 `constructor_postprocess_results` 和 `constructor_intermediate_data_path`。
 
-classifier = CategoryClassifier(
-    model_name="qwen2.5-7b-instruct",
-    base_url="http://localhost:8000/v1",
-    api_key="your-api-key"
-)
+### CleaningSubgraph
 
-category = await classifier.classify_category(
-    user_query="训练一个中文问答模型",
-    objective="获取训练数据"
-)
-print(f"任务类别: {category}")  # 输出: SFT
-```
+- 位置：`loopai/agents/Constructor/nodes/filter_node.py`
+- 作用：按 `cleaning_tool_plan` 执行清洗，更新 `constructor_cleaning_results` 和中间数据路径。
 
-### ObtainQueryNormalizer
+### MappingSubgraph
 
-```python
-from loopai.agents.Obtainer.utils import ObtainQueryNormalizer
-
-normalizer = ObtainQueryNormalizer(
-    model_name="qwen2.5-7b-instruct",
-    base_url="http://localhost:8000/v1",
-    api_key="your-api-key"
-)
-
-result = await normalizer.normalize(
-    user_query="评估模型需要什么数据",
-    objective="模型评估"
-)
-print(f"规范化查询: {result['normalized_query']}")
-```
-
-### RAGManager
-
-```python
-from loopai.agents.Obtainer.utils import RAGManager
-
-rag_manager = RAGManager(
-    api_base_url="http://localhost:8000/v1",
-    api_key="your-api-key",
-    embed_model="text-embedding-3-large",
-    persist_directory="./output/rag_db",
-    reset=False,
-    collection_name="datasets"
-)
-
-# 添加文档
-rag_manager.add_documents(["文档内容1", "文档内容2"])
-
-# 搜索相似文档
-results = rag_manager.search("查询文本", top_k=5)
-```
-
-### HuggingFaceManager
-
-```python
-from loopai.agents.Obtainer.utils import HuggingFaceManager
-
-hf_manager = HuggingFaceManager()
-result = hf_manager.download_dataset(
-    dataset_name="squad",
-    output_dir="./downloads",
-    subset=None
-)
-```
-
-### KaggleManager
-
-```python
-from loopai.agents.Obtainer.utils import KaggleManager
-
-kaggle_manager = KaggleManager(
-    username="your-username",
-    key="your-key"
-)
-result = kaggle_manager.download_dataset(
-    dataset_name="titanic",
-    output_dir="./downloads"
-)
-```
+- 位置：`loopai/agents/Constructor/mapping/mapping_subgraph.py`
+- 作用：处理格式确认与映射，输出 `constructor_mapping_results`。
 
 ## 🚨 故障排除
 
@@ -372,7 +269,7 @@ result = kaggle_manager.download_dataset(
 
 ### 日志分析
 
-调试日志位于 `{output_dir}/obtainer_logs/obtainer_debug_{timestamp}.log`，包含：
+调试日志位于 `{output_dir}/constructor_logs/constructor_debug_{timestamp}.log`，包含：
 - 节点执行详情
 - API 调用记录
 - 错误堆栈信息
@@ -380,8 +277,8 @@ result = kaggle_manager.download_dataset(
 
 启用调试模式：
 ```python
-obtainer_state = {
-    'obtainer_debug': True,
+constructor_state = {
+    'constructor_debug': True,
     # ... 其他配置
 }
 ```
@@ -487,5 +384,5 @@ obtainer_state = {
 
 ---
 
-💡 **提示：** 查看 `examples/scripts/run_obtainer.py` 了解完整的使用示例。
+💡 **提示：** 查看 `examples/scripts/` 下的脚本了解完整使用示例。
 

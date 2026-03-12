@@ -13,114 +13,68 @@ from rich.text import Text
 
 console = Console()
 
-cfg = OmegaConf.load("./examples/config/starter.yaml")
+cfg = OmegaConf.load("./starter.yaml")
+system_config = cfg.get('system', {})
 
-with open(cfg.starter.api_key_path, 'r') as f:
-    api_key = f.read().strip()
-
-# Read Tavily API key
-tavily_api_key = None
-if hasattr(cfg.starter, 'tavily_api_key_path') and os.path.exists(cfg.starter.tavily_api_key_path):
-    with open(cfg.starter.tavily_api_key_path, 'r') as f:
-        tavily_api_key = f.read().strip()
-        os.environ['TAVILY_API_KEY'] = tavily_api_key
-
-rag_api_key = None
-if hasattr(cfg, 'rag') and hasattr(cfg.rag, 'api_key_path') and os.path.exists(cfg.rag.api_key_path):
-    with open(cfg.rag.api_key_path, 'r') as f:
-        rag_api_key = f.read().strip()
-
-kaggle_username = getattr(cfg.starter, 'kaggle_username', '') or ''
-kaggle_key = getattr(cfg.starter, 'kaggle_key', '') or ''
+# Read starter configuration
+starter_model_name = system_config.get('starter_model_name', 'deepseek-chat')
+starter_base_url = system_config.get('starter_base_url', 'https://api.deepseek.com')
+starter_api_key = system_config.get('starter_api_key', '')
+starter_tavily_api_key = system_config.get('tavily_api_key', '')
+starter_kaggle_username = system_config.get('kaggle_username', '')
+starter_kaggle_key = system_config.get('kaggle_key', '')
 
 sg = StarterAgent(tools=[check_motivation],
-                  model_name="deepseek-chat",
-                  base_url="https://api.deepseek.com",
-                  api_key=api_key,
+                  model_name=starter_model_name,
+                  base_url=starter_base_url,
+                  api_key=starter_api_key,
                   checkpointer=checkpointer,
                   store=store)
 
 sg.init_graph()
 
 # %%
-config = {"configurable": {"thread_id": "1"}}
-
-# Prepare obtainer configuration from config file (nested structure)
-obtainer_dict = {}
-
-# Read from nested obtainer config if it exists
-if hasattr(cfg.default_states, 'obtainer') and cfg.default_states.obtainer:
-    obtainer_cfg = cfg.default_states.obtainer
-    if hasattr(obtainer_cfg, 'model_path') and obtainer_cfg.model_path:
-        obtainer_dict['model_path'] = obtainer_cfg.model_path
-    if hasattr(obtainer_cfg, 'base_url') and obtainer_cfg.base_url:
-        obtainer_dict['base_url'] = obtainer_cfg.base_url
-    if hasattr(obtainer_cfg, 'api_key') and obtainer_cfg.api_key:
-        obtainer_dict['api_key'] = obtainer_cfg.api_key
-    else:
-        obtainer_dict['api_key'] = api_key
-    
-    # Add other obtainer parameters from config
-    if hasattr(obtainer_cfg, 'temperature'):
-        obtainer_dict['temperature'] = obtainer_cfg.temperature
-    if hasattr(obtainer_cfg, 'search_engine'):
-        obtainer_dict['search_engine'] = obtainer_cfg.search_engine
-    if hasattr(obtainer_cfg, 'max_urls'):
-        obtainer_dict['max_urls'] = obtainer_cfg.max_urls
-    if hasattr(obtainer_cfg, 'max_download_subtasks'):
-        obtainer_dict['max_download_subtasks'] = obtainer_cfg.max_download_subtasks
-    if hasattr(obtainer_cfg, 'category'):
-        obtainer_dict['category'] = str(obtainer_cfg.category).upper()
-    if hasattr(obtainer_cfg, 'proxy'):
-        obtainer_dict['proxy'] = obtainer_cfg.proxy
-    if hasattr(obtainer_cfg, 'default_mapping_format'):
-        obtainer_dict['default_mapping_format'] = obtainer_cfg.default_mapping_format
-    if hasattr(obtainer_cfg, 'max_exploration_depth'):
-        obtainer_dict['max_exploration_depth'] = obtainer_cfg.max_exploration_depth
-    if hasattr(obtainer_cfg, 'max_jina_urls'):
-        obtainer_dict['max_jina_urls'] = obtainer_cfg.max_jina_urls
-    if hasattr(obtainer_cfg, 'max_records_per_page'):
-        obtainer_dict['max_records_per_page'] = obtainer_cfg.max_records_per_page
-    if hasattr(obtainer_cfg, 'min_relevance_score'):
-        obtainer_dict['min_relevance_score'] = obtainer_cfg.min_relevance_score
-else:
-    # Fallback: if no nested structure, use default api_key
-    obtainer_dict['api_key'] = api_key
-
-# Add Tavily and Kaggle credentials
-obtainer_dict['tavily_api_key'] = tavily_api_key if tavily_api_key else ''
-obtainer_dict['kaggle_username'] = kaggle_username
-obtainer_dict['kaggle_key'] = kaggle_key
-
-# RAG configuration (also nested in obtainer)
-if hasattr(cfg, 'rag'):
-    if hasattr(cfg.rag, 'reset'):
-        obtainer_dict['reset_rag'] = cfg.rag.reset
-    if hasattr(cfg.rag, 'embed_model'):
-        embed_model = cfg.rag.embed_model
-        if embed_model:  # Only set if not empty
-            obtainer_dict['rag_embed_model'] = embed_model
-    if hasattr(cfg.rag, 'collection_name'):
-        obtainer_dict['rag_collection_name'] = cfg.rag.collection_name
-    if hasattr(cfg.rag, 'api_base_url'):
-        if cfg.rag.api_base_url:  # Only set if not empty
-            obtainer_dict['rag_api_base_url'] = cfg.rag.api_base_url
-    if rag_api_key:
-        obtainer_dict['rag_api_key'] = rag_api_key
-
-# Prepare merged states with nested obtainer structure
+# Prepare merged states
 merged_states_dict = {
     'eval_batch_size': 10,
     'analyze_batch_size': 20,
 }
-if obtainer_dict:
-    merged_states_dict['obtainer'] = obtainer_dict
 
-# Handle obtainer_debug separately if it exists (not nested in obtainer dict)
+# Handle obtainer configuration
+if hasattr(cfg.default_states, 'obtainer') and cfg.default_states.obtainer:
+    obtainer_cfg = cfg.default_states.obtainer
+    merged_states_dict['obtainer'] = OmegaConf.to_container(obtainer_cfg, resolve=True) or {}
+
+# Inject starter-level tavily_api_key into obtainer state (config-first, env/txt fallback in ObtainerAgent)
+if starter_tavily_api_key:
+    merged_states_dict.setdefault('obtainer', {})['tavily_api_key'] = starter_tavily_api_key
+
+# Handle webcrawler tavily_api_key injection
+if 'webcrawler' not in merged_states_dict:
+    if hasattr(cfg.default_states, 'webcrawler') and cfg.default_states.webcrawler:
+        merged_states_dict['webcrawler'] = OmegaConf.to_container(cfg.default_states.webcrawler, resolve=True) or {}
+if starter_tavily_api_key:
+    merged_states_dict.setdefault('webcrawler', {})['tavily_api_key'] = starter_tavily_api_key
+
+# Handle obtainer_debug separately if it exists
 if hasattr(cfg.default_states, 'obtainer_debug'):
     merged_states_dict['obtainer_debug'] = cfg.default_states.obtainer_debug
 
 merged_states = OmegaConf.merge(cfg.default_states, merged_states_dict)
+
+# 从状态中读取 recursion_limit，如果没有则使用较大的默认值（例如 100）
+try:
+    recursion_limit = merged_states.get('recursion_limit', 100)
+except (AttributeError, KeyError):
+    recursion_limit = getattr(merged_states, 'recursion_limit', 100)
+if not recursion_limit:
+    recursion_limit = 100
+
+# LangGraph 配置：显式提高 recursion_limit
+config = {
+    "recursion_limit": recursion_limit,
+    "configurable": {"thread_id": "1"},
+}
 
 # 配置日志文件路径
 # 从 merged_states 获取 output_dir，如果不存在则使用默认值
@@ -179,6 +133,11 @@ while thread_states.interrupts:
         ):
             live.update(render_text(sg.agent_event.text(only_updated=True)))
             # print(chunk)
+            # namespace_item, stream_mode, chunk_item = chunk
+            # if stream_mode == 'updates' or stream_mode == 'custom':
+            #     print(namespace_item, '⭐⭐⭐' + stream_mode + '⭐⭐⭐', chunk_item)
+            # if stream_mode == 'messages':
+            #     print(namespace_item, '⭐⭐⭐' + stream_mode + '⭐⭐⭐', chunk_item)
     
     # # 不使用Live显示，直接运行
     # for chunk in sg(
