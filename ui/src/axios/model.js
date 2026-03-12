@@ -113,6 +113,37 @@ export class LogResponse {
     total_lines=undefined
     
 }
+export class MetricsResponse {
+  
+    /**
+     *
+     * @param {String} task_id 
+     * @param {undefined} summary 
+     * @param {Array} latest_metrics 
+     */ 
+    constructor(task_id = undefined,summary = undefined,latest_metrics = undefined){
+        this.task_id = task_id
+        this.summary = summary
+        this.latest_metrics = latest_metrics
+    }
+       
+    /**
+     * 
+     * @type {String}
+     */
+    task_id=undefined   
+    /**
+     * 
+     * @type {undefined}
+     */
+    summary=undefined   
+    /**
+     * 
+     * @type {Array}
+     */
+    latest_metrics=undefined
+    
+}
 export class ResourceItem {
   
     /**
@@ -254,10 +285,14 @@ export class TrainRequest {
      *
      * @param {String} framework 
      * @param {String} config_path 
+     * @param {String} task_id 
+     * @param {String} output_dir 
      */ 
-    constructor(framework = undefined,config_path = undefined,task_name = undefined){
+    constructor(framework = undefined,config_path = undefined,task_id = undefined,output_dir = undefined,task_name = undefined){
         this.framework = framework
         this.config_path = config_path
+        this.task_id = task_id
+        this.output_dir = output_dir
         this.task_name = task_name
     }
        
@@ -270,7 +305,17 @@ export class TrainRequest {
      * 
      * @type {String}
      */
-    config_path=undefined
+    config_path=undefined   
+    /**
+     * 
+     * @type {String}
+     */
+    task_id=undefined   
+    /**
+     * 
+     * @type {String}
+     */
+    output_dir=undefined
     
 }
 export class TrainResponse {

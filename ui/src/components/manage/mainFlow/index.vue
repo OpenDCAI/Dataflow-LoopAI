@@ -26,7 +26,11 @@
                 <baseNode v-bind="nodeProps" @delete-node="deleteNode" />
             </template>
             <template #node-agent-node="nodeProps">
-                <agentNode v-bind="nodeProps" @delete-node="deleteNode" />
+                <agentNode
+                    v-bind="nodeProps"
+                    @delete-node="deleteNode"
+                    @show-node-detail="$emit('show-node-detail', $event)"
+                />
             </template>
 
             <template #connection-line="connectionLineProps">
@@ -59,7 +63,8 @@ const emits = defineEmits([
     'connect',
     'connect-end',
     'connect-start',
-    'update-run-value'
+    'update-run-value',
+    'show-node-detail'
 ])
 
 const props = defineProps({
