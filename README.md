@@ -103,8 +103,17 @@ Dataflow-LoopAI/
 pip install -e .
 ```
 
+## ✅ 快速使用指南 (终端)
 
-## ✅ 快速测试指南
+1. Copy `config/starter.yaml` to `./starter.yaml` and modify it to configure the `system` parameters.
+
+2. Run the `run_starter.py` script to start LoopAI.
+
+```bash
+python examples/scripts/run_starter.py
+```
+
+## ✅ 快速Dev指南
 
 ### 1️⃣ 启动 vLLM 服务
 
