@@ -9,7 +9,7 @@ async def check_config_from_db(base_dir):
     # 判断sqliter中是否有config记录，如果一条也没有，读取./examples/starter.yaml转化为json然后存到数据库
     config = await StarterConfig.filter(Q(name='starter')).first()
     if not config:
-        cfg = OmegaConf.load(os.path.join(base_dir, "examples", "starter.yaml"))
+        cfg = OmegaConf.load(os.path.join(base_dir, "starter.yaml"))
         config_obj = OmegaConf.to_container(cfg, resolve=True)
         await StarterConfig.create(name='starter', config=json.dumps(config_obj))
         config = await StarterConfig.filter(Q(name='starter')).first()
@@ -35,15 +35,13 @@ async def get_system_config(base_dir):
     """获取配置"""
     config = await check_config_from_db(base_dir)
     config_data = json.loads(config.config)
-    if 'default_states' in config_data:
-        del config_data['default_states']
-    for series_key in config_data:
-        for key in config_data[series_key]:
-            config_data[series_key][key] = wrap_attr(config_data[series_key][key])
+    system_config = config_data.get('system', {})
+    for key in system_config:
+        system_config[key] = wrap_attr(system_config[key])
     res = {
         'id': config.id,
         'name': config.name,
-        'config': config_data,
+        'config': system_config,
     }
     return res
 

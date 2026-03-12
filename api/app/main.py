@@ -52,7 +52,7 @@ app.add_middleware(
 register_tortoise(
     app,
     db_url=f"sqlite://{DB_PATH}",
-    modules={"models": ["app.models.db_models"]},
+    modules={"models": ["api.app.models.db_models"]},
     generate_schemas=True,
     add_exception_handlers=True,
 )

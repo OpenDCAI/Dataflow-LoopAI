@@ -139,7 +139,7 @@ python examples/scripts/run_judger.py
 
 ### Configuration
 
-1. **Model Configuration**: Modify `config/starter.yaml` to configure the Obtainer-related model paths and parameters.
+1. **Model Configuration**: Copy `config/starter.yaml` to `./starter.yaml` and modify it to configure the Obtainer-related model paths and parameters.
    - Note: RAG currently supports only API-based embedding models.
 
 2. **Required API Keys**:

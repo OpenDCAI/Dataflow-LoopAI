@@ -1,19 +1,15 @@
-starter:
-  model_path: "gpt-4o" # if empty, will use starter model
-  model_name: "gpt-4o" # if empty, will use starter model
-  base_url: "http://172.96.160.199:3000/v1" # if empty, will use starter base_url
-  api_key: "sk-..." # if empty, will use starter api_key
-  tavily_api_key: "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" # Tavily API key (leave empty if not needed)
-  kaggle_username: "binrxu" # Kaggle username (leave empty if not needed)
-  kaggle_key: "8c120e3a3c8d45f71ace8b4981f829ac" # Kaggle API key (leave empty if not needed)
-
-# RAG configuration (independent from obtainer)
-rag:
-  reset: false # whether to reset RAG database
-  embed_model: "text-embedding-3-large" # RAG embedding model (default: "text-embedding-3-large", leave empty to use default)
-  collection_name: "rag_collection" # RAG collection name
-  api_base_url: "http://172.96.160.199:3000/v1" # RAG API base URL (if empty, will use obtainer's base_url)
-  api_key_path: "./rag_api_key.txt" # RAG API key file path (if empty, will use obtainer's api_key)
+system:
+  starter_api_key: ""
+  starter_model_path: "deepseek-chat"
+  starter_model_name: "deepseek-chat"
+  starter_base_url: "https://api.deepseek.com"
+  llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/"
+  llamafactory_env_path: "/home/lpc/miniconda3/envs/lmf/bin/"
+  CUDA_VISIBLE_DEVICES: "0,1"
+  swanlab_api_key: ""
+  tavily_api_key: ""
+  kaggle_username: "binrxu"
+  kaggle_key: ""
 
 default_states:
   task_id: "default"
@@ -109,5 +105,3 @@ default_states:
     train_input_task_description: "训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务" # to defined the task description for training
     train_input_config_template_path: "/home/lpc/repos/Dataflow-LoopAI/api/examples/bird.yaml" # to defined the path of llamafactory config template
     train_input_model_name: "/home/lpc/models/Qwen2.5-0.5B-Instruct/" # to defined the base model name for training
-    # 可选
-    output_dir: "/home/lpc/repos/Dataflow-LoopAI/outputs/training_test" # to defined the output directory for training

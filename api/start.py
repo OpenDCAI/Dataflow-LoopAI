@@ -7,6 +7,7 @@ import os
 import sys
 import json
 import subprocess
+from omegaconf import OmegaConf
 
 def main():
     """主函数"""
@@ -25,33 +26,22 @@ def main():
         print("pip install -r requirements.txt")
         return 1
     
-    if not os.path.exists('./app_config.json'):
-        print("❌ app_config.json not found. Please copy from examples/app_config.json.example")
+    if not os.path.exists('./starter.yaml'):
+        print("❌ starter.yaml not found. Please copy from examples/config/starter.yaml")
         return 1
     
-    app_config = json.load(open('./app_config.json'))
+    cfg = OmegaConf.load('./starter.yaml')
+    system_config = cfg.get('system', {})
 
     # LLaMA Factory项目目录
-    llamafactory_dir = app_config['llamafactory_dir']
-    llamafactory_env_path = app_config.get('llamafactory_env_path', '')
+    llamafactory_dir = system_config['llamafactory_dir']
+    llamafactory_env_path = system_config.get('llamafactory_env_path', '')
     
     # 检查LLaMA Factory目录是否存在
     if not os.path.exists(llamafactory_dir):
         print(f"❌ LLaMA Factory directory not found: {llamafactory_dir}")
         return 1
-    
-    # 从../examples/config/starter.yaml复制一份到./examples/starter.yaml
-    starter_yaml = '../examples/config/starter.yaml'
-    if not os.path.exists(starter_yaml):
-        print(f"❌ starter.yaml not found in /examples/config/starter.yaml: {starter_yaml}")
-        return 1
-    try:
-        subprocess.run(["cp", starter_yaml, "./examples/starter.yaml"], check=True)
-        print("✅ starter.yaml copied to ./examples/starter.yaml")
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to copy starter.yaml: {e}")
-        return 1
-    
+        
     # 检查是否安装了LLaMA Factory
     try:
         result = subprocess.run([os.path.join(llamafactory_env_path, "llamafactory-cli"), "help"], 
@@ -87,7 +77,7 @@ def main():
         cmd = [
             sys.executable,
             "-m", "uvicorn",
-            "app.main:app",
+            "api.app.main:app",
             "--host", "0.0.0.0",
             "--port", "8000",
         ]

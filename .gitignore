@@ -17,3 +17,5 @@ examples/scripts/api_key.txt
 examples/config/starter.yaml
 ai/
 api/vite.config.js
+app_config.json
+starter.yaml
