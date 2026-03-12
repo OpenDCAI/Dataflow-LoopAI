@@ -739,9 +739,24 @@ def eval_model_node(state: LoopAIState):
 
     # 读取评测结果（JSONL）
     eval_cfg = state.get("judger") or {}
-    eval_result_path = eval_cfg.get("eval_result_path")
+    analyzer_cfg = state.get("analyzer") or {}
+
+    eval_result_path = (
+        eval_cfg.get("out_result_path")
+        or eval_cfg.get("eval_result_path")
+        or analyzer_cfg.get("out_result_path")
+        or analyzer_cfg.get("eval_result_path")
+    )
+
     if not eval_result_path:
-        raise ValueError("eval.eval_result_path not provided")
+        raise ValueError(
+        "eval_result_path not provided. "
+        "Please provide it in judger.out_result_path / judger.eval_result_path "
+        "or analyzer.out_result_path / analyzer.eval_result_path."
+       )
+
+    state.setdefault("analyzer", {})
+    state["analyzer"]["eval_result_path"] = eval_result_path
 
     with open(eval_result_path, 'r', encoding='utf-8') as f:
         lines = [ln for ln in f if ln.strip()]
