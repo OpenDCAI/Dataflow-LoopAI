@@ -1004,6 +1004,12 @@ class JudgerState(BaseModel):
     )
 
 class AnalyzerState(BaseModel):
+    out_result_path: str = Field(
+        default="",
+        title="输入结果路径",
+        description="Analyzer 直接读取的结果文件路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
     analyze_task_type: str = Field(
         default="code",
         title="分析任务类型",

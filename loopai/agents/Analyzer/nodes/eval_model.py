@@ -49,6 +49,39 @@ def _force_real_general_text_package():
     eval_dir = base / "eval"
     if eval_dir.exists():
         _register("dataflow.operators.general_text.eval", eval_dir)
+import pkgutil
+import inspect
+import importlib
+
+METRIC_REGISTRY = {}
+
+def auto_register_metrics():
+    import dataflow.operators.general_text.eval as pkg
+    for _, module_name, _ in pkgutil.iter_modules(pkg.__path__):
+        module = importlib.import_module(f"{pkg.__name__}.{module_name}")
+        for name, obj in inspect.getmembers(module, inspect.isclass):
+            if name.endswith("SampleEvaluator"):
+                key = module_name.replace("_sample_evaluator", "")
+                METRIC_REGISTRY[key] = obj
+def run_metric(metric_name: str, reference: str, response: str):
+    import pandas as pd
+
+    MetricClass = METRIC_REGISTRY.get(metric_name)
+    if not MetricClass:
+        raise ValueError(f"Metric '{metric_name}' not found")
+
+    metric = MetricClass()
+
+    if "dataset" in metric_name:
+        df = pd.DataFrame([{"text": response}])
+        return metric.eval(df, input_key="text")[0]
+
+    if metric_name in ("perspective", "presidio"):
+        df = pd.DataFrame([{"text": response}])
+        return metric.eval(df, input_key="text")[0]
+
+    df = pd.DataFrame([{"ref": reference or "", "hyp": response}])
+    return metric.eval(df, input_key="hyp", reference_key="ref")[0]
 def get_prompt_loader() -> PromptLoader:
     global _PROMPT_LOADER
     if _PROMPT_LOADER is None:
@@ -555,82 +588,107 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
 
     logger.info(f" 已生成 summary：{summary_json} ，文本简报：{summary_txt}")
     return str(summary_json), str(summary_txt)
-def run_general_text_fallback_eval(state: LoopAIState):
-    """
-    使用 DataFlow 的通用文本质量算子进行兜底评估
-    """
+def run_general_text_fallback_eval(state):
     _force_real_general_text_package()
-
     import pandas as pd
+    import jieba
+    import re
+    import json, time
+    from pathlib import Path
     from dataflow.operators.general_text.eval.bleu_sample_evaluator import BleuSampleEvaluator
-    from dataflow.operators.general_text.eval.lexical_diversity_sample_evaluator import LexicalDiversitySampleEvaluator
+    from dataflow.operators.general_text.eval.ngram_sample_evaluator import NgramSampleEvaluator
 
-    cfg = _analyzer(state)
-    prompt = cfg.get("question") or ""
-    response = cfg.get("completion") or ""
-    reference = cfg.get("reference") 
+    def contains_chinese(s: str) -> bool:
+        return bool(re.search(r'[\u4e00-\u9fff]', s or ""))
 
-    # === DataFrame ===
-    if reference:
-        df_bleu = pd.DataFrame([{"ref": reference, "hyp": response}])
-    else:
-        df_bleu = None
-    df_lex = pd.DataFrame([{"text": response}])
+    def tokenize(s: str) -> list:
+        if not s:
+            return []
+        if contains_chinese(s):
+            return jieba.lcut(s)
+        return s.split()
+
+    def ttr(tokens: list) -> float:
+        return len(set(tokens)) / len(tokens) if tokens else 0.0
+
+    cfg = state["analyzer"]
+    weights = cfg.get("metric_weights", {"bleu":0.4,"lexical_diversity":0.3,"ngram":0.3})
+    eval_path = state["judger"]["eval_result_path"]
+
+    with open(eval_path, "r", encoding="utf-8") as f:
+        rows = [json.loads(x) for x in f]
 
     bleu_eval = BleuSampleEvaluator()
-    lex_eval = LexicalDiversitySampleEvaluator()
+    ngram_eval = NgramSampleEvaluator()
 
-    # === BLEU ===
-    bleu_score = None
-    bleu_raw = None
-    if df_bleu is not None:
-        bleu_raw = bleu_eval.eval(df_bleu, input_key="hyp", reference_key="ref")[0]
-        bleu_score = float(bleu_raw)
+    results = []
 
-    # === Lexical Diversity ===
-    lex_raw = lex_eval.eval(df_lex, input_key="text")[0]  
-    lex_vals = []
-    if isinstance(lex_raw, dict):
-        for k in ("LexicalDiversityMTLDScore", "LexicalDiversityHD-DScore"):
-            v = lex_raw.get(k)
-            if isinstance(v, (int, float)):
-                lex_vals.append(float(v))
+    for r in rows:
+        ref_raw = r.get("reference","")
+        hyp_raw = r.get("completion","")
 
-    if lex_vals:
-        lex_score = sum(lex_vals) / len(lex_vals)
-    else:
-        toks = [t for t in response.split() if t.strip()]
-        lex_score = (len(set(toks)) / len(toks)) if toks else 0.0
+        ref_tokens = tokenize(ref_raw)
+        hyp_tokens = tokenize(hyp_raw)
 
-    parts = []
-    weights = []
+        ref = " ".join(ref_tokens)
+        hyp = " ".join(hyp_tokens)
 
-    if bleu_score is not None:
-        parts.append(bleu_score)
-        weights.append(0.6)
-    parts.append(lex_score)
-    weights.append(0.4 if bleu_score is not None else 1.0)
+        # BLEU
+        if ref_tokens:
+            df_bleu = pd.DataFrame([{"ref": ref, "hyp": hyp}])
+            bleu = float(bleu_eval.eval(df_bleu, input_key="hyp", reference_key="ref")[0])
+        else:
+            bleu = 0.0
 
-    overall = sum(p * w for p, w in zip(parts, weights)) / (sum(weights) or 1.0)
+        # Lexical Diversity (统一TTR)
+        lex = ttr(hyp_tokens)
 
-    result = {
-        "bleu": bleu_raw,  
-        "lexical_diversity": lex_raw,
-        "lexical_fallback_ttr": None if lex_vals else round(lex_score, 6),
-        "overall": round(float(overall), 4),
-        "used_reference": bool(reference),
+        # Ngram
+        df_text = pd.DataFrame([{"text": hyp}])
+        ngram = float(ngram_eval.eval(df_text, input_key="text")[0])
+
+        overall = (
+            bleu * weights["bleu"] +
+            lex * weights["lexical_diversity"] +
+            ngram * weights["ngram"]
+        )
+
+        r["metrics"] = {
+            "bleu": round(bleu, 4),
+            "lexical_diversity": round(lex, 4),
+            "ngram": round(ngram, 4),
+            "overall": round(overall, 4)
+        }
+
+        results.append(r)
+
+    outdir = Path(state["output_dir"])
+    ts = time.strftime("%Y%m%d_%H%M%S")
+
+    result_file = outdir / f"text_eval_scored_{ts}.jsonl"
+    with open(result_file, "w", encoding="utf-8") as f:
+        for r in results:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+    # summary
+    n = len(results) or 1
+    summary = {
+        "num_samples": len(results),
+        "average": {
+            "bleu": round(sum(r["metrics"]["bleu"] for r in results) / n, 4),
+            "lexical_diversity": round(sum(r["metrics"]["lexical_diversity"] for r in results) / n, 4),
+            "ngram": round(sum(r["metrics"]["ngram"] for r in results) / n, 4),
+            "overall": round(sum(r["metrics"]["overall"] for r in results) / n, 4),
+        }
     }
-    writer = get_stream_writer()
-    if writer:
-       writer(StreamEvent(
-        current="AnalyzerAgent",
-        progress=1.0,
-        message="通用文本质量兜底评估完成（BLEU + Lexical）",
-        data=result
-       ).json())
 
-    state.setdefault("analyzer", {})
-    state["analyzer"]["general_text_eval"] = result
+    summary_file = outdir / f"text_eval_summary_{ts}.json"
+    with open(summary_file, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+
+    state["analyzer"]["analyze_output_result_path"] = str(result_file)
+    state["analyzer"]["analyze_output_summary_path"] = str(summary_file)
+
     return state
 def eval_model_node(state: LoopAIState):
     """
@@ -681,9 +739,24 @@ def eval_model_node(state: LoopAIState):
 
     # 读取评测结果（JSONL）
     eval_cfg = state.get("judger") or {}
-    eval_result_path = eval_cfg.get("eval_result_path")
+    analyzer_cfg = state.get("analyzer") or {}
+
+    eval_result_path = (
+        eval_cfg.get("out_result_path")
+        or eval_cfg.get("eval_result_path")
+        or analyzer_cfg.get("out_result_path")
+        or analyzer_cfg.get("eval_result_path")
+    )
+
     if not eval_result_path:
-        raise ValueError("eval.eval_result_path not provided")
+        raise ValueError(
+        "eval_result_path not provided. "
+        "Please provide it in judger.out_result_path / judger.eval_result_path "
+        "or analyzer.out_result_path / analyzer.eval_result_path."
+       )
+
+    state.setdefault("analyzer", {})
+    state["analyzer"]["eval_result_path"] = eval_result_path
 
     with open(eval_result_path, 'r', encoding='utf-8') as f:
         lines = [ln for ln in f if ln.strip()]

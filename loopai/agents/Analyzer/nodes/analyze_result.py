@@ -146,6 +146,8 @@ def analyze_result_node(state: LoopAIState):
     """
     分析评测结果，生成 summary 并写入文件
     """
+    if state.get("analyzer", {}).get("analyze_task_type") == "text":
+        return state
     writer = get_stream_writer()
 
     def _emit(message, *, progress=None, data=None):

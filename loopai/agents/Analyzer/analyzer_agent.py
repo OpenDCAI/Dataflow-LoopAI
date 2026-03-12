@@ -33,6 +33,9 @@ class AnalyzerAgent(BaseAgent):
     def get_check_required_fields_node(self):
         @BaseAgent.set_current
         def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
+            analyzer_cfg = state.get("analyzer", {})
+            task_type = analyzer_cfg.get("analyze_task_type")
+
             required_fields = {
                 "analyzer": [
                     "analyze_model_path", "analyze_base_url", "analyze_api_key", "analyze_temperature", "analyze_top_p", 
