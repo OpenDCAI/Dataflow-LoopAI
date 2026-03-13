@@ -98,7 +98,7 @@ class JudgerAgent(BaseAgent):
                     
             """检查text2sql必要字段"""
             if not missing_fields:
-                if state.get("judger", {}).get("eval_text2sql_dir", "") == "text2sql":
+                if state.get("judger", {}).get("eval_task_type", "") == "text2sql":
                     missing_fields = get_missing_fields({'judger':["eval_text2sql_dir"]}, state)
             
             if missing_fields:
