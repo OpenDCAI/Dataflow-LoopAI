@@ -738,9 +738,9 @@ def eval_model_node(state: LoopAIState):
     judge = LLMJudge(task=task_type)
 
     # 读取评测结果（JSONL）
-    eval_cfg = state.get("judger") or {}
+    judger_cfg = state.get("judger") or {}
     analyzer_cfg = state.get("analyzer") or {}
-    eval_result_path = judger_cfg.get("out_result_path")
+    eval_result_path = judger_cfg.get("output_result_path")
     if not eval_result_path:
        eval_result_path = analyzer_cfg.get("eval_result_path")
 
@@ -748,7 +748,7 @@ def eval_model_node(state: LoopAIState):
         raise ValueError(
         "Missing analyzer.eval_result_path. "
         "Please provide analyzer.eval_result_path "
-        "or run judger to generate out_result_path."
+        "or run judger to generate output_result_path."
        )
 
     state.setdefault("analyzer", {})

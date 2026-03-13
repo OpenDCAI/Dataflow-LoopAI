@@ -51,7 +51,7 @@ class AnalyzerAgent(BaseAgent):
 
             if task_type in {"code", "text2sql"}:
                 has_result_path = (
-                    bool(judger_cfg.get("out_result_path"))
+                    bool(judger_cfg.get("output_result_path"))
                     or bool(analyzer_cfg.get("eval_result_path"))
                 )
                 if not has_result_path:
