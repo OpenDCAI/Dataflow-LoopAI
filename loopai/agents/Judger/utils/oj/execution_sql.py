@@ -11,7 +11,7 @@ def extract_solution(solution_str: str):
     
     if not matches:
         logger.error("[Error] No valid SQL tags found")
-        return None
+        return solution_str
     
     # logger.info(f"[Parsed SQL]: {matches[-1].group(1).strip()}")
     return matches[-1].group(1).strip()
