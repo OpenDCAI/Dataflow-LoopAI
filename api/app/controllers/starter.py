@@ -47,70 +47,38 @@ async def init_manager(task_id):
 
     config = await load_config(task_id)
     if not config:
-        return
-
-    with open(os.path.join(LoopAI_DIR, config['starter']['api_key_path']), 'r') as f:
-        api_key = f.read().strip()
-
-    # Read Tavily API key
-    tavily_api_key = None
-    if 'tavily_api_key_path' in config['starter']:
-        with open(os.path.join(LoopAI_DIR, config['starter']['tavily_api_key_path']), 'r') as f:
-            tavily_api_key = f.read().strip()
-            os.environ['TAVILY_API_KEY'] = tavily_api_key
-
-    rag_api_key = None
-    if 'rag' in config and 'api_key_path' in config['rag'] and os.path.exists(config['rag']['api_key_path']):
-        with open(config['rag']['api_key_path'], 'r') as f:
-            rag_api_key = f.read().strip()
+        return False
+    system_config = config.get('system', {})
     
+    # Read starter configuration
+    starter_model_name = system_config.get('starter_model_name', 'deepseek-chat')
+    starter_base_url = system_config.get('starter_base_url', 'https://api.deepseek.com')
+    starter_api_key = system_config.get('starter_api_key', '')
+    starter_tavily_api_key = system_config.get('tavily_api_key', '')
 
-    kaggle_username = config['starter'].get('kaggle_username', '') or ''
-    kaggle_key = config['starter'].get('kaggle_key', '') or ''
-
-    config['default_states']['obtainer']['api_key'] = api_key
-    config['default_states']['obtainer']['category'] = config['default_states']['obtainer']['category'].upper()
-    config['default_states']['obtainer']['tavily_api_key'] = tavily_api_key if tavily_api_key else ''
-    config['default_states']['obtainer']['kaggle_username'] = kaggle_username
-    config['default_states']['obtainer']['kaggle_key'] = kaggle_key
-
-    if 'reset' in config['rag']:
-        config['default_states']['obtainer']['reset_rag'] = config['rag']['reset']
-    if 'embed_model' in config['rag']:
-        embed_model = config['rag']['embed_model']
-        if embed_model:  # Only set if not empty
-            config['default_states']['obtainer']['rag_embed_model'] = embed_model
-    if 'collection_name' in config['rag']:
-        config['default_states']['obtainer']['rag_collection_name'] = config['rag']['collection_name']
-    if 'api_base_url' in config['rag']:
-        if config['rag']['api_base_url']:  # Only set if not empty
-            config['default_states']['obtainer']['rag_api_base_url'] = config['rag']['api_base_url']
-    if rag_api_key:
-        config['default_states']['obtainer']['rag_api_key'] = rag_api_key
-
-    # Configure webcrawler with API keys
-    if 'webcrawler' not in config['default_states']:
-        config['default_states']['webcrawler'] = {}
-    config['default_states']['webcrawler']['deepseek_api_key'] = api_key
-    config['default_states']['webcrawler']['tavily_api_key'] = tavily_api_key if tavily_api_key else ''
+    config['default_states']['obtainer']['tavily_api_key'] = starter_tavily_api_key
+    config['default_states']['webcrawler']['tavily_api_key'] = starter_tavily_api_key
 
     manager = StarterManager(sg_init_args={
         'tools': [check_motivation],
-        'model_name': config['starter']['model_name'],
-        'base_url': config['starter']['base_url'],
-        'api_key': api_key,
+        'model_name': starter_model_name,
+        'base_url': starter_base_url,
+        'api_key': starter_api_key,
         'checkpointer': checkpointer,
         'store': store
     })
 
     default_states = config['default_states']
+    return True
 
 
 @router.post("/agent/start", operation_id='startAgent', summary="Start the agent")
 async def start_agent(task_id: str):
     if manager:
         manager.stop()
-    await init_manager(task_id)
+    res = await init_manager(task_id)
+    if not res:
+        return response_body(code=400, message="Failed to initialize starter manager")
     state = await get_task_state(task_id, default_states)
     manager.start(default_state=state)
     return response_body(message="Agent started")

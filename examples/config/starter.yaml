@@ -1,18 +1,15 @@
-starter:
-  model_name: "deepseek-chat"
-  base_url: "https://api.deepseek.com"
-  api_key_path: "./api_key.txt"
-  tavily_api_key_path: "./tavily_api_key.txt"
-  kaggle_username: "binrxu" # Kaggle username (leave empty if not needed)
-  kaggle_key: "8c120e3a3c8d45f71ace8b4981f829ac" # Kaggle API key (leave empty if not needed)
-
-# RAG configuration (independent from obtainer)
-rag:
-  reset: false # whether to reset RAG database
-  embed_model: "text-embedding-3-large" # RAG embedding model (default: "text-embedding-3-large", leave empty to use default)
-  collection_name: "rag_collection" # RAG collection name
-  api_base_url: "http://123.129.219.111:3000/v1" # RAG API base URL (if empty, will use obtainer's base_url)
-  api_key_path: "./rag_api_key.txt" # RAG API key file path (if empty, will use obtainer's api_key)
+system:
+  starter_api_key: ""
+  starter_model_path: "deepseek-chat"
+  starter_model_name: "deepseek-chat"
+  starter_base_url: "https://api.deepseek.com"
+  llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/"
+  llamafactory_env_path: "/home/lpc/miniconda3/envs/lmf/bin/"
+  CUDA_VISIBLE_DEVICES: "0,1"
+  swanlab_api_key: ""
+  tavily_api_key: ""
+  kaggle_username: "binrxu"
+  kaggle_key: ""
 
 default_states:
   task_id: "default"
@@ -42,20 +39,20 @@ default_states:
     output_suggestion: true
     analyze_batch_size: 20
 
-  # Obtainer agent configuration (nested structure)
+  # Obtainer agent configuration (nested structure for ObtainerAgent)
   obtainer:
-    model_path: "gpt-4o" # if empty, will use analyze_model_path or starter model
-    base_url: "http://123.129.219.111:3000/v1" # if empty, will use analyze_base_url or starter base_url
-    api_key: "" # if empty, will use starter api_key
+    model_path: "gpt-4o" # if empty, will use starter model
+    base_url: "http://172.96.160.199:3000/v1" # if empty, will use starter base_url
+    api_key: "sk-..." # if empty, will use starter api_key
     temperature: 0.7
     search_engine: "tavily" # tavily, duckduckgo, jina
     max_urls: 6
     max_download_subtasks: null # null means no limit
     category: "SFT" # PT or SFT
-    proxy: "http://127.0.0.1:9090"
+    proxy: "http://127.0.0.1:7890"
     # default_mapping_format: "alpaca"  # default mapping format to auto-skip interaction
     # Webpage collect node configuration
-    max_exploration_depth: 3 # Maximum depth for Playwright exploration
+    max_exploration_depth: 2 # Maximum depth for Playwright exploration
     max_jina_urls: 30 # Maximum URLs to explore with Jina per resource list page
     # Webpage dataset node configuration
     max_records_per_page: 20 # Maximum dataset records to generate per webpage (default: 10)
@@ -64,7 +61,7 @@ default_states:
   webcrawler:
     # API 配置
     deepseek_api_key: "" # 从 starter.api_key_path 读取
-    tavily_api_key: "" # 从 starter.tavily_api_key_path 读取
+    tavily_api_key: "" # 从 starter.tavily_api_key 读取
     deepseek_api_base: "https://api.deepseek.com/v1"
     # 模型配置
     model: "deepseek-chat"
@@ -102,10 +99,9 @@ default_states:
   obtainer_debug: false
 
   trainer:
-    train_framework: 'llamafactory'
-    llamafactory_dir: '/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/'
+    train_framework: "llamafactory"
+    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/"
     train_input_dataset_path: "/home/lpc/repos/Dataflow-LoopAI/data/alpaca_en_demo.json" # to defined the path of training dataset (json/jsonl format)
     train_input_task_description: "训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务" # to defined the task description for training
-    train_input_config_template_path: "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml" # to defined the path of llamafactory config template
-    output_dir: "./output/training_test" # to defined the output directory for training
+    train_input_config_template_path: "/home/lpc/repos/Dataflow-LoopAI/api/examples/bird.yaml" # to defined the path of llamafactory config template
     train_input_model_name: "/home/lpc/models/Qwen2.5-0.5B-Instruct/" # to defined the base model name for training

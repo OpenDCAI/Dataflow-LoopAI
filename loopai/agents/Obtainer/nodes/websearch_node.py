@@ -24,6 +24,31 @@ from loopai.common.prompts import PromptLoader
 
 logger = get_logger()
 
+
+def _emit_webresearch_progress(
+    event_name: str,
+    message: str,
+    progress: Optional[float] = None,
+    progress_num: Optional[int] = None,
+    total: Optional[int] = None,
+    data: Optional[Dict[str, Any]] = None,
+) -> None:
+    """发送 WebResearch 进度事件，供前端进度条展示（始终发送，不依赖 debug_mode）"""
+    try:
+        writer = get_stream_writer()
+        if writer:
+            writer(StreamEvent(
+                current=event_name,
+                message=message,
+                progress=progress,
+                progress_num=progress_num,
+                total=total,
+                data=data,
+            ).json())
+    except Exception as e:
+        logger.debug(f"Could not send webresearch progress event: {e}")
+
+
 # 需要跳过的域名列表（这些网站可能会触发 CAPTCHA 验证或有反爬虫保护）
 BLOCKED_DOMAINS = [
     "stackoverflow.com",
@@ -171,6 +196,7 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
             url_timeout=state.get("obtainer", {}).get("url_timeout", 60),  # Timeout in seconds for each URL exploration
             tavily_api_key=tavily_api_key if tavily_api_key else None,
             debug_mode=debug_mode,
+            event_name=state['current'],
         ))
         
         # Update state with results
@@ -182,26 +208,25 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
             state.setdefault("obtainer", {})["urls_visited"] = result.get("urls_visited", [])
             logger.info(f"WebSearch completed: {len(result.get('subtasks', []))} subtasks generated")
         
-        # Send custom stream event if debug mode is enabled
-        debug_mode = state.get("obtainer_debug", False)
-        if debug_mode:
-            try:
-                writer = get_stream_writer()
-                if writer:
-                    writer(StreamEvent(
-                        current=state.get('current', 'websearch_node'),
-                        message="WebSearch node completed",
-                        data={
-                            'user_query': user_query,
-                            'research_summary': result.get("research_summary", "")[:200] if "exception" not in result else None,
-                            'subtasks_count': len(result.get("subtasks", [])),
-                            'urls_visited_count': len(result.get("urls_visited", [])),
-                            'has_exception': "exception" in result,
-                            'exception': result.get("exception") if "exception" in result else None
-                        }
-                    ).json())
-            except Exception as e:
-                logger.debug(f"Could not send stream event: {e}")
+        # 发送 WebResearch 节点完成事件（与内部进度条一致）
+        try:
+            writer = get_stream_writer()
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message="WebResearch: 节点完成",
+                    progress=1.0,
+                    data={
+                        "user_query": user_query,
+                        "research_summary": result.get("research_summary", "")[:200] if "exception" not in result else None,
+                        "subtasks_count": len(result.get("subtasks", [])),
+                        "urls_visited_count": len(result.get("urls_visited", [])),
+                        "has_exception": "exception" in result,
+                        "exception": result.get("exception") if "exception" in result else None,
+                    },
+                ).json())
+        except Exception as e:
+            logger.debug(f"Could not send stream event: {e}")
         
     except Exception as e:
         logger.error(f"WebSearch node error: {e}", exc_info=True)
@@ -234,6 +259,7 @@ async def _websearch_workflow(
     url_timeout: int = 60,
     tavily_api_key: str = None,
     debug_mode: bool = False,
+    event_name: str = "websearch_workflow"
 ) -> Dict[str, Any]:
     """Async workflow for web search"""
     try:
@@ -246,20 +272,14 @@ async def _websearch_workflow(
         
         # Step 1: Generate research queries
         logger.info("Step 1: Generating research queries...")
-        if debug_mode:
-            try:
-                writer = get_stream_writer()
-                if writer:
-                    writer(StreamEvent(
-                        current="websearch_workflow",
-                        message="Generating research queries",
-                        progress=0.0,
-                        progress_num=0,
-                        total=4
-                    ).json())
-            except Exception:
-                pass
-        
+        _emit_webresearch_progress(
+            event_name,
+            "WebResearch: 生成检索查询中",
+            progress=0.0,
+            progress_num=0,
+            total=4,
+        )
+
         queries = await query_generator.generate_queries(
             objective=user_query,
             message=user_query,
@@ -269,38 +289,25 @@ async def _websearch_workflow(
             queries = [user_query]  # Fallback to original query
         
         logger.info(f"Generated {len(queries)} research queries")
-        
-        if debug_mode:
-            try:
-                writer = get_stream_writer()
-                if writer:
-                    writer(StreamEvent(
-                        current="websearch_workflow",
-                        message=f"Generated {len(queries)} research queries",
-                        progress=0.25,
-                        progress_num=1,
-                        total=4,
-                        data={'queries': queries}
-                    ).json())
-            except Exception:
-                pass
-        
+        _emit_webresearch_progress(
+            event_name,
+            f"WebResearch: 已生成 {len(queries)} 个检索查询",
+            progress=0.25,
+            progress_num=1,
+            total=4,
+            data={"queries": queries} if debug_mode else None,
+        )
+
         # Step 2: Search for URLs
         logger.info("Step 2: Searching for URLs...")
-        if debug_mode:
-            try:
-                writer = get_stream_writer()
-                if writer:
-                    writer(StreamEvent(
-                        current="websearch_workflow",
-                        message="Searching for URLs",
-                        progress=0.25,
-                        progress_num=1,
-                        total=4
-                    ).json())
-            except Exception:
-                pass
-        
+        _emit_webresearch_progress(
+            event_name,
+            "WebResearch: 搜索 URL 中",
+            progress=0.25,
+            progress_num=1,
+            total=4,
+        )
+
         all_urls = []
         for query in queries:
             search_results = await WebTools.search_web(query, search_engine, tavily_api_key=tavily_api_key)
@@ -313,22 +320,15 @@ async def _websearch_workflow(
         # Remove duplicates and limit
         unique_urls = list(dict.fromkeys(all_urls))[:max_urls]
         logger.info(f"Total unique URLs to visit: {len(unique_urls)}")
-        
-        if debug_mode:
-            try:
-                writer = get_stream_writer()
-                if writer:
-                    writer(StreamEvent(
-                        current="websearch_workflow",
-                        message=f"Found {len(unique_urls)} unique URLs to visit",
-                        progress=0.5,
-                        progress_num=2,
-                        total=4,
-                        data={'unique_urls_count': len(unique_urls), 'total_urls_found': len(all_urls)}
-                    ).json())
-            except Exception:
-                pass
-        
+        _emit_webresearch_progress(
+            event_name,
+            f"WebResearch: 已找到 {len(unique_urls)} 个待访问 URL",
+            progress=0.5,
+            progress_num=2,
+            total=4,
+            data={"unique_urls_count": len(unique_urls), "total_urls_found": len(all_urls)},
+        )
+
         # Step 3: Explore web forest with depth-limited BFS (max depth 4, concurrent 10)
         logger.info(f"Step 3: Exploring web forest (max_depth={max_depth}, concurrent={concurrent_limit}, topk={topk_urls}, timeout={url_timeout}s)...")
         visited_urls = []
@@ -468,26 +468,19 @@ async def _websearch_workflow(
                 continue
             
             logger.info(f"[Forest Exploration] Processing depth {current_depth}: {len(current_layer)} URLs")
-            
-            if debug_mode:
-                try:
-                    writer = get_stream_writer()
-                    if writer:
-                        writer(StreamEvent(
-                            current="websearch_workflow",
-                            message=f"Exploring depth {current_depth}/{max_depth} with {len(current_layer)} URLs",
-                            progress=0.5 + (current_depth / max_depth) * 0.25,
-                            data={
-                                'current_depth': current_depth,
-                                'max_depth': max_depth,
-                                'urls_at_depth': len(current_layer),
-                                'total_visited': len(visited_urls),
-                                'queue_size': len(url_queue)
-                            }
-                        ).json())
-                except Exception:
-                    pass
-            
+            _emit_webresearch_progress(
+                event_name,
+                f"WebResearch: 探索深度 {current_depth}/{max_depth}，本层 {len(current_layer)} 个 URL",
+                progress=0.5 + (current_depth / max_depth) * 0.25,
+                data={
+                    "current_depth": current_depth,
+                    "max_depth": max_depth,
+                    "urls_at_depth": len(current_layer),
+                    "total_visited": len(visited_urls),
+                    "queue_size": len(url_queue),
+                },
+            )
+
             # Process URLs at current depth in batches to avoid queuing time counting toward timeout
             results = []
             for i in range(0, len(current_layer), concurrent_limit):
@@ -557,22 +550,16 @@ async def _websearch_workflow(
             logger.info("[RAG] Force persist completed")
         except Exception as e:
             logger.warning(f"[RAG] Force persist failed: {e}")
-        
-        if debug_mode:
-            try:
-                writer = get_stream_writer()
-                if writer:
-                    writer(StreamEvent(
-                        current="websearch_workflow",
-                        message=f"Visited and stored {len(visited_urls)}/{len(unique_urls)} URLs",
-                        progress=0.75,
-                        progress_num=3,
-                        total=4,
-                        data={'visited_urls_count': len(visited_urls), 'total_urls': len(unique_urls)}
-                    ).json())
-            except Exception:
-                pass
-        
+
+        _emit_webresearch_progress(
+            event_name,
+            f"WebResearch: 已访问并存储 {len(visited_urls)}/{len(unique_urls)} 个 URL",
+            progress=0.75,
+            progress_num=3,
+            total=4,
+            data={"visited_urls_count": len(visited_urls), "total_urls": len(unique_urls)},
+        )
+
         # Step 4: Generate download subtasks using Summary Agent
         logger.info("Step 4: Generating download subtasks...")
         
@@ -598,22 +585,15 @@ async def _websearch_workflow(
         new_subtasks = subtask_result.get("new_sub_tasks", [])
         
         logger.info(f"Generated {len(new_subtasks)} download subtasks")
-        
-        if debug_mode:
-            try:
-                writer = get_stream_writer()
-                if writer:
-                    writer(StreamEvent(
-                        current="websearch_workflow",
-                        message=f"Generated {len(new_subtasks)} download subtasks",
-                        progress=1.0,
-                        progress_num=4,
-                        total=4,
-                        data={'subtasks_count': len(new_subtasks), 'research_summary': research_summary[:200]}
-                    ).json())
-            except Exception:
-                pass
-        
+        _emit_webresearch_progress(
+            event_name,
+            f"WebResearch: 已生成 {len(new_subtasks)} 个下载子任务",
+            progress=1.0,
+            progress_num=4,
+            total=4,
+            data={"subtasks_count": len(new_subtasks), "research_summary": (research_summary[:200] if research_summary else "")},
+        )
+
         return {
             "research_summary": research_summary,
             "subtasks": new_subtasks,

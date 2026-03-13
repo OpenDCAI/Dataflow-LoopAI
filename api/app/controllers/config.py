@@ -13,13 +13,14 @@ router = APIRouter(tags=["config"])
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(os.path.dirname(CURRENT_DIR))
+LoopAI_DIR = os.path.dirname(BASE_DIR)
 
 
 @router.get("/config", operation_id='getConfig', summary="获取Starter配置")
 async def get_config():
     """获取配置"""
-    system_config = await get_system_config(BASE_DIR)
-    state_config = await get_state_config(BASE_DIR)
+    system_config = await get_system_config(LoopAI_DIR)
+    state_config = await get_state_config(LoopAI_DIR)
     res = {
         'id': system_config['id'],
         'name': system_config['name'],
@@ -43,11 +44,10 @@ async def update_config(config: ConfigModel):
         return response_body(code=400, status='error', message='config不存在')()
     system_config = config_obj.get('system', {})
     states_config = config_obj.get('states', {})
-    for series_key in system_config:
-        for key in system_config[series_key]:
-            format_item = format_value(system_config[series_key][key])
-            original_config_obj.setdefault(series_key, {})[
-                key] = format_item["value"]
+    for key in system_config:
+        format_item = format_value(system_config[key])
+        original_config_obj.setdefault('system', {})[
+            key] = format_item["value"]
     for series_key in states_config:
         if series_key == 'default':
             for key in states_config[series_key]:

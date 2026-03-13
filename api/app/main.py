@@ -52,7 +52,7 @@ app.add_middleware(
 register_tortoise(
     app,
     db_url=f"sqlite://{DB_PATH}",
-    modules={"models": ["app.models.db_models"]},
+    modules={"models": ["api.app.models.db_models"]},
     generate_schemas=True,
     add_exception_handlers=True,
 )
@@ -97,4 +97,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8855)

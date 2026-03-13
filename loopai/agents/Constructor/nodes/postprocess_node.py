@@ -15,9 +15,40 @@ from loopai.common.prompts import PromptLoader
 logger = get_logger()
 
 
+def _emit_postprocess_progress(
+    event_name: str,
+    message: str,
+    progress: Optional[float] = None,
+    progress_num: Optional[int] = None,
+    total: Optional[int] = None,
+    data: Optional[Dict[str, Any]] = None,
+) -> None:
+    """发送后处理进度事件"""
+    try:
+        writer = get_stream_writer()
+        if writer:
+            writer(StreamEvent(
+                current=event_name,
+                message=message,
+                progress=progress,
+                progress_num=progress_num,
+                total=total,
+                data=data,
+            ).json())
+    except Exception as e:
+        logger.debug(f"Could not send postprocess progress: {e}")
+
+
 def postprocess_node(state: LoopAIState) -> LoopAIState:
     """Post-process node that converts downloaded datasets to PT/SFT format"""
     logger.info("=== Post-process Node: Starting ===")
+    
+    _emit_postprocess_progress(
+        event_name=state.get('current', 'postprocess_node'),
+        message="Constructor: 后处理节点开始",
+        progress=0.0,
+        data={"phase": "postprocess", "node": "postprocess_node"},
+    )
     
     # Check if there are any successful downloads
     subtasks = state.get("obtainer_subtasks", [])
@@ -86,18 +117,21 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
                             user_query = message.content
                             break
     
+    # 获取 constructor 嵌套配置
+    constructor = state.get("constructor", {})
+    
     # Get category (PT or SFT) - default to PT if not specified
-    category = state.get("obtainer_category", "PT").upper()
+    category = constructor.get("category", "PT").upper()
     if category not in ["PT", "SFT"]:
         logger.warning(f"Invalid category '{category}', defaulting to PT")
         category = "PT"
     
     # Initialize components
     try:
-        model_name = state.get("obtainer_model_path") or state.get("analyze_model_path")
-        base_url = state.get("obtainer_base_url") or state.get("analyze_base_url")
-        api_key = state.get("obtainer_api_key") or state.get("analyze_api_key")
-        temperature = state.get("obtainer_temperature", 0.0)
+        model_name = constructor.get("model_path")
+        base_url = constructor.get("base_url")
+        api_key = constructor.get("api_key")
+        temperature = constructor.get("temperature", 0.0)
         
         if not model_name or not base_url or not api_key:
             logger.error("Missing required configuration for post-process node")
@@ -122,15 +156,16 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             state["exception"] = f"Download directory does not exist: {download_dir}"
             return state
         
-        # Get additional configuration from state or environment
-        llm_timeout = state.get("obtainer_llm_timeout", 120.0)
-        max_retries = state.get("obtainer_max_retries", 3)
-        max_concurrent_mapping = state.get("obtainer_max_concurrent_mapping", 10)
+        # Get additional configuration from constructor nested config
+        llm_timeout = constructor.get("llm_timeout", 300.0)
+        max_retries = constructor.get("max_retries", 3)
+        max_concurrent_mapping = constructor.get("max_concurrent_mapping", 10)
         
         # Get dataset background for file filtering
-        dataset_background = state.get("obtainer_datasets_background", "")
+        dataset_background = constructor.get("datasets_background", "")
         
-        # Run async workflow
+        # Run async workflow (传入 event_name 用于进度事件)
+        event_name = state.get("current", "ConstructorAgent.postprocess_node")
         result = asyncio.run(_postprocess_workflow(
             download_dir=download_dir,
             user_query=user_query,
@@ -144,13 +179,17 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             max_retries=max_retries,
             max_concurrent_mapping=max_concurrent_mapping,
             dataset_background=dataset_background,
+            event_name=event_name,
         ))
         
-        # Update state with results
+        # Update state with results (写入 constructor 嵌套结构)
         if "exception" in result:
             state["exception"] = result["exception"]
         else:
-            state["obtainer_postprocess_results"] = {
+            # 确保 constructor 字典存在
+            if "constructor" not in state:
+                state["constructor"] = {}
+            state["constructor"]["postprocess_results"] = {
                 "total_records_processed": result.get("total_records_processed", 0),
                 "processed_sources_count": result.get("processed_sources_count", 0),
                 "output_dir": result.get("output_dir", ""),
@@ -158,31 +197,30 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             # Save intermediate format path for mapping node
             output_dir = result.get("output_dir", "")
             if output_dir and os.path.exists(output_dir):
-                state["obtainer_intermediate_data_path"] = output_dir
+                state["constructor"]["intermediate_data_path"] = output_dir
                 logger.info(f"Intermediate format data saved at: {output_dir}")
             logger.info(
                 f"Post-process node completed: {result.get('total_records_processed', 0)} records processed."
             )
             
-            # Send custom stream event if debug mode is enabled
-            debug_mode = state.get("obtainer_debug", True)
-            if debug_mode:
-                try:
-                    writer = get_stream_writer()
-                    if writer:
-                        writer(StreamEvent(
-                            current=state.get('current', 'postprocess_node'),
-                            message="Post-process node completed",
-                            data={
-                                'category': category,
-                                'total_records_processed': result.get('total_records_processed', 0),
-                                'processed_sources_count': result.get('processed_sources_count', 0),
-                                'output_dir': result.get('output_dir', ''),
-                                'user_query': user_query[:100] if user_query else ''
-                            }
-                        ).json())
-                except Exception as e:
-                    logger.debug(f"Could not send stream event: {e}")
+            # 发送后处理完成事件（始终发送，供进度条展示）
+            try:
+                writer = get_stream_writer()
+                if writer:
+                    writer(StreamEvent(
+                        current=state.get('current', 'postprocess_node'),
+                        message="Constructor: 后处理节点完成",
+                        progress=1.0,
+                        data={
+                            "category": category,
+                            "total_records_processed": result.get("total_records_processed", 0),
+                            "processed_sources_count": result.get("processed_sources_count", 0),
+                            "output_dir": result.get("output_dir", ""),
+                            "user_query": user_query[:100] if user_query else "",
+                        },
+                    ).json())
+            except Exception as e:
+                logger.debug(f"Could not send stream event: {e}")
             
     except Exception as e:
         logger.error(f"Post-process node error: {e}", exc_info=True)
@@ -201,13 +239,15 @@ async def _postprocess_workflow(
     api_key: str,
     temperature: float,
     prompt_loader: Optional[PromptLoader] = None,
-    llm_timeout: float = 120.0,
+    llm_timeout: float = 300.0,
     max_retries: int = 3,
     max_concurrent_mapping: int = 10,
     dataset_background: str = "",
+    event_name: str = "ConstructorAgent.postprocess_node",
 ) -> Dict[str, Any]:
     """Async workflow for post-processing downloaded datasets"""
     try:
+        _emit_postprocess_progress(event_name, "Constructor: 后处理 - 初始化环境", progress=0.0)
         _ensure_hf_cache_env(download_dir)
         
         # Initialize data convertor with timeout and retry settings
@@ -234,6 +274,7 @@ async def _postprocess_workflow(
             return {"exception": f"Download directory does not exist: {download_dir}"}
         
         # Step 1: File discovery (LLM-driven)
+        _emit_postprocess_progress(event_name, "Constructor: 后处理 - 扫描并发现数据文件", progress=0.05)
         logger.info(f"Scanning download directory: {download_dir}")
         exclude_files = [
             'PT.jsonl', 'SFT.jsonl', 'summary.txt',
@@ -324,9 +365,16 @@ async def _postprocess_workflow(
                 f"File discovery process had {failed_chunks}/{total_chunks} chunks fail, results may be incomplete."
             )
         logger.info(f"LLM identified {len(data_file_list)} data files: {data_file_list}")
-        
+        _emit_postprocess_progress(
+            event_name,
+            f"Constructor: 后处理 - 已发现 {len(data_file_list)} 个数据文件",
+            progress=0.2,
+            data={"data_files_count": len(data_file_list)},
+        )
+
         # Step 1.5: File filtering based on dataset background
         if dataset_background:
+            _emit_postprocess_progress(event_name, "Constructor: 后处理 - 按数据集背景过滤文件中", progress=0.25)
             logger.info(f"Starting file filtering based on dataset background: {dataset_background[:100]}...")
             filtered_file_list: List[str] = []
             failed_filter_files = 0
@@ -443,7 +491,13 @@ async def _postprocess_workflow(
             
             # Update data_file_list with filtered results
             data_file_list = filtered_file_list
-            
+            _emit_postprocess_progress(
+                event_name,
+                f"Constructor: 后处理 - 过滤完成，保留 {len(data_file_list)} 个文件",
+                progress=0.35,
+                data={"filtered_count": len(data_file_list)},
+            )
+
             if not data_file_list:
                 logger.warning("All files were filtered out, no files to process.")
                 return {
@@ -455,6 +509,7 @@ async def _postprocess_workflow(
             logger.info("No dataset background provided, skipping file filtering step.")
         
         # Step 2 & 3: Data conversion and merging
+        _emit_postprocess_progress(event_name, "Constructor: 后处理 - 开始数据转换与合并", progress=0.4)
         output_dir = os.path.join(download_dir, "processed_output")
         os.makedirs(output_dir, exist_ok=True)
         logger.info(f"Output directory: {os.path.abspath(output_dir)}")
@@ -466,14 +521,23 @@ async def _postprocess_workflow(
         logger.info(f"========================================")
         
         processed_sources_list: List[Tuple[str, int]] = []
-        
-        for relative_file_path in data_file_list:
+        total_files = len(data_file_list)
+        for file_idx, relative_file_path in enumerate(data_file_list):
             absolute_file_path = os.path.join(download_dir, relative_file_path)
             
             if not os.path.exists(absolute_file_path):
                 logger.warning(f"LLM returned non-existent file path '{relative_file_path}', skipping.")
                 continue
-            
+            # 按文件进度：0.4 ~ 0.85
+            file_progress = 0.4 + 0.45 * (file_idx / max(total_files, 1))
+            _emit_postprocess_progress(
+                event_name,
+                f"Constructor: 后处理 - 转换文件中 ({file_idx + 1}/{total_files})",
+                progress=file_progress,
+                progress_num=file_idx + 1,
+                total=total_files,
+                data={"current_file": relative_file_path},
+            )
             logger.info(f"--- Processing file: {absolute_file_path} ---")
             
             files_to_process = []
@@ -633,6 +697,12 @@ async def _postprocess_workflow(
         
         # File processing loop complete
         total_records_processed = sum(count for _, count in processed_sources_list)
+        _emit_postprocess_progress(
+            event_name,
+            f"Constructor: 后处理 - 完成，共 {total_records_processed} 条记录",
+            progress=0.9,
+            data={"total_records_processed": total_records_processed},
+        )
         logger.info(f"Download directory processing complete. Total extracted {total_records_processed} records.")
         
         # Output file location info
@@ -648,7 +718,8 @@ async def _postprocess_workflow(
         # Step 4: Clean up temporary directories
         logger.info("Cleaning up temporary extraction directories...")
         convertor._cleanup_temp_dirs()
-        
+        _emit_postprocess_progress(event_name, "Constructor: 后处理 - 收尾完成", progress=1.0)
+
         return {
             "total_records_processed": total_records_processed,
             "processed_sources_count": len(processed_sources_list),

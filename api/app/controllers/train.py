@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 import shutil
 
-from ..models.task_models import TrainRequest, TrainResponse, TaskStatusResponse, LogResponse, TaskStatus, SwanLabLogResponse, AllSwanLabLogsResponse
+from ..models.task_models import TrainRequest, TrainResponse, TaskStatusResponse, LogResponse, TaskStatus, SwanLabLogResponse, AllSwanLabLogsResponse, MetricsResponse
 from ..utils.train import TaskManager, generate_task_id, save_yaml_config, read_log_file, validate_yaml_content
 
 router = APIRouter(tags=["train"])
@@ -29,7 +29,9 @@ async def start_training(request: TrainRequest):
         #         status_code=400, detail="Invalid YAML configuration")
 
         # 生成任务ID
-        task_id = generate_task_id()
+        # task_id = generate_task_id()
+        task_id = request.task_id
+        output_dir = request.output_dir
 
         # # 保存配置文件
         # config_path = save_yaml_config(task_id, request.config_path, CONFIGS_DIR)
@@ -45,7 +47,7 @@ async def start_training(request: TrainRequest):
             task_id, config_copy_path, request.framework, request.task_name)
 
         # 启动训练
-        if task_manager.start_training(task_id):
+        if task_manager.start_training(task_id, output_dir):
             return TrainResponse(
                 task_id=task_id,
                 status=TaskStatus.RUNNING,
@@ -204,3 +206,42 @@ async def get_all_swanlab_logs():
         total=len(logs),
         logs=logs
     )
+
+
+@router.get("/metrics/{task_id}", response_model=MetricsResponse)
+async def get_task_metrics(task_id: str, count: Optional[int] = 100):
+    """获取任务的训练指标"""
+    metrics_data = task_manager.get_task_metrics(task_id, count)
+    
+    if not metrics_data:
+        raise HTTPException(status_code=404, detail=f"Metrics not found for task {task_id}")
+    
+    return MetricsResponse(**metrics_data)
+
+
+@router.get("/metrics/{task_id}/file")
+async def get_task_metrics_file(task_id: str):
+    """获取任务指标文件路径"""
+    from fastapi.responses import FileResponse
+    
+    metrics_file = task_manager.get_task_metrics_file_path(task_id)
+    
+    if not metrics_file:
+        raise HTTPException(status_code=404, detail=f"Metrics file not found for task {task_id}")
+    
+    return FileResponse(
+        metrics_file,
+        media_type="application/json",
+        filename=f"{task_id}_metrics.json"
+    )
+
+
+@router.delete("/metrics/{task_id}")
+async def delete_task_metrics(task_id: str):
+    """删除任务指标数据"""
+    success = task_manager.cleanup_task_metrics(task_id)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to delete metrics for task {task_id}")
+    
+    return {"message": f"Metrics for task {task_id} deleted successfully"}

@@ -32,9 +32,15 @@ def summary_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState:
     """
     logger.info("=== Summary Node: Starting ===")
     
+    # 确保 constructor 字典存在
+    if "constructor" not in state:
+        state["constructor"] = {}
+    
+    constructor_state = state.get("constructor", {})
+    
     # 获取映射结果
-    mapping_results = state.get("obtainer_mapping_results", {})
-    confirmed_format = state.get("obtainer_confirmed_format", {})
+    mapping_results = constructor_state.get("mapping_results", {})
+    confirmed_format = constructor_state.get("confirmed_format", {})
     exception = state.get("exception")
     
     # 构建总结消息
@@ -171,15 +177,19 @@ def _reset_mapping_runtime_state(state: LoopAIState):
     清理映射流程的临时状态，方便下一轮循环重新触发映射。
     保留 automode/default 配置；仅清理确认/交互相关字段。
     """
+    # 确保 constructor 字典存在
+    if "constructor" not in state:
+        state["constructor"] = {}
+    
     transient_keys = [
-        "obtainer_confirmed_format",
-        "obtainer_confirmation_result",
-        "obtainer_pending_format",
-        "obtainer_mapping_user_intent",
-        "obtainer_mapping_selected_format_id",
-        "obtainer_mapping_custom_description",
+        "confirmed_format",
+        "confirmation_result",
+        "pending_format",
+        "mapping_user_intent",
+        "mapping_selected_format_id",
+        "mapping_custom_description",
     ]
     for key in transient_keys:
-        if key in state:
-            state[key] = None if key.endswith("_format") else ""
+        if key in state.get("constructor", {}):
+            state["constructor"][key] = None if key.endswith("_format") else ""
 

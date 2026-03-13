@@ -53,13 +53,20 @@ class ObtainerAgent(BaseAgent):
         """
         Get start node function that can access self
         """
-        @BaseAgent.set_current
         def start_node(state: LoopAIState):
             """
             Start node for obtainer agent
             Ensure configuration parameters are set in state
             """
             logger.info(f"ObtainerAgent: Starting task")
+            state['current'] = "ObtainerAgent.start_node"
+            writer = get_stream_writer()
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message="ObtainerAgent Config Start",
+                    progress=0
+                ).json())
             
             # Ensure obtainer configuration is set in state
             # Use values from constructor if not already in state
@@ -116,6 +123,10 @@ class ObtainerAgent(BaseAgent):
             if not user_query:
                 user_query = state.get("automated_query", "")
             
+            # Write user_query to state if available
+            if user_query:
+                state.setdefault("obtainer", {})["user_query"] = user_query
+            
             # Get objective if available
             objective = state.get("automated_query", user_query)
             
@@ -153,6 +164,7 @@ class ObtainerAgent(BaseAgent):
                             if normalized_query != user_query:
                                 state["automated_query"] = normalized_query
                                 user_query = normalized_query
+                                state.setdefault("obtainer", {})["user_query"] = user_query
                                 objective = normalized_query
                                 logger.info(
                                     f"Obtain query normalized from eval-style to dataset request: "
@@ -276,23 +288,20 @@ class ObtainerAgent(BaseAgent):
             if "kaggle_key" not in state.get("obtainer", {}):
                 state.setdefault("obtainer", {})["kaggle_key"] = ""
             
-            if "tavily_api_key" not in state.get("obtainer", {}):
-                # Try to read from state first, then environment variable, then from file
-                tavily_api_key = state.get("obtainer", {}).get("tavily_api_key", "")
-                if not tavily_api_key:
-                    tavily_api_key = os.getenv("TAVILY_API_KEY", "")
-                if not tavily_api_key:
-                    # Try to read from examples/scripts/tavily_api_key.txt
-                    script_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "examples", "scripts")
-                    tavily_api_key_file = os.path.join(script_dir, "tavily_api_key.txt")
-                    if os.path.exists(tavily_api_key_file):
-                        try:
-                            with open(tavily_api_key_file, 'r', encoding='utf-8') as f:
-                                tavily_api_key = f.read().strip()
-                                logger.info(f"Loaded Tavily API key from {tavily_api_key_file}")
-                        except Exception as e:
-                            logger.debug(f"Failed to read Tavily API key from file: {e}")
-                state.setdefault("obtainer", {})["tavily_api_key"] = tavily_api_key
+            tavily_api_key = state.get("obtainer", {}).get("tavily_api_key", "")
+            if not tavily_api_key:
+                tavily_api_key = os.getenv("TAVILY_API_KEY", "")
+            if not tavily_api_key:
+                script_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "examples", "scripts")
+                tavily_api_key_file = os.path.join(script_dir, "tavily_api_key.txt")
+                if os.path.exists(tavily_api_key_file):
+                    try:
+                        with open(tavily_api_key_file, 'r', encoding='utf-8') as f:
+                            tavily_api_key = f.read().strip()
+                            logger.info(f"Loaded Tavily API key from {tavily_api_key_file}")
+                    except Exception as e:
+                        logger.debug(f"Failed to read Tavily API key from file: {e}")
+            state.setdefault("obtainer", {})["tavily_api_key"] = tavily_api_key
             
             # Mapping configuration
             # default_mapping_format: If set (e.g., "alpaca"), skip user interaction and use this format directly
@@ -352,27 +361,22 @@ class ObtainerAgent(BaseAgent):
                        f"search_engine: {state.get('obtainer', {}).get('search_engine')}, max_urls: {state.get('obtainer', {}).get('max_urls')}, "
                        f"debug: {debug_mode}")
             
-            # Send custom stream event if debug mode is enabled
-            if debug_mode:
-                try:
-                    writer = get_stream_writer()
-                    if writer:
-                        writer(StreamEvent(
-                            current=state.get('current', 'obtainer_start_node'),
-                            message="ObtainerAgent configuration initialized",
-                            data={
-                                'model': state.get('obtainer', {}).get('model_path'),
-                                'base_url': state.get('obtainer', {}).get('base_url'),
-                                'category': state.get('obtainer', {}).get('category'),
-                                'search_engine': state.get('obtainer', {}).get('search_engine'),
-                                'max_urls': state.get('obtainer', {}).get('max_urls'),
-                                'debug_mode': debug_mode
-                            }
-                        ).json())
-                except Exception as e:
-                    # Stream writer might not be available in all contexts
-                    logger.debug(f"Could not send stream event: {e}")
-            
+            # Send configuration stream event (always, not debug_mode only)
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message="ObtainerAgent 配置初始化完成",
+                    progress=1,
+                    data={
+                        'model': state.get('obtainer', {}).get('model_path'),
+                        'base_url': state.get('obtainer', {}).get('base_url'),
+                        'category': state.get('obtainer', {}).get('category'),
+                        'search_engine': state.get('obtainer', {}).get('search_engine'),
+                        'max_urls': state.get('obtainer', {}).get('max_urls'),
+                        'debug_mode': debug_mode
+                    }
+                ).json())
+
             return state
         
         return start_node
@@ -387,6 +391,15 @@ class ObtainerAgent(BaseAgent):
             Task decomposer node: decompose user input into task list
             """
             logger.info("ObtainerAgent: Task Decomposer Node - Starting task decomposition")
+            state['current'] = "ObtainerAgent.task_decomposer_node"
+            writer = get_stream_writer()
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message="Task Decomposer Start",
+                    progress=0
+                ).json())
+
             
             # Check if task_list already exists (skip if already decomposed)
             if state.get("obtainer", {}).get("task_list") and len(state.get("obtainer", {}).get("task_list", [])) > 0:
@@ -440,7 +453,7 @@ class ObtainerAgent(BaseAgent):
             if not user_input:
                 logger.warning("No user input found, using default task")
                 state.setdefault("obtainer", {})["task_list"] = [{"task_name": "收集数据集用于大模型微调"}]
-                state.setdefault("obtainer", {})["current_task_index"] = 0
+                state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                 state["automated_query"] = state.get("obtainer", {}).get("task_list", [])[0]["task_name"]
                 return state
             
@@ -481,14 +494,19 @@ class ObtainerAgent(BaseAgent):
                         task_list = task_list[:max_decomposed_tasks]
                     
                     state.setdefault("obtainer", {})["task_list"] = task_list
-                    state.setdefault("obtainer", {})["current_task_index"] = 0
+                    state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                     
                     # Set first task as automated_query
                     if task_list and len(task_list) > 0:
                         first_task = task_list[0].get("task_name", user_input)
                         state["automated_query"] = first_task
                         logger.info(f"Decomposed into {len(task_list)} tasks. Starting with task 1/{len(task_list)}: {first_task[:100]}...")
-                        
+                        if writer:
+                            writer(StreamEvent(
+                                current=state['current'],
+                                message=f"Decomposed into {len(task_list)} tasks. Starting with task 1/{len(task_list)}: {first_task[:100]}...",
+                            ).json())
+
                         # Clear RAG collection for the first task (keep downloads folder)
                         output_dir = state.get("output_dir", "./output")
                         download_dir = os.path.join(output_dir, "downloads")
@@ -569,7 +587,7 @@ class ObtainerAgent(BaseAgent):
                     else:
                         logger.warning("Task decomposition returned empty list, using original input")
                         state.setdefault("obtainer", {})["task_list"] = [{"task_name": user_input}]
-                        state.setdefault("obtainer", {})["current_task_index"] = 0
+                        state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                         state["automated_query"] = user_input
                         # Determine category for the fallback task
                         if model_name and base_url and api_key:
@@ -607,7 +625,7 @@ class ObtainerAgent(BaseAgent):
                 else:
                     logger.warning("Model configuration missing, using original input as single task")
                     state.setdefault("obtainer", {})["task_list"] = [{"task_name": user_input}]
-                    state.setdefault("obtainer", {})["current_task_index"] = 0
+                    state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                     state["automated_query"] = user_input
                     # Use keyword-based detection as fallback
                     user_input_lower = user_input.lower()
@@ -618,8 +636,15 @@ class ObtainerAgent(BaseAgent):
                     state.setdefault("obtainer", {})["datasets_background"] = user_input
             except Exception as e:
                 logger.error(f"Error in task decomposition: {e}, using original input as single task")
+                writer = get_stream_writer()
+                if writer:
+                    writer(StreamEvent(
+                        current=state['current'],
+                        message=f"ObtainerAgent 任务分解异常: {str(e)[:200]}，将使用原始输入作为单一任务",
+                        data={"error": str(e), "phase": "task_decomposer"},
+                    ).json())
                 state.setdefault("obtainer", {})["task_list"] = [{"task_name": user_input}]
-                state.setdefault("obtainer", {})["current_task_index"] = 0
+                state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                 state["automated_query"] = user_input
                 # Use keyword-based detection as fallback
                 user_input_lower = user_input.lower()
@@ -659,6 +684,15 @@ class ObtainerAgent(BaseAgent):
         task_list = state.get("obtainer", {}).get("task_list", [])
         current_index = state.get("obtainer", {}).get("current_task_index", 0)
         
+        writer = get_stream_writer()
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                message=f"ObtainerAgent 检查任务进度 ({current_index}/{len(task_list)})",
+                progress=0,
+                data={"phase": "check_next_task", "current_index": current_index, "total_tasks": len(task_list)},
+            ).json())
+        
         # If there are more tasks, clear category information to prevent conflicts
         # The next task will determine its own category in next_task_node
         if current_index < len(task_list):
@@ -670,6 +704,15 @@ class ObtainerAgent(BaseAgent):
             # Note: We keep obtainer_datasets_background as it's the global background
             # Each subtask will get its own dataset_background in next_task_node
         
+        if writer:
+            has_more = current_index < len(task_list)
+            writer(StreamEvent(
+                current=state['current'],
+                message=f"ObtainerAgent 任务检查完成 - {'继续下一任务' if has_more else '所有任务已完成'}",
+                progress=1,
+                data={"phase": "check_next_task", "has_more_tasks": has_more, "current_index": current_index, "total_tasks": len(task_list)},
+            ).json())
+        
         return state
 
     @staticmethod
@@ -678,14 +721,23 @@ class ObtainerAgent(BaseAgent):
         """
         Next task node: prepare next task for execution
         """
-        task_list = state.get("obtainer_task_list", [])
-        current_index = state.get("obtainer_current_task_index", 0)
+        task_list = state.get("obtainer", {}).get("task_list", [])
+        current_index = state.get("obtainer", {}).get("current_task_index", 0)
+        writer = get_stream_writer()
         
         if current_index < len(task_list):
             next_task = task_list[current_index]
             task_name = next_task.get("task_name", "")
             
             logger.info(f"Next task node: Preparing task {current_index + 1}/{len(task_list)}: {task_name[:100]}...")
+
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message=f"Next task node: Preparing task {current_index + 1}/{len(task_list)}: {task_name[:100]}...",
+                    progress=(current_index + 1)/(len(task_list) + 1),
+                ).json())
+
             
             # Clear RAG collection to prevent data duplication between subtasks (keep downloads folder)
             output_dir = state.get("output_dir", "./output")
@@ -813,6 +865,12 @@ class ObtainerAgent(BaseAgent):
             # Increment task index
             state.setdefault("obtainer", {})["current_task_index"] = current_index + 1
             
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message="Task Decomposer Complete",
+                    progress=1
+                ).json())
             return state
         else:
             logger.warning("Next task node: No more tasks, should not reach here")
@@ -826,6 +884,15 @@ class ObtainerAgent(BaseAgent):
         Set next_to to return to parent graph and summarize results
         """
         logger.info(f"ObtainerAgent: All tasks completed, returning to parent graph")
+        
+        writer = get_stream_writer()
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                message="ObtainerAgent 开始生成任务摘要",
+                progress=0,
+                data={"phase": "end_node"},
+            ).json())
         
         # Generate summary of results for LLM
         summary_parts = []
@@ -878,29 +945,22 @@ class ObtainerAgent(BaseAgent):
         state["messages"].append(AIMessage(content=summary_text))
         logger.info(f"ObtainerAgent: Added summary to messages: {summary_text[:100]}...")
         
-        # Send custom stream event if debug mode is enabled
-        debug_mode = state.get("obtainer_debug", False)
-        if debug_mode:
-            try:
-                writer = get_stream_writer()
-                if writer:
-                    # Prepare summary data
-                    summary_data = {
-                        'summary_text': summary_text,
-                        'has_exception': bool(state.get("exception")),
-                        'research_summary': state.get("obtainer", {}).get("research_summary", ""),
-                        'subtasks_count': len(state.get("obtainer", {}).get("subtasks", [])),
-                        'urls_visited_count': len(state.get("obtainer", {}).get("urls_visited", [])),
-                        'download_results': state.get("obtainer", {}).get("download_results", {})
-                    }
-                    writer(StreamEvent(
-                        current=state.get('current', 'obtainer_end_node'),
-                        message="ObtainerAgent task completed",
-                        data=summary_data
-                    ).json())
-            except Exception as e:
-                # Stream writer might not be available in all contexts
-                logger.debug(f"Could not send stream event: {e}")
+        # Send completion stream event (always, not debug_mode only)
+        if writer:
+            summary_data = {
+                'summary_text': summary_text,
+                'has_exception': bool(state.get("exception")),
+                'research_summary': state.get("obtainer", {}).get("research_summary", ""),
+                'subtasks_count': len(state.get("obtainer", {}).get("subtasks", [])),
+                'urls_visited_count': len(state.get("obtainer", {}).get("urls_visited", [])),
+                'download_results': state.get("obtainer", {}).get("download_results", {})
+            }
+            writer(StreamEvent(
+                current=state['current'],
+                message="ObtainerAgent 任务完成",
+                progress=1,
+                data=summary_data
+            ).json())
         
         # Set next_to to query_node to return to parent graph
         # The parent graph has: builder.add_edge('obtain_node', 'query_node')
@@ -925,14 +985,97 @@ class ObtainerAgent(BaseAgent):
             logger.info("No download tasks found, routing to check_next_task_node to continue with next subtask")
             return "check_next_task_node"
 
+    @staticmethod
+    @BaseAgent.set_current
+    def websearch_node(state: LoopAIState):
+        writer = get_stream_writer()
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                message="ObtainerAgent WebResearch 开始",
+                progress=0.0,
+                data={"phase": "webresearch", "message": "WebResearch 流程启动，将显示内部进度"},
+            ).json())
+        try:
+            state = websearch_node(state)
+        except Exception as e:
+            logger.error(f"ObtainerAgent websearch_node error: {e}", exc_info=True)
+            state["exception"] = f"WebResearch error: {str(e)}"
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message=f"ObtainerAgent WebResearch 异常: {str(e)[:200]}",
+                    data={"error": str(e), "phase": "webresearch"},
+                ).json())
+        if writer:
+            subtasks = state.get("obtainer", {}).get("subtasks", [])
+            writer(StreamEvent(
+                current=state['current'],
+                message="ObtainerAgent WebResearch 完成",
+                progress=1.0,
+                data={
+                    "phase": "webresearch",
+                    "subtasks_count": len(subtasks),
+                    "urls_visited_count": len(state.get("obtainer", {}).get("urls_visited", [])),
+                    "has_exception": bool(state.get("exception")),
+                },
+            ).json())
+        return state
+
+    @staticmethod
+    @BaseAgent.set_current
+    def deep_explore_node(state: LoopAIState):
+        return deep_explore_node(state)
+
+    @staticmethod
+    @BaseAgent.set_current
+    def download_node(state: LoopAIState):
+        writer = get_stream_writer()
+        subtasks = state.get("obtainer", {}).get("subtasks", [])
+        download_tasks = [t for t in subtasks if t.get("type") == "download"]
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                message="ObtainerAgent Download Start",
+                progress=0,
+                data={"phase": "download", "download_tasks_count": len(download_tasks)},
+            ).json())
+        try:
+            state = download_node(state)
+        except Exception as e:
+            logger.error(f"ObtainerAgent download_node error: {e}", exc_info=True)
+            state["exception"] = f"Download error: {str(e)}"
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    message=f"ObtainerAgent Download 异常: {str(e)[:200]}",
+                    data={"error": str(e), "phase": "download"},
+                ).json())
+        if writer:
+            completed = [t for t in subtasks if t.get("status") == "completed_successfully"]
+            failed = [t for t in subtasks if t.get("status") == "failed_to_download"]
+            writer(StreamEvent(
+                current=state['current'],
+                message="ObtainerAgent Download Complete",
+                progress=1,
+                data={
+                    "phase": "download",
+                    "download_tasks_count": len(download_tasks),
+                    "completed_count": len(completed),
+                    "failed_count": len(failed),
+                    "has_exception": bool(state.get("exception")),
+                },
+            ).json())
+        return state
+
 
     def init_graph(self, **kwargs):
         builder = StateGraph(LoopAIState)
         builder.add_node("start_node", self.get_start_node())
         builder.add_node("task_decomposer_node", self.get_task_decomposer_node())
-        builder.add_node("websearch_node", websearch_node)
-        builder.add_node("deep_explore_node", deep_explore_node)  # 占位节点，未实现，不接入工作流
-        builder.add_node("download_node", download_node)
+        builder.add_node("websearch_node", self.websearch_node)
+        builder.add_node("deep_explore_node", self.deep_explore_node)  # 占位节点，未实现，不接入工作流
+        builder.add_node("download_node", self.download_node)
         builder.add_node("check_next_task_node", self.check_next_task_node)
         builder.add_node("next_task_node", self.next_task_node)
         builder.add_node("end_node", self.end_node)

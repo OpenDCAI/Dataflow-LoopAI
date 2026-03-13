@@ -27,8 +27,17 @@ graph.invoke({
         "analyze_top_p": 0.95,
         "analyze_task_type": "code",
         "analyze_sampling_top_k": 5,
+        
         "analyze_batch_size": 20,
         "output_brief": True,
         "output_suggestion": True,
+        "metric_config": {
+            "metrics": ["bleu", "lexical_diversity", "ngram"],
+            "weights": {
+                "bleu": 0.35,
+                "lexical_diversity": 0.35,
+                "ngram": 0.30
+            }
+        }
     },
 }, config=config)
