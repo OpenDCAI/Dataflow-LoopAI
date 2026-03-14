@@ -51,7 +51,7 @@ class JudgerAgent(BaseAgent):
             required_fields = {
                 'judger':["eval_model_path", "eval_api_key", "eval_temperature",
                         "eval_top_p", "eval_problem_path", "eval_batch_size", 
-                        "eval_case_num", "eval_task_type", "output_dir"
+                        "eval_case_num", "eval_task_type"
                 ]
             }
             missing_fields = get_missing_fields(required_fields, state)
