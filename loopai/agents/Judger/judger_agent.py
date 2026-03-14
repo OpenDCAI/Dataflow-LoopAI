@@ -52,7 +52,9 @@ class JudgerAgent(BaseAgent):
                 'judger':["eval_model_path", "eval_api_key", "eval_temperature",
                         "eval_top_p", "eval_problem_path", "eval_batch_size", 
                         "eval_case_num", "eval_task_type"
-                ]
+                ],
+                'default':["output_dir","task_id"],
+                'trainer':["trainer_task_id"],
             }
             missing_fields = get_missing_fields(required_fields, state)
 
