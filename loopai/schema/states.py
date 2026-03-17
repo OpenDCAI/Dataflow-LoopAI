@@ -1062,6 +1062,68 @@ class AnalyzerState(BaseModel):
         description="是否输出简要分析结果",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
     )
+     analyze_max_concurrency: int = Field(
+        default=5,
+        title="分析最大并发数",
+        description="分析阶段最大并发数",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    analyze_chunk_size: int = Field(
+        default=50,
+        title="分析分块大小",
+        description="分析阶段单次处理的数据分块大小",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    quick_brief: bool = Field(
+        default=False,
+        title="是否快速摘要",
+        description="是否启用快速摘要模式",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
+    )
+    quick_brief_limit: int = Field(
+        default=10,
+        title="快速摘要条数限制",
+        description="快速摘要时的最大样本数限制",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+
+    # ===== 新增：通用文本评测常用参数 =====
+    analyze_max_tokens: int = Field(
+        default=2048,
+        title="分析模型最大输出 Token",
+        description="通用文本评测阶段调用模型的最大输出 token 数",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    tensor_parallel_size: int = Field(
+        default=1,
+        title="张量并行数",
+        description="通用文本评测时模型推理使用的张量并行数",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    is_api: bool = Field(
+        default=False,
+        title="是否 API 模式",
+        description="是否通过 API 调用分析模型",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
+    )
+    bench_name: str = Field(
+        default="",
+        title="评测集名称",
+        description="通用文本评测使用的评测集名称",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
+    )
+    bench_dataflow_eval_type: str = Field(
+        default="",
+        title="通用文本评测类型",
+        description="One-Eval DataFlow 评测类型，例如 key2_qa / key1_text_score",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
+    )
+    bench_config: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="通用文本评测配置",
+        description="通用文本评测的 bench 配置，如 eval_type、key_mapping 等",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "分析模型"}
+    )
     analyze_output_result_path: str = Field(
         default="",
         title="分析模型输出结果路径",

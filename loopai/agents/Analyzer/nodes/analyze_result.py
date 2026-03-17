@@ -16,6 +16,15 @@ def _analyzer(state: LoopAIState) -> dict:
     if "analyzer" not in state:
         raise KeyError("state 中缺少 analyzer 配置，请在 graph.invoke 中传入 analyzer")
     return state["analyzer"]
+
+def _ensure_analyzer_outdir(state: LoopAIState) -> str:
+    cfg = _analyzer(state)
+    base_outdir = Path(cfg.get("output_dir") or state.get("output_dir") or "./outputs")
+    task_id = state.get("task_id") or "default_task"
+    outdir = base_outdir / task_id / "analyzer"
+    outdir.mkdir(parents=True, exist_ok=True)
+    return str(outdir)
+
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     使用标准 vLLM(OpenAI 兼容) 客户端
@@ -247,8 +256,9 @@ def analyze_result_node(state: LoopAIState):
 
     ts = time.strftime("%Y%m%d_%H%M%S")
     analyzer = _analyzer(state)
-    analyzer["analyze_output_report_json_path"] = os.path.join(state["output_dir"], f"report_{ts}.json")
-    analyzer["analyze_output_report_text_path"] = os.path.join(state["output_dir"], f"report_{ts}.txt")
+    outdir = _ensure_analyzer_outdir(state)
+    analyzer["analyze_output_report_json_path"] = os.path.join(outdir, f"report_{ts}.json")
+    analyzer["analyze_output_report_text_path"] = os.path.join(outdir, f"report_{ts}.txt")
     _emit(
     "写入分析报告",
     progress=0.92,

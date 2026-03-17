@@ -21,6 +21,14 @@ def _analyzer(state: LoopAIState) -> dict:
         raise KeyError("state 中缺少 analyzer 配置，请在 graph.invoke 中传入 analyzer")
     return state["analyzer"]
 
+def _ensure_analyzer_outdir(state: LoopAIState) -> str:
+    cfg = _analyzer(state)
+    base_outdir = Path(cfg.get("output_dir") or state.get("output_dir") or "./outputs")
+    task_id = state.get("task_id") or "default_task"
+    outdir = base_outdir / task_id / "analyzer"
+    outdir.mkdir(parents=True, exist_ok=True)
+    return str(outdir)
+
 def pick_samples_by_stage(
     records: List[Dict[str, Any]],
     limit: int = 20,
@@ -396,7 +404,7 @@ def draw_conclusion_node(state: LoopAIState):
     final_json_path = None
     _emit("开始生成最终报告", progress=0.0)
 
-    outdir = state['output_dir']
+    outdir = _ensure_analyzer_outdir(state)
     summary_path = _analyzer(state).get('analyze_output_summary_path')
 
     # ===== 读取 summary =====
@@ -501,7 +509,8 @@ def draw_conclusion_node(state: LoopAIState):
         suggest_path = os.path.join(outdir, f"final_report_{run_ts}.suggestions.txt")
         with open(suggest_path, "w", encoding="utf-8") as f:
             f.write(suggestion)
-        state['analyze_output_suggestion_path'] = suggest_path
+        state.setdefault("analyzer", {})
+        state["analyzer"]["analyze_output_suggestion_path"] = suggest_path
 
         with open(final_txt_path, "a", encoding="utf-8") as f:
             f.write("\n---------------------\n模型生成的改进建议：\n")
