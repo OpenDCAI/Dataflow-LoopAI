@@ -1288,6 +1288,18 @@ class TrainerState(BaseModel):
         description="SwanLab 日志路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
+    training_checkpoints: List[str] = Field(
+        default_factory=list,
+        title="训练 Checkpoint 列表",
+        description="训练产生的所有 checkpoint 目录名列表，如 ['checkpoint-100', 'checkpoint-200']",
+        json_schema_extra={"ui_type": "json", "ui_group": "训练模型"}
+    )
+    training_step_losses: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        title="关键 Step Loss 记录",
+        description="训练过程中各 step 的 loss 值记录，从 trainer_log.jsonl 解析",
+        json_schema_extra={"ui_type": "json", "ui_group": "训练模型"}
+    )
 
 
 class ConfigerState(BaseModel):
