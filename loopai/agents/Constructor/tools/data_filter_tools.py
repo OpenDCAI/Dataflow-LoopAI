@@ -712,7 +712,12 @@ class NormalDomainAgent(BaseAgent):
         pass
 
     def compute_prompt(self):
-        return "You are an expert in analyzing dialogue datasets. Your task is to determine if a conversation record is related to a specific domain query."
+        return (
+            "You are an expert in analyzing dialogue datasets. Your task is to determine if a conversation "
+            "record is related to a specific domain query. Be conservative when filtering: keep records unless "
+            "they are clearly unrelated. If relevance is weak, indirect, partial, ambiguous, or uncertain, mark "
+            "the record as related."
+        )
 
     async def analyze_record(self, record: Dict[str, Any], user_query: str) -> Dict[str, Any]:
         """
@@ -747,6 +752,10 @@ class NormalDomainAgent(BaseAgent):
             f"User: {user_content[:500]}\n"
             f"Assistant: {assistant_content[:500]}\n\n"
             f"Determine if this conversation is relevant to the target domain query.\n"
+            f"Filtering policy (important):\n"
+            f"- Keep if there is any plausible, weak, indirect, partial, or contextual relevance.\n"
+            f"- Keep if uncertain or information is insufficient.\n"
+            f"- Only mark as unrelated when it is clearly and definitively outside the domain.\n"
             f"Return a JSON object with:\n"
             f'{{"is_related": true/false, "reasoning": "brief explanation"}}\n'
             f"Only return the JSON object, no other text."
@@ -770,12 +779,13 @@ class NormalDomainAgent(BaseAgent):
             
             result = json.loads(content)
             return {
-                "is_related": result.get("is_related", False),
+                "is_related": result.get("is_related", True),
                 "reasoning": result.get("reasoning", "")
             }
         except Exception as e:
             logger.error(f"Error analyzing record: {e}")
-            return {"is_related": False, "reasoning": f"Error: {str(e)}"}
+            # Fail-open to avoid accidental data loss during domain filtering.
+            return {"is_related": True, "reasoning": f"Error (kept by default): {str(e)}"}
 
 
 class NormalRepairAgent(BaseAgent):

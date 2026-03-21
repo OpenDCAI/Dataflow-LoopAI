@@ -64,4 +64,13 @@ async def get_task_state(task_id: str, default_state: dict):
             for key in default_state[series_key]:
                 if key not in state.get(series_key, {}):
                     state.setdefault(series_key, {})[key] = default_state[series_key][key]
+
+    # Runtime switches should follow latest task config instead of stale saved state.
+    # This prevents old task.state from silently disabling debug logging.
+    if "obtainer_debug" in default_state:
+        state["obtainer_debug"] = default_state.get("obtainer_debug")
+    if "output_dir" in default_state:
+        state["output_dir"] = default_state.get("output_dir")
+    if "constructor" in default_state and "debug" in default_state.get("constructor", {}):
+        state.setdefault("constructor", {})["debug"] = default_state["constructor"]["debug"]
     return state

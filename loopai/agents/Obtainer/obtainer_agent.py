@@ -114,11 +114,24 @@ class ObtainerAgent(BaseAgent):
             objective = ""
             
             if state.get("messages") and len(state["messages"]) > 0:
-                last_message = state["messages"][-4]
-                if hasattr(last_message, "content"):
-                    user_query = last_message.content
-                elif isinstance(last_message, dict):
-                    user_query = last_message.get("content", "")
+                # Do not rely on fixed index (e.g. [-4]); message length/order
+                # can vary across different graph paths and retries.
+                for message in reversed(state["messages"]):
+                    # LangChain HumanMessage
+                    if hasattr(message, "type") and getattr(message, "type", "") == "human":
+                        content = getattr(message, "content", "")
+                        if content and not str(content).strip().startswith("<cmd>"):
+                            user_query = str(content)
+                            break
+                    # Dict-style message
+                    elif isinstance(message, dict):
+                        msg_type = str(message.get("type", "")).lower()
+                        msg_role = str(message.get("role", "")).lower()
+                        if msg_type in ("human", "humanmessage") or msg_role in ("human", "user"):
+                            content = str(message.get("content", ""))
+                            if content and not content.strip().startswith("<cmd>"):
+                                user_query = content
+                                break
             
             if not user_query:
                 user_query = state.get("automated_query", "")
@@ -235,7 +248,7 @@ class ObtainerAgent(BaseAgent):
             
             # Ensure output_dir is set
             if not state.get("output_dir"):
-                state["output_dir"] = "./output"
+                state["output_dir"] = "./outputs"
             
             # Set default values for obtainer-specific parameters if not in state
             if "search_engine" not in state.get("obtainer", {}):
@@ -310,7 +323,11 @@ class ObtainerAgent(BaseAgent):
                 state.setdefault("obtainer", {})["default_mapping_format"] = "alpaca"  # Empty means user interaction mode
             
             # Handle debug mode
-            debug_mode = state.get("obtainer_debug", False)
+            debug_raw = state.get("obtainer_debug", False)
+            if isinstance(debug_raw, str):
+                debug_mode = debug_raw.strip().lower() in {"1", "true", "yes", "on"}
+            else:
+                debug_mode = bool(debug_raw)
             if debug_mode:
                 # Set logger level to DEBUG
                 logger.setLevel(logging.DEBUG)
@@ -319,7 +336,7 @@ class ObtainerAgent(BaseAgent):
                     handler.setLevel(logging.DEBUG)
                 
                 # Add file handler for debug logs if not already added
-                output_dir = state.get("output_dir", "./output")
+                output_dir = state.get("output_dir", "./outputs")
                 log_dir = os.path.join(output_dir, "obtainer_logs")
                 os.makedirs(log_dir, exist_ok=True)
                 
@@ -961,6 +978,12 @@ class ObtainerAgent(BaseAgent):
                 progress=1,
                 data=summary_data
             ).json())
+
+        # IMPORTANT:
+        # `automated_query` is only for driving internal Obtainer subtask routing.
+        # If we keep it when returning to Starter graph, Starter.query_node will
+        # consume it as a new HumanMessage and trigger a duplicated round.
+        state["automated_query"] = ""
         
         # Set next_to to query_node to return to parent graph
         # The parent graph has: builder.add_edge('obtain_node', 'query_node')
