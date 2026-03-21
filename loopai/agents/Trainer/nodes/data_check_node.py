@@ -39,10 +39,24 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
     state['trainer']['output_dir'] = training_output_dir
     
     try:
-        # 获取数据集路径
-        dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
+        # 获取数据集路径 - 优先使用 obtainer/constructor 映射结果
+        obtainer_output_file = state.get('obtainer', {}).get('mapping_results', {}).get('output_file') if state.get('obtainer', {}).get('mapping_results') else None
+        constructor_output_file = state.get('constructor', {}).get('mapping_results', {}).get('output_file') if state.get('constructor', {}).get('mapping_results') else None
+        
+        if obtainer_output_file and os.path.exists(obtainer_output_file):
+            dataset_path = obtainer_output_file
+            logger.info(f"使用 obtainer 映射结果作为训练数据集: {dataset_path}")
+        elif constructor_output_file and os.path.exists(constructor_output_file):
+            dataset_path = constructor_output_file
+            logger.info(f"使用 constructor 映射结果作为训练数据集: {dataset_path}")
+        else:
+            dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
+        
         if not dataset_path:
-            raise ValueError("缺少训练数据集路径 (train_input_dataset_path)")
+            raise ValueError("缺少训练数据集路径 (train_input_dataset_path)，且 obtainer/constructor 映射结果中也未找到输出文件")
+        
+        # 同步更新到 trainer state，确保后续节点统一使用
+        state.setdefault('trainer', {})['train_input_dataset_path'] = dataset_path
         
         logger.info(f"检查数据集: {dataset_path}")
 
