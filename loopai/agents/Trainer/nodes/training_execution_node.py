@@ -4,6 +4,7 @@
 """
 
 import os
+import json
 import time
 from pathlib import Path
 from langgraph.config import get_stream_writer
@@ -323,6 +324,45 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             logger.info(f"任务ID: {task_id}")
             
             state.setdefault('trainer', {})['trainer_training_success'] = True
+            
+            # === 扫描 checkpoint 目录 ===
+            training_output_dir = state.get('trainer', {}).get('train_config', {}).get('output_dir', '')
+            checkpoints = []
+            if training_output_dir and os.path.isdir(training_output_dir):
+                for entry in sorted(os.listdir(training_output_dir)):
+                    if entry.startswith('checkpoint-') and os.path.isdir(os.path.join(training_output_dir, entry)):
+                        checkpoints.append(entry)
+            state.setdefault('trainer', {})['training_checkpoints'] = checkpoints
+            logger.info(f"发现 {len(checkpoints)} 个 checkpoint: {checkpoints}")
+            
+            # === 从 trainer_log.jsonl 提取关键 step 的 loss ===
+            step_losses = []
+            trainer_log_path = os.path.join(training_output_dir, 'trainer_log.jsonl') if training_output_dir else ''
+            if trainer_log_path and os.path.isfile(trainer_log_path):
+                try:
+                    with open(trainer_log_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                record = json.loads(line)
+                                entry = {"step": record.get("current_steps")}
+                                if "loss" in record:
+                                    entry["loss"] = record["loss"]
+                                if "eval_loss" in record:
+                                    entry["eval_loss"] = record["eval_loss"]
+                                if "loss" in entry or "eval_loss" in entry:
+                                    step_losses.append(entry)
+                            except json.JSONDecodeError:
+                                continue
+                    logger.info(f"从 trainer_log.jsonl 提取了 {len(step_losses)} 条 step-loss 记录")
+                except Exception as e:
+                    logger.warning(f"读取 trainer_log.jsonl 失败: {e}")
+            else:
+                logger.warning(f"trainer_log.jsonl 不存在: {trainer_log_path}")
+            state.setdefault('trainer', {})['training_step_losses'] = step_losses
+            
               # 进度：训练成功完成
             if writer:
                 writer(StreamEvent(
@@ -335,7 +375,9 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                         "training_time": training_time,
                         "report_path": report_path,
                         "log_path": state.get('trainer', {}).get('train_output_training_log_path'),
-                        "train_output_swanlab_log_path": state.get('trainer', {}).get('train_output_swanlab_log_path')
+                        "train_output_swanlab_log_path": state.get('trainer', {}).get('train_output_swanlab_log_path'),
+                        "training_checkpoints": checkpoints,
+                        "training_step_losses_count": len(step_losses)
                     }
                 ).json())
             
