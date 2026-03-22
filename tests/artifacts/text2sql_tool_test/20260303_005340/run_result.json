@@ -1,0 +1,49 @@
+{
+  "input_jsonl": "/mnt/paper2any/xbr/commit/debug1205/data/outputs/downloads/processed_output/SFT_00001.jsonl",
+  "sampled_jsonl": "/mnt/paper2any/xbr/commit/debug1205/Dataflow-LoopAI/tests/artifacts/text2sql_tool_test/20260303_005340/sampled_20.jsonl",
+  "sample_stats": {
+    "total_lines": 16073,
+    "json_ok": 16073,
+    "constructor_format_ok": 20,
+    "sampled": 20
+  },
+  "clean_result": {
+    "success": true,
+    "cleaned_data_path": "/mnt/paper2any/xbr/commit/debug1205/Dataflow-LoopAI/tests/artifacts/text2sql_tool_test/20260303_005340/sampled_20_text2sql_cleaned.jsonl",
+    "total_records": 20,
+    "valid_records": 16,
+    "invalid_records": 4,
+    "error_message": "",
+    "diagnostics": {
+      "schema_prebuild_count": 20,
+      "leakage_fixed_count": 0,
+      "evidence_injected_count": 20,
+      "intent_mismatch_fixed_count": 0,
+      "hardcode_flagged_count": 0,
+      "schema_alignment_regen_count": 4,
+      "evidence_gap_injected_count": 4,
+      "schema_alignment_final_drop_count": 0,
+      "semantic_desync_flagged_count": 4,
+      "semantic_desync_final_drop_count": 4,
+      "schema_pollution_blocked_count": 0,
+      "strict_grouping_fixed_count": 0,
+      "llm_semantic_checked_count": 0,
+      "llm_leakage_flagged_count": 0,
+      "llm_join_misalignment_count": 0,
+      "non_query_sql_dropped_count": 0,
+      "sql_preprocess_regen_count": 20,
+      "sql_preprocess_regen_success_count": 20,
+      "sqlite_dialect_warning_count": 0,
+      "final_drop_reasons": {
+        "semantic_desync_after_repair": 4
+      }
+    }
+  },
+  "config": {
+    "sample_size": 20,
+    "temperature": 0.1,
+    "model_path": "gpt-4o",
+    "base_url": "http://172.96.160.199:3000/v1",
+    "api_key_set": true
+  }
+}

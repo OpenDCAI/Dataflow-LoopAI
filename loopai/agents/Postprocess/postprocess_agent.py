@@ -120,6 +120,14 @@ async def _run_async(
         "total_records_processed": merged.total_records_processed,
         "processed_sources_count": merged.processed_sources_count,
         "output_dir": merged.output_dir,
+        "dataset_log_files": [r.log_file for r in per_dataset if getattr(r, "log_file", None)],
+        "unqualified_output_dir": os.path.join(output_dir, "unqualified"),
+        "total_unqualified_records": sum(getattr(r, "unqualified_records", 0) for r in per_dataset),
+        "unqualified_files": [
+            fp
+            for r in per_dataset
+            for fp in (getattr(r, "unqualified_files", None) or [])
+        ],
     }
 
 

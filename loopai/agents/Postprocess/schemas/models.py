@@ -129,6 +129,18 @@ class DatasetMappingPlan(BaseModel):
         1.0, ge=0.0, le=1.0,
         description="Agent confidence in this mapping (0-1)",
     )
+    quality_label: str = Field(
+        "qualified",
+        description=(
+            "Mapping quality label: 'qualified' means safe for conversion; "
+            "'unqualified' means dataset needs manual handling and should be routed "
+            "to the unqualified output folder."
+        ),
+    )
+    quality_reason: str = Field(
+        "",
+        description="Reason for quality_label decision, especially when unqualified.",
+    )
 
     # PT mapping
     text_field: Optional[Any] = Field(
@@ -144,12 +156,35 @@ class DatasetMappingPlan(BaseModel):
             "Each dict has 'role', 'content' (field name or list), optional 'loss_mask'."
         ),
     )
-    system: Optional[str] = Field(
+    system: Optional[Any] = Field(
         None,
-        description="For SFT: field name to use as system prompt",
+        description="For SFT: field spec (str or list[str]) to build system prompt",
     )
 
     # Metadata
+    record_path: Optional[str] = Field(
+        None,
+        description=(
+            "Optional path (dot notation) to extract record list from a top-level dict. "
+            "Example: 'data' or 'examples.items'."
+        ),
+    )
+    field_joiners: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Optional joiners for composite field assembly. "
+            "Supports per-role keys ('system'/'user'/'assistant') and "
+            "per-field keys using 'field:<name>'."
+        ),
+    )
+    field_transforms: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Optional transform hints for extracted values. "
+            "Supports keys like role name or 'field:<name>', values like "
+            "'strip' or 'json_dumps'."
+        ),
+    )
     meta_fields: Dict[str, str] = Field(
         default_factory=dict,
         description="Additional fields to include in meta dict. key=meta_key, value=source_field",
@@ -207,7 +242,10 @@ class DatasetAgentResult(BaseModel):
     mapping_plan: Optional[DatasetMappingPlan] = None
     knowledge_summary: Optional[DatasetKnowledgeSummary] = None
     records_processed: int = 0
+    unqualified_records: int = 0
     output_files: List[str] = Field(default_factory=list)
+    unqualified_files: List[str] = Field(default_factory=list)
+    log_file: Optional[str] = None
     error: Optional[str] = None
 
 
