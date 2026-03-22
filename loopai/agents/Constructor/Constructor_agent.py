@@ -14,7 +14,7 @@ from loopai.agents.Constructor.nodes import postprocess_node
 from loopai.agents.Constructor.nodes.filter_node import CleaningSubgraph
 from loopai.agents.Constructor.mapping import MappingSubgraph
 from loopai.common.prompts import PromptLoader
-
+from langchain_core.messages import AIMessage
 logger = get_logger()
 
 
@@ -258,6 +258,32 @@ class ConstructorAgent(BaseAgent):
         return start_node
 
     @staticmethod
+    def _canonical_mapping_metrics(mapping_results: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        script_mapping_node / llm_mapping_node 写入 mapped_records、output_dir；
+        end_node 与前端事件历史上读取 total_mapped_records、final_output_dir。
+        此处统一解析，避免映射成功但摘要与 stream data 仍为 0 / 空。
+        """
+        empty = {
+            "total_records": 0,
+            "total_mapped_records": 0,
+            "failed_records": 0,
+            "final_output_dir": "",
+        }
+        if not mapping_results:
+            return empty
+        mapped = mapping_results.get("total_mapped_records")
+        if mapped is None:
+            mapped = mapping_results.get("mapped_records", 0)
+        final_dir = mapping_results.get("final_output_dir") or mapping_results.get("output_dir", "")
+        return {
+            "total_records": mapping_results.get("total_records", 0),
+            "total_mapped_records": mapped,
+            "failed_records": mapping_results.get("failed_records", 0),
+            "final_output_dir": final_dir,
+        }
+
+    @staticmethod
     @BaseAgent.set_current
     def end_node(state: LoopAIState):
         """
@@ -297,8 +323,9 @@ class ConstructorAgent(BaseAgent):
             # Summarize mapping results
             mapping_results = constructor_state.get("mapping_results", {})
             if mapping_results:
-                final_output_dir = mapping_results.get("final_output_dir", "")
-                total_mapped_records = mapping_results.get("total_mapped_records", 0)
+                mm = ConstructorAgent._canonical_mapping_metrics(mapping_results)
+                final_output_dir = mm["final_output_dir"]
+                total_mapped_records = mm["total_mapped_records"]
                 if final_output_dir:
                     summary_parts.append(f"格式映射完成: 共映射 {total_mapped_records} 条记录")
                     summary_parts.append(f"最终输出目录: {final_output_dir}")
@@ -308,21 +335,26 @@ class ConstructorAgent(BaseAgent):
             summary_text = "数据构造任务执行完成:\n" + "\n".join(summary_parts)
         else:
             summary_text = "数据构造任务执行完成，但未找到相关数据。"
+
+        summary_text += (
+            "\n\n【建议下一步】若需开始模型训练，请在后续轮次中通过主调度 Agent 调用工具 check_motivation，"
+            "并将 motivation 设为 train。\n"
+            "<cmd>根据用户指令执行: train</cmd>"
+        )
         
         # Add summary to messages so LLM can see it
         if "messages" not in state:
             state["messages"] = []
         
-        # Keep runtime state JSON-serializable for API status polling.
-        state["messages"].append({
-            "type": "ai",
-            "role": "assistant",
-            "content": summary_text,
-        })
-        logger.info(f"ConstructorAgent: Added summary to messages: {summary_text[:100]}...")
+        # Keep message type aligned with other agents (e.g. Obtainer),
+        # so MessagesState reducer and persistence behave consistently.
         
+        state["messages"].append(AIMessage(content=summary_text))
+        logger.info(f"ConstructorAgent: Added summary to messages: {summary_text[:100]}...")
+        state["automated_query"]="我收集完也处理完数据了，进入trainer"
         postprocess_results = constructor_state.get("postprocess_results", {})
         mapping_results = constructor_state.get("mapping_results", {})
+        mm = ConstructorAgent._canonical_mapping_metrics(mapping_results)
         ConstructorAgent._emit_stream_event(
             state,
             message="Constructor: 任务完成",
@@ -332,8 +364,8 @@ class ConstructorAgent(BaseAgent):
                 "stage": "completed",
                 "summary_text": summary_text,
                 "total_records_processed": postprocess_results.get("total_records_processed", 0),
-                "total_mapped_records": mapping_results.get("total_mapped_records", 0),
-                "final_output_dir": mapping_results.get("final_output_dir", ""),
+                "total_mapped_records": mm["total_mapped_records"],
+                "final_output_dir": mm["final_output_dir"],
             },
         )
         
@@ -536,6 +568,7 @@ class ConstructorAgent(BaseAgent):
         End node for mapping_subgraph with StreamEvent
         """
         mapping_results = state.get("constructor", {}).get("mapping_results", {})
+        mm = ConstructorAgent._canonical_mapping_metrics(mapping_results)
         has_exception = bool(state.get("exception"))
         ConstructorAgent._emit_stream_event(
             state,
@@ -544,10 +577,10 @@ class ConstructorAgent(BaseAgent):
             data={
                 "phase": "mapping",
                 "stage": "completed" if not has_exception else "completed_with_errors",
-                "total_records": mapping_results.get("total_records", 0),
-                "total_mapped_records": mapping_results.get("total_mapped_records", 0),
-                "failed_records": mapping_results.get("failed_records", 0),
-                "final_output_dir": mapping_results.get("final_output_dir", ""),
+                "total_records": mm["total_records"],
+                "total_mapped_records": mm["total_mapped_records"],
+                "failed_records": mm["failed_records"],
+                "final_output_dir": mm["final_output_dir"],
             },
             current=state.get('current', 'ConstructorAgent.mapping_subgraph'),
         )

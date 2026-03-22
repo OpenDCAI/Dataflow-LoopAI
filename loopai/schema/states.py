@@ -1429,8 +1429,11 @@ class LoopAIState(MessagesState):
     current: str
     next_to: Annotated[str, replace_value]
 
-    # automated_query 既是全局控制信号，也可能被 obtainer 生成
+    # automated_query：Starter query_node 注入的下一条「用户话」（不经 interrupt）
     automated_query: Annotated[str, replace_value]
+
+    # obtainer_subtask_query：仅 Obtainer 子图内部用于多子任务路由的当前子任务文本
+    obtainer_subtask_query: Annotated[str, replace_value]
 
     exception: Annotated[str, replace_value]
 

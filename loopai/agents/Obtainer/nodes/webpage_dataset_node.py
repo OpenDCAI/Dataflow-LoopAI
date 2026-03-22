@@ -30,7 +30,9 @@ def webpage_dataset_node(state: LoopAIState) -> LoopAIState:
     # Get user query from state
     user_query = ""
     
-    if state.get("automated_query"):
+    if state.get("obtainer_subtask_query"):
+        user_query = state.get("obtainer_subtask_query")
+    elif state.get("automated_query"):
         user_query = state.get("automated_query")
     else:
         if state.get("messages") and len(state["messages"]) > 0:
