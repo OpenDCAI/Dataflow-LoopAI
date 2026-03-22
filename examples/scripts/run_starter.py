@@ -44,6 +44,17 @@ if hasattr(cfg.default_states, 'obtainer') and cfg.default_states.obtainer:
     obtainer_cfg = cfg.default_states.obtainer
     merged_states_dict['obtainer'] = OmegaConf.to_container(obtainer_cfg, resolve=True) or {}
 
+# Inject starter-level tavily_api_key into obtainer state (config-first, env/txt fallback in ObtainerAgent)
+if starter_tavily_api_key:
+    merged_states_dict.setdefault('obtainer', {})['tavily_api_key'] = starter_tavily_api_key
+
+# Handle webcrawler tavily_api_key injection
+if 'webcrawler' not in merged_states_dict:
+    if hasattr(cfg.default_states, 'webcrawler') and cfg.default_states.webcrawler:
+        merged_states_dict['webcrawler'] = OmegaConf.to_container(cfg.default_states.webcrawler, resolve=True) or {}
+if starter_tavily_api_key:
+    merged_states_dict.setdefault('webcrawler', {})['tavily_api_key'] = starter_tavily_api_key
+
 # Handle obtainer_debug separately if it exists
 if hasattr(cfg.default_states, 'obtainer_debug'):
     merged_states_dict['obtainer_debug'] = cfg.default_states.obtainer_debug

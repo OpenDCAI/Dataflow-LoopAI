@@ -96,7 +96,7 @@ class DataConvertor:
         max_sample_length: int = 200,
         num_sample_records: int = 3,
         prompt_loader: Optional[PromptLoader] = None,
-        timeout: float = 120.0,
+        timeout: float = 300.0,
         max_retries: int = 3,
     ):
         """Initialize Data Convertor
@@ -1216,7 +1216,7 @@ Please identify which files are data files that should be processed. Return a JS
         logger.warning(f"Cannot determine builder type for file '{file_path}'")
         return None
 
-    async def _manual_load_json(self, file_path: str, max_file_size_mb: int = 5000) -> Optional[Any]:
+    async def _manual_load_json(self, file_path: str, max_file_size_mb: int = 10000) -> Optional[Any]:
         """Manually load JSON file"""
         try:
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
@@ -1289,7 +1289,7 @@ Please identify which files are data files that should be processed. Return a JS
             logger.error(f"Error manually loading JSON file: {e}")
             return None
 
-    async def _manual_load_parquet(self, file_path: str, max_file_size_mb: int = 5000) -> Optional[Any]:
+    async def _manual_load_parquet(self, file_path: str, max_file_size_mb: int = 10000) -> Optional[Any]:
         """Manually load Parquet file"""
         try:
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
@@ -1334,7 +1334,7 @@ Please identify which files are data files that should be processed. Return a JS
             logger.error(f"Error manually loading Parquet file: {e}")
             return None
 
-    async def _manual_load_generic(self, file_path: str, max_file_size_mb: int = 5000) -> Optional[Any]:
+    async def _manual_load_generic(self, file_path: str, max_file_size_mb: int = 10000) -> Optional[Any]:
         """Generic file loading method"""
         try:
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)

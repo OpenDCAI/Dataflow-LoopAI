@@ -117,21 +117,21 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
                             user_query = message.content
                             break
     
-    # 获取 obtainer 嵌套配置（符合 states.py 中 ObtainerState 的定义）
-    obtainer = state.get("obtainer", {})
+    # 获取 constructor 嵌套配置
+    constructor = state.get("constructor", {})
     
     # Get category (PT or SFT) - default to PT if not specified
-    category = obtainer.get("category", "PT").upper()
+    category = constructor.get("category", "PT").upper()
     if category not in ["PT", "SFT"]:
         logger.warning(f"Invalid category '{category}', defaulting to PT")
         category = "PT"
     
     # Initialize components
     try:
-        model_name = obtainer.get("model_path")
-        base_url = obtainer.get("base_url")
-        api_key = obtainer.get("api_key")
-        temperature = obtainer.get("temperature", 0.0)
+        model_name = constructor.get("model_path")
+        base_url = constructor.get("base_url")
+        api_key = constructor.get("api_key")
+        temperature = constructor.get("temperature", 0.0)
         
         if not model_name or not base_url or not api_key:
             logger.error("Missing required configuration for post-process node")
@@ -156,13 +156,13 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             state["exception"] = f"Download directory does not exist: {download_dir}"
             return state
         
-        # Get additional configuration from obtainer nested config
-        llm_timeout = obtainer.get("llm_timeout", 120.0)
-        max_retries = obtainer.get("max_retries", 3)
-        max_concurrent_mapping = obtainer.get("max_concurrent_mapping", 10)
+        # Get additional configuration from constructor nested config
+        llm_timeout = constructor.get("llm_timeout", 300.0)
+        max_retries = constructor.get("max_retries", 3)
+        max_concurrent_mapping = constructor.get("max_concurrent_mapping", 10)
         
         # Get dataset background for file filtering
-        dataset_background = obtainer.get("datasets_background", "")
+        dataset_background = constructor.get("datasets_background", "")
         
         # Run async workflow (传入 event_name 用于进度事件)
         event_name = state.get("current", "ConstructorAgent.postprocess_node")
@@ -182,14 +182,14 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             event_name=event_name,
         ))
         
-        # Update state with results (写入 obtainer 嵌套结构)
+        # Update state with results (写入 constructor 嵌套结构)
         if "exception" in result:
             state["exception"] = result["exception"]
         else:
-            # 确保 obtainer 字典存在
-            if "obtainer" not in state:
-                state["obtainer"] = {}
-            state["obtainer"]["postprocess_results"] = {
+            # 确保 constructor 字典存在
+            if "constructor" not in state:
+                state["constructor"] = {}
+            state["constructor"]["postprocess_results"] = {
                 "total_records_processed": result.get("total_records_processed", 0),
                 "processed_sources_count": result.get("processed_sources_count", 0),
                 "output_dir": result.get("output_dir", ""),
@@ -197,7 +197,7 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             # Save intermediate format path for mapping node
             output_dir = result.get("output_dir", "")
             if output_dir and os.path.exists(output_dir):
-                state["obtainer"]["intermediate_data_path"] = output_dir
+                state["constructor"]["intermediate_data_path"] = output_dir
                 logger.info(f"Intermediate format data saved at: {output_dir}")
             logger.info(
                 f"Post-process node completed: {result.get('total_records_processed', 0)} records processed."
@@ -239,7 +239,7 @@ async def _postprocess_workflow(
     api_key: str,
     temperature: float,
     prompt_loader: Optional[PromptLoader] = None,
-    llm_timeout: float = 120.0,
+    llm_timeout: float = 300.0,
     max_retries: int = 3,
     max_concurrent_mapping: int = 10,
     dataset_background: str = "",

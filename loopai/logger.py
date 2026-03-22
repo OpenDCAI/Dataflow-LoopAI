@@ -1,7 +1,10 @@
 import os
 import sys
 import logging
+import contextvars
 import colorlog
+from contextlib import contextmanager
+from typing import Iterator, Optional
 
 # ---------- 1) 自定义 SUCCESS 等级 ----------
 SUCCESS_LEVEL_NUM = 25
@@ -12,6 +15,10 @@ def success(self, message, *args, **kwargs):
         self._log(SUCCESS_LEVEL_NUM, message, args, **kwargs)
 
 logging.Logger.success = success
+
+_ACTIVE_LOG_CONTEXT: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "active_log_context", default=""
+)
 
 # ---------- 2) stdout / stderr 分流的过滤器 ----------
 class MaxLevelFilter(logging.Filter):
@@ -29,6 +36,32 @@ class MinLevelFilter(logging.Filter):
         self.min_level = min_level
     def filter(self, record: logging.LogRecord) -> bool:
         return record.levelno >= self.min_level
+
+
+class InjectContextFilter(logging.Filter):
+    """Inject context id into each LogRecord."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.log_context = _ACTIVE_LOG_CONTEXT.get("")
+        return True
+
+
+class NoContextFilter(logging.Filter):
+    """Only allow records emitted outside dataset context."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not _ACTIVE_LOG_CONTEXT.get("")
+
+
+class MatchContextFilter(logging.Filter):
+    """Only allow records matching a specific context id."""
+
+    def __init__(self, context_id: str):
+        super().__init__()
+        self.context_id = context_id
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return _ACTIVE_LOG_CONTEXT.get("") == self.context_id
 
 # ---------- 3) 贴近 loguru 的 ColoredFormatter ----------
 def _make_colored_formatter():
@@ -64,6 +97,7 @@ def _make_colored_formatter():
         fmt=(
             "%(asctime_log_color)s%(asctime)s.%(msecs)03d%(reset)s"
             " | %(levelname_log_color)s%(levelname)-8s%(reset)s"
+            " | %(message_log_color)sctx=%(log_context)s%(reset)s"
             " | %(name_log_color)s%(name)s%(reset)s"
             ":%(funcName_log_color)s%(filename)s%(reset)s"
             ":%(funcName_log_color)s%(funcName)s%(reset)s"
@@ -82,6 +116,7 @@ def _make_plain_formatter():
         fmt=(
             "%(asctime)s.%(msecs)03d"
             " | %(levelname)-8s"
+            " | ctx=%(log_context)s"
             " | %(name)s"
             ":%(filename)s"
             ":%(funcName)s"
@@ -114,7 +149,6 @@ def get_logger(level: str = None) -> logging.Logger:
     logger.propagate = False  # 避免向 root 传播造成重复输出
 
     if logger.handlers:
-        # 已初始化过，直接返回（可根据需要改成更新 handler 的级别/格式）
         return logger
 
     colored_fmt = _make_colored_formatter()
@@ -123,16 +157,19 @@ def get_logger(level: str = None) -> logging.Logger:
     h_out = logging.StreamHandler(stream=sys.stdout)
     h_out.setLevel(level)
     h_out.addFilter(MaxLevelFilter(logging.ERROR))
+    h_out.addFilter(NoContextFilter())
     h_out.setFormatter(colored_fmt)
 
     # stderr：ERROR/CRITICAL
     h_err = logging.StreamHandler(stream=sys.stderr)
     h_err.setLevel(level)
     h_err.addFilter(MinLevelFilter(logging.ERROR))
+    h_err.addFilter(NoContextFilter())
     h_err.setFormatter(colored_fmt)
 
     logger.addHandler(h_out)
     logger.addHandler(h_err)
+    logger.addFilter(InjectContextFilter())
     
     # 如果设置了日志文件路径，添加文件 handler
     log_file_path = os.getenv("DF_LOG_FILE_PATH")
@@ -141,7 +178,13 @@ def get_logger(level: str = None) -> logging.Logger:
     
     return logger
 
-def add_file_handler(logger: logging.Logger, log_file_path: str, level = None) -> None:
+def add_file_handler(
+    logger: logging.Logger,
+    log_file_path: str,
+    level=None,
+    *,
+    no_context_only: bool = False,
+) -> None:
     """为 logger 添加文件 handler，实时写入日志文件
     
     Args:
@@ -172,6 +215,52 @@ def add_file_handler(logger: logging.Logger, log_file_path: str, level = None) -
     h_file = ImmediateFlushFileHandler(log_file_path, encoding='utf-8')
     h_file.setLevel(level)
     h_file.setFormatter(plain_fmt)
+    if no_context_only:
+        h_file.addFilter(NoContextFilter())
     
     logger.addHandler(h_file)
     logger.info(f"File logging enabled: {log_file_path}")
+
+
+def add_context_file_handler(
+    logger: logging.Logger,
+    log_file_path: str,
+    context_id: str,
+    level=None,
+) -> logging.Handler:
+    """Attach a file handler that only receives logs in *context_id*."""
+    if level is None:
+        level = logger.level
+    elif isinstance(level, str):
+        level = getattr(logging, level.upper(), logging.INFO)
+
+    log_dir = os.path.dirname(os.path.abspath(log_file_path))
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+
+    plain_fmt = _make_plain_formatter()
+    h_file = ImmediateFlushFileHandler(log_file_path, encoding="utf-8")
+    h_file.setLevel(level)
+    h_file.setFormatter(plain_fmt)
+    h_file.addFilter(MatchContextFilter(context_id))
+    logger.addHandler(h_file)
+    return h_file
+
+
+def remove_handler(logger: logging.Logger, handler: Optional[logging.Handler]) -> None:
+    if handler is None:
+        return
+    try:
+        logger.removeHandler(handler)
+        handler.close()
+    except Exception:
+        pass
+
+
+@contextmanager
+def logging_context(context_id: str) -> Iterator[None]:
+    token = _ACTIVE_LOG_CONTEXT.set(context_id or "")
+    try:
+        yield
+    finally:
+        _ACTIVE_LOG_CONTEXT.reset(token)

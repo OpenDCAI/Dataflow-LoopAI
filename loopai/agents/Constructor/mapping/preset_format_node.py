@@ -4,7 +4,7 @@ Preset Format Node - 预设格式节点 (非LLM)
 功能:
 1. 调用 select_format(format_id) tool
 2. 获取格式的 schema 和 example
-3. 存储到 obtainer_pending_format
+3. 存储到 constructor_pending_format
 4. 生成确认消息
 """
 import json
@@ -35,14 +35,14 @@ def preset_format_node(state: LoopAIState, store: BaseStore = None) -> LoopAISta
     """
     logger.info("=== Preset Format Node: Starting ===")
     
-    # 确保 obtainer 字典存在
-    if "obtainer" not in state:
-        state["obtainer"] = {}
+    # 确保 constructor 字典存在
+    if "constructor" not in state:
+        state["constructor"] = {}
     
-    obtainer_state = state.get("obtainer", {})
+    constructor_state = state.get("constructor", {})
     
     # 获取用户选择的格式ID
-    format_id = obtainer_state.get("mapping_selected_format_id", "")
+    format_id = constructor_state.get("mapping_selected_format_id", "")
     
     if not format_id:
         logger.error("No format_id found in state")
@@ -65,8 +65,8 @@ def preset_format_node(state: LoopAIState, store: BaseStore = None) -> LoopAISta
         ))
         
         # 重置意图，返回 inquiry
-        state["obtainer"]["mapping_user_intent"] = ""
-        state["obtainer"]["mapping_selected_format_id"] = ""
+        state["constructor"]["mapping_user_intent"] = ""
+        state["constructor"]["mapping_selected_format_id"] = ""
         return state
     
     # 存储 pending format
@@ -78,7 +78,7 @@ def preset_format_node(state: LoopAIState, store: BaseStore = None) -> LoopAISta
         "example": result.get("example", {}),
         "is_preset": True  # 标记为预设格式
     }
-    state["obtainer"]["pending_format"] = pending_format
+    state["constructor"]["pending_format"] = pending_format
     
     logger.info(f"Selected preset format: {format_id}")
     
