@@ -268,12 +268,14 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
         .node-info {
             position: relative;
             width: calc(100% - 20px);
+            max-width: 170px;
             height: auto;
             margin-top: 5px;
             margin-left: 10px;
             font-size: 8px;
             font-weight: 400;
             color: var(--node-status-color);
+            overflow: hidden;
         }
 
         .remain-content-block {

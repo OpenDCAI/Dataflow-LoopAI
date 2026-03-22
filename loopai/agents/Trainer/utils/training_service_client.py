@@ -16,7 +16,7 @@ logger = get_logger()
 class TrainingServiceClient:
     """训练服务客户端"""
     
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, task_id: str, base_url: str = "http://localhost:8000"):
         """
         初始化客户端
         
@@ -25,7 +25,8 @@ class TrainingServiceClient:
         """
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
-        
+        self.task_id = task_id
+
     def check_service_health(self) -> bool:
         """
         检查服务健康状态
@@ -40,15 +41,16 @@ class TrainingServiceClient:
             logger.error(f"检查服务健康状态失败: {str(e)}")
             return False
 
-    def start_training(self, framework: str, config_path: str, task_name: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
+    def start_training(self, framework: str, config_path: str, output_dir: str, task_name: Optional[str] = None) -> Tuple[bool, str, Optional[str]]:
         """
         启动训练任务
         
         Args:
             framework: 训练框架
             config_path: 配置文件路径
+            output_dir: 输出目录
             task_name: 任务名称
-            
+
         Returns:
             (成功标志, 任务ID或错误信息, 错误详情)
         """
@@ -69,6 +71,8 @@ class TrainingServiceClient:
             request_data = {
                 "framework": framework,
                 "config_path": config_path,
+                "task_id": self.task_id,
+                "output_dir": output_dir
                 # "config_path": yaml_content
             }
             
@@ -272,7 +276,7 @@ class TrainingServiceClient:
             return False, None, error_msg
 
 
-def create_training_client(base_url: Optional[str] = None) -> TrainingServiceClient:
+def create_training_client(task_id, base_url: Optional[str] = None) -> TrainingServiceClient:
     """
     创建训练服务客户端
     
@@ -285,4 +289,4 @@ def create_training_client(base_url: Optional[str] = None) -> TrainingServiceCli
     if not base_url:
         base_url = os.getenv("TRAINING_SERVICE_URL", "http://localhost:8000")
     
-    return TrainingServiceClient(base_url)
+    return TrainingServiceClient(task_id, base_url)

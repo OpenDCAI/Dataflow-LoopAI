@@ -32,6 +32,7 @@ setup(
         "pydantic",
         "tortoise-orm",
         "func-timeout",
+<<<<<<< HEAD
         # Constructor - code analysis dependencies
         "pyflakes",
         "tree-sitter",
@@ -53,6 +54,28 @@ setup(
         "tree-sitter-json",
         "tree-sitter-yaml",
         "tree-sitter-markdown",
+=======
+        "pyflakes>=3.4.0",
+        "tree_sitter>=0.25.2",
+        "tree-sitter-python>=0.25.0",
+        "tree-sitter-javascript>=0.25.0",
+        "tree-sitter-java>=0.23.5",
+        "tree-sitter-cpp>=0.23.4",
+        "tree-sitter-c>=0.24.1",
+        "tree-sitter-c-sharp>=0.23.1",
+        "tree-sitter-go>=0.25.0",
+        "tree-sitter-rust>=0.24.0",
+        "tree-sitter-ruby>=0.23.1",
+        "tree-sitter-swift>=0.0.1",
+        "tree-sitter-kotlin>=1.1.0",
+        "tree-sitter-scala>=0.24.0",
+        "tree-sitter-bash>=0.25.1",
+        "tree-sitter-html>=0.23.2",
+        "tree-sitter-css>=0.25.0",
+        "tree-sitter-json>=0.24.8",
+        "tree-sitter-yaml>=0.7.2",
+        "tree-sitter-markdown>=0.5.1",
+>>>>>>> 66b19eb83ce207a153c25e6947d750a2057eb633
     ],
     python_requires=">=3.12",
 )
