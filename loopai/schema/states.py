@@ -1126,6 +1126,24 @@ class TrainerState(BaseModel):
         description="LlamaFactory 目录",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
+    llamafactory_env_path: str = Field(
+        default="",
+        title="LlamaFactory 环境路径",
+        description="LlamaFactory 环境路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    CUDA_VISIBLE_DEVICES: str = Field(
+        default="",
+        title="CUDA 可见设备",
+        description="CUDA 可见设备",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    swanlab_api_key: str = Field(
+        default="",
+        title="SwanLab API Key",
+        description="SwanLab API Key",
+        json_schema_extra={"ui_type": "password", "ui_group": "训练模型"}
+    )
     train_input_dataset_path: str = Field(
         default="",
         title="训练数据集路径",
