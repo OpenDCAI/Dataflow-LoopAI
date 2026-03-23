@@ -9,7 +9,6 @@ List Formats Node - 列表节点 (非LLM)
 import json
 from typing import Dict, Any
 
-from langchain_core.messages import AIMessage
 from langgraph.store.base import BaseStore
 
 from loopai.schema.states import LoopAIState
@@ -65,7 +64,11 @@ def list_formats_node(state: LoopAIState, store: BaseStore = None) -> LoopAIStat
     # 添加 AI 消息
     if "messages" not in state:
         state["messages"] = []
-    state["messages"].append(AIMessage(content=message_content))
+    state["messages"].append({
+        "type": "ai",
+        "role": "assistant",
+        "content": message_content,
+    })
     
     # 确保 constructor 字典存在
     if "constructor" not in state:

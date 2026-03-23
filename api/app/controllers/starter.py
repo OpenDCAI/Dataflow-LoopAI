@@ -48,13 +48,20 @@ async def init_manager(task_id):
     config = await load_config(task_id)
     if not config:
         return False
+    # Always fetch latest global starter config so runtime-shared keys
+    # (e.g. tavily_api_key) can be synced even when task snapshot is stale.
+    global_config = await load_config(None)
     system_config = config.get('system', {})
+    global_system_config = (global_config or {}).get('system', {})
     
     # Read starter configuration
     starter_model_name = system_config.get('starter_model_name', 'deepseek-chat')
     starter_base_url = system_config.get('starter_base_url', 'https://api.deepseek.com')
     starter_api_key = system_config.get('starter_api_key', '')
-    starter_tavily_api_key = system_config.get('tavily_api_key', '')
+    starter_tavily_api_key = global_system_config.get(
+        'tavily_api_key',
+        system_config.get('tavily_api_key', '')
+    )
 
     config['default_states']['obtainer']['tavily_api_key'] = starter_tavily_api_key
     config['default_states']['webcrawler']['tavily_api_key'] = starter_tavily_api_key

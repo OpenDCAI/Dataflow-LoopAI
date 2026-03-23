@@ -35,18 +35,9 @@ def create_web_search_tool(tavily_api_key: Optional[str] = None):
 
         logger.info(f"[PostprocessAgent.web_search] query='{query}'")
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result = pool.submit(
-                        asyncio.run,
-                        WebTools.search_web(query, "tavily", tavily_api_key=resolved_key),
-                    ).result(timeout=60)
-            else:
-                result = asyncio.run(
-                    WebTools.search_web(query, "tavily", tavily_api_key=resolved_key)
-                )
+            result = asyncio.run(
+                WebTools.search_web(query, "tavily", tavily_api_key=resolved_key)
+            )
             if not result:
                 return "No search results found."
             return result[:8000]
