@@ -536,7 +536,7 @@ class ConstructorState(BaseModel):
         json_schema_extra={"ui_type": "switch", "ui_group": "构造配置"}
     )
     postprocess_version: str = Field(
-        default="legacy",
+        default="agent_v2",
         title="后处理版本",
         description="后处理实现版本: legacy 使用原有流程, agent_v2 使用新版子 Agent 流程",
         json_schema_extra={

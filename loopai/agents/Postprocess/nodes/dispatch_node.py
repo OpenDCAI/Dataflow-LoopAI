@@ -296,6 +296,17 @@ def _build_sft_record(row: Dict, plan: DatasetMappingPlan, file_path: str, idx: 
             loss_mask = role == "assistant"
         messages.append({"role": role, "content": content, "loss_mask": loss_mask})
 
+    if plan.system:
+        sys_val = _extract_text_from_spec(
+            row,
+            plan.system,
+            plan,
+            role="system",
+            default_joiner=ROLE_JOINER_DEFAULTS["system"],
+        )
+        if sys_val:
+            messages.insert(0, {"role": "system", "content": sys_val, "loss_mask": False})
+
     if not messages:
         return None
     has_user = any(m["role"] == "user" for m in messages)
@@ -313,16 +324,6 @@ def _build_sft_record(row: Dict, plan: DatasetMappingPlan, file_path: str, idx: 
         "messages": messages,
         "meta": meta,
     }
-    if plan.system:
-        sys_val = _extract_text_from_spec(
-            row,
-            plan.system,
-            plan,
-            role="system",
-            default_joiner=ROLE_JOINER_DEFAULTS["system"],
-        )
-        if sys_val:
-            result["system"] = sys_val
     return result
 
 

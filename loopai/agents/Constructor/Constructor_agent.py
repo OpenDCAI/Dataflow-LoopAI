@@ -385,7 +385,7 @@ class ConstructorAgent(BaseAgent):
         """
         state['current'] = "ConstructorAgent.postprocess_node"
         constructor = state.get("constructor", {})
-        version = constructor.get("postprocess_version", "legacy")
+        version = constructor.get("postprocess_version", "agent_v2")
 
         ConstructorAgent._emit_stream_event(
             state,

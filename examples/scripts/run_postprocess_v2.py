@@ -35,7 +35,7 @@ USER_QUERY = os.getenv(
 CATEGORY = os.getenv("CATEGORY", "SFT")          # "PT" 或 "SFT"
 
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4o")
-BASE_URL   = os.getenv("BASE_URL",   "http://172.96.160.199:3000/v1")
+BASE_URL   = os.getenv("BASE_URL",   "http://123.129.219.111:3000/v1")
 API_KEY    = os.getenv("API_KEY",     "sk-...")         # ← 必填，或通过环境变量传入
 
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
