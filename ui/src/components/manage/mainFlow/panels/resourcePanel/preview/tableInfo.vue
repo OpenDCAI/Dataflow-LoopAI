@@ -1,26 +1,39 @@
 <template>
     <div class="collapse-item-content">
         <div v-if="showBack" class="control-block">
-            <fv-button background="transparent" border-radius="8" style="width: 30px; height: 30px"
-                @click="$emit('back')">
+            <fv-button
+                background="transparent"
+                border-radius="8"
+                style="width: 30px; height: 30px"
+                @click="$emit('back')"
+            >
                 <i class="ms-Icon ms-Icon--Back"></i>
             </fv-button>
             <p>{{ local('Back') }}</p>
         </div>
-        <table-preview :table-info="tableInfo" v-model:current-page="currentPage" :total="total" ref="tablePreview" />
+        <table-preview
+            :table-info="tableInfo"
+            v-model:current-page="currentPage"
+            :total="total"
+            ref="tablePreview"
+        />
     </div>
 </template>
 
 <script>
 import { mapState } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
-import tablePreview from '@/components/general/preview/tablePreview.vue';
+import tablePreview from '@/components/general/preview/tablePreview.vue'
 
 export default {
     components: {
         tablePreview
     },
     props: {
+        isShow: {
+            type: Boolean,
+            default: false
+        },
         item: {
             type: Object,
             default: () => ({})
@@ -40,6 +53,13 @@ export default {
         }
     },
     watch: {
+        isShow(newVal) {
+            if (newVal) {
+                this.$nextTick(() => {
+                    this.$refs.tablePreview.getHeads()
+                })
+            }
+        },
         currentPage() {
             this.getTableData(false)
         }
@@ -64,12 +84,13 @@ export default {
                 )
                 .then((res) => {
                     if (res.code === 200) {
-                        const { samples, count } = res.data;
+                        const { samples, count } = res.data
                         this.tableInfo = samples
                         this.total = count
-                        if (refreshHead) this.$nextTick(() => {
-                            this.$refs.tablePreview.getHeads()
-                        })
+                        if (refreshHead)
+                            this.$nextTick(() => {
+                                this.$refs.tablePreview.getHeads()
+                            })
                     }
                 })
         }
