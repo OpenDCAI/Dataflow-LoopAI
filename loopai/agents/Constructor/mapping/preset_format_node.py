@@ -10,7 +10,6 @@ Preset Format Node - 预设格式节点 (非LLM)
 import json
 from typing import Dict, Any
 
-from langchain_core.messages import AIMessage
 from langgraph.store.base import BaseStore
 
 from loopai.schema.states import LoopAIState
@@ -60,9 +59,11 @@ def preset_format_node(state: LoopAIState, store: BaseStore = None) -> LoopAISta
         
         if "messages" not in state:
             state["messages"] = []
-        state["messages"].append(AIMessage(
-            content=f"错误: {error_msg}\n\n可用格式: {', '.join(available)}\n\n请重新选择格式。"
-        ))
+        state["messages"].append({
+            "type": "ai",
+            "role": "assistant",
+            "content": f"错误: {error_msg}\n\n可用格式: {', '.join(available)}\n\n请重新选择格式。",
+        })
         
         # 重置意图，返回 inquiry
         state["constructor"]["mapping_user_intent"] = ""

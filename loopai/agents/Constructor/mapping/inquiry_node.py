@@ -7,7 +7,7 @@ Uses LLM to analyze user input and determine intent
 import json
 from typing import Dict, Any, Optional
 
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import interrupt
 from langgraph.store.base import BaseStore
@@ -42,7 +42,11 @@ def inquiry_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState:
     
     if "messages" not in state:
         state["messages"] = []
-    state["messages"].append(AIMessage(content=welcome_message))
+    state["messages"].append({
+        "type": "ai",
+        "role": "assistant",
+        "content": welcome_message,
+    })
     
     logger.info("Showing welcome message and waiting for user input...")
     user_input = interrupt(welcome_message)
@@ -50,7 +54,11 @@ def inquiry_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState:
     logger.info(f"User input received: {user_input}")
     
     if user_input:
-        state["messages"].append(HumanMessage(content=str(user_input)))
+        state["messages"].append({
+            "type": "human",
+            "role": "user",
+            "content": str(user_input),
+        })
     
     return _analyze_user_intent(state, str(user_input) if user_input else "", store)
 
