@@ -49,12 +49,22 @@ class JudgerAgent(BaseAgent):
         def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
             writer = get_stream_writer()
             required_fields = {
-                'judger':["eval_model_path", "eval_api_key", "eval_temperature",
+                'judger':["eval_api_key", "eval_temperature",
                         "eval_top_p", "eval_problem_path", "eval_batch_size", 
-                        "eval_case_num", "eval_task_type", "output_dir"
-                ]
+                        "eval_case_num", "eval_task_type"
+                ],
+                'default':["output_dir", "task_id"]
             }
             missing_fields = get_missing_fields(required_fields, state)
+
+            if not missing_fields:
+                # judger无模型参数则去查看trainer是否提供
+                if _isNotNone(state.get("judger", {}).get("eval_model_path", "")) is not True :
+                    if _isNotNone(state.get("trainer", {}).get("train_input_model_name", "")) is True :
+                        logger.info("judger未提供模型参数，检测到trainer提供模型，将以trainer提供的模型进行评测")
+                        state["judger"]["eval_model_path"] = state.get("trainer", {}).get("train_input_model_name")
+                    else :
+                        missing_fields = get_missing_fields({'judger':["eval_model_path"]}, state)
 
             """vllm启动检查"""
             base_url = state.get("judger", {}).get("eval_base_url", None)
@@ -98,7 +108,7 @@ class JudgerAgent(BaseAgent):
                     
             """检查text2sql必要字段"""
             if not missing_fields:
-                if state.get("judger", {}).get("eval_text2sql_dir", "") == "text2sql":
+                if state.get("judger", {}).get("eval_task_type", "") == "text2sql":
                     missing_fields = get_missing_fields({'judger':["eval_text2sql_dir"]}, state)
             
             if missing_fields:
@@ -248,7 +258,7 @@ class JudgerAgent(BaseAgent):
         problem_path = state.get("judger", {}).get("eval_problem_path", "")
         format_type = state.get("judger", {}).get("eval_format_type", None)
         state_task_id = state.get("task_id")
-        output_dir = Path(state.get("judger", {}).get("output_dir", "/"))
+        output_dir = Path(state.get("output_dir", "/"))
         problem_file_name = str(Path(problem_path).stem)
 
         target_format_path = output_dir / str(state_task_id) / "judger" / (problem_file_name + "_format.jsonl")

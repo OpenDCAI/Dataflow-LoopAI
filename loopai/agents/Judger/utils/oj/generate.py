@@ -43,7 +43,7 @@ def generate_sample_code(state):
         top_p=judger_state['eval_top_p']
     )
 
-    output_dir = Path(judger_state['output_dir'])
+    output_dir = Path(jstate.get("output_dir"))
     problem_path = judger_state['eval_problem_path']
     problem_file_name = str(Path(problem_path).stem)
     test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
@@ -127,7 +127,7 @@ def generate_sample_text2sql(state):
         temperature=judger_state['eval_temperature'],
         top_p=judger_state['eval_top_p']
     )
-    output_dir = Path(judger_state['output_dir'])
+    output_dir = Path(state.get("output_dir"))
     problem_path = judger_state['eval_problem_path']
     problem_file_name = str(Path(problem_path).stem)
     test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
