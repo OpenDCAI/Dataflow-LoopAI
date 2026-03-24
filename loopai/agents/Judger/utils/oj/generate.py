@@ -43,13 +43,10 @@ def generate_sample_code(state):
         top_p=judger_state['eval_top_p']
     )
 
-    trainer_state = state.get("trainer", {})
-    trainer_task_id = trainer_state['trainer_task_id']
-
-    output_dir = Path(state.get("output_dir"))
+    output_dir = Path(jstate.get("output_dir"))
     problem_path = judger_state['eval_problem_path']
     problem_file_name = str(Path(problem_path).stem)
-    test_case_path = str(output_dir / str(state_task_id) / "trainer" / str(trainer_task_id) / (problem_file_name + "_sample.jsonl"))
+    test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
 
     batch_size = judger_state['eval_batch_size']
     num_samples_per_task = judger_state['eval_case_num']
@@ -122,9 +119,6 @@ def generate_sample_code(state):
 def generate_sample_text2sql(state):
     judger_state = state.get("judger", {})
     state_task_id = state.get("task_id")
-
-    trainer_state = state.get("trainer", {})
-    trainer_task_id = trainer_state['trainer_task_id']
     logger.info(f"进入生成样本{state_task_id}")
     model = init_model(
         model_path=judger_state['eval_model_path'],
@@ -136,7 +130,7 @@ def generate_sample_text2sql(state):
     output_dir = Path(state.get("output_dir"))
     problem_path = judger_state['eval_problem_path']
     problem_file_name = str(Path(problem_path).stem)
-    test_case_path = str(output_dir / str(state_task_id) / "trainer" / str(trainer_task_id) / (problem_file_name + "_sample.jsonl"))
+    test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
 
     task_type = judger_state['eval_task_type']
     num_samples_per_task = judger_state['eval_case_num']
