@@ -712,7 +712,12 @@ class NormalDomainAgent(BaseAgent):
         pass
 
     def compute_prompt(self):
-        return "You are an expert in analyzing dialogue datasets. Your task is to determine if a conversation record is related to a specific domain query."
+        return (
+            "You are an expert in analyzing dialogue datasets. Your task is to determine if a conversation "
+            "record is related to a specific domain query. Be conservative when filtering: keep records unless "
+            "they are clearly unrelated. If relevance is weak, indirect, partial, ambiguous, or uncertain, mark "
+            "the record as related."
+        )
 
     async def analyze_record(self, record: Dict[str, Any], user_query: str) -> Dict[str, Any]:
         """
@@ -747,6 +752,10 @@ class NormalDomainAgent(BaseAgent):
             f"User: {user_content[:500]}\n"
             f"Assistant: {assistant_content[:500]}\n\n"
             f"Determine if this conversation is relevant to the target domain query.\n"
+            f"Filtering policy (important):\n"
+            f"- Keep if there is any plausible, weak, indirect, partial, or contextual relevance.\n"
+            f"- Keep if uncertain or information is insufficient.\n"
+            f"- Only mark as unrelated when it is clearly and definitively outside the domain.\n"
             f"Return a JSON object with:\n"
             f'{{"is_related": true/false, "reasoning": "brief explanation"}}\n'
             f"Only return the JSON object, no other text."
@@ -770,12 +779,88 @@ class NormalDomainAgent(BaseAgent):
             
             result = json.loads(content)
             return {
-                "is_related": result.get("is_related", False),
+                "is_related": result.get("is_related", True),
                 "reasoning": result.get("reasoning", "")
             }
         except Exception as e:
             logger.error(f"Error analyzing record: {e}")
-            return {"is_related": False, "reasoning": f"Error: {str(e)}"}
+            # Fail-open to avoid accidental data loss during domain filtering.
+            return {"is_related": True, "reasoning": f"Error (kept by default): {str(e)}"}
+
+
+class NormalDomainQueryRewriteAgent(BaseAgent):
+    """
+    用于将用户原始 query 改写为更适合领域相关性召回的检索描述。
+    """
+
+    @property
+    def role_name(self) -> str:
+        return "NormalDomainQueryRewrite"
+
+    @property
+    def system_prompt_type(self) -> str:
+        return "system"
+
+    @property
+    def system_prompt_name(self) -> str:
+        return "default_prompt"
+
+    def init_graph(self):
+        pass
+
+    def __call__(self):
+        pass
+
+    def compute_prompt(self):
+        return (
+            "You are an expert in domain query rewriting for dataset filtering. "
+            "Rewrite the query to maximize recall while preserving original intent. "
+            "Do not narrow the domain. Expand with semantically related terms and coverage hints. "
+            "Output valid JSON only."
+        )
+
+    async def rewrite_query(self, user_query: str) -> Dict[str, str]:
+        """
+        对 user_query 进行语义扩写，生成更利于召回的领域描述。
+        """
+        prompt = (
+            "Rewrite the following domain query for high-recall dataset filtering.\n\n"
+            f"Original Query: {user_query}\n\n"
+            "Requirements:\n"
+            "1) Preserve the original intent and task goal.\n"
+            "2) Expand domain scope with close, semantically related subdomains and terminology.\n"
+            "3) Keep it concise and practical for relevance matching.\n"
+            "4) Avoid introducing unrelated domains.\n"
+            "Return JSON only with keys:\n"
+            '{"rewritten_query":"...", "domain_focus":"...", "keep_policy_note":"..."}'
+        )
+        try:
+            messages_list = [
+                SystemMessage(content=self.compute_prompt()),
+                HumanMessage(content=prompt),
+            ]
+            response = await _await_llm_with_timeout(
+                self.llm, messages_list, DEFAULT_LLM_TIMEOUT_SECONDS, "normal_domain_query_rewrite"
+            )
+            content = response.content.strip()
+            content = re.sub(r'^```json\s*', '', content, flags=re.MULTILINE)
+            content = re.sub(r'^```\s*', '', content, flags=re.MULTILINE)
+            content = re.sub(r'```$', '', content, flags=re.MULTILINE)
+            content = content.strip()
+            result = json.loads(content)
+            rewritten_query = str(result.get("rewritten_query", "")).strip()
+            return {
+                "rewritten_query": rewritten_query or user_query,
+                "domain_focus": str(result.get("domain_focus", "")).strip(),
+                "keep_policy_note": str(result.get("keep_policy_note", "")).strip(),
+            }
+        except Exception as e:
+            logger.error(f"Error rewriting domain query: {e}")
+            return {
+                "rewritten_query": user_query,
+                "domain_focus": "",
+                "keep_policy_note": f"fallback_to_original_due_to_error: {str(e)}",
+            }
 
 
 class NormalRepairAgent(BaseAgent):
@@ -3832,9 +3917,16 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
     
     # 初始化 Agent
     domain_agent = None
+    query_rewrite_agent = None
     repair_agent = None
     try:
         domain_agent = NormalDomainAgent(
+            model_name=agent_config.get("model_path"),
+            base_url=agent_config.get("base_url"),
+            api_key=agent_config.get("api_key"),
+            temperature=0.1
+        )
+        query_rewrite_agent = NormalDomainQueryRewriteAgent(
             model_name=agent_config.get("model_path"),
             base_url=agent_config.get("base_url"),
             api_key=agent_config.get("api_key"),
@@ -3890,7 +3982,14 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
         
         file_total = len(all_records)
         logger.info(f"[{os.path.basename(file_path)}] Total records to process: {file_total}")
-        logger.info(f"[{os.path.basename(file_path)}] Target domain query: {user_query}")
+        rewrite_result = await query_rewrite_agent.rewrite_query(user_query)
+        effective_query = rewrite_result.get("rewritten_query", user_query) or user_query
+        logger.info(f"[{os.path.basename(file_path)}] Original domain query: {user_query}")
+        logger.info(f"[{os.path.basename(file_path)}] Effective domain query: {effective_query}")
+        if rewrite_result.get("domain_focus"):
+            logger.info(f"[{os.path.basename(file_path)}] Query rewrite domain focus: {rewrite_result.get('domain_focus')}")
+        if rewrite_result.get("keep_policy_note"):
+            logger.info(f"[{os.path.basename(file_path)}] Query rewrite note: {rewrite_result.get('keep_policy_note')}")
         
         # 第一步：并发判断领域相关性
         logger.info(f"[{os.path.basename(file_path)}] Step 1: Analyzing domain relevance...")
@@ -3903,7 +4002,7 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
             async def _analyze_single_record(record):
                 """分析单条记录：判断是否与领域相关"""
                 try:
-                    analysis = await domain_agent.analyze_record(record, user_query)
+                    analysis = await domain_agent.analyze_record(record, effective_query)
                     return {
                         "record": record,
                         "is_related": analysis.get("is_related", False),
@@ -3959,7 +4058,7 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
                     improved_content, is_valid, error_msg = await repair_agent.improve_and_validate(
                         user_content=user_content,
                         assistant_content=assistant_content,
-                        user_query=user_query
+                        user_query=effective_query
                     )
                     
                     if not is_valid:

@@ -1,14 +1,31 @@
 <template>
-    <basePanel v-model="thisValue" :title="title" width="min(1200px, 90%)" height="80%" theme="light" :teleport="true">
+    <basePanel
+        v-model="thisValue"
+        :title="title"
+        width="min(1200px, 90%)"
+        height="80%"
+        theme="light"
+        :teleport="true"
+    >
         <template v-slot:content>
             <div class="panel-resource-preview-content-block">
-                <component :is="computedUI" :item="{ id: computedPath }" :showBack="!readOnly">
+                <component
+                    :is="computedUI"
+                    :is-show="thisValue"
+                    :item="{ id: computedPath }"
+                    :showBack="!readOnly"
+                >
                 </component>
             </div>
         </template>
         <template v-slot:control="{ close }">
-            <fv-button :borderRadius="8" :isBoxShadow="true" style="width: 120px; margin-right: 8px" @click="close">{{
-                local('Close') }}</fv-button>
+            <fv-button
+                :borderRadius="8"
+                :isBoxShadow="true"
+                style="width: 120px; margin-right: 8px"
+                @click="close"
+                >{{ local('Close') }}</fv-button
+            >
         </template>
     </basePanel>
 </template>
@@ -72,10 +89,8 @@ export default {
             return `file:///${this.filePath}`
         }
     },
-    mounted() { },
-    methods: {
-
-    }
+    mounted() {},
+    methods: {}
 }
 </script>
 

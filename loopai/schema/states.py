@@ -536,7 +536,7 @@ class ConstructorState(BaseModel):
         json_schema_extra={"ui_type": "switch", "ui_group": "构造配置"}
     )
     postprocess_version: str = Field(
-        default="legacy",
+        default="agent_v2",
         title="后处理版本",
         description="后处理实现版本: legacy 使用原有流程, agent_v2 使用新版子 Agent 流程",
         json_schema_extra={
@@ -1120,6 +1120,24 @@ class TrainerState(BaseModel):
         description="LlamaFactory 目录",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
+    llamafactory_env_path: str = Field(
+        default="",
+        title="LlamaFactory 环境路径",
+        description="LlamaFactory 环境路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    CUDA_VISIBLE_DEVICES: str = Field(
+        default="",
+        title="CUDA 可见设备",
+        description="CUDA 可见设备",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    swanlab_api_key: str = Field(
+        default="",
+        title="SwanLab API Key",
+        description="SwanLab API Key",
+        json_schema_extra={"ui_type": "password", "ui_group": "训练模型"}
+    )
     train_input_dataset_path: str = Field(
         default="",
         title="训练数据集路径",
@@ -1252,12 +1270,7 @@ class TrainerState(BaseModel):
         description="训练错误信息",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
-    training_service_url: str = Field(
-        default="http://localhost:8000",
-        title="训练服务器 URL",
-        description="训练服务器 URL",
-        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
-    )
+    # training_service_url 已废弃：训练现在直接在本地通过 TaskManager 执行，不再需要远程服务地址
     current_training_status: str = Field(
         default="",
         title="当前训练状态",
@@ -1281,6 +1294,18 @@ class TrainerState(BaseModel):
         title="SwanLab 日志路径",
         description="SwanLab 日志路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    training_checkpoints: List[str] = Field(
+        default_factory=list,
+        title="训练 Checkpoint 列表",
+        description="训练产生的所有 checkpoint 目录名列表，如 ['checkpoint-100', 'checkpoint-200']",
+        json_schema_extra={"ui_type": "json", "ui_group": "训练模型"}
+    )
+    training_step_losses: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        title="关键 Step Loss 记录",
+        description="训练过程中各 step 的 loss 值记录，从 trainer_log.jsonl 解析",
+        json_schema_extra={"ui_type": "json", "ui_group": "训练模型"}
     )
 
 
@@ -1401,7 +1426,7 @@ class LoopAIState(MessagesState):
     # training_log_path: str = ""
     # training_report_path: str = ""
     # training_error: str = ""
-    # training_service_url: str = "http://localhost:8000"
+    # training_service_url: 已废弃，训练现在本地执行
     # current_training_status: str = ""
     # update_model_path: str
     # swanlab_url: str
@@ -1411,8 +1436,11 @@ class LoopAIState(MessagesState):
     current: str
     next_to: Annotated[str, replace_value]
 
-    # automated_query 既是全局控制信号，也可能被 obtainer 生成
+    # automated_query：Starter query_node 注入的下一条「用户话」（不经 interrupt）
     automated_query: Annotated[str, replace_value]
+
+    # obtainer_subtask_query：仅 Obtainer 子图内部用于多子任务路由的当前子任务文本
+    obtainer_subtask_query: Annotated[str, replace_value]
 
     exception: Annotated[str, replace_value]
 

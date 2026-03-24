@@ -174,8 +174,8 @@ class StarterAgent(BaseAgent):
         builder.add_edge('llm_node', 'feedback_node')
         builder.add_edge('evaluate_node', 'query_node')
         builder.add_edge('train_node', 'route_node')
-        # Obtainer -> Constructor
-        builder.add_edge('obtain_node', 'constructor_node')
+        # Obtainer -> Query (user/LLM decides next step via check_motivation, e.g. constructor)
+        builder.add_edge('obtain_node', 'query_node')
         # Constructor -> Query
         builder.add_edge('constructor_node', 'query_node')
         builder.add_edge('config_node', 'query_node')

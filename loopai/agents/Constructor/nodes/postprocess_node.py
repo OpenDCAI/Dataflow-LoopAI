@@ -120,8 +120,11 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
     # 获取 constructor 嵌套配置
     constructor = state.get("constructor", {})
     
-    # Get category (PT or SFT) - default to PT if not specified
-    category = constructor.get("category", "PT").upper()
+    # Get category (PT or SFT): prefer constructor, fallback to obtainer, then PT.
+    category_raw = constructor.get("category")
+    if not category_raw:
+        category_raw = state.get("obtainer", {}).get("category", "PT")
+    category = str(category_raw).upper()
     if category not in ["PT", "SFT"]:
         logger.warning(f"Invalid category '{category}', defaulting to PT")
         category = "PT"

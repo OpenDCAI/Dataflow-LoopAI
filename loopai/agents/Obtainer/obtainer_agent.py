@@ -114,21 +114,41 @@ class ObtainerAgent(BaseAgent):
             objective = ""
             
             if state.get("messages") and len(state["messages"]) > 0:
-                last_message = state["messages"][-4]
-                if hasattr(last_message, "content"):
-                    user_query = last_message.content
-                elif isinstance(last_message, dict):
-                    user_query = last_message.get("content", "")
+                # Do not rely on fixed index (e.g. [-4]); message length/order
+                # can vary across different graph paths and retries.
+                for message in reversed(state["messages"]):
+                    # LangChain HumanMessage
+                    if hasattr(message, "type") and getattr(message, "type", "") == "human":
+                        content = getattr(message, "content", "")
+                        if content and not str(content).strip().startswith("<cmd>"):
+                            user_query = str(content)
+                            break
+                    # Dict-style message
+                    elif isinstance(message, dict):
+                        msg_type = str(message.get("type", "")).lower()
+                        msg_role = str(message.get("role", "")).lower()
+                        if msg_type in ("human", "humanmessage") or msg_role in ("human", "user"):
+                            content = str(message.get("content", ""))
+                            if content and not content.strip().startswith("<cmd>"):
+                                user_query = content
+                                break
             
             if not user_query:
-                user_query = state.get("automated_query", "")
+                user_query = (
+                    state.get("obtainer_subtask_query", "")
+                    or state.get("automated_query", "")
+                )
             
             # Write user_query to state if available
             if user_query:
                 state.setdefault("obtainer", {})["user_query"] = user_query
             
-            # Get objective if available
-            objective = state.get("automated_query", user_query)
+            # Get objective if available (subtask drive first, then legacy automated_query)
+            objective = (
+                state.get("obtainer_subtask_query", "")
+                or state.get("automated_query", "")
+                or user_query
+            )
             
             # LLM normalize: detect eval-based recommendations and rewrite to dataset request
             logger.info(f"[Obtainer] Using user_query for dataset background extraction: {user_query[:200]}...")
@@ -162,7 +182,7 @@ class ObtainerAgent(BaseAgent):
                             state.setdefault("obtainer", {})["normalized_reason"] = reason
                             # Only override when a rewrite is provided
                             if normalized_query != user_query:
-                                state["automated_query"] = normalized_query
+                                state["obtainer_subtask_query"] = normalized_query
                                 user_query = normalized_query
                                 state.setdefault("obtainer", {})["user_query"] = user_query
                                 objective = normalized_query
@@ -235,7 +255,7 @@ class ObtainerAgent(BaseAgent):
             
             # Ensure output_dir is set
             if not state.get("output_dir"):
-                state["output_dir"] = "./output"
+                state["output_dir"] = "./outputs"
             
             # Set default values for obtainer-specific parameters if not in state
             if "search_engine" not in state.get("obtainer", {}):
@@ -310,7 +330,11 @@ class ObtainerAgent(BaseAgent):
                 state.setdefault("obtainer", {})["default_mapping_format"] = "alpaca"  # Empty means user interaction mode
             
             # Handle debug mode
-            debug_mode = state.get("obtainer_debug", False)
+            debug_raw = state.get("obtainer_debug", False)
+            if isinstance(debug_raw, str):
+                debug_mode = debug_raw.strip().lower() in {"1", "true", "yes", "on"}
+            else:
+                debug_mode = bool(debug_raw)
             if debug_mode:
                 # Set logger level to DEBUG
                 logger.setLevel(logging.DEBUG)
@@ -319,7 +343,7 @@ class ObtainerAgent(BaseAgent):
                     handler.setLevel(logging.DEBUG)
                 
                 # Add file handler for debug logs if not already added
-                output_dir = state.get("output_dir", "./output")
+                output_dir = state.get("output_dir", "./outputs")
                 log_dir = os.path.join(output_dir, "obtainer_logs")
                 os.makedirs(log_dir, exist_ok=True)
                 
@@ -407,7 +431,7 @@ class ObtainerAgent(BaseAgent):
                 return state
             
             # Get user input - find the last HumanMessage, not just the last message
-            # Priority: 1. Original HumanMessage from messages, 2. automated_query
+            # Priority: 1. Original HumanMessage from messages, 2. obtainer_subtask_query, 3. automated_query (legacy)
             user_input = ""
             
             # Extract user message from messages list
@@ -446,15 +470,18 @@ class ObtainerAgent(BaseAgent):
                                     user_input = content
                                     break
             
-            # Fallback to automated_query if no valid HumanMessage found
+            # Fallback if no valid HumanMessage found
             if not user_input:
-                user_input = state.get("automated_query", "")
+                user_input = (
+                    state.get("obtainer_subtask_query", "")
+                    or state.get("automated_query", "")
+                )
             
             if not user_input:
                 logger.warning("No user input found, using default task")
                 state.setdefault("obtainer", {})["task_list"] = [{"task_name": "收集数据集用于大模型微调"}]
                 state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
-                state["automated_query"] = state.get("obtainer", {}).get("task_list", [])[0]["task_name"]
+                state["obtainer_subtask_query"] = state.get("obtainer", {}).get("task_list", [])[0]["task_name"]
                 return state
             
             # Prepare prompt loader
@@ -496,15 +523,16 @@ class ObtainerAgent(BaseAgent):
                     state.setdefault("obtainer", {})["task_list"] = task_list
                     state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
                     
-                    # Set first task as automated_query
+                    # Set first task as internal subtask drive string
                     if task_list and len(task_list) > 0:
                         first_task = task_list[0].get("task_name", user_input)
-                        state["automated_query"] = first_task
+                        state["obtainer_subtask_query"] = first_task
                         logger.info(f"Decomposed into {len(task_list)} tasks. Starting with task 1/{len(task_list)}: {first_task[:100]}...")
                         if writer:
                             writer(StreamEvent(
                                 current=state['current'],
                                 message=f"Decomposed into {len(task_list)} tasks. Starting with task 1/{len(task_list)}: {first_task[:100]}...",
+                                progress=1.0,
                             ).json())
 
                         # Clear RAG collection for the first task (keep downloads folder)
@@ -588,7 +616,7 @@ class ObtainerAgent(BaseAgent):
                         logger.warning("Task decomposition returned empty list, using original input")
                         state.setdefault("obtainer", {})["task_list"] = [{"task_name": user_input}]
                         state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
-                        state["automated_query"] = user_input
+                        state["obtainer_subtask_query"] = user_input
                         # Determine category for the fallback task
                         if model_name and base_url and api_key:
                             try:
@@ -626,7 +654,7 @@ class ObtainerAgent(BaseAgent):
                     logger.warning("Model configuration missing, using original input as single task")
                     state.setdefault("obtainer", {})["task_list"] = [{"task_name": user_input}]
                     state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
-                    state["automated_query"] = user_input
+                    state["obtainer_subtask_query"] = user_input
                     # Use keyword-based detection as fallback
                     user_input_lower = user_input.lower()
                     if any(keyword in user_input_lower for keyword in ["sft", "supervised fine-tuning", "fine-tuning", "微调", "问答", "qa", "question", "answer"]):
@@ -645,7 +673,7 @@ class ObtainerAgent(BaseAgent):
                     ).json())
                 state.setdefault("obtainer", {})["task_list"] = [{"task_name": user_input}]
                 state.setdefault("obtainer", {})["current_task_index"] = 1  # 第一个任务已分配执行，索引指向下一个
-                state["automated_query"] = user_input
+                state["obtainer_subtask_query"] = user_input
                 # Use keyword-based detection as fallback
                 user_input_lower = user_input.lower()
                 if any(keyword in user_input_lower for keyword in ["sft", "supervised fine-tuning", "fine-tuning", "微调", "问答", "qa", "question", "answer"]):
@@ -655,7 +683,7 @@ class ObtainerAgent(BaseAgent):
                 state.setdefault("obtainer", {})["datasets_background"] = user_input
             
             return state
-        
+            
         return task_decomposer_node
 
     @staticmethod
@@ -774,8 +802,8 @@ class ObtainerAgent(BaseAgent):
             except Exception as e:
                 logger.warning(f"Failed to clear RAG collection for next task: {e}, continuing anyway")
             
-            # Set automated_query for next task
-            state["automated_query"] = task_name
+            # Drive next subtask via internal field (do not use global automated_query)
+            state["obtainer_subtask_query"] = task_name
             
             # Reset task-specific state for new task
             # Keep accumulated results but reset per-task state
@@ -935,6 +963,12 @@ class ObtainerAgent(BaseAgent):
             summary_text = "数据获取任务执行完成:\n" + "\n".join(summary_parts)
         else:
             summary_text = "数据获取任务执行完成，但未找到相关数据。"
+
+        summary_text += (
+            "\n\n【建议下一步】若需对已获取数据做清洗、格式映射或构造训练数据集，"
+            "请在后续轮次中通过主调度 Agent 调用工具 check_motivation，并将 motivation 设为 constructor。\n"
+            "<cmd>根据用户指令执行: constructor</cmd>"
+        )
         
         # Add summary to messages so LLM can see it
         from langchain_core.messages import AIMessage
@@ -961,10 +995,15 @@ class ObtainerAgent(BaseAgent):
                 progress=1,
                 data=summary_data
             ).json())
-        
-        # Set next_to to query_node to return to parent graph
-        # The parent graph has: builder.add_edge('obtain_node', 'query_node')
-        # So when this subgraph finishes, it will automatically go to query_node
+
+        # Clear internal subtask drive; hand off to Starter query_node via automated_query
+        state["obtainer_subtask_query"] = ""
+        state["automated_query"] = (
+            "请进入数据构造流程：对已下载数据做清洗与格式映射，生成训练可用数据。"
+            "请调用 check_motivation，motivation 使用 constructor。"
+        )
+
+        # Parent Starter graph: builder.add_edge('obtain_node', 'query_node')
         state["next_to"] = "query_node"
         return state
 

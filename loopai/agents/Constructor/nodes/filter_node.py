@@ -460,9 +460,22 @@ def process_node(state: LoopAIState) -> LoopAIState:
                     sampling_done_after_basic = True
                 
                 # 记录执行结果
+                if hasattr(result, "model_dump"):
+                    serializable_result = result.model_dump()
+                elif hasattr(result, "dict"):
+                    serializable_result = result.dict()
+                else:
+                    serializable_result = {
+                        "cleaned_data_path": getattr(result, "cleaned_data_path", ""),
+                        "total_records": getattr(result, "total_records", 0),
+                        "valid_records": getattr(result, "valid_records", 0),
+                        "invalid_records": getattr(result, "invalid_records", 0),
+                        "success": getattr(result, "success", True),
+                        "error_message": getattr(result, "error_message", ""),
+                    }
                 cleaning_results["tools_executed"].append({
                     "tool": tool_name,
-                    "result": result
+                    "result": serializable_result
                 })
                 
                 logger.info(f"Tool {tool_name} completed successfully")
@@ -535,6 +548,7 @@ def benchmark_cleaner_node(state: LoopAIState) -> LoopAIState:
                     progress=1.0,
                     data={"phase": "data_cleaning", "node": "benchmark_cleaner", "skipped": True},
                 ).json())
+            logger.info("=== Cleaning Subgraph: Benchmark Cleaner Node Completed (skipped, no path) ===")
             return state
 
         import os
