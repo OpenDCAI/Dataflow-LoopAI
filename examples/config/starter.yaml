@@ -100,7 +100,10 @@ default_states:
 
   trainer:
     train_framework: "llamafactory"
-    llamafactory_dir: "/mnt/paper2any/xbr/gitpush/loopai/Dataflow-LoopAI/"
+    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/
+    llamafactory_env_path: "/home/lpc/miniconda3/envs/lmf/bin/"
+    CUDA_VISIBLE_DEVICES: "0,1"
+    swanlab_api_key: ""
     train_input_dataset_path: "/home/lpc/repos/Dataflow-LoopAI/data/alpaca_en_demo.json" # to defined the path of training dataset (json/jsonl format)
     train_input_task_description: "训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务" # to defined the task description for training
     train_input_config_template_path: "/home/lpc/repos/Dataflow-LoopAI/api/examples/bird.yaml" # to defined the path of llamafactory config template
