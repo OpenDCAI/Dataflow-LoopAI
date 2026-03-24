@@ -22,7 +22,7 @@ else:
 # Model configuration
 MODEL_CONFIG = {
     'obtainer_model_path': os.getenv('OBTAINER_MODEL_PATH', 'gpt-4o'),
-    'obtainer_base_url': os.getenv('OBTAINER_BASE_URL', 'http://123.129.219.111:3000/v1'),
+    'obtainer_base_url': os.getenv('OBTAINER_BASE_URL', 'http://123.129.219.111:3000/v1v1'),
     'obtainer_api_key': api_key,
     'obtainer_temperature': float(os.getenv('OBTAINER_TEMPERATURE', '0.0')),
     'obtainer_category': os.getenv('OBTAINER_CATEGORY', 'PT').upper(),  # PT or SFT

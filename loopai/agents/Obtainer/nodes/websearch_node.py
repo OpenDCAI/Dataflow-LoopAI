@@ -75,8 +75,10 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
     # Get user query from state
     user_query = ""
     
-    # First try to get from automated_query (highest priority)
-    if state.get("automated_query"):
+    # Obtainer 内部子任务优先；兼容脚本里仍写 automated_query 的情况
+    if state.get("obtainer_subtask_query"):
+        user_query = state.get("obtainer_subtask_query")
+    elif state.get("automated_query"):
         user_query = state.get("automated_query")
     else:
         # Extract user message from messages list
