@@ -2,6 +2,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Type
 
+from typing import Union
 from langgraph.graph import StateGraph, END
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt, Command
@@ -17,6 +18,7 @@ from .utils.oj.data import check_file
 from .utils.oj.vllm_starter import start_vllm_openai_api_server
 from .utils.oj.vllm_killer import kill_vllm_openai_api_server
 from .utils.oj.vllm_check import check_vllm_running
+from .nodes.eval_general_text_node import eval_general_text_node
 
 from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
@@ -293,16 +295,27 @@ class JudgerAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
-    def generate_node(state: LoopAIState) -> LoopAIState:
+    def generate_node(state: LoopAIState) -> Union[LoopAIState, Command]:
         task_type = state.get("judger", {}).get("eval_task_type", "code")
-        writer = get_stream_writer()
+        
         match task_type:
             case "code":  # code
                 res = generate_sample_code(state)
+                state["judger"]["output_case_path"] = res
+                goto = "evaluate"
+                
+                
             case "text2sql":
                 res = generate_sample_text2sql(state)
-        state["judger"]["output_case_path"] = res
-        return state
+                state["judger"]["output_case_path"] = res
+                goto = "evaluate"
+                
+                
+            case _:  # 所有其他类型（如 general_text）
+                # 路由到 eval_general_text 节点
+                goto="eval_general_text"
+            
+        return Command(goto=goto)
 
     @staticmethod
     @BaseAgent.set_current
@@ -386,11 +399,15 @@ class JudgerAgent(BaseAgent):
         builder.add_node("data_format", self.data_format_node)
         builder.add_node("generate_code", self.generate_node)
         builder.add_node("evaluate", self.evaluate_node)
+        builder.add_node("eval_general_text", eval_general_text_node)
+        
         builder.add_edge("check_required_fields", "check_param_type")
         builder.add_edge("vllm_start", "data_format")
         builder.add_edge("data_format", "generate_code")
-        builder.add_edge("generate_code", "evaluate")
+        #builder.add_edge("generate_code", "evaluate")
+        
         builder.set_entry_point("check_required_fields")
+        builder.set_finish_point("eval_general_text")
 
         builder.add_conditional_edges(
             source="check_param_type",  # 来源节点（从哪个节点跳转出来）
