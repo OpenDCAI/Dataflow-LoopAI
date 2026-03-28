@@ -1,0 +1,264 @@
+<div align="center">
+  <img src="./assets/LoopAI.svg" width="160" alt="LoopAI Logo" />
+  <h1>LoopAI：一个闭环优化框架</h1>
+
+  <p>
+    <a href="https://www.python.org/">
+      <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" />
+    </a>
+    <a href="./LICENSE">
+      <img src="https://img.shields.io/badge/License-Apache_2.0-2F80ED?style=flat-square&logo=apache&logoColor=white" />
+    </a>
+  </p>
+
+  <h4><i>✨ 具备自优化能力的智能系统 ✨</i></h4>
+</div>
+
+<br>
+
+简体中文 | [English](/README.md)
+
+LoopAI 是一个面向**特定领域大语言模型（LLMs）自优化**的智能系统。它能够自动检测并评估模型生成中的缺陷，并通过**对话驱动的数据获取与闭环优化机制**，持续提升模型性能。
+
+```text
+User  ⇄  Starter（调度器）  ⇄  Sub-Agent
+                  │
+                  ├── 简单问题 → 直接返回
+                  └── 复杂任务 → 图执行流程
+                                 （评测 → 数据收集 → 训练）
+````
+
+<p align="center">
+  <img src="./assets/workflow.svg" alt="LoopAI Workflow" width="90%"/>
+</p>
+
+---
+
+## 📰 1. 最新动态
+
+* **[2026-03] 🎉 LoopAI（v0.1.0）正式开源！**
+  我们发布了 LoopAI 的首个版本，实现了从**自然语言指令到模型优化的全流程自动化**。
+  告别繁琐的人工流程，让 LLM 的评测与优化像对话一样简单直观。
+  ⭐ 欢迎 Star 支持并关注后续更新！
+
+---
+
+## 💡 2. 为什么选择 LoopAI？
+
+传统的大语言模型优化流程通常需要用户手动完成：
+
+* 模型效果评测
+* 错误分析
+* 数据收集与构建
+
+**LoopAI 对这一范式进行了重构**：
+
+> 🚀 *一切可以自动化的工作，全部交给 Agent 完成。*
+
+从评测到再训练，LoopAI 提供了一个**无缝衔接、交互友好、全流程自动化**的优化体验。
+
+---
+
+## 🔍 3. 系统概览
+
+LoopAI 将 LLM 的优化流程重构为一个**基于图的执行框架（Graph / Node / State）**，致力于构建新一代交互式优化系统：
+
+* 🗣️ **NL2Optimize**
+  只需用自然语言描述你的目标（例如：“提升模型的代码生成能力”），系统即可自动解析意图并规划优化流程。
+
+* 🔄 **端到端自动化**
+  覆盖完整流程：评测 → 错误分析 → 数据获取 → 模型训练。
+
+* 👨‍💻 **Human-in-the-Loop（人类参与）**
+  支持在关键步骤（如评测结果审核、数据筛选）进行人工干预，实现灵活的优化策略调整。
+
+* 📊 **可扩展架构**
+  基于 LangGraph 状态管理机制，支持轻松接入私有数据集与自定义评测指标。
+
+---
+
+## 🚀 4. 快速开始
+
+### 4.1 安装
+
+```bash
+pip install -e .
+```
+
+---
+
+### 4.2 启动服务
+
+LoopAI 支持两种运行模式：
+
+#### ✅ 方式一：后端模式（命令行）
+
+1. 复制配置文件：
+
+```bash
+cp examples/config/starter.yaml ./starter.yaml
+```
+
+2. 修改 `starter.yaml` 中的系统配置
+
+3. 启动 LoopAI：
+
+```bash
+python examples/scripts/run_starter.py
+```
+
+---
+
+#### ✅ 方式二：API 模式（FastAPI）
+
+```bash
+cd api
+python start.py
+```
+
+API 服务地址：
+
+```
+http://0.0.0.0:8855
+```
+
+---
+
+<p align="center">
+  <img src="./assets/UI.png" alt="LoopAI UI" width="90%"/>
+</p>
+
+### 🖥️ 前端部署
+
+#### 1. 安装 NVM
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+```
+
+#### 2. 激活 NVM
+
+```bash
+source ~/.bashrc  # 或 ~/.zshrc
+```
+
+#### 3. 安装 Node.js
+
+```bash
+nvm install 20
+nvm use 20
+nvm alias default 20
+```
+
+#### 4. 验证安装
+
+```bash
+node -v
+npm -v
+```
+
+#### 5. 安装 Yarn
+
+```bash
+corepack enable
+corepack prepare yarn@stable --activate
+```
+
+#### 6. 安装依赖
+
+```bash
+yarn
+```
+
+#### 7. 配置后端代理
+
+编辑 `vite.config.js`：
+
+```javascript
+server: {
+  host: '0.0.0.0',
+  proxy: {
+    '/api': {
+      target: 'http://<host>:8855/',
+      changeOrigin: true,
+      rewrite: path => path.replace(/^\/api/, '')
+    }
+  }
+}
+```
+
+#### 8. 启动前端
+
+```bash
+yarn dev
+```
+
+---
+
+## 🧠 5. 核心 Agents
+
+LoopAI 中的每个 Agent 都被实现为一个**可独立运行、可组合的子图模块**。
+
+### 🤖 StarterAgent（调度器）
+
+* 负责用户交互与任务意图解析
+* 动态编排下游 Agent
+* 管理整体任务执行流程
+
+### 🤖 JudgerAgent（评测代理）
+
+* 自动生成评测用例（基于 LLM）
+* 对接外部评测系统执行测试
+* 收集结构化评测结果与日志
+
+### 🤖 AnalyzerAgent（分析代理）
+
+* 对评测结果进行统计分析
+* 自动挖掘错误模式与失败类型
+* 输出高可读性的诊断报告
+
+### 🤖 ObtainerAgent & WebCrawlerAgent（数据获取代理）
+
+* 推导数据获取策略
+* 检索数据集与知识来源
+* 清洗并结构化为训练数据
+* 支持可扩展的 Web 数据抓取
+
+### 🤖 TrainerAgent（训练代理）
+
+* 基于新数据执行增量训练
+* 支持持续学习以避免遗忘
+* 实现模型能力的闭环提升
+
+### 🤖 ConfigerAgent（配置代理）
+
+* 与用户进行配置交互
+* 支持动态参数调整
+* 处理缺失信息与流程恢复
+
+---
+
+## 🚀 6. 未来工作
+
+我们将持续在以下方向推进 LoopAI：
+
+* 💻 **扩展更多应用领域**
+* 🤖 **增强 Agent 智能与自主性**
+* 🌐 **构建在线平台与社区**
+* 📊 **提升可视化能力**
+
+---
+
+## 🙌 7. 贡献指南
+
+欢迎参与共建！
+
+* 📮 通过 GitHub Issues 提交问题或建议
+* 🔧 通过 Pull Requests 贡献代码
+
+---
+
+## 📄 8. 开源协议
+
+本项目基于 **Apache 2.0 License** 开源。
+详情请参见 [LICENSE](./LICENSE) 文件。
