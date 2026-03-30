@@ -31,11 +31,12 @@ def main():
         return 1
     
     cfg = OmegaConf.load('./starter.yaml')
-    system_config = cfg.get('system', {})
+    default_states_config = cfg.get('default_states', {})
+    trainer_config = default_states_config.get('trainer', {})
 
     # LLaMA Factory项目目录
-    llamafactory_dir = system_config['llamafactory_dir']
-    llamafactory_env_path = system_config.get('llamafactory_env_path', '')
+    llamafactory_dir = trainer_config['llamafactory_dir']
+    llamafactory_env_path = trainer_config.get('llamafactory_env_path', '')
     
     # 检查LLaMA Factory目录是否存在
     if not os.path.exists(llamafactory_dir):
