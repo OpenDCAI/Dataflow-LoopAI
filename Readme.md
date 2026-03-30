@@ -112,8 +112,7 @@ python examples/scripts/run_starter.py
 #### ✅ Option B: API Mode (FastAPI)
 
 ```bash
-cd api
-python start.py
+python api/start.py
 ```
 
 API will be available at:

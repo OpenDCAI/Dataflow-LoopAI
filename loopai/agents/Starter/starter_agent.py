@@ -177,11 +177,11 @@ class StarterAgent(BaseAgent):
         # Obtainer -> Query (user/LLM decides next step via check_motivation, e.g. constructor)
         builder.add_edge('obtain_node', 'query_node')
         # Constructor -> Query
-        builder.add_edge('constructor_node', 'query_node')
+        builder.add_edge('constructor_node', 'route_node')
         builder.add_edge('config_node', 'query_node')
         builder.add_edge('judge_node', 'route_node')
         builder.add_edge('analyze_node', 'route_node')
-        builder.add_edge('webcrawler_node', 'query_node')
+        builder.add_edge('webcrawler_node', 'route_node')
         builder.add_conditional_edges(
             "feedback_node",
             self.conditional_edge)

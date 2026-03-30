@@ -112,8 +112,7 @@ python examples/scripts/run_starter.py
 #### ✅ 方式二：API 模式（FastAPI）
 
 ```bash
-cd api
-python start.py
+python api/start.py
 ```
 
 API 服务地址：
