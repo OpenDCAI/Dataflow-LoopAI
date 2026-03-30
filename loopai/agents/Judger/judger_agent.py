@@ -157,6 +157,8 @@ class JudgerAgent(BaseAgent):
             if state.get("judger", {}).get("eval_task_type", "") == "code":
                 if state.get("judger", {}).get("eval_format_type", "") == "mbpp":
                     required_fields = ["text", "code", "task_id", "challenge_test_list", "test_list"]
+                elif state.get("judger", {}).get("eval_format_type", "") == "human-eval":
+                    required_fields = ["task_id", "prompt", "entry_point", "canonical_solution", "test"]
                 else:
                     required_fields = ["task_id", "prompt", "entry_point", "canonical_solution", "test_list"]
             elif state.get("judger", {}).get("eval_task_type", "") == "text2sql":
