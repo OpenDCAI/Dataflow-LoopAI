@@ -56,11 +56,19 @@ class StarterAgent(BaseAgent):
         else:
             value = interrupt('input the human query')
         writer = get_stream_writer()
+        logger.info(f"Exec: Query node")
+        if value == '> $resume$':
+            writer(StreamEvent(
+                current=state['current'],
+                message=f"Exec: Query node with resume the saved chat."
+            ).json())
+            return {
+                'automated_query': ''
+            }
         writer(StreamEvent(
             current=state['current'],
-            message=f"Exec: Query node"
+            message=f"Exec: Query node with common query."
         ).json())
-        logger.info(f"Exec: Query node")
         return {
             'messages': [{'role': 'user', 'content': value}],
             'automated_query': ''
