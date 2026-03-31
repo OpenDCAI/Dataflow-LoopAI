@@ -63,7 +63,7 @@ class StarterAgent(BaseAgent):
                 message=f"Exec: Query node with resume the saved chat."
             ).json())
             return {
-                'automated_query': ''
+                'next_to': 'query_node'
             }
         writer(StreamEvent(
             current=state['current'],
@@ -71,7 +71,8 @@ class StarterAgent(BaseAgent):
         ).json())
         return {
             'messages': [{'role': 'user', 'content': value}],
-            'automated_query': ''
+            'automated_query': '',
+            'next_to': 'llm_node'
         }
 
     @staticmethod
@@ -178,7 +179,9 @@ class StarterAgent(BaseAgent):
         builder.set_entry_point("query_node")
         builder.set_finish_point("end_node")
 
-        builder.add_edge('query_node', 'llm_node')
+        builder.add_conditional_edges(
+            "query_node",
+            self.conditional_edge)
         builder.add_edge('llm_node', 'feedback_node')
         builder.add_edge('evaluate_node', 'query_node')
         builder.add_edge('train_node', 'route_node')
