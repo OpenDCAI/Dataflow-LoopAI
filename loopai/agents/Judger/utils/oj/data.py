@@ -7,7 +7,45 @@ import gzip
 def read_problems(evalset_file) -> Dict[str, Dict]:
     return {task["task_id"]: task for task in stream_jsonl(evalset_file)}
 
+import json
+from typing import List
 
+def check_jsonl_fields(filepath: str, require_fields: List[str]) -> bool:
+    """
+    检查 JSONL 文件中的每一行是否都包含指定的字段。
+
+    参数:
+        filepath: JSONL 文件路径
+        require_fields: 必需的字段列表
+
+    返回:
+        如果所有行都包含所有字段，返回 True；否则返回 False
+    """
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:  # 跳过空行
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError as e:
+                    print(f"第 {line_num} 行 JSON 解析错误: {e}")
+                    return False
+                
+                # 检查每个必需字段
+                for field in require_fields:
+                    if field not in data:
+                        print(f"第 {line_num} 行缺少字段 '{field}'")
+                        return False
+        return True
+    except FileNotFoundError:
+        print(f"文件不存在: {filepath}")
+        return False
+    except Exception as e:
+        print(f"读取文件时发生错误: {e}")
+        return False
+    
 def stream_jsonl(filename: str) -> Iterable[Dict]:
     """
     Parses each jsonl line and yields it as a dictionary

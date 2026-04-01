@@ -88,6 +88,7 @@ async def start_agent(task_id: str):
         return response_body(code=400, message="Failed to initialize starter manager")
     state = await get_task_state(task_id, default_states)
     manager.start(default_state=state)
+    manager.send_input('> $resume$')
     return response_body(message="Agent started")
 
 

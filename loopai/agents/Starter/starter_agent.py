@@ -56,14 +56,23 @@ class StarterAgent(BaseAgent):
         else:
             value = interrupt('input the human query')
         writer = get_stream_writer()
+        logger.info(f"Exec: Query node")
+        if value == '> $resume$':
+            writer(StreamEvent(
+                current=state['current'],
+                message=f"Exec: Query node with resume the saved chat."
+            ).json())
+            return {
+                'next_to': 'query_node'
+            }
         writer(StreamEvent(
             current=state['current'],
-            message=f"Exec: Query node"
+            message=f"Exec: Query node with common query."
         ).json())
-        logger.info(f"Exec: Query node")
         return {
             'messages': [{'role': 'user', 'content': value}],
-            'automated_query': ''
+            'automated_query': '',
+            'next_to': 'llm_node'
         }
 
     @staticmethod
@@ -170,18 +179,20 @@ class StarterAgent(BaseAgent):
         builder.set_entry_point("query_node")
         builder.set_finish_point("end_node")
 
-        builder.add_edge('query_node', 'llm_node')
+        builder.add_conditional_edges(
+            "query_node",
+            self.conditional_edge)
         builder.add_edge('llm_node', 'feedback_node')
         builder.add_edge('evaluate_node', 'query_node')
         builder.add_edge('train_node', 'route_node')
         # Obtainer -> Query (user/LLM decides next step via check_motivation, e.g. constructor)
         builder.add_edge('obtain_node', 'query_node')
         # Constructor -> Query
-        builder.add_edge('constructor_node', 'query_node')
+        builder.add_edge('constructor_node', 'route_node')
         builder.add_edge('config_node', 'query_node')
         builder.add_edge('judge_node', 'route_node')
         builder.add_edge('analyze_node', 'route_node')
-        builder.add_edge('webcrawler_node', 'query_node')
+        builder.add_edge('webcrawler_node', 'route_node')
         builder.add_conditional_edges(
             "feedback_node",
             self.conditional_edge)

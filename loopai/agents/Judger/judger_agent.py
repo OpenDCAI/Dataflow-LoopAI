@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type, Union
 
 from typing import Union
 from langgraph.graph import StateGraph, END
@@ -14,7 +14,7 @@ from loopai.agents import BaseAgent
 from .utils.oj.generate import generate_sample_code, generate_sample_text2sql
 from .utils.oj.evaluate import evaluate_sample_code, evaluate_sample_text2sql
 from .utils.oj.format import data_format
-from .utils.oj.data import check_file
+from .utils.oj.data import check_file, check_jsonl_fields
 from .utils.oj.vllm_starter import start_vllm_openai_api_server
 from .utils.oj.vllm_killer import kill_vllm_openai_api_server
 from .utils.oj.vllm_check import check_vllm_running
@@ -29,6 +29,28 @@ logger = get_logger()
 
 def _isNotNone(value):
     return value != "" and value is not None
+
+def find_best_checkpoint(checkpoints: List[str], training_step_losses: List[Dict[str, Union[int, float]]]) -> str:
+    """
+    根据训练步骤的损失值，选择最合适的 checkpoint。
+    参数:
+        checkpoints: 字符串列表，每个元素格式如 'checkpoint-100'
+        training_step_losses: 字典列表，每个字典包含 'step' 和 'loss' 字段
+
+    返回:
+        最佳匹配的 checkpoint 字符串
+    """
+    # 找到损失最小的步骤（损失最小，若相同则步骤最小）
+    best_step = min(training_step_losses, key=lambda x: (x['loss'], x['step']))['step']
+
+    # 从 checkpoints 中提取数值部分，并找到与 best_step 最接近的 checkpoint
+    def extract_num(cp: str) -> int:
+        return int(cp.split('-')[-1])
+
+    # 使用 min 选择：先按距离排序，再按数值本身排序
+    best_cp = min(checkpoints, key=lambda cp: (abs(extract_num(cp) - best_step), extract_num(cp)))
+
+    return best_cp
 
 class JudgerAgent(BaseAgent):
     @property
@@ -62,9 +84,14 @@ class JudgerAgent(BaseAgent):
             if not missing_fields:
                 # judger无模型参数则去查看trainer是否提供
                 if _isNotNone(state.get("judger", {}).get("eval_model_path", "")) is not True :
-                    if _isNotNone(state.get("trainer", {}).get("train_input_model_name", "")) is True :
+                    trainer_task_id = state.get("trainer", {}).get("trainer_task_id", "")
+                    training_checkpoints = state.get("trainer", {}).get("training_checkpoints", "")
+                    training_step_losses = state.get("trainer", {}).get("training_step_losses", "")
+                    output_dir = state.get("output_dir")
+                    if _isNotNone(trainer_task_id) is True and _isNotNone(training_checkpoints) is True and _isNotNone(training_step_losses) is True:
                         logger.info("judger未提供模型参数，检测到trainer提供模型，将以trainer提供的模型进行评测")
-                        state["judger"]["eval_model_path"] = state.get("trainer", {}).get("train_input_model_name")
+                        best_checkpoint = find_best_checkpoint(training_checkpoints, training_step_losses)
+                        state["judger"]["eval_model_path"] = f"{output_dir}/{state.get("task_id")}/trainer/{trainer_task_id}/{best_checkpoint}/"
                     else :
                         missing_fields = get_missing_fields({'judger':["eval_model_path"]}, state)
 
@@ -123,6 +150,31 @@ class JudgerAgent(BaseAgent):
                 state.setdefault('configer',{})['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
                 goto_node = runtime.context['exception_navigate']
                 logger.info(f'found missing fields, goto {goto_node}')
+                return Command(
+                    update=state,
+                    goto=goto_node,
+                    graph=Command.PARENT
+                )
+
+            if state.get("judger", {}).get("eval_task_type", "") == "code":
+                if state.get("judger", {}).get("eval_format_type", "") == "mbpp":
+                    required_fields = ["text", "code", "task_id", "challenge_test_list", "test_list"]
+                else:
+                    required_fields = ["task_id", "prompt", "entry_point", "canonical_solution", "test_list"]
+            elif state.get("judger", {}).get("eval_task_type", "") == "text2sql":
+                required_fields = ["task_id", "prompt", "db_id", "question", "ground_truth"]
+            check_file_fields = check_jsonl_fields(state.get("judger", {}).get("eval_problem_path", ""), required_fields)
+
+            if check_file_fields is not True:
+                logger.info("$"*50)
+                logger.info(["eval_problem_path"])
+                state['exception'] = 'ConfigerError'
+                state['next_to'] = 'config_node'
+                state['automated_query'] = self.prompt_loader(
+                    "automated_query", "judger_missing_fields_prompt")
+                state.setdefault('configer',{})['configer_error'] = f'Wrong required fields: {json.dumps({"wrong_fields": "eval_problem_path"}, ensure_ascii=False)}'
+                goto_node = runtime.context['exception_navigate']
+                logger.info(f'found wrong fields, required fields missing in the file, goto {goto_node}')
                 return Command(
                     update=state,
                     goto=goto_node,
