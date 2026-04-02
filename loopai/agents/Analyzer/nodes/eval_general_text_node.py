@@ -29,6 +29,7 @@ class BenchAdapter:
     bench_dataflow_eval_type: str
     eval_status: str = "pending"
     meta: Dict[str, Any] = field(default_factory=dict)
+    key_mapping: Dict[str, Any] = field(default_factory=dict)
 
 
 def _emit(writer, message: str, *, progress=None, data=None):
@@ -195,106 +196,145 @@ def _write_summary_files(outdir: Path, summary: Dict[str, Any], run_ts: str):
     return str(summary_json), str(summary_txt)
 
 
-def _prepare_bench_from_state(state: LoopAIState, cfg: Dict[str, Any], writer) -> tuple[BenchAdapter, str, str, Dict[str, Any], Path, str]:
+def _prepare_bench_from_state(
+    state: LoopAIState,
+    cfg: Dict[str, Any],
+    writer
+) -> tuple[BenchAdapter, str, str, Dict[str, Any], Path, str]:
     """
     准备 bench：
-    - 优先用 state["bench"]
-    - 否则从 judger.eval_result_path + bench_config 构造
+    1. 优先用 state["bench"]
+    2. 否则尝试从 state["benches"][eval_cursor] 取
+    3. 再不行，才从结果路径 + bench_config 动态构造
     """
+    analyzer_cfg = state.get("analyzer") or {}
     judger_cfg = state.get("judger") or {}
-    bench = state.get("bench")
+
     outdir = _ensure_outdir(state)
     run_ts = time.strftime("%Y%m%d_%H%M%S")
 
-    if bench is None:
-        eval_result_path = judger_cfg.get("out_result_path")
-        if not eval_result_path:
-            raise ValueError("judger.out_result_path 未提供")
-        if not os.path.exists(out_result_path):
-            raise FileNotFoundError(f"out_result_path 不存在：{out_result_path}")
+    bench = state.get("bench")
 
+    if bench is None:
+        benches = state.get("benches") or []
+        eval_cursor = state.get("eval_cursor", 0)
+        if isinstance(benches, list) and 0 <= eval_cursor < len(benches):
+            bench = benches[eval_cursor]
+
+    if bench is not None:
+        eval_type = bench.bench_dataflow_eval_type
         bench_cfg = (
             state.get("bench_config")
             or cfg.get("bench_config")
             or {}
         )
-
-        eval_type = (
-            bench_cfg.get("bench_dataflow_eval_type")
-            or bench_cfg.get("eval_type")
-            or cfg.get("bench_dataflow_eval_type")
-            or cfg.get("analyze_dataflow_eval_type")
+        key_mapping = (
+            getattr(bench, "key_mapping", None)
+            or (bench.meta or {}).get("key_mapping", {})
+            or bench_cfg.get("key_mapping", {})
+            or cfg.get("key_mapping", {})
+            or {}
         )
-        if not eval_type:
-            raise ValueError(
-                "通用文本评测缺少 eval_type。请在 bench_config.bench_dataflow_eval_type 或 bench_config.eval_type 中提供，例如：key2_qa"
-            )
 
-        key_mapping = bench_cfg.get("key_mapping") or cfg.get("key_mapping") or {}
+        if key_mapping:
+            if bench.meta is None:
+                bench.meta = {}
+            bench.meta["key_mapping"] = key_mapping
+            bench.key_mapping = key_mapping
+
+        dataset_cache_path_str = str(Path(bench.dataset_cache).resolve())
 
         _emit(
             writer,
             "开始通用文本评测（One-Eval Phase4 / DataFlow）",
             progress=0.0,
             data={
-                "eval_result_path": eval_result_path,
+                "eval_result_path": bench.dataset_cache,
                 "eval_type": eval_type,
                 "key_mapping": key_mapping,
             }
         )
 
-        rows = _read_jsonl(eval_result_path)
-        _emit(writer, "读取待评测样本完成", progress=0.10, data={"records": len(rows)})
-
-        dataset_cache_path = outdir / f"general_text_dataset_cache_{run_ts}.jsonl"
-        _write_jsonl(dataset_cache_path, rows)
-
         _emit(
             writer,
-            "已生成 dataset_cache",
+            "已读取传入 bench",
             progress=0.20,
-            data={"dataset_cache": str(dataset_cache_path)}
+            data={
+                "bench_name": bench.bench_name,
+                "dataset_cache": bench.dataset_cache,
+                "eval_type": bench.bench_dataflow_eval_type,
+            }
         )
 
-        bench = BenchAdapter(
-            bench_name=bench_cfg.get("bench_name", cfg.get("bench_name", "general_text_eval")),
-            dataset_cache=str(dataset_cache_path),
-            bench_dataflow_eval_type=eval_type,
-            meta={}
-        )
-
-        if key_mapping:
-            bench.meta["key_mapping"] = key_mapping
-
-        dataset_cache_path_str = str(dataset_cache_path.resolve())
         return bench, eval_type, dataset_cache_path_str, key_mapping, outdir, run_ts
 
-    eval_type = bench.bench_dataflow_eval_type
-    key_mapping = (bench.meta or {}).get("key_mapping", {})
-    dataset_cache_path_str = str(Path(bench.dataset_cache).resolve())
+    eval_result_path = (
+        analyzer_cfg.get("eval_result_path")
+        or judger_cfg.get("out_result_path")
+        or judger_cfg.get("eval_result_path")
+    )
+    if not eval_result_path:
+        raise ValueError("缺少评测输入路径：请提供 analyzer.eval_result_path 或 judger.out_result_path")
+
+    if not os.path.exists(eval_result_path):
+        raise FileNotFoundError(f"评测输入路径不存在：{eval_result_path}")
+
+    bench_cfg = (
+        state.get("bench_config")
+        or cfg.get("bench_config")
+        or {}
+    )
+
+    eval_type = (
+        bench_cfg.get("bench_dataflow_eval_type")
+        or bench_cfg.get("eval_type")
+        or cfg.get("bench_dataflow_eval_type")
+        or cfg.get("analyze_dataflow_eval_type")
+        or analyzer_cfg.get("analyze_task_type")
+    )
+    if not eval_type:
+        raise ValueError(
+            "通用文本评测缺少 eval_type。请在 bench_config.bench_dataflow_eval_type / bench_config.eval_type / analyzer.analyze_task_type 中提供"
+        )
+
+    key_mapping = bench_cfg.get("key_mapping") or cfg.get("key_mapping") or {}
 
     _emit(
         writer,
         "开始通用文本评测（One-Eval Phase4 / DataFlow）",
         progress=0.0,
         data={
-            "eval_result_path": bench.dataset_cache,
+            "eval_result_path": eval_result_path,
             "eval_type": eval_type,
             "key_mapping": key_mapping,
         }
     )
 
+    rows = _read_jsonl(eval_result_path)
+    _emit(writer, "读取待评测样本完成", progress=0.10, data={"records": len(rows)})
+
+    dataset_cache_path = outdir / f"general_text_dataset_cache_{run_ts}.jsonl"
+    _write_jsonl(dataset_cache_path, rows)
+
     _emit(
         writer,
-        "已读取传入 bench",
+        "已生成 dataset_cache",
         progress=0.20,
-        data={
-            "bench_name": bench.bench_name,
-            "dataset_cache": bench.dataset_cache,
-            "eval_type": bench.bench_dataflow_eval_type,
-        }
+        data={"dataset_cache": str(dataset_cache_path)}
     )
 
+    bench = BenchAdapter(
+        bench_name=bench_cfg.get("bench_name", analyzer_cfg.get("bench_name", "general_text_eval")),
+        dataset_cache=str(dataset_cache_path),
+        bench_dataflow_eval_type=eval_type,
+        meta={},
+        key_mapping=key_mapping or {}
+    )
+
+    if key_mapping:
+        bench.meta["key_mapping"] = key_mapping
+
+    dataset_cache_path_str = str(dataset_cache_path.resolve())
     return bench, eval_type, dataset_cache_path_str, key_mapping, outdir, run_ts
 
 
@@ -327,7 +367,6 @@ def eval_general_text_node(state: LoopAIState):
 
     tool = DataFlowEvalTool(output_root=str(outdir))
 
-    # ===== 完全对齐 DataFlowEvalNode 的前置检查逻辑 =====
     if bench.eval_status == "success" and bench.meta and bench.meta.get("eval_result"):
         logger.info(f"[{bench.bench_name}] 已评测成功，跳过")
         stats = bench.meta.get("eval_result") or {}
@@ -358,6 +397,17 @@ def eval_general_text_node(state: LoopAIState):
             logger.info(f"[{bench.bench_name}] 开始评测... Type={bench.bench_dataflow_eval_type}")
             bench.eval_status = "running"
 
+            # 兼容 One-Eval 可能读取 bench.key_mapping 或 bench.meta["key_mapping"]
+            if getattr(bench, "key_mapping", None):
+                if bench.meta is None:
+                    bench.meta = {}
+                bench.meta["key_mapping"] = bench.key_mapping
+            elif (bench.meta or {}).get("key_mapping"):
+                bench.key_mapping = bench.meta["key_mapping"]
+
+            logger.info(f"[{bench.bench_name}] bench.key_mapping={getattr(bench, 'key_mapping', {})}")
+            logger.info(f"[{bench.bench_name}] bench.meta.key_mapping={(bench.meta or {}).get('key_mapping', {})}")
+
             result = tool.run_eval(bench, model_config)
 
             if not bench.meta:
@@ -368,7 +418,6 @@ def eval_general_text_node(state: LoopAIState):
             bench.meta["eval_result"] = stats
             bench.meta["eval_detail_path"] = detail_path
 
-            # ===== 按 DataFlowEvalNode 逻辑推断 pred/ref key =====
             final_key_mapping = result.get("key_mapping", {})
             inferred = _infer_pred_ref_keys(eval_type, final_key_mapping)
             pred_key = inferred["pred_key"]
@@ -383,6 +432,7 @@ def eval_general_text_node(state: LoopAIState):
 
             if final_key_mapping:
                 bench.meta["key_mapping"] = final_key_mapping
+                bench.key_mapping = final_key_mapping
 
             bench.eval_status = "success"
 
@@ -450,7 +500,6 @@ def eval_general_text_node(state: LoopAIState):
     state["analyzer"]["analyze_output_summary_path"] = summary_json_path
     state["analyzer"]["analyze_output_summary_txt_path"] = summary_txt_path
 
-    # 把 bench 信息也回填到 state，方便后续 analyze_result_node 用
     state["bench"] = bench
 
     _emit(

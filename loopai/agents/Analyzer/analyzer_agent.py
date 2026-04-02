@@ -10,8 +10,11 @@ from loopai.agents import BaseAgent
 from .nodes import (
     eval_model_node,
     eval_general_text_node,
+    metric_recommend_node,
+    metric_score_node,
     analyze_result_node,
-    draw_conclusion_node
+    analyze_metric_report_node,
+    draw_conclusion_node,
 )
 
 from loopai.logger import get_logger
@@ -34,7 +37,7 @@ class AnalyzerAgent(BaseAgent):
     def system_prompt_name(self) -> str:
         """System prompt name"""
         return "default_prompt"
-    
+
     def get_check_required_fields_node(self):
         @BaseAgent.set_current
         def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
@@ -67,7 +70,6 @@ class AnalyzerAgent(BaseAgent):
                     if field not in analyzer_cfg:
                         missing_fields.setdefault("analyzer", []).append(field)
 
-                # judger.out_result_path 或 analyzer.eval_result_path 二选一
                 has_result_path = (
                     bool(judger_cfg.get("out_result_path"))
                     or bool(analyzer_cfg.get("eval_result_path"))
@@ -86,12 +88,12 @@ class AnalyzerAgent(BaseAgent):
                         missing_fields.setdefault("analyzer", []).append("eval_result_path")
 
             if missing_fields:
-                state['exception'] = 'ConfigerError'
-                state['next_to'] = 'config_node'
-                state['automated_query'] = self.prompt_loader("automated_query", "analyzer_missing_fields_prompt")
-                state.setdefault('configer', {})['configer_error'] = missing_fields
-                goto_node = runtime.context['exception_navigate'] if runtime and runtime.context else 'config_node'
-                logger.info(f'found missing fields, goto {goto_node}')
+                state["exception"] = "ConfigerError"
+                state["next_to"] = "config_node"
+                state["automated_query"] = self.prompt_loader("automated_query", "analyzer_missing_fields_prompt")
+                state.setdefault("configer", {})["configer_error"] = missing_fields
+                goto_node = runtime.context["exception_navigate"] if runtime and runtime.context else "config_node"
+                logger.info(f"found missing fields, goto {goto_node}")
                 return Command(
                     update=state,
                     goto=goto_node,
@@ -103,17 +105,25 @@ class AnalyzerAgent(BaseAgent):
     def get_route_eval_node(self):
         @BaseAgent.set_current
         def route_eval(state: LoopAIState, runtime: Runtime[RuntimeContext]):
-            analyzer_cfg = state.get("analyzer", {})
+            analyzer_cfg = state.get("analyzer", {}) or {}
             task_type = analyzer_cfg.get("analyze_task_type")
 
-            if task_type not in {"code", "text2sql"}:
-                goto = "eval_general_text"
-            else:
+            # code / text2sql 走原有分析链
+            if task_type in {"code", "text2sql"}:
                 goto = "eval_model"
+            # 其他通用文本任务走 metric 链
+            else:
+                goto = "eval_general_text"
 
             return Command(goto=goto)
 
         return route_eval
+
+    def get_finish_node(self):
+        @BaseAgent.set_current
+        def finish_node(state: LoopAIState, runtime: Runtime[RuntimeContext]):
+            return state
+        return finish_node
 
     def init_graph(self, **kwargs):
         builder = StateGraph(LoopAIState)
@@ -122,16 +132,29 @@ class AnalyzerAgent(BaseAgent):
         builder.add_node("route_eval", self.get_route_eval_node())
         builder.add_node("eval_model", eval_model_node)
         builder.add_node("eval_general_text", eval_general_text_node)
+        builder.add_node("metric_recommend", metric_recommend_node)
+        builder.add_node("metric_score", metric_score_node)
+        builder.add_node("analyze_metric_report", analyze_metric_report_node)
         builder.add_node("analyze_result", analyze_result_node)
         builder.add_node("draw_conclusion", draw_conclusion_node)
+        builder.add_node("finish", self.get_finish_node())
 
+        # 入口
         builder.add_edge("check_required_fields", "route_eval")
+
+        # -------- 链 1：code / text2sql --------
         builder.add_edge("eval_model", "analyze_result")
         builder.add_edge("analyze_result", "draw_conclusion")
-        builder.set_finish_point("eval_general_text")
+        builder.add_edge("draw_conclusion", "finish")
+
+        # -------- 链 2：general_text / 通用文本 --------
+        builder.add_edge("eval_general_text", "metric_recommend")
+        builder.add_edge("metric_recommend", "metric_score")
+        builder.add_edge("metric_score", "analyze_metric_report")
+        builder.add_edge("analyze_metric_report", "finish")
 
         builder.set_entry_point("check_required_fields")
-        builder.set_finish_point("draw_conclusion")
+        builder.set_finish_point("finish")
 
         self.graph = builder.compile(
             checkpointer=self.checkpointer,
