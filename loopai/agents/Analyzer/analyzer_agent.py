@@ -9,7 +9,6 @@ from loopai.schema.states import LoopAIState, RuntimeContext
 from loopai.agents import BaseAgent
 from .nodes import (
     eval_model_node,
-    eval_general_text_node,
     metric_recommend_node,
     metric_score_node,
     analyze_result_node,
@@ -78,14 +77,15 @@ class AnalyzerAgent(BaseAgent):
                     missing_fields.setdefault("analyzer", []).append("eval_result_path")
 
             else:
-                # 非 code / text2sql 时，只有在没有 bench 的情况下才要求结果路径
-                if not has_bench:
-                    has_result_path = (
-                        bool(judger_cfg.get("out_result_path"))
-                        or bool(analyzer_cfg.get("eval_result_path"))
-                    )
-                    if not has_result_path:
-                        missing_fields.setdefault("analyzer", []).append("eval_result_path")
+                # 这里优先要求 Judger 已产出结果路径；如果没有 bench，也允许 analyzer.eval_result_path 兜底
+                has_result_path = (
+                    bool(judger_cfg.get("output_result_path"))
+                    or bool(judger_cfg.get("out_result_path"))
+                    or bool(judger_cfg.get("eval_result_path"))
+                    or bool(analyzer_cfg.get("eval_result_path"))
+                )
+                if (not has_bench) and (not has_result_path):
+                    missing_fields.setdefault("analyzer", []).append("eval_result_path")
 
             if missing_fields:
                 state["exception"] = "ConfigerError"
@@ -111,9 +111,9 @@ class AnalyzerAgent(BaseAgent):
             # code / text2sql 走原有分析链
             if task_type in {"code", "text2sql"}:
                 goto = "eval_model"
-            # 其他通用文本任务走 metric 链
+            # 通用文本：不再走 eval_general_text，直接进入 metric 链
             else:
-                goto = "eval_general_text"
+                goto = "metric_recommend"
 
             return Command(goto=goto)
 
@@ -131,7 +131,6 @@ class AnalyzerAgent(BaseAgent):
         builder.add_node("check_required_fields", self.get_check_required_fields_node())
         builder.add_node("route_eval", self.get_route_eval_node())
         builder.add_node("eval_model", eval_model_node)
-        builder.add_node("eval_general_text", eval_general_text_node)
         builder.add_node("metric_recommend", metric_recommend_node)
         builder.add_node("metric_score", metric_score_node)
         builder.add_node("analyze_metric_report", analyze_metric_report_node)
@@ -148,7 +147,6 @@ class AnalyzerAgent(BaseAgent):
         builder.add_edge("draw_conclusion", "finish")
 
         # -------- 链 2：general_text / 通用文本 --------
-        builder.add_edge("eval_general_text", "metric_recommend")
         builder.add_edge("metric_recommend", "metric_score")
         builder.add_edge("metric_score", "analyze_metric_report")
         builder.add_edge("analyze_metric_report", "finish")

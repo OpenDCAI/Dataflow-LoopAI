@@ -6,8 +6,6 @@ from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
-
-# 你已经放进 Analyzer/eval_metrics 里的模块
 from ..eval_metrics.metrics.dispatcher import metric_dispatcher
 
 logger = get_logger()
@@ -116,12 +114,25 @@ def metric_recommend_node(state: LoopAIState):
     """
     writer = get_stream_writer()
 
-    bench = state.get("bench")
-    if bench is None:
-        raise ValueError("metric_recommend_node: state['bench'] 不存在，请先执行 eval_general_text_node")
+    judger_cfg = state.get("judger", {}) or {}
+    analyzer_cfg = state.get("analyzer", {}) or {}
 
-    bench_name = getattr(bench, "bench_name", None) or "general_text_eval"
-    eval_type = getattr(bench, "bench_dataflow_eval_type", None) or "unknown"
+    bench = state.get("bench") or judger_cfg.get("bench")
+
+    if bench is not None:
+        bench_name = getattr(bench, "bench_name", None) or "general_text_eval"
+        eval_type = getattr(bench, "bench_dataflow_eval_type", None) or "unknown"
+    else:
+        bench_name = (
+            judger_cfg.get("bench_name")
+            or analyzer_cfg.get("bench_name")
+            or "general_text_eval"
+        )
+        eval_type = (
+            judger_cfg.get("bench_dataflow_eval_type")
+            or analyzer_cfg.get("bench_dataflow_eval_type")
+            or "unknown"
+        )
 
     _emit(
         writer,
@@ -156,10 +167,10 @@ def metric_recommend_node(state: LoopAIState):
         bench_name: normalized
     }
 
-    # 顺手写入 bench.meta，方便后面调试或报告阶段使用
-    if getattr(bench, "meta", None) is None:
-        bench.meta = {}
-    bench.meta["metric_plan"] = normalized
+    if bench is not None:
+        if getattr(bench, "meta", None) is None:
+            bench.meta = {}
+        bench.meta["metric_plan"] = normalized
 
     _emit(
         writer,

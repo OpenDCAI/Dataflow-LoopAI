@@ -1003,6 +1003,19 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     # ===== 通用文本 / DataFlow Eval =====
+    output_summary_path: str = Field(
+        default="",
+        title="通用文本评测摘要路径",
+        description="eval_general_text_node 生成的摘要 JSON 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+
+    output_summary_txt_path: str = Field(
+        default="",
+        title="通用文本评测摘要文本路径",
+        description="eval_general_text_node 生成的摘要 TXT 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
     analyze_max_tokens: int = Field(
         default=2048,
         title="分析模型最大输出 Token",

@@ -65,12 +65,10 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     )
     return model
 
-
 def _load_metric_result(state: LoopAIState) -> Dict[str, Any]:
     """
     加载 metric_score_node 产出的 metric 结果。
-    优先读取 analyzer.metric_eval_results；
-    如果没有，则从 analyzer.metric_eval_result_path 读取 JSON 文件。
+    只从 analyzer 读取（metric 是 analyzer 产物）。
     """
     analyzer = _analyzer(state)
 
@@ -80,11 +78,10 @@ def _load_metric_result(state: LoopAIState) -> Dict[str, Any]:
 
     metric_eval_result_path = analyzer.get("metric_eval_result_path")
     if not metric_eval_result_path:
-        raise ValueError("缺少 metric_eval_results 或 metric_eval_result_path")
+        raise ValueError("缺少 analyzer.metric_eval_results 或 metric_eval_result_path")
 
     with open(metric_eval_result_path, "r", encoding="utf-8") as f:
         return json.load(f)
-
 
 def _load_records_from_alignment(metric_result: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
@@ -267,7 +264,8 @@ def _infer_task_domain(state: LoopAIState) -> str:
     4. 默认 general
     """
     analyzer = _analyzer(state)
-    bench = state.get("bench")
+    judger = state.get("judger", {}) or {}
+    bench = state.get("bench") or judger.get("bench")
 
     if analyzer.get("task_domain"):
         return analyzer["task_domain"]
@@ -291,7 +289,8 @@ def _build_summary(
     将 metric_result + records 统一整理为结构化 summary。
     这个 summary 是两个 LLM prompt 的共同输入层。
     """
-    bench = state.get("bench")
+    judger = state.get("judger", {}) or {}
+    bench = state.get("bench") or judger.get("bench")
     bench_name = getattr(bench, "bench_name", "unknown_bench")
     eval_type = getattr(bench, "bench_dataflow_eval_type", "unknown_eval_type")
     task_domain = _infer_task_domain(state)

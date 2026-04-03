@@ -68,15 +68,18 @@ def metric_score_node(state: LoopAIState):
     """
     writer = get_stream_writer()
 
-    bench = state.get("bench")
+    judger_cfg = state.get("judger", {}) or {}
+    analyzer_cfg = state.get("analyzer", {}) or {}
+
+    bench = judger_cfg.get("bench") or state.get("bench")
     if bench is None:
-        raise ValueError("metric_score_node: state['bench'] 不存在，请先执行 eval_general_text_node")
+        raise ValueError("metric_score_node: 未找到 bench，请先执行 eval_general_text_node")
 
     bench_name = getattr(bench, "bench_name", None) or "general_text_eval"
 
     metric_plan_obj = (
         state.get("metric_plan")
-        or (state.get("analyzer") or {}).get("metric_plan")
+        or analyzer_cfg.get("metric_plan")
     )
     if not metric_plan_obj:
         raise ValueError("metric_score_node: 缺少 metric_plan，请先执行 metric_recommend_node")
@@ -88,7 +91,13 @@ def metric_score_node(state: LoopAIState):
         detail_path = bench.meta.get("eval_detail_path")
 
     if not detail_path:
-        detail_path = (state.get("analyzer") or {}).get("analyze_output_result_path")
+        detail_path = (
+            judger_cfg.get("output_result_path")
+            or judger_cfg.get("out_result_path")
+            or judger_cfg.get("eval_result_path")
+            or analyzer_cfg.get("analyze_output_result_path")
+            or analyzer_cfg.get("eval_result_path")
+        )
 
     if not detail_path:
         raise ValueError("metric_score_node: 未找到评测结果文件路径（detail_path）")
@@ -107,21 +116,18 @@ def metric_score_node(state: LoopAIState):
         }
     )
 
-    # 不改你原来的 eval_general_text_node，只在这里补 runner 需要的路径
     if getattr(bench, "meta", None) is None:
         bench.meta = {}
 
     bench.meta.setdefault("artifact_paths", {})
     bench.meta["artifact_paths"]["records_path"] = detail_path
 
-    # 有些实现会 fallback 到 dataset_cache，这里也保留原值不动
     logger.info(f"[metric_score] records_path={bench.meta['artifact_paths']['records_path']}")
     logger.info(f"[metric_score] dataset_cache={getattr(bench, 'dataset_cache', None)}")
     logger.info(f"[metric_score] metric_plan={metric_plan}")
 
     runner = MetricRunner()
 
-    # 兼容不同 runner 接口命名
     if hasattr(runner, "run_bench"):
         metric_result = runner.run_bench(bench, metric_plan)
     elif hasattr(runner, "run"):
@@ -141,7 +147,6 @@ def metric_score_node(state: LoopAIState):
     state["analyzer"]["metric_eval_results"] = metric_result
     state["eval_results"] = metric_result
 
-    # 同步回 bench.meta，便于后面分析/结论节点继续使用
     bench.meta["metric_eval_result_path"] = str(metric_result_path.resolve())
     bench.meta["metric_eval_results"] = metric_result
 
