@@ -2,6 +2,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional, Type
 
+from typing import Union
 from langgraph.graph import StateGraph, END
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt, Command
@@ -17,12 +18,12 @@ from .utils.oj.data import check_file
 from .utils.oj.vllm_starter import start_vllm_openai_api_server
 from .utils.oj.vllm_killer import kill_vllm_openai_api_server
 from .utils.oj.vllm_check import check_vllm_running
+from .nodes.eval_general_text_node import eval_general_text_node
 
 from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
 
 from loopai.logger import get_logger
-
 logger = get_logger()
 
 def _isNotNone(value):
@@ -49,12 +50,22 @@ class JudgerAgent(BaseAgent):
         def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
             writer = get_stream_writer()
             required_fields = {
-                'judger':["eval_model_path", "eval_api_key", "eval_temperature",
+                'judger':["eval_api_key", "eval_temperature",
                         "eval_top_p", "eval_problem_path", "eval_batch_size", 
-                        "eval_case_num", "eval_task_type", "output_dir"
-                ]
+                        "eval_case_num", "eval_task_type"
+                ],
+                'default':["output_dir", "task_id"]
             }
             missing_fields = get_missing_fields(required_fields, state)
+
+            if not missing_fields:
+                # judger无模型参数则去查看trainer是否提供
+                if _isNotNone(state.get("judger", {}).get("eval_model_path", "")) is not True :
+                    if _isNotNone(state.get("trainer", {}).get("train_input_model_name", "")) is True :
+                        logger.info("judger未提供模型参数，检测到trainer提供模型，将以trainer提供的模型进行评测")
+                        state["judger"]["eval_model_path"] = state.get("trainer", {}).get("train_input_model_name")
+                    else :
+                        missing_fields = get_missing_fields({'judger':["eval_model_path"]}, state)
 
             """vllm启动检查"""
             base_url = state.get("judger", {}).get("eval_base_url", None)
@@ -98,7 +109,7 @@ class JudgerAgent(BaseAgent):
                     
             """检查text2sql必要字段"""
             if not missing_fields:
-                if state.get("judger", {}).get("eval_text2sql_dir", "") == "text2sql":
+                if state.get("judger", {}).get("eval_task_type", "") == "text2sql":
                     missing_fields = get_missing_fields({'judger':["eval_text2sql_dir"]}, state)
             
             if missing_fields:
@@ -248,7 +259,7 @@ class JudgerAgent(BaseAgent):
         problem_path = state.get("judger", {}).get("eval_problem_path", "")
         format_type = state.get("judger", {}).get("eval_format_type", None)
         state_task_id = state.get("task_id")
-        output_dir = Path(state.get("judger", {}).get("output_dir", "/"))
+        output_dir = Path(state.get("output_dir", "/"))
         problem_file_name = str(Path(problem_path).stem)
 
         target_format_path = output_dir / str(state_task_id) / "judger" / (problem_file_name + "_format.jsonl")
@@ -283,16 +294,27 @@ class JudgerAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
-    def generate_node(state: LoopAIState) -> LoopAIState:
+    def generate_node(state: LoopAIState) -> Union[LoopAIState, Command]:
         task_type = state.get("judger", {}).get("eval_task_type", "code")
-        writer = get_stream_writer()
+        
         match task_type:
             case "code":  # code
                 res = generate_sample_code(state)
+                state["judger"]["output_case_path"] = res
+                goto = "evaluate"
+                
+                
             case "text2sql":
                 res = generate_sample_text2sql(state)
-        state["judger"]["output_case_path"] = res
-        return state
+                state["judger"]["output_case_path"] = res
+                goto = "evaluate"
+                
+                
+            case _:  # 所有其他类型（如 general_text）
+                # 路由到 eval_general_text 节点
+                goto="eval_general_text"
+            
+        return Command(goto=goto)
 
     @staticmethod
     @BaseAgent.set_current
@@ -376,11 +398,15 @@ class JudgerAgent(BaseAgent):
         builder.add_node("data_format", self.data_format_node)
         builder.add_node("generate_code", self.generate_node)
         builder.add_node("evaluate", self.evaluate_node)
+        builder.add_node("eval_general_text", eval_general_text_node)
+        
         builder.add_edge("check_required_fields", "check_param_type")
         builder.add_edge("vllm_start", "data_format")
         builder.add_edge("data_format", "generate_code")
-        builder.add_edge("generate_code", "evaluate")
+        #builder.add_edge("generate_code", "evaluate")
+        
         builder.set_entry_point("check_required_fields")
+        builder.set_finish_point("eval_general_text")
 
         builder.add_conditional_edges(
             source="check_param_type",  # 来源节点（从哪个节点跳转出来）
