@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./docs/assets/LoopAI.svg" width="160" alt="LoopAI Logo" />
+  <img src="docs/assets/LoopAI.svg" width="160" alt="LoopAI Logo" />
   <h1>LoopAI: A Closed-loop Optimization Framework</h1>
 
   <p>
