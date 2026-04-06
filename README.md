@@ -91,25 +91,7 @@ pip install -e .
 
 LoopAI supports two modes:
 
-#### ✅ Option A: Backend (Terminal Mode)
-
-1. Copy configuration file:
-
-```bash
-cp examples/config/starter.yaml ./starter.yaml
-```
-
-2. Modify system settings in `starter.yaml`
-
-3. Start LoopAI:
-
-```bash
-python examples/scripts/run_starter.py
-```
-
----
-
-#### ✅ Option B: API Mode (FastAPI)
+#### ✅ Option A: API Mode (Recommended)
 
 ```bash
 python api/start.py
@@ -190,6 +172,24 @@ server: {
 
 ```bash
 yarn dev
+```
+
+---
+
+#### ✅ Option A: Backend (Terminal Mode)
+
+1. Copy configuration file:
+
+```bash
+cp examples/config/starter.yaml ./starter.yaml
+```
+
+2. Modify system settings in `starter.yaml`
+
+3. Start LoopAI:
+
+```bash
+python examples/scripts/run_starter.py
 ```
 
 ---
