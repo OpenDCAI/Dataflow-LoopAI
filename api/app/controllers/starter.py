@@ -10,6 +10,7 @@ from ..models.body import response_body, ConfigModel
 from ..models.db_models import StarterConfig, TaskModel
 from ..utils.starter import StarterManager
 from ..utils.task.task import update_task_state, get_task_state
+from ..utils.monitor.hw_stat import get_nvidia_gpu_usage, get_huawei_npu_usage, get_cpu_usage, get_memory_usage
 from loopai.memory import checkpointer, store
 from loopai.agents.Starter.tools.check_motivation import check_motivation
 
@@ -118,6 +119,23 @@ async def get_status():
     save_status = await update_task_state(_task_id, data.get('state', {}))
     return response_body(message="Agent state saved: {}".format(save_status), data=data)
 
+@router.get("/agent/hardware_usage", operation_id='getHardwareUsage', summary="Get the hardware usage")
+async def get_hw_usage():
+    gpu_usage = []
+    cpu_usage = {}
+    mem_usage = {}
+    res = get_nvidia_gpu_usage()
+    if not res[0]:
+        res = get_huawei_npu_usage()
+    if res[0]:
+        gpu_usage = res[1]
+    cpu_usage = get_cpu_usage()
+    mem_usage = get_memory_usage()
+    return response_body(message="Hardware usage", data={
+        "gpu_usage": gpu_usage,
+        "cpu_usage": cpu_usage,
+        "mem_usage": mem_usage
+    })
 
 @router.get("/agent/messages", operation_id='getAgentMessages', summary="Get the agent messages")
 def get_state_messages():
