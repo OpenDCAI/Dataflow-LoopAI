@@ -31,7 +31,7 @@
                     v-model="value"
                     :options="options"
                     :item-border-radius="30"
-                    background="rgba(250, 250, 250, 0.8)"
+                    background="rgba(255, 255, 255, 0.6)"
                     class="command-bar"
                 >
                     <template v-slot:optionItem="x">
@@ -67,20 +67,18 @@
                                 foreground="rgba(255, 255, 255, 1)"
                                 border-color="rgba(255, 255, 255, 0.3)"
                                 border-radius="30"
-                                :disabled="(!currentTask || !currentTask.task_id) && !isRunning"
+                                :disabled="
+                                    ((!currentTask || !currentTask.task_id) && !isRunning) ||
+                                    !lock.runBtn
+                                "
                                 :reveal-background-color="[
                                     'rgba(255, 255, 255, 0.5)',
                                     'rgba(103, 105, 251, 0.6)'
                                 ]"
                                 @click="handleExecute"
                             >
-                                <i
-                                    class="ms-Icon"
-                                    :class="[`ms-Icon--${isRunning ? 'CheckboxFill' : 'Play'}`]"
-                                    style="margin-right: 5px"
-                                ></i>
                                 <fv-progress-ring
-                                    v-show="!lock.loading"
+                                    v-if="!lock.loading || !lock.runBtn"
                                     loading="true"
                                     :r="10"
                                     :border-width="2"
@@ -88,7 +86,13 @@
                                     :color="'white'"
                                     style="margin-right: 5px"
                                 ></fv-progress-ring>
-                                <p>{{ isRunning ? this.local('Stop') : this.local('Run') }}</p>
+                                <i
+                                    v-else
+                                    class="ms-Icon"
+                                    :class="[`ms-Icon--${isRunning ? 'CheckboxFill' : 'Play'}`]"
+                                    style="margin-right: 5px"
+                                ></i>
+                                <p>{{ isRunning ? local('Stop') : local('Run') }}</p>
                             </fv-button>
                             <i
                                 class="ms-Icon ms-Icon--FullCircleMask status-coin"
@@ -415,13 +419,15 @@ export default {
                 fullScreen: false
             },
             lock: {
-                loading: true
+                loading: true,
+                runBtn: true
             }
         }
     },
     watch: {
         'taskStatus.running'(val) {
             if (val) this.getStatus()
+            this.lock.runBtn = true
         },
         'currentTask.task_id'(val, oldVal) {
             if (oldVal !== null && val !== oldVal) this.stop()
@@ -463,20 +469,20 @@ export default {
                 let running = this.taskStatus.running
                 if (running && !this.taskStatus.state && !this.currentTask) {
                     this.stop()
-                    this.$barWarning('Detect running task without task id, stop it.', {
+                    this.$barWarning(this.local('Detect running task without task id, stop it.'), {
                         status: 'default'
                     })
                     return
                 }
                 let task_id = this.taskStatus.state.task_id
                 if (running && task_id && !this.currentTask) {
-                    this.$barWarning('Detect running task, obtaining task info.', {
+                    this.$barWarning(this.local('Detect running task, obtaining task info.'), {
                         status: 'default'
                     })
                     this.$api.task.getTask(task_id).then((res) => {
                         if (res.code === 200) {
                             this.currentTask = res.data
-                            this.$barWarning('Running task info obtained', {
+                            this.$barWarning(this.local('Running task info obtained'), {
                                 status: 'correct'
                             })
                         } else {
@@ -491,13 +497,14 @@ export default {
         },
         handleSaveClick() {},
         handleExecute() {
+            this.lock.runBtn = false
             if (this.isRunning) this.stop()
             else this.execute()
         },
         stop() {
             this.$api.starter.stopAgent().then((res) => {
                 if (res.code === 200) {
-                    this.$barWarning('Stop signal sent', {
+                    this.$barWarning(this.local('Stop signal sent'), {
                         status: 'correct'
                     })
                 }

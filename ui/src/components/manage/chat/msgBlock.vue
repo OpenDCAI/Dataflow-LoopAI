@@ -184,7 +184,7 @@ export default {
                 .use(markdownItSubscript)
                 .use(markdownItSuperscript)
                 .use(markdownItMark),
-            copyIcon: 'Copy',
+            copyIcon: 'Set',
             img: {
                 agent: loopAI,
                 user: userImg,
@@ -288,7 +288,7 @@ export default {
                 this.copyIcon = 'Accept'
                 clearTimeout(this.timer.copyIcon)
                 this.timer.copyIcon = setTimeout(() => {
-                    this.copyIcon = 'Copy'
+                    this.copyIcon = 'Set'
                 }, 1000)
             })
         },
@@ -359,7 +359,7 @@ export default {
         height: auto;
         padding: 10px 0px;
         background: rgba(255, 255, 255, 0.3);
-        border: rgba(160, 160, 160, 0.1) solid thin;
+        border: rgba(160, 160, 160, 0.2) solid thin;
         border-radius: 12px;
         transition: background 0.3s;
         display: flex;
@@ -625,8 +625,11 @@ export default {
         .tool-msg-info {
             @include Vcenter;
 
+            width: 1px;
+            max-width: 100%;
             padding-left: 15px;
             gap: 5px;
+            flex: 1;
             flex-wrap: wrap;
             user-select: none;
             cursor: default;
@@ -635,6 +638,7 @@ export default {
                 @include HbetweenVcenter;
 
                 width: auto;
+                max-width: 100%;
                 height: auto;
                 gap: 5px;
                 padding: 5px;
@@ -648,6 +652,7 @@ export default {
                 &.long {
                     border-radius: 8px;
                     flex-direction: column;
+                    overflow-x: overlay;
 
                     .tool-msg-value {
                         border-radius: 8px;
@@ -664,6 +669,7 @@ export default {
                     @include Vcenter;
 
                     width: auto;
+                    max-width: 100%;
                     min-height: 35px;
                     flex: 1;
                     height: auto;
@@ -673,6 +679,9 @@ export default {
                     font-size: 12px;
                     color: rgba(95, 75, 189, 1);
                     border-radius: 999px;
+                    white-space: pre-wrap;
+                    text-overflow: ellipsis;
+                    overflow-x: overlay;
                 }
             }
         }
