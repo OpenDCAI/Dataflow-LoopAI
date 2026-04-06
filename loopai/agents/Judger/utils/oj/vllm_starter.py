@@ -90,7 +90,7 @@ def start_vllm_openai_api_server(
     vllm_gpu_memory_utilization, 
     vllm_model,
     poll_interval: float = 2.0,
-    max_timeout: float = 300.0
+    max_timeout: float = 10000.0
 ) -> tuple[subprocess.Popen, threading.Event]:
     """
     启动vllm openai兼容api服务（保留shell=True+字符串命令，解决卡死问题）

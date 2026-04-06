@@ -978,12 +978,6 @@ class JudgerState(BaseModel):
         description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动。参数需要具体到python目录，格式应为<path>/miniconda3/envs/<env_name>/bin/python",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
-    output_dir: str = Field(
-        default=None,
-        title="评估模型输出文件目录",
-        description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果。输出文件路径将会在judger参数output_result_path（评测结果）、output_case_path（评测样例集）、output_problem_path（评测格式化后问题集）中记录。",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型", "is_output": True}
-    )
     output_result_path: str = Field(
         default="",
         title="评测结果文件保存路径",
@@ -1125,6 +1119,24 @@ class TrainerState(BaseModel):
         title="LlamaFactory 目录",
         description="LlamaFactory 目录",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    llamafactory_env_path: str = Field(
+        default="",
+        title="LlamaFactory 环境路径",
+        description="LlamaFactory 环境路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    CUDA_VISIBLE_DEVICES: str = Field(
+        default="",
+        title="CUDA 可见设备",
+        description="CUDA 可见设备",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    swanlab_api_key: str = Field(
+        default="",
+        title="SwanLab API Key",
+        description="SwanLab API Key",
+        json_schema_extra={"ui_type": "password", "ui_group": "训练模型"}
     )
     train_input_dataset_path: str = Field(
         default="",
