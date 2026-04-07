@@ -1126,6 +1126,25 @@ class TrainerState(BaseModel):
         description="LlamaFactory 环境路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
+    verl_dir: str = Field(
+        default="",
+        title="verl 目录",
+        description="verl 项目安装目录，用于 verl 框架训练时的工作目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    verl_env_path: str = Field(
+        default="",
+        title="verl 环境路径",
+        description="verl 虚拟环境路径（包含 bin/python 的目录）",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    verl_train_mode: str = Field(
+        default="grpo",
+        title="verl 训练模式",
+        description="verl 训练模式: grpo / ppo / sft",
+        json_schema_extra={"ui_type": "list", "ui_group": "训练模型",
+                           "allowed_values": ["grpo", "ppo", "sft"]}
+    )
     CUDA_VISIBLE_DEVICES: str = Field(
         default="",
         title="CUDA 可见设备",

@@ -341,10 +341,12 @@ class TrainerAgent(BaseAgent):
                 ]
             }
             
-            # 如果使用 LlamaFactory 框架，则需要额外的字段
+            # 根据训练框架追加额外的必需字段
             framework = state.get('trainer', {}).get('train_framework')
             if framework == 'llamafactory':
                 required_fields["trainer"].append('llamafactory_dir')
+            elif framework == 'verl':
+                required_fields["trainer"].append('verl_dir')
             
             missing_fields = get_missing_fields(required_fields, state)
                     

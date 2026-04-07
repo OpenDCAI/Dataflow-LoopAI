@@ -265,15 +265,42 @@ class TaskManager:
         # verl 环境配置 - 可通过 app_config 传入
         verl_env_path = self.app_config.get("verl_env_path", "")
         if verl_env_path:
-            env["PYTHONPATH"] = os.path.join(verl_env_path, "lib/python3.10/site-packages")
-            env["PATH"] = f"{os.path.join(verl_env_path, 'bin')}:{env.get('PATH', '')}"
+            verl_env_path = os.path.abspath(verl_env_path)
+            env_root = verl_env_path
+            if os.path.basename(verl_env_path) == "bin":
+                env_root = os.path.dirname(verl_env_path)
+
+            # 自动推断 Python site-packages 路径（与 llamafactory 一致的逻辑）
+            bin_path = os.path.join(env_root, "bin")
+            lib_dir = os.path.join(env_root, "lib")
+            python_site_packages = None
+            if os.path.isdir(lib_dir):
+                try:
+                    candidates = [d for d in os.listdir(lib_dir) if d.startswith("python")]
+                    candidates.sort()
+                    for py_dir in reversed(candidates):
+                        candidate = os.path.join(lib_dir, py_dir, "site-packages")
+                        if os.path.isdir(candidate):
+                            python_site_packages = candidate
+                            break
+                except Exception:
+                    python_site_packages = None
+
+            if os.path.isdir(bin_path):
+                env["PATH"] = os.pathsep.join([bin_path, env.get("PATH", "")])
+
+            if python_site_packages:
+                env["PYTHONPATH"] = python_site_packages
+            else:
+                logger.warning(f"未能在 {lib_dir} 中找到 site-packages; verl 将使用系统默认 Python 环境")
+        else:
+            logger.warning("未指定 verl 环境路径，使用系统默认 Python 环境")
+
         env["PYTHONNOUSERSITE"] = "True"
 
         cmd = ["bash", config_path]
         logger.info(f"训练命令: {' '.join(cmd)}")
-
-        # 启动实时日志解析
-        log_parser.start_monitoring()
+        logger.info(f"工作目录: {self.verl_dir}")
 
         with open(log_path, 'w', encoding='utf-8') as log_file:
             process = subprocess.Popen(
@@ -286,6 +313,10 @@ class TaskManager:
             )
 
             task_info['process'] = process
+            try:
+                log_parser.start_monitoring()
+            except Exception as e:
+                logger.error(f"启动 verl 日志监控失败: {e}")
 
             return_code = process.wait()
 
