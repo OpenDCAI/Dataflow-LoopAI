@@ -1,10 +1,10 @@
 # Trainer Agent 使用指南
 
-Trainer Agent 是 Dataflow-LoopAI 框架中负责模型训练的智能代理。它能够自动化完成从数据验证到模型训练的完整流程，并集成 SwanLab 监控功能。
+Trainer Agent 是 Dataflow-LoopAI 框架中负责模型训练的智能代理。支持 **LlamaFactory**（SFT 微调）和 **verl**（RL/SFT 训练）两种训练框架。
 
 ## 🏗️ 架构设计
 
-Trainer Agent 采用三阶段顺序执行架构：
+通过 `train_framework` 字段自动选择对应框架的执行逻辑：
 
 ```
 数据检查 → 配置生成 → 训练执行
@@ -12,124 +12,147 @@ Trainer Agent 采用三阶段顺序执行架构：
    结束      结束      结束
 ```
 
-### 1. 数据检查节点 (Data Check Node)
+## 📦 双框架对比
 
-**功能：** 验证数据集格式是否符合 LlamaFactory 要求
+| 特性 | LlamaFactory | verl |
+|------|-------------|------|
+| `train_framework` | `"llamafactory"` | `"verl"` |
+| 训练类型 | SFT 微调 | GRPO / PPO / SFT |
+| 数据格式 | Alpaca/对话 (JSON/JSONL) | prompt/messages (Parquet/JSON/JSONL) |
+| 配置生成 | YAML (规则式+LLM) | Shell 脚本 (模板+自动调参) |
+| 训练执行 | `llamafactory-cli train` | `bash script.sh` |
+| 额外必需字段 | `llamafactory_dir` | `verl_dir` |
 
-**输入：**
-- `train_input_dataset_path`: 数据集文件路径（支持 JSON/JSONL 格式）
+---
 
-**输出：**
-- 数据格式验证报告
-- 数据样本统计信息
-- 格式错误和警告列表
+## 🔧 verl 框架
 
-**支持的数据格式：**
+### 数据格式
 
-1. **指令格式（Alpaca）：**
+**RL 模式 (GRPO/PPO)：** 需要 `prompt` 字段
 ```json
-{
-  "instruction": "请计算 2 + 2 的结果",
-  "input": "",
-  "output": "2 + 2 = 4"
-}
+{"prompt": [{"role": "user", "content": "请计算 2+2"}], "data_source": "math"}
 ```
 
-2. **对话格式：**
+**SFT 模式：** 需要 `messages` 字段
 ```json
-{
-  "conversations": [
-    {"from": "human", "value": "你好"},
-    {"from": "gpt", "value": "你好！我是AI助手"}
-  ]
-}
+{"messages": [{"role": "user", "content": "你好"}, {"role": "assistant", "content": "你好！"}]}
 ```
 
-### 2. 配置生成节点 (Config Generation Node)
+支持 `.parquet` / `.json` / `.jsonl` 格式。
 
-**功能：** 根据任务描述智能生成 LlamaFactory 训练配置
-
-**输入：**
-- `train_input_task_description`: 训练任务描述
-- `train_input_model_name`: 基础模型名称（可选）
-- `train_input_config_template_path`: 配置模板路径（可选）
-
-**智能配置特性：**
-
-- **自适应学习率：** 根据任务复杂度自动调整
-  - 复杂任务（数学、推理）：`1e-5`
-  - 对话任务：`5e-5`
-  
-- **动态训练轮数：** 
-  - 微调任务：1 轮
-  - 完整训练：5 轮
-  
-- **智能 LoRA 参数：**
-  - 代码任务：`lora_r=16, lora_alpha=32, target=all`
-  - 对话任务：`lora_r=8, lora_alpha=16, target=q_proj,v_proj`
-
-### 3. 训练执行节点 (Training Execution Node)
-
-**功能：** 执行 LlamaFactory 训练并提供 SwanLab 监控
-
-**特性：**
-- 自动环境验证（Python、CUDA、依赖包）
-- 实时训练日志监控
-- SwanLab 集成监控
-- 详细的训练报告生成
-
-## 📝 使用方法
-
-### 基本用法
+### 用法示例
 
 ```python
 from loopai.agents import TrainerAgent
 from loopai.memory import checkpointer, store
 
-# 创建 TrainerAgent 实例
 trainer = TrainerAgent(checkpointer=checkpointer, store=store)
 
-# 准备训练状态
 training_state = {
-    # 必需字段
-    'train_input_dataset_path': "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json",  # 使用 JSON 格式数据集
-    'train_input_task_description': '训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务',
-    'train_input_config_template_path': "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
-    'train_input_model_name': '/jizhicfs/hymiezhao/models/Qwen2.5-1.5B',
-    'output_dir': './output/trainer_test'
-
-    # 可选字段（如果不提供将使用默认值）
-    'train_input_use_swanlab': True,
-    'train_input_swanlab_project': 'test_llamafactory_training',
+    "trainer": {
+        "train_framework": "verl",
+        "verl_train_mode": "grpo",          # grpo / ppo / sft
+        "verl_dir": "/path/to/verl",
+        "verl_env_path": "/path/to/verl_env",
+        "train_input_dataset_path": "/path/to/train.parquet",
+        "train_input_task_description": "数学推理 GRPO 训练",
+        "train_input_model_name": "Qwen/Qwen2-7B-Instruct",
+        "CUDA_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+    },
+    "output_dir": "./output/verl_test",
 }
 
-# 构建并执行图
-config = {"configurable": {"thread_id": "my_training"}}
 graph = trainer()
-result = graph.invoke(training_state, config=config)
+result = graph.invoke(training_state, config={"configurable": {"thread_id": "verl_training"}})
 ```
 
-## 📊 状态字段说明
+### 训练模式
 
-### 输入字段
+| 模式 | 说明 |
+|------|------|
+| `grpo` | Group Relative Policy Optimization，无需 Critic，采样 N 个响应组内对比 |
+| `ppo` | Proximal Policy Optimization，需要 Critic 模型 |
+| `sft` | Supervised Fine-Tuning，使用 torchrun 执行 |
 
-| 字段名 | 类型 | 必需 | 默认值 | 说明 |
-|-------|------|-----|--------|-----|
-| `train_input_dataset_path` | str | ✅ | - | 训练数据集路径 |
-| `train_input_task_description` | str | ✅ | - | 训练任务描述 |
-| `train_input_model_name` | str | ✅ | - | 基础模型名称 |
-| `train_input_config_template_path` | str | ✅ | - | 配置模板路径 |
-| `train_output_dir` | str | ✅ | ./output/training | 训练输出目录 |
-| `train_input_use_swanlab` | bool | ❌ | True | 是否使用SwanLab |
-| `train_input_swanlab_project` | str | ❌ | llamafactory_training | SwanLab项目名 |
-| `output_dir` | str | ❌ | ./output/trainer | Agent输出目录 |
+### 配置生成
+
+- **自动生成**（推荐）：不提供模板路径，系统根据 `verl_train_mode` 自动生成脚本
+- **自定义模板**：提供 `train_input_config_template_path` 指向 `.sh` 脚本
+
+自动调参规则：
+- 数学/推理任务：响应长度 2048，lr=5e-7
+- 对话任务：响应长度 512，rollout_n=3
+- 代码/长文本（SFT）：max_length=4096
+
+---
+
+## 🔧 LlamaFactory 框架
+
+### 数据格式
+
+```json
+{"instruction": "请计算 2+2", "input": "", "output": "4"}
+```
+或
+```json
+{"conversations": [{"from": "human", "value": "你好"}, {"from": "gpt", "value": "你好！"}]}
+```
+
+### 用法示例
+
+```python
+training_state = {
+    "trainer": {
+        "train_framework": "llamafactory",
+        "llamafactory_dir": "/path/to/LLaMA-Factory",
+        "train_input_dataset_path": "/path/to/data.json",
+        "train_input_task_description": "训练对话AI助手",
+        "train_input_config_template_path": "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
+        "train_input_model_name": "/path/to/Qwen2.5-1.5B",
+    },
+    "output_dir": "./output/trainer_test",
+}
+```
+
+---
+
+## 📊 状态字段
+
+### 通用输入字段
+
+| 字段名 | 类型 | 必需 | 说明 |
+|-------|------|-----|-----|
+| `train_framework` | str | ✅ | 训练框架: `llamafactory` / `verl` |
+| `train_input_dataset_path` | str | ✅ | 训练数据集路径 |
+| `train_input_task_description` | str | ✅ | 训练任务描述 |
+| `train_input_model_name` | str | ✅ | 基础模型名称/路径 |
+| `train_input_config_template_path` | str | ❌ | 配置模板路径（不提供则自动生成） |
+| `CUDA_VISIBLE_DEVICES` | str | ❌ | GPU 设备号 |
+
+### verl 专用字段
+
+| 字段名 | 类型 | 必需 | 说明 |
+|-------|------|-----|-----|
+| `verl_dir` | str | ✅ | verl 项目目录 |
+| `verl_env_path` | str | ❌ | verl 虚拟环境路径 |
+| `verl_train_mode` | str | ❌ | 训练模式: `grpo`(默认) / `ppo` / `sft` |
+
+### LlamaFactory 专用字段
+
+| 字段名 | 类型 | 必需 | 说明 |
+|-------|------|-----|-----|
+| `llamafactory_dir` | str | ✅ | LlamaFactory 目录 |
+| `llamafactory_env_path` | str | ❌ | LlamaFactory 环境路径 |
+| `train_input_use_swanlab` | bool | ❌ | 是否使用 SwanLab (默认 True) |
 
 ### 输出字段
 
 | 字段名 | 类型 | 说明 |
 |-------|------|-----|
-`train_output_data_check_report_path` | str | 数据检查报告路径 |
-| `train_output_config_path` | str | 生成的配置文件路径 |
-| `train_output_training_log_path` | str | 训练日志文件路径 |
-| `train_output_swanlab_log_path` | str | Swanlog日志路径 |
-|`train_output_training_report_path` | str | 训练报告路径 |
+| `train_output_data_check_report_path` | str | 数据检查报告 |
+| `train_output_config_path` | str | 生成的配置文件 |
+| `train_output_training_log_path` | str | 训练日志 |
+| `train_output_training_report_path` | str | 训练报告 |
+| `training_checkpoints` | list | checkpoint 目录列表 |
+| `training_step_losses` | list | 各 step loss 记录 |
