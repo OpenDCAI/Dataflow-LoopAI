@@ -1,0 +1,41 @@
+set -x
+
+python3 -m verl.trainer.main_ppo \
+    algorithm.adv_estimator=gae \
+    data.train_files="${TRAIN_FILES}" \
+    data.val_files="${VAL_FILES}" \
+    data.train_batch_size=${TRAIN_BATCH_SIZE:-1024} \
+    data.max_prompt_length=${MAX_PROMPT_LENGTH:-512} \
+    data.max_response_length=${MAX_RESPONSE_LENGTH:-512} \
+    data.filter_overlong_prompts=True \
+    data.truncation='error' \
+    actor_rollout_ref.model.path=${MODEL_PATH} \
+    actor_rollout_ref.actor.optim.lr=${LEARNING_RATE:-1e-6} \
+    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.actor.ppo_mini_batch_size=${PPO_MINI_BATCH_SIZE:-256} \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=${PPO_MICRO_BATCH_SIZE:-16} \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.actor.use_kl_loss=False \
+    actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=${TENSOR_PARALLEL_SIZE:-4} \
+    actor_rollout_ref.rollout.name=vllm \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+    critic.optim.lr=${CRITIC_LR:-1e-5} \
+    critic.model.use_remove_padding=True \
+    critic.model.path=${CRITIC_MODEL_PATH:-${MODEL_PATH}} \
+    critic.model.enable_gradient_checkpointing=True \
+    critic.ppo_micro_batch_size_per_gpu=32 \
+    critic.fsdp.param_offload=False \
+    critic.fsdp.optimizer_offload=False \
+    algorithm.use_kl_in_reward=False \
+    trainer.critic_warmup=0 \
+    trainer.logger='["console","file"]' \
+    trainer.project_name='${PROJECT_NAME:-verl_ppo}' \
+    trainer.experiment_name='${EXPERIMENT_NAME:-ppo_train}' \
+    trainer.n_gpus_per_node=${N_GPUS_PER_NODE:-8} \
+    trainer.nnodes=${NNODES:-1} \
+    trainer.save_freq=${SAVE_FREQ:-20} \
+    trainer.test_freq=${TEST_FREQ:-1} \
+    trainer.total_epochs=${TOTAL_EPOCHS:-15} $@

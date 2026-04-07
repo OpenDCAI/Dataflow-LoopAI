@@ -121,14 +121,48 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
             if use_swanlab:
                 logger.info(f"  SwanLab 项目: {swanlab_project}")
         elif framework == 'verl':
-            # logger.info("配置生成跳过: Verl 框架当前不支持自动配置生成，请手动提供配置文件")
-            state.setdefault('trainer', {})['trainer_config_generation_success'] = True
-            # 直接使用模板配置
-            template_path = state.get('trainer', {}).get('train_input_config_template_path')
-            if not template_path or not os.path.exists(template_path):
-                raise ValueError("Verl 框架需要提供有效的配置模板路径 (train_input_config_template_path)")
-            state.setdefault('trainer', {})['train_output_config_path'] = template_path
-            logger.info("✅ Verl 框架配置生成跳过，已使用提供的配置模板")
+            from loopai.agents.Trainer.utils.verl_config_generator import VerlConfigGenerator, generate_verl_config_explanation
+
+            train_mode = state.get('trainer', {}).get('verl_train_mode', 'grpo')
+            user_template = state.get('trainer', {}).get('train_input_config_template_path')
+
+            # 如果用户提供了完整的自定义脚本，直接使用
+            if user_template and os.path.exists(user_template):
+                state.setdefault('trainer', {})['train_output_config_path'] = user_template
+                state.setdefault('trainer', {})['trainer_config_generation_success'] = True
+                logger.info(f"✅ 使用用户提供的 verl 配置模板: {user_template}")
+            else:
+                # 自动生成训练脚本
+                generator = VerlConfigGenerator()
+                output_dir = state.get('trainer', {}).get('output_dir', './output/trainer')
+                os.makedirs(output_dir, exist_ok=True)
+
+                script = generator.generate_script(
+                    train_mode=train_mode,
+                    model_path=model_name,
+                    train_files=dataset_path,
+                    val_files=state.get('trainer', {}).get('train_input_val_dataset_path', ''),
+                    output_dir=os.path.join(output_dir, 'verl_checkpoints'),
+                    task_description=task_description,
+                    project_name=state.get('trainer', {}).get('train_input_swanlab_project', f'verl_{train_mode}'),
+                    experiment_name=f'{train_mode}_train',
+                )
+
+                script_path = os.path.join(output_dir, f'verl_{train_mode}_train.sh')
+                if not generator.save_script(script, script_path):
+                    raise RuntimeError("保存 verl 训练脚本失败")
+
+                state.setdefault('trainer', {})['train_output_config_path'] = script_path
+                state.setdefault('trainer', {})['trainer_config_generation_success'] = True
+
+                # 生成说明文档
+                explanation = generate_verl_config_explanation(train_mode, {}, task_description)
+                explanation_path = os.path.join(output_dir, 'config_explanation.txt')
+                with open(explanation_path, 'w', encoding='utf-8') as f:
+                    f.write(explanation)
+                state.setdefault('trainer', {})['trainer_config_explanation_path'] = explanation_path
+
+                logger.info(f"✅ verl {train_mode} 配置生成成功: {script_path}")
         else:
             raise ValueError(f"未知的训练框架: {framework}")
         
