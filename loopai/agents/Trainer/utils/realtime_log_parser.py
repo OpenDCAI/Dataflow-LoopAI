@@ -40,10 +40,30 @@ class MetricsExtractor:
         self.perplexity_pattern = re.compile(rf'(?:perplexity|ppl)[:\s=]+({number_pattern})', re.IGNORECASE)
 
     def extract_metrics(self, line: str) -> Dict[str, Any]:
-        """从日志行中提取指标"""
+        """从日志行中提取指标（同时支持 LlamaFactory 和 verl 日志格式）"""
         metrics = {}
 
-        # 首先尝试提取JSON格式的指标
+        # verl file logger 格式: {"step": N, "data": {"metric/name": value}}
+        line_stripped = line.strip()
+        if line_stripped.startswith('{') and '"step"' in line_stripped and '"data"' in line_stripped:
+            try:
+                parsed = json.loads(line_stripped)
+                if isinstance(parsed, dict) and "step" in parsed and "data" in parsed:
+                    metrics["step"] = parsed["step"]
+                    data = parsed["data"]
+                    if isinstance(data, dict):
+                        for key, value in data.items():
+                            if isinstance(value, (int, float)):
+                                # verl 指标格式: "train/loss" -> "loss", "train/lr" -> "lr"
+                                short_key = key.split("/")[-1] if "/" in key else key
+                                metrics[short_key] = value
+                                # 也保留原始 key 方便后续使用
+                                metrics[key] = value
+                    return metrics
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        # 首先尝试提取JSON格式的指标（LlamaFactory 格式）
         json_matches = self.json_pattern.findall(line)
         for json_str in json_matches:
             try:

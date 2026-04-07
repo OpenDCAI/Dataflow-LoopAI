@@ -397,40 +397,82 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
 
             # === 扫描 checkpoint 目录 ===
             training_output_dir = state.get('trainer', {}).get('train_config', {}).get('output_dir', '')
+            # verl 的 checkpoint 路径在 trainer.default_local_dir 下
+            if not training_output_dir and framework == 'verl':
+                training_output_dir = state.get('trainer', {}).get('output_dir', '')
+
             checkpoints = []
             if training_output_dir and os.path.isdir(training_output_dir):
                 for entry in sorted(os.listdir(training_output_dir)):
-                    if entry.startswith('checkpoint-') and os.path.isdir(os.path.join(training_output_dir, entry)):
+                    entry_path = os.path.join(training_output_dir, entry)
+                    # LlamaFactory: checkpoint-XXX, verl: global_step_XXX / epoch_XXX
+                    if os.path.isdir(entry_path) and (
+                        entry.startswith('checkpoint-') or
+                        entry.startswith('global_step_') or
+                        entry.startswith('epoch_')
+                    ):
                         checkpoints.append(entry)
             state.setdefault('trainer', {})['training_checkpoints'] = checkpoints
             logger.info(f"发现 {len(checkpoints)} 个 checkpoint: {checkpoints}")
 
-            # === 从 trainer_log.jsonl 提取关键 step 的 loss ===
+            # === 提取关键 step 的 loss ===
             step_losses = []
-            trainer_log_path = os.path.join(training_output_dir, 'trainer_log.jsonl') if training_output_dir else ''
-            if trainer_log_path and os.path.isfile(trainer_log_path):
-                try:
-                    with open(trainer_log_path, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                record = json.loads(line)
-                                entry = {"step": record.get("current_steps")}
-                                if "loss" in record:
-                                    entry["loss"] = record["loss"]
-                                if "eval_loss" in record:
-                                    entry["eval_loss"] = record["eval_loss"]
-                                if "loss" in entry or "eval_loss" in entry:
-                                    step_losses.append(entry)
-                            except json.JSONDecodeError:
-                                continue
-                    logger.info(f"从 trainer_log.jsonl 提取了 {len(step_losses)} 条 step-loss 记录")
-                except Exception as e:
-                    logger.warning(f"读取 trainer_log.jsonl 失败: {e}")
+            if framework == 'verl':
+                # verl file logger 输出 JSONL: {"step": N, "data": {"train/loss": V, ...}}
+                # 搜索可能的日志文件位置
+                verl_log_candidates = []
+                if training_output_dir:
+                    verl_log_candidates.append(os.path.join(training_output_dir, '*.jsonl'))
+                # 也检查 metrics 目录
+                metrics_dir = os.path.join(output_dir, "metrics")
+                if os.path.isdir(metrics_dir):
+                    for f_name in os.listdir(metrics_dir):
+                        if f_name.endswith('.json') or f_name.endswith('.jsonl'):
+                            verl_log_candidates.append(os.path.join(metrics_dir, f_name))
+
+                # 从实时日志解析器的 metrics 文件读取
+                metrics_file = os.path.join(output_dir, "metrics", "metrics.json")
+                if os.path.isfile(metrics_file):
+                    try:
+                        with open(metrics_file, 'r', encoding='utf-8') as f:
+                            metrics_data = json.load(f)
+                        for m in metrics_data.get("metrics", []):
+                            entry = {"step": m.get("step")}
+                            for k in ["loss", "train/loss", "grad_norm", "train/grad_norm", "lr", "train/lr"]:
+                                if k in m:
+                                    short_k = k.split("/")[-1] if "/" in k else k
+                                    entry[short_k] = m[k]
+                            if any(k in entry for k in ["loss", "grad_norm", "lr"]):
+                                step_losses.append(entry)
+                        logger.info(f"从 verl metrics 提取了 {len(step_losses)} 条记录")
+                    except Exception as e:
+                        logger.warning(f"读取 verl metrics 失败: {e}")
             else:
-                logger.warning(f"trainer_log.jsonl 不存在: {trainer_log_path}")
+                # LlamaFactory: trainer_log.jsonl
+                trainer_log_path = os.path.join(training_output_dir, 'trainer_log.jsonl') if training_output_dir else ''
+                if trainer_log_path and os.path.isfile(trainer_log_path):
+                    try:
+                        with open(trainer_log_path, 'r', encoding='utf-8') as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                try:
+                                    record = json.loads(line)
+                                    entry = {"step": record.get("current_steps")}
+                                    if "loss" in record:
+                                        entry["loss"] = record["loss"]
+                                    if "eval_loss" in record:
+                                        entry["eval_loss"] = record["eval_loss"]
+                                    if "loss" in entry or "eval_loss" in entry:
+                                        step_losses.append(entry)
+                                except json.JSONDecodeError:
+                                    continue
+                        logger.info(f"从 trainer_log.jsonl 提取了 {len(step_losses)} 条 step-loss 记录")
+                    except Exception as e:
+                        logger.warning(f"读取 trainer_log.jsonl 失败: {e}")
+                else:
+                    logger.warning(f"trainer_log.jsonl 不存在: {trainer_log_path}")
             state.setdefault('trainer', {})['training_step_losses'] = step_losses
 
             # 进度：训练成功完成
