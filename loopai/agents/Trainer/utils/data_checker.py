@@ -234,3 +234,191 @@ def generate_format_report(check_result: Dict[str, Any]) -> str:
         report.append("  3. 检查每个样本的字段完整性")
     
     return "\n".join(report)
+
+
+# ==================== verl 数据格式检查 ====================
+
+def check_verl_data_format(dataset_path: str, train_mode: str = "grpo") -> Dict[str, Any]:
+    """
+    检查数据集格式是否符合 verl 要求
+
+    Args:
+        dataset_path: 数据集文件路径
+        train_mode: 训练模式 ("grpo" / "ppo" / "sft")
+    Returns:
+        检查结果字典
+    """
+    result = {
+        "is_valid": False, "format_type": None, "total_samples": 0,
+        "errors": [], "warnings": [], "sample_preview": [], "verl_mode": train_mode
+    }
+    if not os.path.exists(dataset_path):
+        result["errors"].append(f"数据文件不存在: {dataset_path}")
+        return result
+
+    file_ext = Path(dataset_path).suffix.lower()
+    if file_ext not in ['.parquet', '.json', '.jsonl']:
+        result["errors"].append(f"不支持的文件格式: {file_ext}，verl 支持 .parquet/.json/.jsonl")
+        return result
+    result["format_type"] = file_ext.lstrip('.')
+
+    try:
+        if file_ext == '.parquet':
+            data = _load_parquet_samples(dataset_path, max_samples=50)
+        else:
+            data = _load_dataset(dataset_path, "json" if file_ext == ".json" else "jsonl")
+        result["total_samples"] = len(data)
+        if result["total_samples"] == 0:
+            result["errors"].append("数据文件为空")
+            return result
+
+        if train_mode in ("grpo", "ppo"):
+            validation = _validate_verl_rl_format(data)
+        elif train_mode == "sft":
+            validation = _validate_verl_sft_format(data)
+        else:
+            result["errors"].append(f"未知的 verl 训练模式: {train_mode}")
+            return result
+        result["errors"].extend(validation["errors"])
+        result["warnings"].extend(validation["warnings"])
+        result["sample_preview"] = [_safe_preview(s) for s in data[:3]]
+        result["is_valid"] = len(result["errors"]) == 0
+    except Exception as e:
+        result["errors"].append(f"读取数据文件时发生错误: {str(e)}")
+    return result
+
+
+def _load_parquet_samples(dataset_path: str, max_samples: int = 50) -> List[Dict[str, Any]]:
+    """从 parquet 文件加载样本"""
+    try:
+        import pyarrow.parquet as pq
+        table = pq.read_table(dataset_path)
+        if max_samples > 0 and table.num_rows > max_samples:
+            table = table.slice(0, max_samples)
+        return table.to_pylist()
+    except ImportError:
+        import pandas as pd
+        df = pd.read_parquet(dataset_path)
+        return df.head(max_samples).to_dict('records') if max_samples > 0 else df.to_dict('records')
+
+
+def _validate_verl_rl_format(data: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """验证 verl RL 数据格式 (GRPO/PPO): 需要 prompt 字段 (list[{role, content}])"""
+    errors, warnings = [], []
+    fields = set()
+    for s in data[:10]:
+        if isinstance(s, dict):
+            fields.update(s.keys())
+    if "prompt" not in fields:
+        errors.append("缺少必需字段 'prompt'（verl RL 需要 [{role, content}] 格式的对话列表）")
+    if "data_source" not in fields:
+        warnings.append("缺少 'data_source' 字段，建议添加用于日志分组")
+
+    err_n = 0
+    for i, sample in enumerate(data):
+        if not isinstance(sample, dict):
+            continue
+        prompt = sample.get("prompt")
+        if prompt is None:
+            err_n += 1
+            if err_n <= 5: errors.append(f"样本 {i+1} 缺少 'prompt' 字段")
+            continue
+        if not isinstance(prompt, list):
+            err_n += 1
+            if err_n <= 5: errors.append(f"样本 {i+1} 'prompt' 应为列表，实际: {type(prompt).__name__}")
+            continue
+        for j, msg in enumerate(prompt):
+            if not isinstance(msg, dict):
+                err_n += 1
+                if err_n <= 5: errors.append(f"样本 {i+1} prompt[{j}] 应为字典")
+                continue
+            if "role" not in msg or "content" not in msg:
+                err_n += 1
+                if err_n <= 5: errors.append(f"样本 {i+1} prompt[{j}] 缺少 'role' 或 'content'")
+        if err_n >= 10:
+            warnings.append(f"错误过多（{err_n}+），仅显示前5个")
+            break
+    return {"errors": errors, "warnings": warnings}
+
+
+def _validate_verl_sft_format(data: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """验证 verl SFT 数据格式: 需要 messages 字段 (list[{role, content}])"""
+    errors, warnings = [], []
+    fields = set()
+    for s in data[:10]:
+        if isinstance(s, dict):
+            fields.update(s.keys())
+    if "messages" not in fields:
+        errors.append("缺少必需字段 'messages'（verl SFT 需要 [{role, content}] 格式的多轮对话列表）")
+
+    err_n = 0
+    for i, sample in enumerate(data):
+        if not isinstance(sample, dict):
+            continue
+        messages = sample.get("messages")
+        if messages is None:
+            err_n += 1
+            if err_n <= 5: errors.append(f"样本 {i+1} 缺少 'messages' 字段")
+            continue
+        if not isinstance(messages, list):
+            err_n += 1
+            if err_n <= 5: errors.append(f"样本 {i+1} 'messages' 应为列表，实际: {type(messages).__name__}")
+            continue
+        if len(messages) < 2:
+            if err_n <= 5: warnings.append(f"样本 {i+1} messages 仅 {len(messages)} 条，建议至少一轮对话")
+        for j, msg in enumerate(messages):
+            if not isinstance(msg, dict):
+                err_n += 1
+                if err_n <= 5: errors.append(f"样本 {i+1} messages[{j}] 应为字典")
+                continue
+            if "role" not in msg or "content" not in msg:
+                err_n += 1
+                if err_n <= 5: errors.append(f"样本 {i+1} messages[{j}] 缺少 'role' 或 'content'")
+        if err_n >= 10:
+            warnings.append(f"错误过多（{err_n}+），仅显示前5个")
+            break
+    return {"errors": errors, "warnings": warnings}
+
+
+def _safe_preview(sample: Any) -> Any:
+    """将样本转换为可 JSON 序列化的格式"""
+    if isinstance(sample, dict):
+        out = {}
+        for k, v in sample.items():
+            try:
+                json.dumps(v, ensure_ascii=False)
+                out[k] = v
+            except (TypeError, ValueError):
+                out[k] = str(v)[:200]
+        return out
+    return str(sample)
+
+
+def generate_verl_format_report(check_result: Dict[str, Any]) -> str:
+    """生成 verl 数据格式检查报告"""
+    report = ["=" * 50, "verl 数据集格式检查报告", "=" * 50]
+    report.append(f"训练模式: {check_result.get('verl_mode', 'unknown')}")
+    report.append(f"文件格式: {check_result.get('format_type', 'unknown')}")
+    report.append(f"样本总数: {check_result.get('total_samples', 0)}")
+    report.append(f"验证结果: {'通过' if check_result.get('is_valid', False) else '未通过'}")
+    report.append("")
+    if check_result.get("errors"):
+        report.append("错误:")
+        for e in check_result["errors"]:
+            report.append(f"  ❌ {e}")
+        report.append("")
+    if check_result.get("warnings"):
+        report.append("警告:")
+        for w in check_result["warnings"]:
+            report.append(f"  ⚠️  {w}")
+        report.append("")
+    mode = check_result.get("verl_mode", "grpo")
+    if not check_result.get("is_valid", False):
+        report.append("修改建议:")
+        report.append("  1. 确保数据格式为 parquet / JSON / JSONL")
+        if mode in ("grpo", "ppo"):
+            report.append('  2. RL 数据需含 prompt 字段: [{"role":"user","content":"..."}]')
+            report.append("  3. 建议添加 data_source 字段标识数据来源")
+        else:
+            report.append('  2. SFT 数据需含 messages 字段: [{"role":"user","content":"..."},{"role":"assistant","content":"..."}]')
+    return "\n".join(report)

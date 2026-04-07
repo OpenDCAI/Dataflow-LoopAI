@@ -101,8 +101,32 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
                 for warning in check_result['warnings'][:3]:  # 只显示前3个警告
                     logger.warning(f"  - {warning}")
         elif framework == "verl":
-            logger.info("数据检查跳过: Verl 框架当前不支持数据格式检查")
-            state.setdefault('trainer', {})['trainer_data_check_passed'] = True
+            from loopai.agents.Trainer.utils.data_checker import check_verl_data_format, generate_verl_format_report
+
+            train_mode = state.get('trainer', {}).get('verl_train_mode', 'grpo')
+            logger.info(f"使用 verl 数据格式检查（模式: {train_mode}）")
+
+            check_result = check_verl_data_format(dataset_path, train_mode=train_mode)
+            report = generate_verl_format_report(check_result)
+
+            output_dir = state.get('trainer', {}).get('output_dir', './output/trainer')
+            os.makedirs(output_dir, exist_ok=True)
+            report_path = os.path.join(output_dir, 'data_check_report.txt')
+            with open(report_path, 'w', encoding='utf-8') as f:
+                f.write(report)
+            logger.info(f"verl 数据检查报告已保存到: {report_path}")
+
+            state.setdefault('trainer', {})['trainer_data_check_result'] = check_result
+            state.setdefault('trainer', {})['train_output_data_check_report_path'] = report_path
+
+            if check_result['is_valid']:
+                logger.info(f"✅ verl 数据格式检查通过，共 {check_result['total_samples']} 个样本")
+                state.setdefault('trainer', {})['trainer_data_check_passed'] = True
+            else:
+                logger.warning(f"❌ verl 数据格式检查未通过: {len(check_result['errors'])} 个错误")
+                for error in check_result['errors'][:5]:
+                    logger.warning(f"  - {error}")
+                state.setdefault('trainer', {})['trainer_data_check_passed'] = False
         else:
             raise ValueError(f"未知的训练框架: {framework}")
         

@@ -3,7 +3,7 @@ Trainer 工具模块
 包含数据检查、配置生成、训练执行和任务管理的工具类
 """
 
-from .data_checker import check_data_format, generate_format_report
+from .data_checker import check_data_format, generate_format_report, check_verl_data_format, generate_verl_format_report
 from .config_generator import ConfigGenerator, generate_config_explanation
 from .training_executor import TrainingExecutor, validate_training_environment, generate_training_report
 from .task_manager import TaskManager
@@ -14,6 +14,8 @@ from .realtime_log_parser import RealTimeLogParser, MetricsExtractor
 __all__ = [
     'check_data_format',
     'generate_format_report',
+    'check_verl_data_format',
+    'generate_verl_format_report',
     'ConfigGenerator', 
     'generate_config_explanation',
     'TrainingExecutor',
