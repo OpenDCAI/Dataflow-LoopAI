@@ -10,7 +10,7 @@ import json
 import re
 from typing import Dict, Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import interrupt
 from langgraph.store.base import BaseStore
@@ -67,14 +67,22 @@ Please describe the fields and data structure you need:"""
         
         if "messages" not in state:
             state["messages"] = []
-        state["messages"].append(AIMessage(content=ask_message))
+        state["messages"].append({
+            "type": "ai",
+            "role": "assistant",
+            "content": ask_message,
+        })
         
         user_input = interrupt(ask_message)
         
         if user_input:
             description = str(user_input)
             state["constructor"]["mapping_custom_description"] = description
-            state["messages"].append(HumanMessage(content=description))
+            state["messages"].append({
+                "type": "human",
+                "role": "user",
+                "content": description,
+            })
             logger.info(f"User provided description: {description}")
         else:
             logger.warning("No description provided")
@@ -167,9 +175,11 @@ Generate corresponding schema and example data. Only output JSON object."""
         
         if "messages" not in state:
             state["messages"] = []
-        state["messages"].append(AIMessage(
-            content=f"Error generating custom format: {str(e)}\n\nPlease try describing your format more clearly, or select a preset format."
-        ))
+        state["messages"].append({
+            "type": "ai",
+            "role": "assistant",
+            "content": f"Error generating custom format: {str(e)}\n\nPlease try describing your format more clearly, or select a preset format.",
+        })
         
         state["constructor"]["mapping_user_intent"] = ""
         state["constructor"]["mapping_custom_description"] = ""

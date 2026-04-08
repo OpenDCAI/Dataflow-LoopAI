@@ -32,6 +32,7 @@ setup(
         "pydantic",
         "tortoise-orm",
         "func-timeout",
+        "psutil",
         "pyflakes>=3.4.0",
         "tree_sitter>=0.25.2",
         "tree-sitter-python>=0.25.0",

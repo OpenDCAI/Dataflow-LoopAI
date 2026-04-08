@@ -33,13 +33,9 @@ class TaskManager:
         self.app_config = self.app_config.get('system', {})
         self.llamafactory_dir = self.app_config.get("llamafactory_dir")
         self.verl_dir = self.app_config.get("verl_dir")
-        # self.llamafactory_dir = "/home/lpc/repos/LLaMA-Factory/"
-        
-        # 实时日志解析器字典，按任务ID索引
-        self.log_parsers: Dict[str, RealTimeLogParser] = {}
-        
-        # 确保目录存在
-        for directory in [configs_dir, logs_dir, runs_dir, self.llamafactory_dir]:
+
+        # 确保目录存在（只检查非空目录）
+        for directory in [configs_dir, logs_dir, runs_dir]:
             ensure_directory_exists(directory)
         if self.llamafactory_dir:
             ensure_directory_exists(self.llamafactory_dir)

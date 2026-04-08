@@ -14,7 +14,7 @@ from loopai.agents.Constructor.nodes import postprocess_node
 from loopai.agents.Constructor.nodes.filter_node import CleaningSubgraph
 from loopai.agents.Constructor.mapping import MappingSubgraph
 from loopai.common.prompts import PromptLoader
-
+from langchain_core.messages import AIMessage
 logger = get_logger()
 
 
@@ -46,6 +46,40 @@ class ConstructorAgent(BaseAgent):
     def system_prompt_name(self) -> str:
         """System prompt name"""
         return "default_prompt"
+
+    @staticmethod
+    def _emit_stream_event(
+        state: LoopAIState,
+        message: str,
+        progress: float = 0.0,
+        data: Optional[Dict[str, Any]] = None,
+        current: Optional[str] = None,
+    ) -> None:
+        """Emit a richer StreamEvent payload for frontend observability."""
+        writer = get_stream_writer()
+        if not writer:
+            return
+
+        constructor_state = state.get("constructor", {})
+        payload = {
+            "agent": "constructor",
+            "node": current or state.get("current", "ConstructorAgent.unknown"),
+            "task_id": state.get("task_id", ""),
+            "next_to": state.get("next_to", ""),
+            "category": constructor_state.get("category", ""),
+            "model": constructor_state.get("model_path", ""),
+            "debug_mode": bool(constructor_state.get("debug", False)),
+            "has_exception": bool(state.get("exception")),
+        }
+        if data:
+            payload.update(data)
+
+        writer(StreamEvent(
+            current=current or state.get("current", "ConstructorAgent.unknown"),
+            message=message,
+            progress=progress,
+            data=payload,
+        ).json())
     
     def get_start_node(self):
         """
@@ -59,14 +93,16 @@ class ConstructorAgent(BaseAgent):
             """
             logger.info(f"ConstructorAgent: Starting task")
             state['current'] = "ConstructorAgent.start_node"
-            writer = get_stream_writer()
-            if writer:
-                writer(StreamEvent(
-                    current=state['current'],
-                    message="Constructor: 配置开始",
-                    progress=0.0,
-                    data={"phase": "constructor_config"},
-                ).json())
+            ConstructorAgent._emit_stream_event(
+                state,
+                message="Constructor: 配置开始",
+                progress=0.0,
+                data={
+                    "phase": "constructor_config",
+                    "stage": "start",
+                    "has_obtainer_state": bool(state.get("obtainer")),
+                },
+            )
             
             # Ensure constructor configuration is set in state
             # Use values from constructor if not already in state
@@ -93,6 +129,23 @@ class ConstructorAgent(BaseAgent):
             for key in fallback_keys:
                 if key not in constructor and key in obtainer_state:
                     constructor[key] = obtainer_state.get(key)
+
+            # Some fields can exist but be null in constructor state snapshot.
+            # Treat null as missing and fallback to obtainer state when possible.
+            for key in fallback_keys:
+                if constructor.get(key) is None and key in obtainer_state:
+                    constructor[key] = obtainer_state.get(key)
+
+            # Empty strings in constructor often mean "not initialized yet".
+            # For shared runtime fields (e.g. category) prefer obtainer values.
+            for key in fallback_keys:
+                if key not in obtainer_state:
+                    continue
+                cur_val = constructor.get(key)
+                if isinstance(cur_val, str) and not cur_val.strip():
+                    incoming = obtainer_state.get(key)
+                    if incoming is not None and (not isinstance(incoming, str) or incoming.strip()):
+                        constructor[key] = incoming
 
             # model_path: 优先使用 constructor 中的值，其次使用 self.model_name
             if not constructor.get("model_path"):
@@ -187,22 +240,48 @@ class ConstructorAgent(BaseAgent):
                        f"base_url: {constructor.get('base_url')}, "
                        f"debug: {debug_mode}")
             
-            if writer:
-                writer(StreamEvent(
-                    current=state['current'],
-                    message="Constructor: 配置完成",
-                    progress=1.0,
-                    data={
-                        "phase": "constructor_config",
-                        "model": constructor.get("model_path"),
-                        "base_url": constructor.get("base_url"),
-                        "debug_mode": debug_mode,
-                    },
-                ).json())
+            ConstructorAgent._emit_stream_event(
+                state,
+                message="Constructor: 配置完成",
+                progress=1.0,
+                data={
+                    "phase": "constructor_config",
+                    "stage": "completed",
+                    "base_url": constructor.get("base_url"),
+                    "default_mapping_format": constructor.get("default_mapping_format"),
+                    "subtasks_count": len(constructor.get("subtasks") or []),
+                },
+            )
             
             return state
         
         return start_node
+
+    @staticmethod
+    def _canonical_mapping_metrics(mapping_results: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        script_mapping_node / llm_mapping_node 写入 mapped_records、output_dir；
+        end_node 与前端事件历史上读取 total_mapped_records、final_output_dir。
+        此处统一解析，避免映射成功但摘要与 stream data 仍为 0 / 空。
+        """
+        empty = {
+            "total_records": 0,
+            "total_mapped_records": 0,
+            "failed_records": 0,
+            "final_output_dir": "",
+        }
+        if not mapping_results:
+            return empty
+        mapped = mapping_results.get("total_mapped_records")
+        if mapped is None:
+            mapped = mapping_results.get("mapped_records", 0)
+        final_dir = mapping_results.get("final_output_dir") or mapping_results.get("output_dir", "")
+        return {
+            "total_records": mapping_results.get("total_records", 0),
+            "total_mapped_records": mapped,
+            "failed_records": mapping_results.get("failed_records", 0),
+            "final_output_dir": final_dir,
+        }
 
     @staticmethod
     @BaseAgent.set_current
@@ -213,14 +292,12 @@ class ConstructorAgent(BaseAgent):
         """
         logger.info(f"ConstructorAgent: Task completed, returning to parent graph")
         state['current'] = "ConstructorAgent.end_node"
-        writer = get_stream_writer()
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                message="Constructor: 结束节点开始",
-                progress=0.0,
-                data={"phase": "constructor_end"},
-            ).json())
+        ConstructorAgent._emit_stream_event(
+            state,
+            message="Constructor: 结束节点开始",
+            progress=0.0,
+            data={"phase": "constructor_end", "stage": "start"},
+        )
         
         # Generate summary of results for LLM
         summary_parts = []
@@ -246,8 +323,9 @@ class ConstructorAgent(BaseAgent):
             # Summarize mapping results
             mapping_results = constructor_state.get("mapping_results", {})
             if mapping_results:
-                final_output_dir = mapping_results.get("final_output_dir", "")
-                total_mapped_records = mapping_results.get("total_mapped_records", 0)
+                mm = ConstructorAgent._canonical_mapping_metrics(mapping_results)
+                final_output_dir = mm["final_output_dir"]
+                total_mapped_records = mm["total_mapped_records"]
                 if final_output_dir:
                     summary_parts.append(f"格式映射完成: 共映射 {total_mapped_records} 条记录")
                     summary_parts.append(f"最终输出目录: {final_output_dir}")
@@ -257,32 +335,39 @@ class ConstructorAgent(BaseAgent):
             summary_text = "数据构造任务执行完成:\n" + "\n".join(summary_parts)
         else:
             summary_text = "数据构造任务执行完成，但未找到相关数据。"
+
+        summary_text += (
+            "\n\n【建议下一步】若需开始模型训练，请在后续轮次中通过主调度 Agent 调用工具 check_motivation，"
+            "并将 motivation 设为 train。\n"
+            "<cmd>根据用户指令执行: train</cmd>"
+        )
         
         # Add summary to messages so LLM can see it
-        from langchain_core.messages import AIMessage
         if "messages" not in state:
             state["messages"] = []
         
-        # Add summary as AI message
+        # Keep message type aligned with other agents (e.g. Obtainer),
+        # so MessagesState reducer and persistence behave consistently.
+        
         state["messages"].append(AIMessage(content=summary_text))
         logger.info(f"ConstructorAgent: Added summary to messages: {summary_text[:100]}...")
-        
-        if writer:
-            postprocess_results = constructor_state.get("postprocess_results", {})
-            mapping_results = constructor_state.get("mapping_results", {})
-            writer(StreamEvent(
-                current=state['current'],
-                message="Constructor: 任务完成",
-                progress=1.0,
-                data={
-                    "phase": "constructor_end",
-                    "summary_text": summary_text,
-                    "has_exception": bool(state.get("exception")),
-                    "total_records_processed": postprocess_results.get("total_records_processed", 0),
-                    "total_mapped_records": mapping_results.get("total_mapped_records", 0),
-                    "final_output_dir": mapping_results.get("final_output_dir", ""),
-                },
-            ).json())
+        state["automated_query"]="我收集完也处理完数据了，进入trainer"
+        postprocess_results = constructor_state.get("postprocess_results", {})
+        mapping_results = constructor_state.get("mapping_results", {})
+        mm = ConstructorAgent._canonical_mapping_metrics(mapping_results)
+        ConstructorAgent._emit_stream_event(
+            state,
+            message="Constructor: 任务完成",
+            progress=1.0,
+            data={
+                "phase": "constructor_end",
+                "stage": "completed",
+                "summary_text": summary_text,
+                "total_records_processed": postprocess_results.get("total_records_processed", 0),
+                "total_mapped_records": mm["total_mapped_records"],
+                "final_output_dir": mm["final_output_dir"],
+            },
+        )
         
         # Set next_to to query_node to return to parent graph
         state["next_to"] = "query_node"
@@ -298,18 +383,21 @@ class ConstructorAgent(BaseAgent):
           - ``legacy`` (default): calls the original ``postprocess_node``
           - ``agent_v2``: calls the new Postprocess sub-agent system
         """
-        writer = get_stream_writer()
         state['current'] = "ConstructorAgent.postprocess_node"
         constructor = state.get("constructor", {})
-        version = constructor.get("postprocess_version", "legacy")
+        version = constructor.get("postprocess_version", "agent_v2")
 
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                message=f"Constructor: 后处理开始 (version={version})",
-                progress=0.0,
-                data={"phase": "postprocess", "version": version},
-            ).json())
+        ConstructorAgent._emit_stream_event(
+            state,
+            message=f"Constructor: 后处理开始 (version={version})",
+            progress=0.0,
+            data={
+                "phase": "postprocess",
+                "stage": "start",
+                "version": version,
+                "category": constructor.get("category", ""),
+            },
+        )
 
         try:
             if version == "agent_v2":
@@ -319,27 +407,26 @@ class ConstructorAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Constructor postprocess_node error: {e}", exc_info=True)
             state["exception"] = f"Postprocess error: {str(e)}"
-            if writer:
-                writer(StreamEvent(
-                    current=state['current'],
-                    message=f"Constructor: 后处理异常: {str(e)[:200]}",
-                    data={"error": str(e), "phase": "postprocess"},
-                ).json())
-
-        if writer:
-            res = state.get("constructor", {}).get("postprocess_results", {})
-            writer(StreamEvent(
-                current=state['current'],
-                message="Constructor: 后处理完成",
+            ConstructorAgent._emit_stream_event(
+                state,
+                message=f"Constructor: 后处理异常: {str(e)[:200]}",
                 progress=1.0,
-                data={
-                    "phase": "postprocess",
-                    "total_records_processed": res.get("total_records_processed", 0),
-                    "processed_sources_count": res.get("processed_sources_count", 0),
-                    "output_dir": res.get("output_dir", ""),
-                    "has_exception": bool(state.get("exception")),
-                },
-            ).json())
+                data={"error": str(e), "phase": "postprocess", "stage": "failed"},
+            )
+
+        res = state.get("constructor", {}).get("postprocess_results", {})
+        ConstructorAgent._emit_stream_event(
+            state,
+            message="Constructor: 后处理完成",
+            progress=1.0,
+            data={
+                "phase": "postprocess",
+                "stage": "completed",
+                "total_records_processed": res.get("total_records_processed", 0),
+                "processed_sources_count": res.get("processed_sources_count", 0),
+                "output_dir": res.get("output_dir", ""),
+            },
+        )
         return state
 
     @staticmethod
@@ -363,6 +450,13 @@ class ConstructorAgent(BaseAgent):
                 if isinstance(msg, HumanMessage) and hasattr(msg, "content"):
                     user_query = msg.content
                     break
+                if isinstance(msg, dict):
+                    msg_type = str(msg.get("type", "")).lower()
+                    msg_role = str(msg.get("role", "")).lower()
+                    if msg_type == "human" or msg_role == "user":
+                        user_query = str(msg.get("content", "")).strip()
+                        if user_query:
+                            break
 
         category = constructor.get("category", "PT").upper()
         if category not in ("PT", "SFT"):
@@ -411,15 +505,13 @@ class ConstructorAgent(BaseAgent):
         """
         Start node for data_cleaning subgraph with StreamEvent.
         """
-        writer = get_stream_writer()
         state['current'] = "ConstructorAgent.data_cleaning"
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                message="Constructor: 数据清洗开始",
-                progress=0.0,
-                data={"phase": "data_cleaning"},
-            ).json())
+        ConstructorAgent._emit_stream_event(
+            state,
+            message="Constructor: 数据清洗开始",
+            progress=0.0,
+            data={"phase": "data_cleaning", "stage": "start"},
+        )
 
         return state
 
@@ -429,22 +521,23 @@ class ConstructorAgent(BaseAgent):
         """
         End node for data_cleaning subgraph with StreamEvent
         """
-        writer = get_stream_writer()
-        if writer:
-            cleaning_results = state.get("constructor", {}).get("cleaning_results", {})
-            tools_executed = cleaning_results.get("tools_executed", [])
-            has_exception = bool(state.get("exception"))
-            writer(StreamEvent(
-                current=state.get('current', 'ConstructorAgent.data_cleaning'),
-                message="Constructor: 数据清洗完成" if not has_exception else f"Constructor: 数据清洗完成(有异常)",
-                progress=1.0,
-                data={
-                    "phase": "data_cleaning",
-                    "tools_executed": [t.get("tool") if isinstance(t, dict) else str(t) for t in tools_executed],
-                    "tools_count": len(tools_executed),
-                    "has_exception": has_exception,
-                },
-            ).json())
+        from loopai.logger import get_logger
+        get_logger().info("=== data_cleaning_end: ENTER ===")
+        cleaning_results = state.get("constructor", {}).get("cleaning_results", {})
+        tools_executed = cleaning_results.get("tools_executed", [])
+        has_exception = bool(state.get("exception"))
+        ConstructorAgent._emit_stream_event(
+            state,
+            message="Constructor: 数据清洗完成" if not has_exception else "Constructor: 数据清洗完成(有异常)",
+            progress=1.0,
+            data={
+                "phase": "data_cleaning",
+                "stage": "completed" if not has_exception else "completed_with_errors",
+                "tools_executed": [t.get("tool") if isinstance(t, dict) else str(t) for t in tools_executed],
+                "tools_count": len(tools_executed),
+            },
+            current=state.get('current', 'ConstructorAgent.data_cleaning'),
+        )
         return state
 
     @staticmethod
@@ -453,15 +546,19 @@ class ConstructorAgent(BaseAgent):
         """
         Start node for mapping_subgraph with StreamEvent
         """
-        writer = get_stream_writer()
         state['current'] = "ConstructorAgent.mapping_subgraph"
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                message="Constructor: 格式映射开始",
-                progress=0.0,
-                data={"phase": "mapping"},
-            ).json())
+        constructor_state = state.get("constructor", {})
+        ConstructorAgent._emit_stream_event(
+            state,
+            message="Constructor: 格式映射开始",
+            progress=0.0,
+            data={
+                "phase": "mapping",
+                "stage": "start",
+                "confirmed_format": (constructor_state.get("confirmed_format") or {}).get("format_id", ""),
+                "auto_mode": constructor_state.get("mapping_auto_mode", ""),
+            },
+        )
         return state
 
     @staticmethod
@@ -470,21 +567,23 @@ class ConstructorAgent(BaseAgent):
         """
         End node for mapping_subgraph with StreamEvent
         """
-        writer = get_stream_writer()
-        if writer:
-            mapping_results = state.get("constructor", {}).get("mapping_results", {})
-            has_exception = bool(state.get("exception"))
-            writer(StreamEvent(
-                current=state.get('current', 'ConstructorAgent.mapping_subgraph'),
-                message="Constructor: 格式映射完成" if not has_exception else "Constructor: 格式映射完成(有异常)",
-                progress=1.0,
-                data={
-                    "phase": "mapping",
-                    "total_mapped_records": mapping_results.get("total_mapped_records", 0),
-                    "final_output_dir": mapping_results.get("final_output_dir", ""),
-                    "has_exception": has_exception,
-                },
-            ).json())
+        mapping_results = state.get("constructor", {}).get("mapping_results", {})
+        mm = ConstructorAgent._canonical_mapping_metrics(mapping_results)
+        has_exception = bool(state.get("exception"))
+        ConstructorAgent._emit_stream_event(
+            state,
+            message="Constructor: 格式映射完成" if not has_exception else "Constructor: 格式映射完成(有异常)",
+            progress=1.0,
+            data={
+                "phase": "mapping",
+                "stage": "completed" if not has_exception else "completed_with_errors",
+                "total_records": mm["total_records"],
+                "total_mapped_records": mm["total_mapped_records"],
+                "failed_records": mm["failed_records"],
+                "final_output_dir": mm["final_output_dir"],
+            },
+            current=state.get('current', 'ConstructorAgent.mapping_subgraph'),
+        )
         return state
 
     @staticmethod
@@ -496,7 +595,7 @@ class ConstructorAgent(BaseAgent):
             "postprocess_node" if there are successful downloads, "end_node" otherwise
         """
         constructor_state = state.get("constructor", {})
-        subtasks = constructor_state.get("subtasks", [])
+        subtasks = constructor_state.get("subtasks") or state.get("obtainer", {}).get("subtasks") or []
         successful_downloads = [
             task for task in subtasks 
             if task.get("type") == "download" and task.get("status") == "completed_successfully"
@@ -518,10 +617,50 @@ class ConstructorAgent(BaseAgent):
         
         if successful_downloads or has_download_files:
             logger.info(f"Found {len(successful_downloads)} successful downloads or files in download directory, routing to postprocess_node")
+            ConstructorAgent._emit_stream_event(
+                state,
+                message="Constructor: 检测到可处理下载结果，进入后处理",
+                progress=0.05,
+                data={
+                    "phase": "routing",
+                    "route_to": "postprocess_node",
+                    "successful_downloads_count": len(successful_downloads),
+                    "has_download_files": bool(has_download_files),
+                    "download_dir": download_dir,
+                },
+                current=state.get("current", "ConstructorAgent.start_node"),
+            )
             return "postprocess_node"
         else:
             logger.info("No successful downloads found, routing to end_node")
+            ConstructorAgent._emit_stream_event(
+                state,
+                message="Constructor: 未检测到可处理下载结果，直接结束",
+                progress=0.05,
+                data={
+                    "phase": "routing",
+                    "route_to": "end_node",
+                    "successful_downloads_count": len(successful_downloads),
+                    "has_download_files": bool(has_download_files),
+                    "download_dir": download_dir,
+                },
+                current=state.get("current", "ConstructorAgent.start_node"),
+            )
             return "end_node"
+
+    @staticmethod
+    def should_run_data_cleaning(state: LoopAIState) -> str:
+        """
+        Conditional: skip data_cleaning subgraph when no intermediate_data_path (nothing to clean).
+        Avoids running subgraph when postprocess filtered out all files.
+        """
+        constructor_state = state.get("constructor", {})
+        intermediate_path = constructor_state.get("intermediate_data_path", "")
+        if intermediate_path and os.path.exists(intermediate_path):
+            return "data_cleaning"
+        from loopai.logger import get_logger
+        get_logger().info("No intermediate_data_path, skipping data_cleaning subgraph")
+        return "data_cleaning_end"
 
     @staticmethod
     def should_trigger_mapping(state: LoopAIState) -> str:
@@ -531,15 +670,40 @@ class ConstructorAgent(BaseAgent):
         Returns:
             "mapping_subgraph_start" if intermediate data exists and format not confirmed, "end_node" otherwise
         """
+        from loopai.logger import get_logger
+        get_logger().info("=== should_trigger_mapping: ENTER ===")
         constructor_state = state.get("constructor", {})
         intermediate_path = constructor_state.get("intermediate_data_path", "")
         if intermediate_path and os.path.exists(intermediate_path):
             confirmed_format = constructor_state.get("confirmed_format")
             if not confirmed_format:
                 logger.info("Intermediate data found, routing to mapping_subgraph_start for format selection")
+                ConstructorAgent._emit_stream_event(
+                    state,
+                    message="Constructor: 检测到中间数据，进入格式映射",
+                    progress=0.75,
+                    data={
+                        "phase": "routing",
+                        "route_to": "mapping_subgraph_start",
+                        "intermediate_data_path": intermediate_path,
+                    },
+                    current=state.get("current", "ConstructorAgent.data_cleaning"),
+                )
                 return "mapping_subgraph_start"
             else:
                 logger.info("Format already confirmed, skipping mapping_subgraph")
+                ConstructorAgent._emit_stream_event(
+                    state,
+                    message="Constructor: 已确认格式，跳过映射流程",
+                    progress=0.75,
+                    data={
+                        "phase": "routing",
+                        "route_to": "end_node",
+                        "intermediate_data_path": intermediate_path,
+                        "confirmed_format": confirmed_format.get("format_id", "") if isinstance(confirmed_format, dict) else str(confirmed_format),
+                    },
+                    current=state.get("current", "ConstructorAgent.data_cleaning"),
+                )
         return "end_node"
 
     def init_graph(self, **kwargs):
@@ -580,9 +744,16 @@ class ConstructorAgent(BaseAgent):
             }
         )
         
-        # postprocess_node -> data_cleaning_start -> data_cleaning -> data_cleaning_end (先进行数据清洗)
+        # postprocess_node -> data_cleaning_start -> (conditional) data_cleaning or skip to data_cleaning_end
         builder.add_edge("postprocess_node", "data_cleaning_start")
-        builder.add_edge("data_cleaning_start", "data_cleaning")
+        builder.add_conditional_edges(
+            "data_cleaning_start",
+            self.should_run_data_cleaning,
+            {
+                "data_cleaning": "data_cleaning",
+                "data_cleaning_end": "data_cleaning_end",
+            }
+        )
         builder.add_edge("data_cleaning", "data_cleaning_end")
         
         # data_cleaning_end -> mapping_subgraph (检查是否需要映射)

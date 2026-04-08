@@ -73,6 +73,7 @@ export default {
 
 <style lang="scss">
 .detail-node-container {
+    position: relative;
     height: 100%;
 
     .lp-flow-node-container {

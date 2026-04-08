@@ -146,6 +146,65 @@ def _truncate_sample(sample: Dict[str, Any], max_val_len: int = 500) -> Dict[str
     return out
 
 
+def _is_list_of_dicts(value: Any) -> bool:
+    return isinstance(value, list) and bool(value) and all(isinstance(v, dict) for v in value)
+
+
+def _collect_field_paths(
+    obj: Any,
+    prefix: str = "",
+    *,
+    max_depth: int = 2,
+    _depth: int = 0,
+    _out: Optional[List[str]] = None,
+) -> List[str]:
+    out = _out if _out is not None else []
+    if _depth > max_depth:
+        return out
+
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            path = f"{prefix}.{key}" if prefix else key
+            out.append(path)
+            _collect_field_paths(value, path, max_depth=max_depth, _depth=_depth + 1, _out=out)
+        return out
+
+    if isinstance(obj, list) and obj:
+        first = obj[0]
+        if isinstance(first, dict):
+            _collect_field_paths(first, f"{prefix}.0" if prefix else "0", max_depth=max_depth, _depth=_depth + 1, _out=out)
+    return out
+
+
+def _analyze_preview_structure(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not samples:
+        return {
+            "top_level_type": "empty",
+            "candidate_record_paths": [],
+            "sample_path_fields": [],
+        }
+
+    candidate_paths = set()
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        for k, v in sample.items():
+            if _is_list_of_dicts(v):
+                candidate_paths.add(k)
+
+    path_fields: List[str] = []
+    for sample in samples[:2]:
+        if isinstance(sample, dict):
+            path_fields.extend(_collect_field_paths(sample, max_depth=2))
+
+    dedup_paths = sorted(set(path_fields))[:40]
+    return {
+        "top_level_type": "list_of_records",
+        "candidate_record_paths": sorted(candidate_paths),
+        "sample_path_fields": dedup_paths,
+    }
+
+
 def create_data_load_tool(dataset_dir: str):
     """Factory that returns a @tool-decorated data_load scoped to *dataset_dir*."""
 
@@ -176,12 +235,15 @@ def create_data_load_tool(dataset_dir: str):
             if result is not None:
                 columns, samples, total = result
                 samples = [_truncate_sample(s) for s in samples[:num_samples]]
+                structure_info = _analyze_preview_structure(samples)
                 preview = {
                     "file": os.path.basename(abs_path),
+                    "loader": name,
                     "columns": columns,
                     "total_records": total,
                     "num_samples": len(samples),
                     "samples": samples,
+                    "structure": structure_info,
                 }
                 text = json.dumps(preview, indent=2, ensure_ascii=False, default=str)
                 if len(text) > MAX_PREVIEW_CHARS:

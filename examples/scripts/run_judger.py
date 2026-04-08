@@ -9,8 +9,8 @@ from rich.text import Text
 
 console = Console()
 
-with open('api_key.txt', 'r') as f:
-    api_key = f.read().strip()
+# with open('api_key.txt', 'r') as f:
+#     api_key = f.read().strip()
 
 sg = JudgerAgent(checkpointer=checkpointer, store=store)
 
@@ -22,23 +22,29 @@ graph = sg()
 
 graph.invoke({
     "judger":{
-        'eval_model_path': '/root/brjverl/models/Qwen2.5-Coder-7B-Instruct/',
-        'eval_base_url': 'http://127.0.0.1:8911/v1',
+        'eval_model_path': '/root/brjverl/models/sft1000/',
+        # 'eval_base_url': 'http://127.0.0.1:8911/v1',
+        'eval_base_url': '',
         'eval_api_key': "EMPTY",
-        'eval_temperature': 0.7,
+        'eval_temperature': 0,
         'eval_top_p': 0.95,
-        'eval_task_type': 'code',
-        'eval_problem_path': '/root/brjverl/dataflow/examples/scripts/data/human-eval-v2-20210705.jsonl',
-        'eval_format_type': 'human-eval',
+        'eval_task_type': 'text2sql',
+        'eval_problem_path': '/root/brjverl/dataflow/examples/scripts/data/dev_bird_for_oj.jsonl',
+        'eval_format_type': '',
         'eval_text2sql_dir': '/root/brjverl/dataflow/examples/scripts/database/',
-        'output_dir': '/root/brjverl/dataflow/examples/scripts/output/',
-        'eval_vllm_env_path': '/root/miniconda3/envs/loopai/bin/python3',
-        'eval_batch_size': 10,
+        'eval_batch_size': 20,
         'eval_case_num': 1,
-        'eval_vllm_command': 'python -m vllm.entrypoints.openai.api_server --model /root/brjverl/models/Qwen2.5-Coder-7B-Instruct/ --port 8911 --tensor-parallel-size 1 --trust-remote-code --gpu-memory-utilization 0.9 --enable-auto-tool-choice --tool-call-parser hermes',
-        'eval_env_configs':'{"CUDA_VISIBLE_DEVICES": "0","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}'
+        'eval_vllm_port': 8911,
+        'eval_vllm_env_path': '/root/miniconda3/envs/loopai/bin/python3',
+        'eval_vllm_tensor_parallel_size': 2,
+        'eval_vllm_gpu_memory_utilization': 0.9,
+        'eval_env_configs':'{"CUDA_VISIBLE_DEVICES": "0,1","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}'
     },
-    "task_id": 10000,
+    "trainer":{
+        "trainer_task_id":"ceshi"
+    },
+    "task_id": 20260002,
+    'output_dir': '/root/brjverl/dataflow/examples/scripts/output/',
 }, config=config)
 
 # %%

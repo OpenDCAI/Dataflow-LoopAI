@@ -10,7 +10,6 @@ Summary Node - 总结节点
 import json
 from typing import Dict, Any
 
-from langchain_core.messages import AIMessage
 from langgraph.store.base import BaseStore
 
 from loopai.schema.states import LoopAIState
@@ -54,7 +53,11 @@ def summary_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState:
     # 添加 AI 消息
     if "messages" not in state:
         state["messages"] = []
-    state["messages"].append(AIMessage(content=summary_message))
+    state["messages"].append({
+        "type": "ai",
+        "role": "assistant",
+        "content": summary_message,
+    })
     
     # 保存到 store
     _save_to_store(state, store, mapping_results, summary_message)
