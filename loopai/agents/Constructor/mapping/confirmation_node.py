@@ -7,7 +7,7 @@ Uses LLM to analyze user feedback (confirm/modify/restart)
 import json
 from typing import Dict, Any, Optional
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.types import interrupt
 from langgraph.store.base import BaseStore
@@ -42,7 +42,11 @@ def confirmation_node(state: LoopAIState, store: BaseStore = None) -> LoopAIStat
     
     if "messages" not in state:
         state["messages"] = []
-    state["messages"].append(AIMessage(content=confirm_message))
+    state["messages"].append({
+        "type": "ai",
+        "role": "assistant",
+        "content": confirm_message,
+    })
     
     logger.info("Waiting for user confirmation...")
     user_input = interrupt(confirm_message)
@@ -50,7 +54,11 @@ def confirmation_node(state: LoopAIState, store: BaseStore = None) -> LoopAIStat
     logger.info(f"User confirmation input: {user_input}")
     
     if user_input:
-        state["messages"].append(HumanMessage(content=str(user_input)))
+        state["messages"].append({
+            "type": "human",
+            "role": "user",
+            "content": str(user_input),
+        })
     
     return _analyze_confirmation_intent(state, str(user_input) if user_input else "", pending_format, store)
 

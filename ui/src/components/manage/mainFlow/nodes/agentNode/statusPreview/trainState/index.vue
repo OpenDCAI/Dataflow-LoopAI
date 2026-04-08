@@ -81,7 +81,7 @@ export default {
     mounted() {
         setTimeout(() => {
             this.getTrainState()
-        }, 300)
+        }, 1000)
     },
     methods: {
         timerInit() {

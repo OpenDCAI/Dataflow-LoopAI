@@ -70,7 +70,7 @@ class AnalyzerAgent(BaseAgent):
                         missing_fields.setdefault("analyzer", []).append(field)
 
                 has_result_path = (
-                    bool(judger_cfg.get("out_result_path"))
+                    bool(judger_cfg.get("output_result_path"))
                     or bool(analyzer_cfg.get("eval_result_path"))
                 )
                 if not has_result_path:

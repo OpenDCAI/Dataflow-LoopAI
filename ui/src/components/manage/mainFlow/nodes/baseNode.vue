@@ -412,6 +412,10 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
                     align-items: flex-start;
                 }
 
+                &.w-pad {
+                    padding: 0px 10px;
+                }
+
                 .info-value {
                     margin-left: 5px;
                     text-overflow: ellipsis;

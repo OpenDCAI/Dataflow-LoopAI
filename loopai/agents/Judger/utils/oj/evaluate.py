@@ -82,7 +82,7 @@ def evaluate_sample_text2sql(state):
 
     state_task_id = state.get("task_id")
     judger_state = state.get("judger", {})
-    output_dir = Path(judger_state['output_dir'])
+    output_dir = Path(state.get("output_dir"))
     problem_path = judger_state['eval_problem_path']
     problem_file_name = str(Path(problem_path).stem)
     test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))
@@ -175,7 +175,7 @@ def evaluate_sample_code(state):
     state_task_id = state.get("task_id")
     judger_state = state.get("judger", {})
 
-    output_dir = Path(judger_state['output_dir'])
+    output_dir = Path(state.get("output_dir"))
     problem_path = judger_state['eval_problem_path']
     problem_file_name = str(Path(problem_path).stem)
     test_case_path = str(output_dir / str(state_task_id) / "judger" / (problem_file_name + "_sample.jsonl"))

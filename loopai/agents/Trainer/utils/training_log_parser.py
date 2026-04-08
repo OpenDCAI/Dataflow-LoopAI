@@ -103,39 +103,38 @@ class TrainingLogParser:
         self.total_steps = None
 
 
-def parse_task_training_progress(task_id: str) -> Optional[Dict[str, str]]:
+def parse_task_training_progress(task_id: str, logs_dir: str = None) -> Optional[Dict[str, str]]:
     """
     解析指定任务的训练进度
     
     Args:
         task_id: 任务ID
+        logs_dir: 日志文件所在目录。如果不指定，默认使用 ./output/trainer/logs
 
     Returns:
         进度信息字典，如果没有找到则返回 None
     """
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    # loopai\agents\Trainer\utils -> loopai\agents\Trainer -> loopai\agents -> loopai -> 项目根目录
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_dir))))
-    output_dir = os.path.join(base_dir, "api", "logs")
+    if logs_dir is None:
+        logs_dir = os.path.join(".", "output", "trainer", "logs")
 
-    log_path = os.path.join(output_dir, f"{task_id}.log")
+    log_path = os.path.join(logs_dir, f"{task_id}.log")
     parser = TrainingLogParser()
     return parser.parse_training_progress(log_path)
 
 
-def get_task_progress_percentage(task_id: str) -> float:
+def get_task_progress_percentage(task_id: str, logs_dir: str = None) -> float:
     """
     获取指定任务的训练进度百分比
     
     Args:
         task_id: 任务ID
-        output_dir: 输出目录，默认为 ./output
+        logs_dir: 日志文件所在目录
         
     Returns:
         进度百分比 (0.0 - 1.0)
     """
     
-    progress_info = parse_task_training_progress(task_id)
+    progress_info = parse_task_training_progress(task_id, logs_dir=logs_dir)
     if progress_info:
         parser = TrainingLogParser()
         return parser.get_progress_percentage(progress_info)

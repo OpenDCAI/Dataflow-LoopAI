@@ -10,6 +10,7 @@ from ..models.body import response_body, ConfigModel
 from ..models.db_models import StarterConfig, TaskModel
 from ..utils.starter import StarterManager
 from ..utils.task.task import update_task_state, get_task_state
+from ..utils.monitor.hw_stat import get_nvidia_gpu_usage, get_huawei_npu_usage, get_cpu_usage, get_memory_usage
 from loopai.memory import checkpointer, store
 from loopai.agents.Starter.tools.check_motivation import check_motivation
 
@@ -48,13 +49,20 @@ async def init_manager(task_id):
     config = await load_config(task_id)
     if not config:
         return False
+    # Always fetch latest global starter config so runtime-shared keys
+    # (e.g. tavily_api_key) can be synced even when task snapshot is stale.
+    global_config = await load_config(None)
     system_config = config.get('system', {})
+    global_system_config = (global_config or {}).get('system', {})
     
     # Read starter configuration
     starter_model_name = system_config.get('starter_model_name', 'deepseek-chat')
     starter_base_url = system_config.get('starter_base_url', 'https://api.deepseek.com')
     starter_api_key = system_config.get('starter_api_key', '')
-    starter_tavily_api_key = system_config.get('tavily_api_key', '')
+    starter_tavily_api_key = global_system_config.get(
+        'tavily_api_key',
+        system_config.get('tavily_api_key', '')
+    )
 
     config['default_states']['obtainer']['tavily_api_key'] = starter_tavily_api_key
     config['default_states']['webcrawler']['tavily_api_key'] = starter_tavily_api_key
@@ -81,6 +89,7 @@ async def start_agent(task_id: str):
         return response_body(code=400, message="Failed to initialize starter manager")
     state = await get_task_state(task_id, default_states)
     manager.start(default_state=state)
+    manager.send_input('> $resume$')
     return response_body(message="Agent started")
 
 
@@ -110,6 +119,23 @@ async def get_status():
     save_status = await update_task_state(_task_id, data.get('state', {}))
     return response_body(message="Agent state saved: {}".format(save_status), data=data)
 
+@router.get("/agent/hardware_usage", operation_id='getHardwareUsage', summary="Get the hardware usage")
+async def get_hw_usage():
+    gpu_usage = []
+    cpu_usage = {}
+    mem_usage = {}
+    res = get_nvidia_gpu_usage()
+    if not res[0]:
+        res = get_huawei_npu_usage()
+    if res[0]:
+        gpu_usage = res[1]
+    cpu_usage = get_cpu_usage()
+    mem_usage = get_memory_usage()
+    return response_body(message="Hardware usage", data={
+        "gpu_usage": gpu_usage,
+        "cpu_usage": cpu_usage,
+        "mem_usage": mem_usage
+    })
 
 @router.get("/agent/messages", operation_id='getAgentMessages', summary="Get the agent messages")
 def get_state_messages():

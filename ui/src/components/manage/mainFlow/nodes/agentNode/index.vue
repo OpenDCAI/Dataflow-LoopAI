@@ -42,14 +42,7 @@
         </div>
 
         <div v-if="customInfoFiltered.length > 0" class="col-wrapper" style="width: 250px">
-            <!-- 自定义 Node CustomInfo展示 -->
-            <component
-                :is="customInfoPanel"
-                :foreground="thisData.iconColor"
-                :graphClsPrefix="thisData.graphClsPrefix"
-            />
-
-            <!-- 其他 Agent 的通用 CustomInfo 展示 -->
+            <!-- Agent 的通用 CustomInfo 展示 -->
             <template v-if="customInfoFiltered.length > 0">
                 <div class="node-row-item">
                     <span
@@ -64,6 +57,12 @@
                     class="node-group-item scroll-list"
                     @wheel.stop
                 >
+                    <!-- 自定义 Node CustomInfo展示 -->
+                    <component
+                        :is="customStatusPanel"
+                        :foreground="thisData.iconColor"
+                        :graphClsPrefix="thisData.graphClsPrefix"
+                    />
                     <div
                         v-for="(custom_info, c_index) in customInfoFiltered"
                         :key="`custom_${c_index}`"
@@ -77,13 +76,17 @@
                         >
                         <hr />
                         <div class="node-row-item">
-                            <span class="info-title">{{ appConfig.local('Message') }}</span>
+                            <span class="info-title" style="padding-left: 10px; margin-top: 5px">{{
+                                appConfig.local('Message')
+                            }}</span>
                             <p class="info-value tiny" :title="custom_info.value.message">
                                 {{ custom_info.value.message ? custom_info.value.message : 'null' }}
                             </p>
                         </div>
-                        <div v-if="custom_info.value.progress" class="node-row-item col">
-                            <span class="info-title">{{ appConfig.local('Progress') }}</span>
+                        <div v-if="custom_info.value.progress" class="node-row-item col w-pad">
+                            <span class="info-title" style="padding-left: 10px; margin-top: 5px">{{
+                                appConfig.local('Progress')
+                            }}</span>
                             <fv-progress-bar
                                 :model-value="custom_info.value.progress * 100"
                                 :foreground="thisData.iconColor"
@@ -92,15 +95,18 @@
                                 style="width: 100%"
                             ></fv-progress-bar>
                         </div>
-                        <span class="info-title" :style="{ color: thisData.iconColor }">{{
-                            appConfig.local('Event Data')
-                        }}</span>
+                        <span
+                            class="info-title"
+                            style="padding-left: 10px; margin-top: 5px"
+                            :style="{ color: thisData.iconColor }"
+                            >{{ appConfig.local('Event Data') }}</span
+                        >
                         <hr />
                         <div
                             v-if="custom_info.value.data"
                             v-for="(item_val, item_key) in custom_info.value.data"
                             :key="`custom_item_${item_key}`"
-                            class="node-row-item col"
+                            class="node-row-item col w-pad"
                         >
                             <span class="info-title">{{ item_key }}</span>
                             <fv-text-box
@@ -130,11 +136,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useGlobal } from '@/hooks/general/useGlobal'
 import { useAppConfig } from '@/stores/appConfig'
 import { useLoopAI } from '@/stores/loopAI'
-
 import baseNode from '@/components/manage/mainFlow/nodes/baseNode.vue'
 import valuePreview from './valuePreview/index.vue'
-import WebCrawlerLogPanel from './webcrawlerLogPanel.vue'
 import trainState from './statusPreview/trainState/index.vue'
+import WebcrawlerStatusPannel from './custom/webcrawlerStatusPannel.vue'
+import ObtainerStatusPannel from './custom/obtainerStatusPannel.vue'
 
 const { $api } = useGlobal()
 
@@ -252,14 +258,16 @@ const customInfoFiltered = computed(() => {
 })
 
 // 自定义节点信息展示
-const customInfoPanel = computed(() => {
-    if (thisData.value.graphClsPrefix === 'WebCrawlerAgent') {
-        return WebCrawlerLogPanel
+const customStatusPanel = computed(() => {
+    const { graphClsPrefix } = thisData.value || {}
+    if (graphClsPrefix === 'WebCrawlerAgent') {
+        return WebcrawlerStatusPannel
+    }
+    if (graphClsPrefix === 'ObtainerAgent') {
+        return ObtainerStatusPannel
     }
     return null
 })
-
-console.log('thisData.value.graphClsPrefix', thisData.value.graphClsPrefix)
 
 const runningMe = computed(() => {
     try {

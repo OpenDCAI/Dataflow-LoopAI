@@ -19,7 +19,7 @@ else
     DOWNLOAD_DIR="${DOWNLOAD_DIR:-/mnt/DataFlow/lz/proj/agentgroup/binrui/postprocess_banchmark}"
 fi
 OBTAINER_MODEL_PATH="${OBTAINER_MODEL_PATH:-gpt-4o}"
-OBTAINER_BASE_URL="${OBTAINER_BASE_URL:-http://123.129.219.111:3000/v1}"
+OBTAINER_BASE_URL="${OBTAINER_BASE_URL:-http://123.129.219.111:3000/v1v1}"
 OBTAINER_TEMPERATURE="${OBTAINER_TEMPERATURE:-0.0}"
 OBTAINER_DEBUG="${OBTAINER_DEBUG:-False}"  # Enable debug mode (logs all levels and saves to file)
 OUTPUT_DIR="$(dirname "$DOWNLOAD_DIR")"
