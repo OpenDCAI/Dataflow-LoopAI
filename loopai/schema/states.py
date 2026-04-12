@@ -381,9 +381,9 @@ class ObtainerState(BaseModel):
     )
     banckmark_jsonl_path: str = Field(
         default="",
-        title="测试使用的banchmark的JSONL 路径",
-        description="测试使用的banchmark的JSONL 路径",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "banchmark"}
+        title="[已废弃] Benchmark JSONL 路径",
+        description="[已废弃] 请使用 constructor.benchmark_source_dir 替代",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "已废弃", "deprecated": True}
     )
     webpage_collect_db_path: str = Field(
         default="",
@@ -499,11 +499,23 @@ class ConstructorState(BaseModel):
 
     # --- 构造配置 ---
     max_samples_before_cleaning: int = Field(
-        default=5000,
-        title="基础清洗后最大采样数",
-        description="基础清洗后最大样本数量，0 表示不限制",
+        default=20000,
+        title="清洗前全局采样预算",
+        description=(
+            "进入 basic_data_flitter 之前，对待处理 JSONL 的总条数上限；"
+            "在全部 jsonl 文件间均分配额。0 表示不限制条数。"
+        ),
         ge=0,
         json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    cleaning_random_seed: Optional[int] = Field(
+        default=None,
+        title="清洗子图随机种子",
+        description=(
+            "若设置：postprocess 产物进入清洗后，apply_sampling 蓄水池采样与 ShareGPT 改写中 benchmark 抽取使用固定随机流（可复现）；"
+            "None 表示使用全局 random 默认行为。"
+        ),
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"},
     )
     llm_timeout: float = Field(
         default=300.0,
@@ -533,17 +545,42 @@ class ConstructorState(BaseModel):
         default=False,
         title="调试模式",
         description="是否开启 Constructor 调试日志",
-        json_schema_extra={"ui_type": "switch", "ui_group": "构造配置"}
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "构造配置"}
     )
     postprocess_version: str = Field(
         default="agent_v2",
         title="后处理版本",
-        description="后处理实现版本: legacy 使用原有流程, agent_v2 使用新版子 Agent 流程",
+        description="legacy：旧版 postprocess_node；agent_v2：新版 Postprocess 子 Agent（默认）",
         json_schema_extra={
-            "ui_type": "text",
+            "ui_type": "list",
             "ui_group": "构造配置",
-            "options": ["legacy", "agent_v2(建设中)"],
+            "allowed_values": ["legacy", "agent_v2"],
         }
+    )
+    append_cot_after_cleaning: bool = Field(
+        default=False,
+        title="是否生成CoT",
+        description=(
+            "开启后：在 Benchmark 去重之后固定执行 CoT 清洗工具；规划阶段不会将 norma_filter_and_add_cot "
+            "排入领域工具链。此时会将 output（或 messages 中 assistant）改写为："
+            "think 标签内为 CoT 文本，标签后为原始输出全文。"
+        ),
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "构造配置"},
+    )
+    sharegpt_rewrite_pre_backup: bool = Field(
+        default=True,
+        title="ShareGPT 改写前备份原 JSONL",
+        description=(
+            "为 True 时：在覆写 intermediate 下各 jsonl 之前，将当前文件完整复制到备份目录，便于与改写后对比。"
+            "默认目录为 intermediate_data_path 下的 pre_sharegpt_rewrite/（单文件时为同目录下 pre_sharegpt_rewrite/）。"
+        ),
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "构造配置"},
+    )
+    sharegpt_rewrite_pre_backup_dir: str = Field(
+        default="",
+        title="ShareGPT 改写前备份目录",
+        description="非空时覆盖默认 pre_sharegpt_rewrite 路径；须为目录路径，备份文件以原 jsonl 文件名写入该目录。",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "构造配置"},
     )
 
     # --- 运行结果 ---
@@ -558,6 +595,49 @@ class ConstructorState(BaseModel):
         title="中间数据路径",
         description="清洗和映射的输入数据路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "运行结果"}
+    )
+    benchmark_samples_path: str = Field(
+        default="",
+        title="[已废弃] Benchmark 采样参考文件",
+        description="[已废弃] 请使用 benchmark_pool_path 替代",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "已废弃", "deprecated": True}
+    )
+    benchmark_source_dir: str = Field(
+        default="",
+        title="Benchmark 源目录",
+        description="Benchmark 数据集源目录，用于初始化采样池",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "构造配置"}
+    )
+    benchmark_pool_path: str = Field(
+        default="outputs/benchmark_load/benchmark_pool.jsonl",
+        title="Benchmark 采样池路径",
+        description="Benchmark 采样池输出文件路径（供清洗/映射等阶段复用）",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "构造配置"}
+    )
+    benchmark_pool_size: int = Field(
+        default=500,
+        title="Benchmark 采样池大小",
+        description="Benchmark 采样池的样本数量",
+        ge=1,
+        json_schema_extra={"ui_type": "number", "ui_group": "构造配置"}
+    )
+    cleaning_sampling_plan: Optional[Dict[str, int]] = Field(
+        default=None,
+        title="清洗采样配额",
+        description="各 JSONL 路径到目标条数的映射；-1 表示该文件不截断",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "运行结果"}
+    )
+    cleaning_presampled: bool = Field(
+        default=False,
+        title="已完成清洗前采样",
+        description="apply_sampling_node 完成后为 True",
+        json_schema_extra={"ui_type": "switch", "readOnly": True, "ui_group": "运行结果"}
+    )
+    cleaning_sharegpt_rewrite: Optional[Dict[str, Any]] = Field(
+        default=None,
+        title="ShareGPT 改写统计",
+        description="SFT 清洗第二步改写行数统计",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "运行结果"}
     )
     cleaning_tool_plan: Optional[List[str]] = Field(
         default=None,
@@ -978,12 +1058,6 @@ class JudgerState(BaseModel):
         description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动。参数需要具体到python目录，格式应为<path>/miniconda3/envs/<env_name>/bin/python",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
-    output_dir: str = Field(
-        default=None,
-        title="评估模型输出文件目录",
-        description="评估模型输出文件目录，包含中间产出的样例以及最终评测的结果。输出文件路径将会在judger参数output_result_path（评测结果）、output_case_path（评测样例集）、output_problem_path（评测格式化后问题集）中记录。",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型", "is_output": True}
-    )
     output_result_path: str = Field(
         default="",
         title="评测结果文件保存路径",
@@ -1126,6 +1200,24 @@ class TrainerState(BaseModel):
         description="LlamaFactory 目录",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
+    llamafactory_env_path: str = Field(
+        default="",
+        title="LlamaFactory 环境路径",
+        description="LlamaFactory 环境路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    CUDA_VISIBLE_DEVICES: str = Field(
+        default="",
+        title="CUDA 可见设备",
+        description="CUDA 可见设备",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    swanlab_api_key: str = Field(
+        default="",
+        title="SwanLab API Key",
+        description="SwanLab API Key",
+        json_schema_extra={"ui_type": "password", "ui_group": "训练模型"}
+    )
     train_input_dataset_path: str = Field(
         default="",
         title="训练数据集路径",
@@ -1258,12 +1350,7 @@ class TrainerState(BaseModel):
         description="训练错误信息",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
-    training_service_url: str = Field(
-        default="http://localhost:8000",
-        title="训练服务器 URL",
-        description="训练服务器 URL",
-        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
-    )
+    # training_service_url 已废弃：训练现在直接在本地通过 TaskManager 执行，不再需要远程服务地址
     current_training_status: str = Field(
         default="",
         title="当前训练状态",
@@ -1419,7 +1506,7 @@ class LoopAIState(MessagesState):
     # training_log_path: str = ""
     # training_report_path: str = ""
     # training_error: str = ""
-    # training_service_url: str = "http://localhost:8000"
+    # training_service_url: 已废弃，训练现在本地执行
     # current_training_status: str = ""
     # update_model_path: str
     # swanlab_url: str

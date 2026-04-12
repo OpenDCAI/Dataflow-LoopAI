@@ -26,13 +26,9 @@ export default defineConfig({
         port: 5174,
         proxy: {
             '/api': {
-<<<<<<< HEAD
-                target: 'http://localhost:8855/', // 后端 FastAPI 地址
-=======
-		    target: 'http://127.0.0.1:8855/', // 后端 FastAPI 地址
->>>>>>> xbr/FunctionOptimization/WebExploration
+                target: 'http://100.64.0.18:8855/', // 后端 FastAPI 地址
                 changeOrigin: true,
-                rewrite: path => path.replace(/^\/api/, '') // 如果后端没有 /api 前缀
+                rewrite: path => path.replace(/^\/api/, '') // 后端路由无 /api 前缀
             }
         }
     }

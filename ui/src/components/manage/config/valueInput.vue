@@ -100,7 +100,8 @@ export default {
             }
         },
         computedUIType() {
-            if (this.modelValue.ui_type === 'list' && this.modelValue.allowed_values) return 'list'
+            const listChoices = this.modelValue.allowed_values || this.modelValue.options
+            if (this.modelValue.ui_type === 'list' && listChoices && listChoices.length) return 'list'
             if (this.modelValue.value === null || this.modelValue.value === undefined) return 'none'
             if (this.modelValue.ui_type === 'file_path') return 'dir'
             if (
@@ -111,7 +112,7 @@ export default {
                 this.modelValue.ui_type === 'password'
             )
                 return 'text'
-            if (this.modelValue.type === 'bool' || this.modelValue.ui_type === 'toggle_switch')
+            if (this.modelValue.type === 'bool' || this.modelValue.ui_type === 'toggle_switch' || this.modelValue.ui_type === 'switch')
                 return 'bool'
             if (this.modelValue.ui_type === 'slider') return 'slider'
             return 'text'
@@ -127,8 +128,9 @@ export default {
             }
         },
         formatAllowedValues() {
-            if (!this.modelValue.allowed_values) return []
-            return this.modelValue.allowed_values.map((item) => ({
+            const raw = this.modelValue.allowed_values || this.modelValue.options
+            if (!raw || !raw.length) return []
+            return raw.map((item) => ({
                 key: item,
                 text: item
             }))

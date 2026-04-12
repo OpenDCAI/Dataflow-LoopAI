@@ -49,10 +49,13 @@ app.add_middleware(
     allow_headers=["*"],  # 允许的请求头
 )
 
+# 与启动方式一致：仓库根目录用 `uvicorn api.app.main:app`，api 目录下用 `uvicorn app.main:app`
+_tortoise_models = f"{__package__}.models.db_models" if __package__ else "app.models.db_models"
+
 register_tortoise(
     app,
     db_url=f"sqlite://{DB_PATH}",
-    modules={"models": ["api.app.models.db_models"]},
+    modules={"models": [_tortoise_models]},
     generate_schemas=True,
     add_exception_handlers=True,
 )

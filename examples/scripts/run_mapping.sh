@@ -16,7 +16,7 @@ if [ -n "$1" ]; then
 else
     INTERMEDIATE_DATA_PATH="${INTERMEDIATE_DATA_PATH:-/mnt/DataFlow/lz/proj/agentgroup/binrui/postprocess_banchmark/processed_output}"
 fi
-OBTAINER_MODEL_PATH="${OBTAINER_MODEL_PATH:-gpt-4o}"
+OBTAINER_MODEL_PATH="${OBTAINER_MODEL_PATH:-gpt-4o-mini}"
 OBTAINER_BASE_URL="${OBTAINER_BASE_URL:-http://123.129.219.111:3000/v1v1}"
 OBTAINER_TEMPERATURE="${OBTAINER_TEMPERATURE:-0.7}"
 OBTAINER_DEBUG="${OBTAINER_DEBUG:-False}"  # Enable debug mode (logs all levels and saves to file)

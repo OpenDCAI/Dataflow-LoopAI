@@ -101,7 +101,6 @@ training_state = {
     # 可选字段（如果不提供将使用默认值）
     'train_input_use_swanlab': True,
     'train_input_swanlab_project': 'test_llamafactory_training',
-    'training_service_url': 'http://localhost:8000',  # 远程训练服务地址
 }
 
 # 构建并执行图

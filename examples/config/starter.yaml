@@ -1,7 +1,7 @@
 system:
   starter_api_key: "sk-..."
-  starter_model_path: "gpt-4o"
-  starter_model_name: "gpt-4o"
+  starter_model_path: "gpt-4o-mini"
+  starter_model_name: "gpt-4o-mini"
   starter_base_url: "http://123.129.219.111:3000/v1"
   llamafactory_dir: "/mnt/paper2any/xbr/gitpush/loopai/Dataflow-LoopAI/"
   llamafactory_env_path: "/mnt/paper2any/xbr/commit/debug1205/.venv/bin/"
@@ -41,7 +41,7 @@ default_states:
 
   # Obtainer agent configuration (nested structure for ObtainerAgent)
   obtainer:
-    model_path: "gpt-4o" # if empty, will use starter model
+    model_path: "gpt-4o-mini" # if empty, will use starter model
     base_url: "http://123.129.219.111:3000/v1" # if empty, will use starter base_url
     api_key: "sk-..." # if empty, will use starter api_key
     temperature: 0.7
@@ -64,7 +64,7 @@ default_states:
     tavily_api_key: "" # 从 starter.tavily_api_key 读取
     deepseek_api_base: "http://123.129.219.111:3000/v1"
     # 模型配置
-    model: "gpt-4o"
+    model: "gpt-4o-mini"
     temperature: 0.7
     # 查询生成配置
     num_queries: 5
@@ -95,12 +95,34 @@ default_states:
     sft_mapping_format: "jsonl_sft"
     pt_mapping_format: "jsonl_pt"
 
+  # Constructor：后处理 / 清洗 / 映射（未填的字段由 API 用 schema 默认值补齐）
+  constructor:
+    postprocess_version: "agent_v2"
+    benchmark_source_dir: ""
+    benchmark_pool_path: "outputs/benchmark_load/benchmark_pool.jsonl"
+    benchmark_pool_size: 500
+    default_mapping_format: "alpaca"
+    max_samples_before_cleaning: 300
+    llm_timeout: 300.0
+    max_retries: 3
+    max_concurrent_mapping: 10
+    debug: false
+    category: ""
+    user_query: ""
+    datasets_background: ""
+    download_dir: ""
+    output_dir: ""
+    prompt_template_dir: ""
+
   # Obtainer debug flag (not nested in obtainer dict)
   obtainer_debug: false
 
   trainer:
     train_framework: "llamafactory"
-    llamafactory_dir: "/mnt/paper2any/xbr/gitpush/loopai/Dataflow-LoopAI/"
+    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/
+    llamafactory_env_path: "/home/lpc/miniconda3/envs/lmf/bin/"
+    CUDA_VISIBLE_DEVICES: "0,1"
+    swanlab_api_key: ""
     train_input_dataset_path: "/home/lpc/repos/Dataflow-LoopAI/data/alpaca_en_demo.json" # to defined the path of training dataset (json/jsonl format)
     train_input_task_description: "训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务" # to defined the task description for training
     train_input_config_template_path: "/home/lpc/repos/Dataflow-LoopAI/api/examples/bird.yaml" # to defined the path of llamafactory config template
