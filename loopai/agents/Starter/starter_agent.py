@@ -195,7 +195,6 @@ class StarterAgent(BaseAgent):
         builder.add_edge('judge_node', 'route_node')
         builder.add_edge('analyze_node', 'route_node')
         builder.add_edge('webcrawler_node', 'route_node')
-        builder.add_edge('webcrawler_node', 'route_node')
         builder.add_conditional_edges(
             "feedback_node",
             self.conditional_edge)
