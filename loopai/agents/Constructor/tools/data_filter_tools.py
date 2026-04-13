@@ -28,6 +28,10 @@ from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 from pydantic import BaseModel, Field
 from loopai.agents.BaseAgent.base_agent import BaseAgent
+from loopai.agents.Constructor.utils.openai_compat_chat import (
+    OpenAIChatParams,
+    chat_completion_async,
+)
 
 logger = get_logger()
 
@@ -87,6 +91,40 @@ async def _await_llm_with_timeout(
     if timeout <= 0:
         timeout = DEFAULT_LLM_TIMEOUT_SECONDS
     try:
+        # Route ChatOpenAI calls through OpenAI-compatible HTTP client to avoid
+        # LangGraph messages-stream propagation into Starter stream_message.
+        if isinstance(llm, ChatOpenAI):
+            base_url = (
+                getattr(llm, "openai_api_base", None)
+                or getattr(llm, "base_url", None)
+                or ""
+            )
+            model_name = (
+                getattr(llm, "model_name", None)
+                or getattr(llm, "model", None)
+                or ""
+            )
+            api_key_raw = getattr(llm, "openai_api_key", None) or getattr(llm, "api_key", None)
+            if hasattr(api_key_raw, "get_secret_value"):
+                api_key = api_key_raw.get_secret_value()
+            else:
+                api_key = str(api_key_raw or "")
+            temperature = getattr(llm, "temperature", 0.0)
+            top_p = getattr(llm, "top_p", 0.95)
+            max_tokens = (
+                getattr(llm, "max_tokens", None)
+                or getattr(llm, "max_completion_tokens", None)
+                or 4096
+            )
+            params = OpenAIChatParams(
+                model=str(model_name),
+                base_url=str(base_url),
+                api_key=str(api_key),
+                temperature=float(temperature if temperature is not None else 0.0),
+                top_p=float(top_p if top_p is not None else 0.95),
+                max_completion_tokens=int(max_tokens),
+            )
+            return await chat_completion_async(params, messages, timeout_seconds=timeout)
         return await asyncio.wait_for(llm.ainvoke(messages), timeout=timeout)
     except asyncio.TimeoutError as e:
         raise TimeoutError(f"{op_name} timed out after {timeout:.1f}s") from e
