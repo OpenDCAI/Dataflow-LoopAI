@@ -1,4 +1,6 @@
 import json
+import os
+import time
 from typing import Any, Dict, List, Optional, Type
 
 from langgraph.graph import StateGraph
@@ -185,9 +187,9 @@ class StarterAgent(BaseAgent):
         builder.add_edge('llm_node', 'feedback_node')
         builder.add_edge('evaluate_node', 'query_node')
         builder.add_edge('train_node', 'route_node')
-        # Obtainer -> Query (user/LLM decides next step via check_motivation, e.g. constructor)
-        builder.add_edge('obtain_node', 'query_node')
-        # Constructor -> Query
+        # Obtainer -> route_node
+        builder.add_edge('obtain_node', 'route_node')
+        # Constructor -> route_node
         builder.add_edge('constructor_node', 'route_node')
         builder.add_edge('config_node', 'query_node')
         builder.add_edge('judge_node', 'route_node')
@@ -219,6 +221,14 @@ class StarterAgent(BaseAgent):
         """
         run invoke method
         """
+        try:
+            min_ms = float(os.getenv("LOOPAI_CUSTOM_YIELD_MIN_INTERVAL_MS", "0") or "0")
+        except (TypeError, ValueError):
+            min_ms = 0.0
+        min_custom_yield_s = max(0.0, min_ms / 1000.0)
+        last_custom_yield_mono: Optional[float] = None
+        pending_custom_tail = None
+
         for res in self.graph.stream(
             Command(resume=input),
             subgraphs=True,
@@ -257,6 +267,16 @@ class StarterAgent(BaseAgent):
                 self.agent_event.set_custom_info(key, chunk_item)
                 self.agent_event.set_running_tasks(self.get_state(
                         invoke_args['config'], subgraphs=True).tasks)
+                if min_custom_yield_s > 0:
+                    now = time.monotonic()
+                    if (
+                        last_custom_yield_mono is not None
+                        and (now - last_custom_yield_mono) < min_custom_yield_s
+                    ):
+                        pending_custom_tail = res
+                        continue
+                    last_custom_yield_mono = now
+                    pending_custom_tail = None
             # Receiving updates event, update state, and clear stream_message
             elif stream_mode == 'updates':
                 if len(namespace_item) > 0:
@@ -272,3 +292,7 @@ class StarterAgent(BaseAgent):
                         invoke_args['config'], subgraphs=True).tasks)
                     self.agent_event.clear_stream_message()
             yield res
+            pending_custom_tail = None
+
+        if pending_custom_tail is not None:
+            yield pending_custom_tail

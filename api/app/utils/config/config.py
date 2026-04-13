@@ -59,14 +59,18 @@ async def get_state_config(base_dir):
     for series_key in nested_keys:
         result.setdefault(series_key, {})
         for key in nested_states_schema.get(series_key, {}):
+            schema_val = nested_states_schema[series_key].get(key, {})
             if key in states_data.get(series_key, {}):
                 cur_val = wrap_attr(states_data.get(series_key, {})[key])
+            elif "default" in schema_val:
+                # 与 Pydantic model_json_schema 对齐：缺失键时用字段默认值，避免前端把 value=null 渲染成不可编辑的 None
+                cur_val = wrap_attr(schema_val["default"])
             else:
                 cur_val = {
                     'value': None,
                     'default_value': None,
+                    'type': 'none',
                 }
-            schema_val = nested_states_schema[series_key].get(key, {})
             result[series_key][key] = {
                 **schema_val,
                 **cur_val,

@@ -202,7 +202,7 @@ constructor_state.update({
 | `constructor_llm_timeout` | float | ❌ | 120.0 | LLM 超时时间（秒） |
 | `constructor_max_retries` | int | ❌ | 3 | 最大重试次数 |
 | `constructor_max_concurrent_mapping` | int | ❌ | 10 | 最大并发映射数 |
-| `constructor_max_samples_before_cleaning` | int | ❌ | 20000 | 清洗后最大采样数（0 不限制） |
+| `constructor_max_samples_before_cleaning` | int | ❌ | 20000 | 进入 basic 前、全部 JSONL 的全局采样预算，按文件数均分（0 不限制） |
 | `constructor_default_mapping_format` | str | ❌ | alpaca | 默认映射格式（空则用户交互） |
 | `constructor_debug` | bool | ❌ | False | 是否启用调试模式 |
 | `output_dir` | str | ❌ | ./output | 输出目录 |
@@ -230,7 +230,8 @@ constructor_state.update({
 ### CleaningSubgraph
 
 - 位置：`loopai/agents/Constructor/nodes/filter_node.py`
-- 作用：按 `cleaning_tool_plan` 执行清洗，更新 `constructor_cleaning_results` 和中间数据路径。
+- 流程：`max_samples_before_cleaning` 在全部待处理 JSONL 间**均分**配额并采样 →（`category=SFT` 时）按 benchmark + `user_query` 将行改写为 ShareGPT → `basic_data_flitter`（SFT 同时接受 `messages` 与 `conversations`）→ LLM 规划**仅领域工具** → 顺序执行 `text2sql` / `code_generate` / `normal_data` →（可选）benchmark 去重。
+- 作用：更新 `constructor_cleaning_results`、`constructor_intermediate_data_path` 及运行态字段（如 `cleaning_sampling_plan`、`cleaning_presampled`）。
 
 ### MappingSubgraph
 
