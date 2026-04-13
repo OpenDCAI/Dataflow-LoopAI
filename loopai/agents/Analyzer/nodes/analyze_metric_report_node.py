@@ -327,6 +327,106 @@ def _build_summary(
     }
 
 
+def _build_obtainer_stats(
+    state: LoopAIState,
+    metric_result: Dict[str, Any],
+    records: List[Dict[str, Any]],
+    summary: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    为 obtainer 提供更细粒度的数据缺口统计
+    """
+    primary_metric_name, primary_metric_item = _select_primary_metric(metric_result)
+    details = primary_metric_item.get("details", []) or []
+
+    failed_samples = []
+    passed_samples = []
+
+    match_type_fail_counter = {}
+    match_type_pass_counter = {}
+    domain_counter = {}
+    field_presence_counter = {}
+
+    for idx, detail in enumerate(details):
+        score = _normalize_detail_score(detail)
+        rec = records[idx] if idx < len(records) else {}
+        domain = (
+            rec.get("domain")
+            or rec.get("subset")
+            or rec.get("source")
+            or summary.get("task_domain")
+        )
+
+        sample = {
+            "idx": idx,
+            "domain": domain,
+            "question": rec.get("question") or rec.get("prompt") or rec.get("input"),
+            "target": rec.get("target") or rec.get("ground_truth") or rec.get("label"),
+            "generated_ans": rec.get("generated_ans") or rec.get("completion") or rec.get("prediction"),
+        }
+
+        if isinstance(detail, dict):
+            sample["match_type"] = detail.get("match_type")
+            sample["extracted"] = detail.get("extracted")
+            sample["raw_pred"] = detail.get("raw_pred")
+
+        if domain:
+            domain_counter[domain] = domain_counter.get(domain, 0) + 1
+
+        for k, v in rec.items():
+            if v not in [None, "", [], {}]:
+                field_presence_counter[k] = field_presence_counter.get(k, 0) + 1
+
+        if score == 0.0:
+            failed_samples.append(sample)
+            mt = sample.get("match_type") or "primary_metric_failure"
+            match_type_fail_counter[mt] = match_type_fail_counter.get(mt, 0) + 1
+        else:
+            passed_samples.append(sample)
+            mt = sample.get("match_type") or "matched"
+            match_type_pass_counter[mt] = match_type_pass_counter.get(mt, 0) + 1
+
+    fail_bias_match_type = []
+    all_match_types = set(match_type_fail_counter.keys()) | set(match_type_pass_counter.keys())
+    for mt in all_match_types:
+        f = match_type_fail_counter.get(mt, 0)
+        p = match_type_pass_counter.get(mt, 0)
+        fail_bias_match_type.append({
+            "match_type": mt,
+            "fail_count": f,
+            "pass_count": p,
+            "bias": f - p,
+        })
+    fail_bias_match_type.sort(key=lambda x: (-x["bias"], -x["fail_count"], x["match_type"]))
+
+    representative_failure_samples = []
+    for s in failed_samples[:20]:
+        representative_failure_samples.append({
+            "idx": s.get("idx"),
+            "domain": s.get("domain"),
+            "match_type": s.get("match_type"),
+            "question": s.get("question"),
+            "target": s.get("target"),
+            "generated_ans": s.get("generated_ans"),
+            "extracted": s.get("extracted"),
+            "raw_pred": s.get("raw_pred"),
+        })
+
+    top_fields = sorted(field_presence_counter.items(), key=lambda x: x[1], reverse=True)[:20]
+    top_domains = sorted(domain_counter.items(), key=lambda x: x[1], reverse=True)[:20]
+
+    return {
+        "primary_metric": primary_metric_name,
+        "failed_total": len(failed_samples),
+        "passed_total": len(passed_samples),
+        "failure_match_type_top": sorted(match_type_fail_counter.items(), key=lambda x: x[1], reverse=True)[:10],
+        "domain_top": top_domains,
+        "field_presence_top": top_fields,
+        "fail_bias_match_type": fail_bias_match_type[:15],
+        "representative_failure_samples": representative_failure_samples,
+    }
+
+
 def build_prompt_for_report(summary: Dict[str, Any]) -> str:
     """
     构造自然语言评测报告用的 prompt。
@@ -373,6 +473,27 @@ def build_prompt_for_data_plan(summary: Dict[str, Any]) -> str:
         by_stage_json=json.dumps(summary["by_stage"], ensure_ascii=False),
         quick_samples_json=json.dumps(summary["quick_samples"], ensure_ascii=False),
         summary_json=json.dumps(summary["summary_json"], ensure_ascii=False),
+    )
+
+def build_prompt_for_obtainer(summary: Dict[str, Any], obtainer_stats: Dict[str, Any]) -> str:
+    """
+    构造细粒度 obtainer 侧报告用的 prompt。
+    prompt 模板从 PromptLoader 中读取。
+    """
+    loader = PromptLoader()
+    template = loader("data_obtainer", "suggest_obtainer")
+
+    return template.format(
+        dataset_json=json.dumps({
+            "bench_name": summary["bench_name"],
+            "eval_type": summary["eval_type"],
+            "task_domain": summary["task_domain"],
+            "primary_metric": summary["primary_metric"],
+            "primary_score": summary["primary_score"],
+            "total": summary["total"],
+        }, ensure_ascii=False),
+        summary_json=json.dumps(summary["summary_json"], ensure_ascii=False),
+        obtainer_stats_json=json.dumps(obtainer_stats, ensure_ascii=False),
     )
 
 def _invoke_prompt(llm, prompt):
@@ -426,6 +547,7 @@ def analyze_metric_report_node(state: LoopAIState):
     metric_result = _load_metric_result(state)
     records = _load_records_from_alignment(metric_result)
     summary = _build_summary(state, metric_result, records)
+    obtainer_stats = _build_obtainer_stats(state, metric_result, records, summary)
 
     _emit(
         "已构建 metric 摘要",
@@ -458,6 +580,14 @@ def analyze_metric_report_node(state: LoopAIState):
     )
     data_plan_text = _invoke_prompt(llm, data_plan_prompt)
 
+    obtainer_prompt = build_prompt_for_obtainer(summary, obtainer_stats)
+    _emit(
+        "调用模型生成细粒度 obtainer 侧报告",
+        progress=0.82,
+        data={"prompt_chars": len(obtainer_prompt or "")},
+    )
+    obtainer_text = _invoke_prompt(llm, obtainer_prompt)
+
     ts = time.strftime("%Y%m%d_%H%M%S")
     outdir = _ensure_analyzer_outdir(state)
 
@@ -466,6 +596,8 @@ def analyze_metric_report_node(state: LoopAIState):
     analyzer["analyze_output_report_json_path"] = os.path.join(outdir, f"metric_report_{ts}.json")
     analyzer["analyze_output_report_text_path"] = os.path.join(outdir, f"metric_report_{ts}.txt")
     analyzer["analyze_output_data_plan_text_path"] = os.path.join(outdir, f"metric_data_plan_{ts}.txt")
+    analyzer["analyze_output_obtainer_json_path"] = os.path.join(outdir, f"metric_obtainer_{ts}.json")
+    analyzer["analyze_output_obtainer_text_path"] = os.path.join(outdir, f"metric_obtainer_{ts}.txt")
 
     _emit(
         "写入 metric 分析报告",
@@ -475,6 +607,8 @@ def analyze_metric_report_node(state: LoopAIState):
             "report_json": analyzer["analyze_output_report_json_path"],
             "report_txt": analyzer["analyze_output_report_text_path"],
             "data_plan_txt": analyzer["analyze_output_data_plan_text_path"],
+            "obtainer_json": analyzer["analyze_output_obtainer_json_path"],
+            "obtainer_txt": analyzer["analyze_output_obtainer_text_path"],
         },
     )
 
@@ -482,6 +616,8 @@ def analyze_metric_report_node(state: LoopAIState):
         "summary": summary,
         "analysis_report": report_text,
         "data_plan_report": data_plan_text,
+        "obtainer_stats": obtainer_stats,
+        "obtainer_report": obtainer_text,
     }
 
     Path(analyzer["analysis_summary_json_path"]).write_text(
@@ -494,6 +630,11 @@ def analyze_metric_report_node(state: LoopAIState):
     )
     Path(analyzer["analyze_output_report_text_path"]).write_text(report_text, encoding="utf-8")
     Path(analyzer["analyze_output_data_plan_text_path"]).write_text(data_plan_text, encoding="utf-8")
+    Path(analyzer["analyze_output_obtainer_json_path"]).write_text(
+        json.dumps(obtainer_stats, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+    Path(analyzer["analyze_output_obtainer_text_path"]).write_text(obtainer_text, encoding="utf-8")
 
     analyzer["analysis_summary"] = summary
 
@@ -504,6 +645,7 @@ def analyze_metric_report_node(state: LoopAIState):
             "summary_json": analyzer["analysis_summary_json_path"],
             "report_txt": analyzer["analyze_output_report_text_path"],
             "data_plan_txt": analyzer["analyze_output_data_plan_text_path"],
+            "obtainer_txt": analyzer["analyze_output_obtainer_text_path"],
         },
     )
 
@@ -511,7 +653,9 @@ def analyze_metric_report_node(state: LoopAIState):
         f"已写入：{analyzer['analysis_summary_json_path']}\n"
         f"已写入：{analyzer['analyze_output_report_json_path']}\n"
         f"已写入：{analyzer['analyze_output_report_text_path']}\n"
-        f"已写入：{analyzer['analyze_output_data_plan_text_path']}"
+        f"已写入：{analyzer['analyze_output_data_plan_text_path']}\n"
+        f"已写入：{analyzer['analyze_output_obtainer_json_path']}\n"
+        f"已写入：{analyzer['analyze_output_obtainer_text_path']}"
     )
 
     return state
