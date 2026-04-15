@@ -1397,6 +1397,31 @@ class ConfigerState(BaseModel):
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
 
+class DefaultState(BaseModel):
+    task_id: str = Field(
+        default="",
+        title="任务 ID",
+        description="任务 ID",
+        json_schema_extra={"ui_type": "text", "ui_group": "默认"}
+    )
+    language: str = Field(
+        default="",
+        title="语言",
+        description="语言",
+        json_schema_extra={"ui_type": "list", "ui_group": "默认", "allowed_values": ["en", "zh"]}
+    )
+    prompt_template_dir: str = Field(
+        default="",
+        title="提示模板目录",
+        description="提示模板目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "默认"}
+    )
+    output_dir: str = Field(
+        default="",
+        title="输出目录",
+        description="输出目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "默认"}
+    )
 
 def get_state_config_schema():
     """获取Starter配置字段说明"""
@@ -1406,6 +1431,7 @@ def get_state_config_schema():
         return properties
 
     fields_statement = {
+        "default": get_field_statement(DefaultState),
         "judger": get_field_statement(JudgerState),
         "configer": get_field_statement(ConfigerState),
         "analyzer": get_field_statement(AnalyzerState),
@@ -1437,7 +1463,9 @@ def get_missing_fields(required_fields, state: dict):
 class LoopAIState(MessagesState):
     # === Global Attributes (全局属性) ===
     task_id: str
+    language: str
     mined_data: str
+    prompt_template_dir: str
     output_dir: str  # 全局输出目录
 
     # === Obtainer Module (新增的模块化部分) ===

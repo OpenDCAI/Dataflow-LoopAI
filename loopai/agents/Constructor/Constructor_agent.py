@@ -381,7 +381,7 @@ class ConstructorAgent(BaseAgent):
         
         state["messages"].append(AIMessage(content=summary_text))
         logger.info(f"ConstructorAgent: Added summary to messages: {summary_text[:100]}...")
-        state["automated_query"]="我收集完也处理完数据了，进入trainer"
+        state["automated_query"]="constructor subagent complete"
         postprocess_results = constructor_state.get("postprocess_results", {})
         mapping_results = constructor_state.get("mapping_results", {})
         mm = ConstructorAgent._canonical_mapping_metrics(mapping_results)
