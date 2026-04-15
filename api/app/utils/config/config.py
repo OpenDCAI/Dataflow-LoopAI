@@ -51,11 +51,28 @@ async def get_state_config(base_dir):
     config_data = json.loads(config.config)
     states_data = config_data.get('default_states', {})
     nested_states_schema = get_state_config_schema()
-    nested_keys = nested_states_schema.keys()
+    default_schema = nested_states_schema.get('default', {})
+    nested_keys = list(nested_states_schema.keys())
+    nested_keys.remove('default')
     result = {}
-    for series_key in states_data:
+    for series_key in dict.fromkeys(list(states_data.keys()) + list(default_schema.keys())):
         if series_key not in nested_keys:
-            result.setdefault('default', {})[series_key] = wrap_attr(states_data[series_key])
+            key = series_key
+            schema_val = default_schema.get(key, {})
+            if key in states_data:
+                cur_val = wrap_attr(states_data[key])
+            elif "default" in schema_val:
+                cur_val = wrap_attr(schema_val["default"])
+            else:
+                cur_val = {
+                    'value': None,
+                    'default_value': None,
+                    'type': 'none',
+                }
+            result.setdefault('default', {})[key] = {
+                **schema_val,
+                **cur_val,
+            }
     for series_key in nested_keys:
         result.setdefault(series_key, {})
         for key in nested_states_schema.get(series_key, {}):
