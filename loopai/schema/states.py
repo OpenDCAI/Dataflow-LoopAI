@@ -1,6 +1,7 @@
 from typing import TypedDict, Any, List, Dict, Annotated, Optional, Union
 from langgraph.graph import MessagesState
 from pydantic import BaseModel, Field
+from loopai.common.i18n.i18n_loader import I18NLoader
 
 
 # ==========================================
@@ -1423,11 +1424,24 @@ class DefaultState(BaseModel):
         json_schema_extra={"ui_type": "file_path", "ui_group": "默认"}
     )
 
-def get_state_config_schema():
+def get_state_config_schema(language: str="zh"):
     """获取Starter配置字段说明"""
+
+    i18n = I18NLoader(language)
+    
     def get_field_statement(model_cls):
         schema = model_cls.model_json_schema()
         properties = schema.get('properties', {})
+
+        for field_name, field_info in properties.items():
+            # 翻译 title
+            if "title" in field_info:
+                field_info["title"] = i18n(field_info["title"])
+            
+            # 翻译 description
+            if "description" in field_info:
+                field_info["description"] = i18n(field_info["description"])
+
         return properties
 
     fields_statement = {
