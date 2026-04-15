@@ -113,18 +113,19 @@ export class config {
  
   /**
   * @summary 获取State的配置Schema
+  * @param {String} [language] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async getStateSchema(cancelSource,uploadProgress,downloadProgress){
+  static async getStateSchema(language,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
         url:'/config/state_schema',
         data:{},
-        params:{},
+        params:{language},
         headers:{
           "Content-Type":""
         },

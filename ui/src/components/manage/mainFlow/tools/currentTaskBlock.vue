@@ -30,17 +30,25 @@
                 <div
                     v-if="usageInfo.gpu_usage && usageInfo.gpu_usage.length > 0"
                     class="board-unit"
-                    v-for="(gpu_value, gpu_index) in usageInfo.gpu_usage"
-                    :key="gpu_value.gpu"
+                    v-for="(gpu_item, gpu_index) in usageInfo.gpu_usage"
+                    :key="gpu_index"
                 >
                     <fv-progress-ring
-                        :model-value="gpu_value"
-                        r="25"
-                        :border-width="5"
+                        class="abs-progress"
+                        :model-value="gpu_item.utilization_percent"
+                        r="20"
+                        :border-width="3"
                         background="whitesmoke"
                         :color="color"
                     ></fv-progress-ring>
-                    <p class="info-value">{{ gpu_value }}%</p>
+                    <fv-progress-ring
+                        :model-value="gpu_item.memory.usage_percent"
+                        r="25"
+                        :border-width="3"
+                        background="whitesmoke"
+                        :color="'rgba(229, 123, 67, 1)'"
+                    ></fv-progress-ring>
+                    <p class="info-value">{{ gpu_item.utilization_percent }}%</p>
                     <p class="info-name">GPU {{ gpu_index }}</p>
                 </div>
                 <div v-if="usageInfo.cpu_usage && usageInfo.cpu_usage.total" class="board-unit">
@@ -213,6 +221,10 @@ export default {
         background: rgba(255, 255, 255, 0.6);
         border-radius: 8px;
         overflow-x: overlay;
+
+        .abs-progress {
+            position: absolute;
+        }
 
         .board-unit {
             @include HcenterVcenter;
