@@ -407,7 +407,8 @@ class JudgerAgent(BaseAgent):
         如果已启动vllm则直接跳过本地启动阶段
         """
         base_url = state.get("judger", {}).get("eval_base_url", None)
-        if _isNotNone(base_url):
+        task_type = state.get("judger", {}).get("eval_task_type","code")
+        if _isNotNone(base_url) or task_type=="general_text":
             return "to_data_format"
         else:
             return "to_vllm_kill"
