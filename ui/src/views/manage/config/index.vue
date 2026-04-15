@@ -150,6 +150,7 @@ export default {
         this.getConfigs()
     },
     methods: {
+        ...mapActions(useAppConfig, ['reviseConfig']),
         ...mapActions(useLoopAI, ['getConfigs']),
         handleSelectDataset(item) {
             this.show.dataset = true
@@ -173,9 +174,26 @@ export default {
                         this.$barWarning(this.local('Update Config Success.'), {
                             status: 'correct'
                         })
+                        this.refreshLanguage()
                     }
                 })
             this.lock.update = true
+        },
+        async refreshLanguage() {
+            await this.getConfigs()
+                .then((res) => {
+                    let language = 'en'
+                    try {
+                        language = res.data.states.default.language.value
+                    } catch (error) {}
+                    if (!language) language = 'en'
+                    this.reviseConfig({
+                        language: language
+                    })
+                })
+                .catch((error) => {
+                    console.log(error)
+                })
         },
         valueBuilder(item) {
             let type = item.type

@@ -16,6 +16,13 @@ export const useAppConfig = defineStore('useAppConfig', () => {
         i18n.value = val
     }
 
+    function reviseConfig(val) {
+        config.value = {
+            ...config.value,
+            ...val
+        }
+    }
+
     const language = computed(() => {
         return config.value.language
     })
@@ -33,6 +40,7 @@ export const useAppConfig = defineStore('useAppConfig', () => {
         screenWidth,
         setScreenWidth,
         reviseI18N,
+        reviseConfig,
         local
     }
 })
