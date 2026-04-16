@@ -187,6 +187,14 @@ def build_evidence_for_record_sql(rec: Dict[str, Any]) -> Dict[str, Any]:
 def _analyzer(state: LoopAIState) -> dict:
     return state.get("analyzer") or {}
 
+def _ensure_analyzer_outdir(state: LoopAIState) -> Path:
+    cfg = _analyzer(state)
+    base_outdir = Path(cfg.get("output_dir") or state.get("output_dir") or "./outputs")
+    task_id = state.get("task_id") or "default_task"
+    outdir = base_outdir / task_id / "analyzer"
+    outdir.mkdir(parents=True, exist_ok=True)
+    return outdir
+
 def init_model(state: LoopAIState) -> BaseChatModel:
     """
     初始化用于判因 / 短评的 LLM 模型（OpenAI 兼容接口）
@@ -662,7 +670,7 @@ def run_general_text_fallback_eval(state):
 
         results.append(r)
 
-    outdir = Path(state["output_dir"])
+    outdir = _ensure_analyzer_outdir(state)
     ts = time.strftime("%Y%m%d_%H%M%S")
 
     result_file = outdir / f"text_eval_scored_{ts}.jsonl"
@@ -921,8 +929,7 @@ def eval_model_node(state: LoopAIState):
 
     logger.info(f" 判因完成：共 {len(failed_results)} 条")
     ts = time.strftime("%Y%m%d_%H%M%S")
-    out_dir = Path(cfg.get("output_dir") or state.get("output_dir"))
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = _ensure_analyzer_outdir(state)
 
     out_jsonl_path = out_dir / f"oj_records_enriched_{ts}.jsonl"
     with open(out_jsonl_path, "w", encoding="utf-8") as f:
@@ -941,7 +948,7 @@ def eval_model_node(state: LoopAIState):
        ).json())
     try:
         summary_json_path, summary_txt_path = _build_and_write_summary(
-            failed_results, Path(state['output_dir']), ts, task_type=task_type
+              failed_results, _ensure_analyzer_outdir(state), ts, task_type=task_type
         )
         with open(summary_json_path, "r", encoding="utf-8") as f:
             sdata = json.load(f)

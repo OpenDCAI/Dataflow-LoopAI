@@ -21,6 +21,14 @@ def _analyzer(state: LoopAIState) -> dict:
         raise KeyError("state 中缺少 analyzer 配置，请在 graph.invoke 中传入 analyzer")
     return state["analyzer"]
 
+def _ensure_analyzer_outdir(state: LoopAIState) -> str:
+    cfg = _analyzer(state)
+    base_outdir = Path(cfg.get("output_dir") or state.get("output_dir") or "./outputs")
+    task_id = state.get("task_id") or "default_task"
+    outdir = base_outdir / task_id / "analyzer"
+    outdir.mkdir(parents=True, exist_ok=True)
+    return str(outdir)
+
 def pick_samples_by_stage(
     records: List[Dict[str, Any]],
     limit: int = 20,
@@ -211,6 +219,91 @@ def enhance_stats_with_oj(records):
     return extras
 
 
+def build_obtainer_stats(summary: dict, oj_records: list, final_json: dict) -> dict:
+    """
+    为 obtainer 提供更细粒度的数据缺口统计
+    """
+    failed = [
+        r for r in (oj_records or [])
+        if isinstance(r, dict) and not r.get("passed", False)
+    ]
+    passed = [
+        r for r in (oj_records or [])
+        if isinstance(r, dict) and r.get("passed", False)
+    ]
+
+    fail_stage = Counter()
+    fail_tags = Counter()
+    pass_tags = Counter()
+    domain_counter = Counter()
+
+    for rec in failed:
+        judge = _as_dict(rec.get("judge") or {})
+        stage = str(judge.get("stage") or "other")
+        fail_stage.update([stage])
+
+        tags = judge.get("tags") or []
+        if isinstance(tags, list):
+            fail_tags.update([str(t) for t in tags if t])
+
+        domain = (
+            rec.get("domain")
+            or judge.get("domain")
+            or rec.get("subset")
+            or rec.get("source")
+            or rec.get("task_type")
+        )
+        if domain:
+            domain_counter.update([str(domain)])
+
+    for rec in passed:
+        judge = _as_dict(rec.get("judge") or {})
+        tags = judge.get("tags") or []
+        if isinstance(tags, list):
+            pass_tags.update([str(t) for t in tags if t])
+
+    fail_bias_tags = []
+    all_tags = set(fail_tags.keys()) | set(pass_tags.keys())
+    for tag in all_tags:
+        f = fail_tags.get(tag, 0)
+        p = pass_tags.get(tag, 0)
+        fail_bias_tags.append({
+            "tag": tag,
+            "fail_count": f,
+            "pass_count": p,
+            "bias": f - p,
+        })
+    fail_bias_tags.sort(key=lambda x: (-x["bias"], -x["fail_count"], x["tag"]))
+
+    qb = final_json.get("quick_brief") or {}
+    qb_samples = qb.get("samples") or []
+
+    sample_briefs = []
+    for r in qb_samples[:20]:
+        judge = _as_dict(r.get("judge") or {})
+        ap = _as_dict(r.get("assert_parsed") or {})
+        sample_briefs.append({
+            "task_id": r.get("task_id"),
+            "sample_index": r.get("sample_index"),
+            "stage": judge.get("stage"),
+            "tags": judge.get("tags"),
+            "domain": r.get("domain") or judge.get("domain") or r.get("subset") or r.get("source"),
+            "input_expr": ap.get("input_expr"),
+            "expected": ap.get("expected"),
+            "actual": ap.get("actual"),
+        })
+
+    return {
+        "failed_total": len(failed),
+        "passed_total": len(passed),
+        "failure_stage_top": fail_stage.most_common(10),
+        "failure_tag_top": fail_tags.most_common(20),
+        "domain_top": domain_counter.most_common(20),
+        "fail_bias_tags": fail_bias_tags[:15],
+        "representative_failure_samples": sample_briefs,
+    }
+
+
 def make_final_json(summary: dict, oj_records: list):
     """
     构建最终的 JSON 报告输出
@@ -305,6 +398,22 @@ def build_suggestion_prompt(final_json: dict) -> str:
         quick_samples=quick_samples_json,
         summary_json=summary_json,   # ★ NEW
     )
+def build_obtainer_prompt(final_json: dict, obtainer_stats: dict) -> str:
+    """
+    构建 obtainer 细粒度报告的提示文本
+    """
+    loader = PromptLoader()
+    tpl = loader("data_obtainer", "suggest_obtainer")
+
+    dataset_json = json.dumps(final_json.get("dataset", {}), ensure_ascii=False, indent=2)
+    summary_json = json.dumps(final_json.get("summary", {}), ensure_ascii=False, indent=2)
+    obtainer_stats_json = json.dumps(obtainer_stats, ensure_ascii=False, indent=2)
+
+    return tpl.format(
+        dataset_json=dataset_json,
+        summary_json=summary_json,
+        obtainer_stats_json=obtainer_stats_json,
+    )
 def build_background_prompt(final_json: dict) -> str:
     """
     构建背景介绍的提示文本：只介绍数据集本身
@@ -378,6 +487,46 @@ def make_human_text(final_json: dict, background: str = None) -> str:
 
     lines.append("整体来看，建议优先修复最常见错误并优化边界测试。")
     return "\n".join(lines)
+def make_obtainer_human_text(obtainer_stats: dict, llm_text: str = "") -> str:
+    """
+    生成人类可读的 obtainer 细粒度报告
+    """
+    lines = []
+    lines.append("【Obtainer 细粒度报告】")
+    lines.append("")
+
+    lines.append(f"失败样本数：{obtainer_stats.get('failed_total', 0)}")
+    lines.append(f"通过样本数：{obtainer_stats.get('passed_total', 0)}")
+    lines.append("")
+
+    stage_top = obtainer_stats.get("failure_stage_top", [])
+    if stage_top:
+        lines.append("失败 stage Top：")
+        for k, v in stage_top[:5]:
+            lines.append(f"- {k}: {v}")
+        lines.append("")
+
+    tag_top = obtainer_stats.get("failure_tag_top", [])
+    if tag_top:
+        lines.append("失败 tags Top：")
+        for k, v in tag_top[:8]:
+            lines.append(f"- {k}: {v}")
+        lines.append("")
+
+    bias_tags = obtainer_stats.get("fail_bias_tags", [])
+    if bias_tags:
+        lines.append("优先补数标签：")
+        for item in bias_tags[:5]:
+            lines.append(
+                f"- {item['tag']}（失败 {item['fail_count']} / 通过 {item['pass_count']} / 偏差 {item['bias']}）"
+            )
+        lines.append("")
+
+    if llm_text:
+        lines.append("【模型生成的 Obtainer 建议】")
+        lines.append(llm_text.strip())
+
+    return "\n".join(lines)
 def draw_conclusion_node(state: LoopAIState):
     """
     绘制结论，生成 summary / final_report，并可选生成背景介绍与改进建议
@@ -396,7 +545,7 @@ def draw_conclusion_node(state: LoopAIState):
     final_json_path = None
     _emit("开始生成最终报告", progress=0.0)
 
-    outdir = state['output_dir']
+    outdir = _ensure_analyzer_outdir(state)
     summary_path = _analyzer(state).get('analyze_output_summary_path')
 
     # ===== 读取 summary =====
@@ -471,11 +620,18 @@ def draw_conclusion_node(state: LoopAIState):
         background_text = ""
     final_json["background"] = background_text
 
+    obtainer_stats = build_obtainer_stats(summary, oj_records, final_json)
+    final_json["obtainer_stats"] = obtainer_stats
+
     # ===== 写入 JSON 报告 =====
     final_json_path = os.path.join(outdir, f"final_report_{run_ts}.json")
     _emit("写入最终 JSON 报告", progress=0.4 , data={"path": final_json_path})
     with open(final_json_path, "w", encoding="utf-8") as f:
         f.write(json.dumps(final_json, ensure_ascii=False, indent=2))
+
+    obtainer_json_path = os.path.join(outdir, f"final_report_{run_ts}.obtainer.json")
+    with open(obtainer_json_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(obtainer_stats, ensure_ascii=False, indent=2))
 
     # ===== 写入文本报告（包含背景介绍）=====
     final_txt_path = os.path.join(outdir, f"final_report_{run_ts}.txt")
@@ -501,7 +657,8 @@ def draw_conclusion_node(state: LoopAIState):
         suggest_path = os.path.join(outdir, f"final_report_{run_ts}.suggestions.txt")
         with open(suggest_path, "w", encoding="utf-8") as f:
             f.write(suggestion)
-        state['analyze_output_suggestion_path'] = suggest_path
+        state.setdefault("analyzer", {})
+        state["analyzer"]["analyze_output_suggestion_path"] = suggest_path
 
         with open(final_txt_path, "a", encoding="utf-8") as f:
             f.write("\n---------------------\n模型生成的改进建议：\n")
@@ -514,6 +671,28 @@ def draw_conclusion_node(state: LoopAIState):
         })
         logger.info(f"→ {suggest_path}")
         logger.info(f"→ {final_txt_path}")
+
+    if _analyzer(state).get('output_obtainer_report', False):
+        _emit("生成 obtainer 细粒度报告", progress=0.8)
+        logger.info("🤖 正在生成 obtainer 细粒度报告……")
+        try:
+            obtainer_prompt = build_obtainer_prompt(final_json, obtainer_stats)
+            obtainer_text = llm.batch([obtainer_prompt])[0].content
+        except Exception as e:
+            logger.error(f"生成 obtainer 报告时出错：{e}")
+            obtainer_text = ""
+
+        obtainer_txt_path = os.path.join(outdir, f"final_report_{run_ts}.obtainer.txt")
+        with open(obtainer_txt_path, "w", encoding="utf-8") as f:
+            f.write(make_obtainer_human_text(obtainer_stats, llm_text=obtainer_text))
+
+        state.setdefault("analyzer", {})
+        state["analyzer"]["analyze_output_obtainer_json_path"] = obtainer_json_path
+        state["analyzer"]["analyze_output_obtainer_txt_path"] = obtainer_txt_path
+
+        logger.info("Obtainer 报告生成完成：")
+        logger.info(f"→ {obtainer_json_path}")
+        logger.info(f"→ {obtainer_txt_path}")
 
     _emit("最终报告生成完成", progress=1.0)
     return state

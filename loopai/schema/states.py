@@ -1077,6 +1077,68 @@ class JudgerState(BaseModel):
         description="评测格式化后问题集，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成，如未使用格式化模版该路径即为原始问题文件的路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
+    # ===== 通用文本 / DataFlow Eval =====
+    output_summary_path: str = Field(
+        default="",
+        title="通用文本评测摘要路径",
+        description="eval_general_text_node 生成的摘要 JSON 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+
+    output_summary_txt_path: str = Field(
+        default="",
+        title="通用文本评测摘要文本路径",
+        description="eval_general_text_node 生成的摘要 TXT 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
+    analyze_max_tokens: int = Field(
+        default=2048,
+        title="分析模型最大输出 Token",
+        description="通用文本评测阶段调用模型的最大输出 token 数",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    tensor_parallel_size: int = Field(
+        default=1,
+        title="张量并行数",
+        description="通用文本评测时模型推理使用的张量并行数",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    is_api: bool = Field(
+        default=False,
+        title="是否 API 模式",
+        description="是否通过 API 调用分析模型",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
+    )
+    bench_name: str = Field(
+        default="",
+        title="评测集名称",
+        description="通用文本评测使用的评测集名称",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
+    )
+    bench_dataflow_eval_type: str = Field(
+        default="",
+        title="通用文本评测类型",
+        description="One-Eval DataFlow 评测类型，例如 key2_qa / key1_text_score",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
+    )
+    bench_config: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="通用文本评测配置",
+        description="通用文本评测的 bench 配置，如 eval_type、key_mapping 等",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "分析模型"}
+    )
+    key_mapping: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="字段映射",
+        description="DataFlow 评测字段映射，如 input_question_key / input_target_key / input_pred_key",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "分析模型"}
+    )
+    skip_dataflow_eval: bool = Field(
+        default=False,
+        title="跳过 DataFlow 正式评测",
+        description="为 True 时仅准备 bench / records，不调用 DataFlowEvalTool.run_eval",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
+    )
 
 class AnalyzerState(BaseModel):
     eval_result_path: str = Field(
@@ -1088,13 +1150,18 @@ class AnalyzerState(BaseModel):
             "ui_group": "分析模型"
         }
     )
+
     analyze_task_type: str = Field(
         default="code",
         title="分析任务类型",
         description="分析任务类型",
-        json_schema_extra={"ui_type": "list", "ui_group": "分析模型",
-                           "allowed_values": ["code", "text2sql"]}
+        json_schema_extra={
+            "ui_type": "list",
+            "ui_group": "分析模型",
+            "allowed_values": ["code", "text2sql", "general_text"]
+        }
     )
+
     analyze_batch_size: int = Field(
         default=20,
         title="分析模型批量大小",
@@ -1137,16 +1204,98 @@ class AnalyzerState(BaseModel):
         description="是否输出简要分析结果",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
     )
+    analyze_max_concurrency: int = Field(
+        default=5,
+        title="分析最大并发数",
+        description="分析阶段最大并发数",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    analyze_chunk_size: int = Field(
+        default=50,
+        title="分析分块大小",
+        description="分析阶段单次处理的数据分块大小",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    quick_brief: bool = Field(
+        default=False,
+        title="是否快速摘要",
+        description="是否启用快速摘要模式",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
+    )
+    quick_brief_limit: int = Field(
+        default=10,
+        title="快速摘要条数限制",
+        description="快速摘要时的最大样本数限制",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+
+    # ===== 通用文本 / DataFlow Eval =====
+    analyze_max_tokens: int = Field(
+        default=2048,
+        title="分析模型最大输出 Token",
+        description="通用文本评测阶段调用模型的最大输出 token 数",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    tensor_parallel_size: int = Field(
+        default=1,
+        title="张量并行数",
+        description="通用文本评测时模型推理使用的张量并行数",
+        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+    is_api: bool = Field(
+        default=False,
+        title="是否 API 模式",
+        description="是否通过 API 调用分析模型",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
+    )
+    bench_name: str = Field(
+        default="",
+        title="评测集名称",
+        description="通用文本评测使用的评测集名称",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
+    )
+    bench_dataflow_eval_type: str = Field(
+        default="",
+        title="通用文本评测类型",
+        description="One-Eval DataFlow 评测类型，例如 key2_qa / key1_text_score",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
+    )
+    bench_config: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="通用文本评测配置",
+        description="通用文本评测的 bench 配置，如 eval_type、key_mapping 等",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "分析模型"}
+    )
+    key_mapping: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="字段映射",
+        description="DataFlow 评测字段映射，如 input_question_key / input_target_key / input_pred_key",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "分析模型"}
+    )
+    skip_dataflow_eval: bool = Field(
+        default=False,
+        title="跳过 DataFlow 正式评测",
+        description="为 True 时仅准备 bench / records，不调用 DataFlowEvalTool.run_eval",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
+    )
+
+    # ===== eval_general_text 产物 =====
     analyze_output_result_path: str = Field(
         default="",
         title="分析模型输出结果路径",
-        description="分析模型输出结果路径",
+        description="eval_general_text / prepare_general_text 产出的结果路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
     analyze_output_summary_path: str = Field(
         default="",
         title="分析模型输出摘要路径",
-        description="分析模型输出摘要路径",
+        description="DataFlow / 通用文本评测摘要 JSON 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    analyze_output_summary_txt_path: str = Field(
+        default="",
+        title="分析模型输出摘要文本路径",
+        description="DataFlow / 通用文本评测摘要 TXT 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
     analyze_sampling_top_k: int = Field(
@@ -1154,6 +1303,40 @@ class AnalyzerState(BaseModel):
         title="分析模型采样 Top K",
         description="分析模型采样 Top K",
         json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+    )
+
+    # ===== metric 推荐 / 评估 =====
+    metric_plan: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="指标推荐结果",
+        description="metric_recommend_node 生成的评估指标方案",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "分析模型"}
+    )
+    metric_eval_result_path: str = Field(
+        default="",
+        title="指标评测结果路径",
+        description="metric_score_node 输出的评测结果路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    metric_eval_results: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="指标评测结果",
+        description="metric_score_node 输出的统计结果",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "分析模型"}
+    )
+
+    # ===== metric 报告 / 分析 =====
+    analysis_summary: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="分析摘要",
+        description="analyze_metric_report_node 生成的结构化分析摘要",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "分析模型"}
+    )
+    analysis_summary_json_path: str = Field(
+        default="",
+        title="分析摘要JSON路径",
+        description="分析摘要 JSON 文件路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
     analyze_output_report_json_path: str = Field(
         default="",
@@ -1177,6 +1360,12 @@ class AnalyzerState(BaseModel):
         default="",
         title="分析模型输出建议路径",
         description="分析模型输出建议路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    analyze_output_data_plan_text_path: str = Field(
+        default="",
+        title="数据构造建议路径",
+        description="analyze_metric_report_node 生成的数据构造/优化建议文本路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
 
