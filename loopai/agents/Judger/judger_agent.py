@@ -154,17 +154,24 @@ class JudgerAgent(BaseAgent):
                     goto=goto_node,
                     graph=Command.PARENT
                 )
+            
+            task_type = state.get("judger", {}).get("eval_task_type", "code")
 
-            if state.get("judger", {}).get("eval_task_type", "") == "code":
+            if task_type == "code":
                 if state.get("judger", {}).get("eval_format_type", "") == "mbpp":
                     required_fields = ["text", "code", "task_id", "challenge_test_list", "test_list"]
                 elif state.get("judger", {}).get("eval_format_type", "") == "human-eval":
                     required_fields = ["task_id", "prompt", "entry_point", "canonical_solution", "test"]
                 else:
                     required_fields = ["task_id", "prompt", "entry_point", "canonical_solution", "test_list"]
-            elif state.get("judger", {}).get("eval_task_type", "") == "text2sql":
+            elif task_type == "text2sql":
                 required_fields = ["task_id", "prompt", "db_id", "question", "ground_truth"]
-            check_file_fields = check_jsonl_fields(state.get("judger", {}).get("eval_problem_path", ""), required_fields)
+            elif task_type == "general_text":
+                check_file_fields = True
+            
+            if task_type == "code" or task_type == "text2sql":
+                check_file_fields = check_jsonl_fields(state.get("judger", {}).get("eval_problem_path", ""), required_fields)
+
 
             if check_file_fields is not True:
                 logger.info("$"*50)

@@ -268,6 +268,7 @@ def _prepare_bench_from_state(
 
     eval_result_path = (
         analyzer_cfg.get("eval_result_path")
+        or judger_cfg.get("eval_problem_path")
         or judger_cfg.get("eval_result_path")
         or judger_cfg.get("out_result_path")
     )
