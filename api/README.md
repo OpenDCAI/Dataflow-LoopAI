@@ -144,6 +144,39 @@ curl http://localhost:8000/health
 打开浏览器访问: http://localhost:8000/docs
 ```
 
+### 前端 dist 发布和安装
+
+FastAPI 会从 `api/dist` 托管前端：
+
+- `GET /` 返回 `api/dist/index.html`
+- `GET /assets/*` 返回 Vite 构建后的静态资源
+- 生产环境前端请求同源 API 原路径，例如 `/train`、`/config/config`
+
+推荐前端 release tag 使用 `ui-v*`，避免和 Python 包版本 tag 混在一起：
+
+```bash
+cd ui
+yarn version --new-version 0.1.0 --no-git-tag-version
+git add package.json yarn.lock
+git commit -m "chore(ui): release 0.1.0"
+git tag ui-v0.1.0
+git push origin main ui-v0.1.0
+```
+
+仓库里的 GitHub Actions 会在 `ui-v*` tag 推送后构建 `ui/`，创建 GitHub Release，并上传 `loopai-ui-dist.tar.gz`。
+
+服务端安装最新公开前端 release：
+
+```bash
+python scripts/download_ui_release.py
+```
+
+如果 tag 前缀或仓库不同，可以显式指定：
+
+```bash
+python scripts/download_ui_release.py --repo OpenDCAI/Dataflow-LoopAI --tag-prefix ui-v --output-dir api/dist
+```
+
 ## 📚 API 文档
 
 ### 1. 启动训练任务

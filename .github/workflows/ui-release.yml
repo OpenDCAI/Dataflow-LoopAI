@@ -1,0 +1,44 @@
+name: UI Release
+
+on:
+  push:
+    tags:
+      - "ui-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: ui/yarn.lock
+
+      - name: Install Yarn
+        run: npm install -g yarn@1.22.22
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build UI
+        run: yarn build
+
+      - name: Pack dist
+        run: tar -czf loopai-ui-dist.tar.gz -C dist .
+
+      - name: Create GitHub release
+        run: gh release create "$GITHUB_REF_NAME" loopai-ui-dist.tar.gz --title "$GITHUB_REF_NAME" --notes "LoopAI UI build." --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
