@@ -4,6 +4,7 @@
             <p class="top-title">{{ local('Chat with LoopAI') }}</p>
             <power-editor
                 :placeholder="placeholder"
+                :language="language == 'zh' ? 'cn' : 'en'"
                 :theme="theme"
                 class="power-editor-block"
                 ref="editor"
@@ -79,7 +80,7 @@ export default {
         }
     },
     computed: {
-        ...mapState(useAppConfig, ['local']),
+        ...mapState(useAppConfig, ['local', 'language']),
         ...mapState(useTheme, ['color']),
         ...mapState(useLoopAI, ['taskStatus', 'msgStreamModel']),
         placeholder() {

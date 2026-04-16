@@ -108,7 +108,8 @@ export default {
         },
         computedUIType() {
             if (!this.schemaModel) return 'default'
-            if (this.schemaModel.ui_type === 'list' && this.schemaModel.allowed_values)
+            const listChoices = this.schemaModel.allowed_values || this.schemaModel.options
+            if (this.schemaModel.ui_type === 'list' && listChoices && listChoices.length)
                 return 'list'
             if (this.thisValue === null || this.thisValue === undefined) return 'none'
             if (this.schemaModel.ui_type === 'file_path') return 'dir'
@@ -118,7 +119,7 @@ export default {
                 this.schemaModel.ui_type === 'password'
             )
                 return 'text'
-            if (this.schemaModel.ui_type === 'toggle_switch') return 'bool'
+            if (this.schemaModel.ui_type === 'toggle_switch' || this.schemaModel.ui_type === 'switch') return 'bool'
             if (this.schemaModel.ui_type === 'slider') return 'slider'
             return 'text'
         },
@@ -133,8 +134,10 @@ export default {
             }
         },
         formatAllowedValues() {
-            if (!this.schemaModel.allowed_values) return []
-            return this.schemaModel.allowed_values.map((item) => ({
+            if (!this.schemaModel) return []
+            const raw = this.schemaModel.allowed_values || this.schemaModel.options
+            if (!raw || !raw.length) return []
+            return raw.map((item) => ({
                 key: item,
                 text: item
             }))

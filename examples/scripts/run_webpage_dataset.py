@@ -30,7 +30,7 @@ else:
     api_key = os.getenv('API_KEY', 'empty')
 
 # Get obtainer configuration from config file
-obtainer_model_path = cfg.default_states.get('obtainer_model_path', 'gpt-4o')
+obtainer_model_path = cfg.default_states.get('obtainer_model_path', 'gpt-4o-mini')
 obtainer_base_url = cfg.default_states.get('obtainer_base_url', cfg.starter.base_url)
 obtainer_api_key = cfg.default_states.get('obtainer_api_key', '') or api_key
 obtainer_temperature = float(cfg.default_states.get('obtainer_temperature', 0.7))

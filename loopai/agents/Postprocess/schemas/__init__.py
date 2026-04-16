@@ -4,6 +4,7 @@ from .models import (
     DatasetFieldInventory,
     FieldMapping,
     DatasetSamplePreview,
+    DatasetRelevanceVerdict,
     DatasetMappingPlan,
     MainAgentDecision,
     DatasetAgentResult,

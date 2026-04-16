@@ -90,6 +90,8 @@ def router_node(download_dir: str) -> List[DatasetSourceInfo]:
         ("hf_datasets", os.path.join(download_dir, "hf_datasets")),
         ("kaggle_datasets", os.path.join(download_dir, "kaggle_datasets")),
         ("web_downloads", os.path.join(download_dir, "web_downloads")),
+        # benchmark 文件夹也按数据集目录处理，供后续采样/参考使用。
+        ("benchmark_datasets", os.path.join(download_dir, "benchmark")),
     ]
 
     for source_type, parent_dir in source_dirs:
