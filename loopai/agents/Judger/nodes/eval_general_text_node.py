@@ -268,9 +268,9 @@ def _prepare_bench_from_state(
 
     eval_result_path = (
         analyzer_cfg.get("eval_result_path")
-        or judger_cfg.get("eval_problem_path")
         or judger_cfg.get("eval_result_path")
         or judger_cfg.get("out_result_path")
+        or judger_cfg.get("eval_problem_path")
     )
     if not eval_result_path:
         raise ValueError("缺少评测输入路径：请提供 analyzer.eval_result_path 或 judger.out_result_path")
