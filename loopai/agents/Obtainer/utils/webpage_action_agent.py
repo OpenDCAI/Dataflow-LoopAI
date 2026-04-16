@@ -32,7 +32,7 @@ class WebPageActionAgent(BaseAgent):
     def __init__(
         self,
         browser_manager: PlaywrightBrowserManager,
-        model_name: str = "gpt-4o",
+        model_name: str = "gpt-4o-mini",
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.7,

@@ -4,6 +4,7 @@ These tools perform various cleaning operations on data files.
 Currently implemented as Mock functions for testing.
 """
 import os
+import sys
 import json
 import random
 import shutil
@@ -14,7 +15,11 @@ import ast
 import hashlib
 import time
 import copy
-from typing import Dict, Any, List, Tuple, Optional
+import tempfile
+import importlib.util
+import types
+import uuid
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -23,10 +28,54 @@ from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 from pydantic import BaseModel, Field
 from loopai.agents.BaseAgent.base_agent import BaseAgent
+from loopai.agents.Constructor.utils.openai_compat_chat import (
+    OpenAIChatParams,
+    chat_completion_async,
+)
 
 logger = get_logger()
 
 DEFAULT_LLM_TIMEOUT_SECONDS = 300.0
+
+# 改写 prompt 中单条「待处理记录」JSON 文本最大字符数（与 UTF-8 多字节无关，按 Python str 长度）
+REWRITE_RECORD_JSON_MAX_CHARS_DEFAULT = 50000
+
+
+def rewrite_record_prompt_json_max_chars(constructor: Optional[Dict[str, Any]] = None) -> int:
+    """constructor.sharegpt_rewrite_max_raw_chars > 环境变量 CONSTRUCTOR_SHAREGPT_REWRITE_MAX_RAW_CHARS > 默认 50000。"""
+    c = constructor or {}
+    raw = c.get("sharegpt_rewrite_max_raw_chars")
+    if raw is not None and str(raw).strip() != "":
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            pass
+    try:
+        return max(
+            1,
+            int(
+                os.getenv(
+                    "CONSTRUCTOR_SHAREGPT_REWRITE_MAX_RAW_CHARS",
+                    str(REWRITE_RECORD_JSON_MAX_CHARS_DEFAULT),
+                )
+            ),
+        )
+    except ValueError:
+        return REWRITE_RECORD_JSON_MAX_CHARS_DEFAULT
+
+
+def truncate_json_for_llm_prompt(obj: Any, max_chars: int) -> str:
+    """将对象序列化为 JSON 字符串；超过 max_chars 时尾部截断并附说明（供 LLM 读，不要求合法 JSON）。"""
+    raw = json.dumps(obj, ensure_ascii=False)
+    n = len(raw)
+    if n <= max_chars:
+        return raw
+    note = f"\n...[record JSON truncated: original_chars={n}, max={max_chars}]"
+    budget = max_chars - len(note)
+    if budget < 64:
+        note = "\n...[truncated]"
+        budget = max_chars - len(note)
+    return raw[: max(0, budget)] + note
 
 
 async def _await_llm_with_timeout(
@@ -42,6 +91,40 @@ async def _await_llm_with_timeout(
     if timeout <= 0:
         timeout = DEFAULT_LLM_TIMEOUT_SECONDS
     try:
+        # Route ChatOpenAI calls through OpenAI-compatible HTTP client to avoid
+        # LangGraph messages-stream propagation into Starter stream_message.
+        if isinstance(llm, ChatOpenAI):
+            base_url = (
+                getattr(llm, "openai_api_base", None)
+                or getattr(llm, "base_url", None)
+                or ""
+            )
+            model_name = (
+                getattr(llm, "model_name", None)
+                or getattr(llm, "model", None)
+                or ""
+            )
+            api_key_raw = getattr(llm, "openai_api_key", None) or getattr(llm, "api_key", None)
+            if hasattr(api_key_raw, "get_secret_value"):
+                api_key = api_key_raw.get_secret_value()
+            else:
+                api_key = str(api_key_raw or "")
+            temperature = getattr(llm, "temperature", 0.0)
+            top_p = getattr(llm, "top_p", 0.95)
+            max_tokens = (
+                getattr(llm, "max_tokens", None)
+                or getattr(llm, "max_completion_tokens", None)
+                or 4096
+            )
+            params = OpenAIChatParams(
+                model=str(model_name),
+                base_url=str(base_url),
+                api_key=str(api_key),
+                temperature=float(temperature if temperature is not None else 0.0),
+                top_p=float(top_p if top_p is not None else 0.95),
+                max_completion_tokens=int(max_tokens),
+            )
+            return await chat_completion_async(params, messages, timeout_seconds=timeout)
         return await asyncio.wait_for(llm.ainvoke(messages), timeout=timeout)
     except asyncio.TimeoutError as e:
         raise TimeoutError(f"{op_name} timed out after {timeout:.1f}s") from e
@@ -1007,7 +1090,7 @@ def basic_data_flitter(data_path: str, state: LoopAIState) -> BaseCleanResult:
             return False
         return _has_non_empty_content(record.get("text"))
 
-    def _is_valid_sft_record(record: Dict[str, Any]) -> bool:
+    def _is_valid_messages_sft_record(record: Dict[str, Any]) -> bool:
         if not isinstance(record, dict):
             return False
         messages = record.get("messages")
@@ -1025,7 +1108,8 @@ def basic_data_flitter(data_path: str, state: LoopAIState) -> BaseCleanResult:
             role_lower = role.lower()
             # 获取 content
             content = msg.get("content")
-            if not _has_non_empty_content(content):
+            # system 角色允许 content 为空，其他角色不允许
+            if role_lower != "system" and not _has_non_empty_content(content):
                 return False
             # 检查 role（支持大小写不敏感）
             if role_lower == "user":
@@ -1033,6 +1117,34 @@ def basic_data_flitter(data_path: str, state: LoopAIState) -> BaseCleanResult:
             elif role_lower == "assistant":
                 has_assistant = True
         return has_user and has_assistant
+
+    def _is_valid_sharegpt_sft_record(record: Dict[str, Any]) -> bool:
+        """ShareGPT / LlamaFactory 对话格式：conversations[].from / value"""
+        if not isinstance(record, dict):
+            return False
+        conversations = record.get("conversations")
+        if not isinstance(conversations, list) or not conversations:
+            return False
+        has_human = False
+        has_gpt = False
+        for turn in conversations:
+            if not isinstance(turn, dict):
+                return False
+            from_ = turn.get("from")
+            if not isinstance(from_, str) or not from_.strip():
+                return False
+            value = turn.get("value")
+            if not _has_non_empty_content(value):
+                return False
+            fl = from_.lower()
+            if fl == "human":
+                has_human = True
+            elif fl == "gpt":
+                has_gpt = True
+        return has_human and has_gpt
+
+    def _is_valid_sft_record(record: Dict[str, Any]) -> bool:
+        return _is_valid_messages_sft_record(record) or _is_valid_sharegpt_sft_record(record)
 
     def _write_valid_jsonl(
         input_path: str,
@@ -2090,7 +2202,7 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
     )
     
     # === 配置部分 ===
-    BATCH_SIZE = 64  # 设置并发 Batch 大小
+    BATCH_SIZE = 502  # 设置并发 Batch 大小
     agent_config = state.get("constructor", {}) or {}
     llm_timeout = float(agent_config.get("llm_timeout", DEFAULT_LLM_TIMEOUT_SECONDS) or DEFAULT_LLM_TIMEOUT_SECONDS)
     if llm_timeout <= 0:
@@ -3472,6 +3584,309 @@ def _test_syntax_with_treesitter(code: str, language: str) -> Tuple[bool, str]:
         return False, f"ParseError: {str(e)}"
 
 
+def _extract_user_query_for_cleaning(state: LoopAIState) -> str:
+    """与 filter_node._extract_user_query 一致，避免循环 import。优先 constructor.user_query。"""
+    constructor = state.get("constructor") or {}
+    uq = (constructor.get("user_query") or "").strip()
+    if uq:
+        return uq
+    if state.get("automated_query"):
+        return str(state.get("automated_query", "")).strip()
+    messages = state.get("messages") or []
+    for message in reversed(messages):
+        if isinstance(message, HumanMessage):
+            c = getattr(message, "content", "")
+            if c:
+                return str(c).strip()
+        if isinstance(message, dict):
+            msg_type = str(message.get("type", "")).lower()
+            msg_role = str(message.get("role", "")).lower()
+            if msg_type == "human" or msg_role == "human" or msg_type == "humanmessage":
+                c = message.get("content", "")
+                if c:
+                    return str(c).strip()
+        if hasattr(message, "type") and getattr(message, "type", None) == "human":
+            c = getattr(message, "content", "")
+            if c:
+                return str(c).strip()
+    return ""
+
+
+def load_benchmark_raw_for_codegen(state: LoopAIState) -> Optional[Dict[str, Any]]:
+    """
+    读取用于 code-gen 清洗的 benchmark 原始样本。
+    从 constructor.benchmark_pool_path 采样池中随机采样一条。
+    如果采样池不存在，返回 None。
+    """
+    from loopai.agents.Postprocess.tools.benchmark_sampler import sample_from_benchmark_pool
+
+    constructor = state.get("constructor") or {}
+
+    # 从采样池采样
+    pool_path = (constructor.get("benchmark_pool_path") or "").strip()
+    if not pool_path:
+        logger.warning("load_benchmark_raw_for_codegen: benchmark_pool_path not configured")
+        return None
+
+    if not os.path.isfile(pool_path):
+        logger.warning(f"load_benchmark_raw_for_codegen: benchmark pool not found at {pool_path}")
+        return None
+
+    sampled = sample_from_benchmark_pool(pool_path)
+    if not sampled:
+        logger.warning("load_benchmark_raw_for_codegen: failed to sample from benchmark pool")
+        return None
+
+    sr = sampled.get("sample_record")
+    bundle: Dict[str, Any] = {"source": "benchmark_pool", "wrapper": sampled}
+    if sampled.get("benchmark_name"):
+        bundle["benchmark_name"] = sampled.get("benchmark_name")
+    if isinstance(sr, dict):
+        bundle["raw"] = sr
+    else:
+        bundle["raw"] = sampled
+    return bundle
+
+
+def _strip_llm_json_text(content: str) -> str:
+    content = (content or "").strip()
+    content = re.sub(r"^```json\s*", "", content, flags=re.MULTILINE)
+    content = re.sub(r"^```\s*", "", content, flags=re.MULTILINE)
+    content = re.sub(r"```$", "", content, flags=re.MULTILINE)
+    return content.strip()
+
+
+CODEGEN_INTERMEDIATE_SFT_SCHEMA_DOC = """
+中间格式单条 JSON 须满足（与 Postprocess 产出的 SFT 中间 JSONL 一致）：
+- id: string，可选；若无则下游可忽略。
+- dataset_type: 字符串，一般为 \"sft\"。
+- messages: **非空数组，且第一条必须是 role=system**，且 system 的 content 为**非空** string；
+  其后为 user、assistant 等；各条可有 loss_mask（system/user 常为 false，assistant 常为 true）。
+- meta: 对象，可选。
+
+**system 是强制字段**：须概括助手角色、任务边界、与用户 builder 目标（user_query）一致；即使参考原始行里没有
+system，也必须在转写时**补写一条恰当的 system**，并置于 messages 首位。
+
+代码类 user/assistant 分工仍须**严格沿用参考模板**（user 侧重程序桩/题干，assistant 侧重续写/答案），与 system 要求同时满足。
+
+"""
+
+
+def _default_codegen_system_content(user_query: str) -> str:
+    uq = (user_query or "").strip()
+    if uq:
+        return (
+            "You are an expert programming assistant. The dataset builder's goal is: "
+            f"{uq}\n"
+            "Follow the user/developer message: produce assistant content in the exact completion or answer style "
+            "required, without extra chit-chat."
+        )
+    return (
+        "You are an expert programming assistant for code generation, completion, and code understanding. "
+        "Follow the user message format; assistant replies match the requested technical style."
+    )
+
+
+def _ensure_record_has_system(record: Dict[str, Any], user_query: str) -> None:
+    """保证 messages 首位为含非空内容的 system（与 builder 目标一致）；缺则插入，空则补全。"""
+    msgs = record.get("messages")
+    if not isinstance(msgs, list):
+        return
+    base = _default_codegen_system_content(user_query)
+    if not msgs:
+        record["messages"] = [{"role": "system", "content": base, "loss_mask": False}]
+        return
+    first = msgs[0]
+    if not isinstance(first, dict):
+        msgs.insert(0, {"role": "system", "content": base, "loss_mask": False})
+        record["messages"] = msgs
+        return
+    role = str(first.get("role", "")).lower()
+    if role == "system":
+        if not (str(first.get("content", "")).strip()):
+            first["content"] = base
+        first.setdefault("loss_mask", False)
+        return
+    msgs.insert(0, {"role": "system", "content": base, "loss_mask": False})
+    record["messages"] = msgs
+
+
+def parse_codegen_phase_b_response(parsed: Dict[str, Any]) -> str:
+    """
+    解析 Phase B 顶层 JSON。返回 'accept' | 'reject' | 'parse_error'
+    """
+    if not isinstance(parsed, dict):
+        return "parse_error"
+    if parsed.get("accept") is False or parsed.get("reject_mapping") is True:
+        return "reject"
+    if parsed.get("accept") is True and isinstance(parsed.get("record"), dict):
+        return "accept"
+    if isinstance(parsed.get("record"), dict) and parsed.get("accept") is not False:
+        return "accept"
+    return "parse_error"
+
+
+class CodeGenBenchmarkFormatAgent(BaseAgent):
+    """Benchmark 模板规范化（Phase A）与逐条改写 / 拒绝映射（Phase B）。"""
+
+    @property
+    def role_name(self) -> str:
+        return "CodeGenBenchmarkFormat"
+
+    @property
+    def system_prompt_type(self) -> str:
+        return "system"
+
+    @property
+    def system_prompt_name(self) -> str:
+        return "default_prompt"
+
+    def init_graph(self):
+        pass
+
+    def __call__(self):
+        pass
+
+    def compute_prompt(self) -> str:
+        return (
+            "You are an expert in building supervised fine-tuning datasets for code and assistants. "
+            "You prefer rewriting over rejecting when content is code-related, but you MUST preserve the "
+            "structural contract of the provided reference template (what belongs in user vs assistant, "
+            "stub vs completion, language and formatting)—not shallow paraphrases that drop the code framing."
+        )
+
+    async def canonicalize_benchmark(
+        self,
+        user_query: str,
+        benchmark_bundle: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        raw = benchmark_bundle.get("raw") or {}
+        prompt = (
+            "Task: Convert the following **reference row** (raw fields as exported by the user) into ONE intermediate SFT "
+            "JSON record. This object is the **only structural exemplar** later steps must imitate.\n\n"
+            "Rules for the template:\n"
+            "- Mirror how the reference splits information across messages: if the reference keeps imports + signature + "
+            "docstring (or partial function) as the 'prompt' side and a code fragment as the 'answer' side, map that into "
+            "messages so the **user** turn carries the **full programmatic preamble / stub** (not a one-line natural "
+            "language summary), and the **assistant** turn carries the **completion segment** with matching indentation "
+            "and style.\n"
+            "- **You MUST include a non-empty `system` as the first message**, tuned to the user_query goal (e.g. code "
+            "generation / completion / explanation in dataset form). If the raw row has no system, **author one** that "
+            "is concise and task-specific—not generic chit-chat, and not empty.\n"
+            "- Preserve programming language, typing, docstring language, and doctest/examples placement as in the "
+            "reference when those appear in the raw fields.\n"
+            "- Do not name or discuss specific public benchmarks or leaderboard names; only use the raw fields.\n\n"
+            f"User dataset goal (user_query):\n{user_query}\n\n"
+            f"Reference row (JSON):\n{json.dumps(raw, ensure_ascii=False)}\n\n"
+            f"{CODEGEN_INTERMEDIATE_SFT_SCHEMA_DOC}\n\n"
+            "Output a single JSON object only (no markdown): dataset_type, messages, optional id, meta. "
+            "Do not wrap in a code block."
+        )
+        try:
+            messages_list = [
+                SystemMessage(content=self.compute_prompt()),
+                HumanMessage(content=prompt),
+            ]
+            response = await _await_llm_with_timeout(
+                self.llm, messages_list, DEFAULT_LLM_TIMEOUT_SECONDS, "codegen_canonicalize_benchmark"
+            )
+            text = _strip_llm_json_text(response.content.strip())
+            rec = json.loads(text)
+            if isinstance(rec, dict) and rec.get("messages"):
+                _ensure_record_has_system(rec, user_query)
+                return rec
+            logger.warning("canonicalize_benchmark: LLM returned dict without messages")
+            return None
+        except Exception as e:
+            logger.error(f"canonicalize_benchmark failed: {e}")
+            return None
+
+    async def rewrite_training_record(
+        self,
+        user_query: str,
+        benchmark_template: Dict[str, Any],
+        record: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        max_raw = getattr(self, "_rewrite_record_json_max_chars", None)
+        if not isinstance(max_raw, int) or max_raw < 1:
+            max_raw = rewrite_record_prompt_json_max_chars()
+        record_json = truncate_json_for_llm_prompt(record, max_raw)
+        prompt = (
+            "**Task: Data Format Conversion for SFT Training**\n"
+            "You are performing data format conversion to prepare SFT (Supervised Fine-Tuning) training data. "
+            "Rewrite the given training record into ShareGPT-compliant intermediate SFT JSON that:\n"
+            "1. Conforms to the user's dataset goal\n"
+            "2. **Strictly follows the benchmark template's style and structure**\n"
+            "3. Outputs in valid ShareGPT format (messages array with role/content)\n\n"
+            "**Critical Requirements:**\n"
+            "- **Data Style**: Your output MUST match the benchmark template's style—tone, language, code patterns, "
+            "instruction format, and interaction flow. The benchmark defines the target quality and style standard.\n"
+            "- **Data Format**: Output MUST be ShareGPT-compliant with a `messages` array containing objects with "
+            "`role` (system/user/assistant) and `content` fields.\n"
+            "- **Purpose**: This is data format transformation for SFT training, not content generation. Preserve "
+            "the source record's semantic content while adapting its format and style to match the benchmark.\n\n"
+            "**Template Conformity (Mandatory):**\n"
+            "- **System Message**: The `messages` array MUST begin with a non-empty `system` turn. Mirror the "
+            "benchmark template's system message style—if it's task-specific, match that; if it's role-based, "
+            "follow that pattern. Never omit or leave empty.\n"
+            "- **Interaction Pattern**: Study the benchmark template's user/assistant exchange pattern. Replicate "
+            "the same structure: what goes in user content vs assistant content, code context placement, completion "
+            "granularity (full function vs body-only), indentation style, and formatting conventions.\n"
+            "- **User Message**: Must NOT be reduced to vague natural language if the benchmark template includes "
+            "substantial code context. Preserve or reconstruct code context from the source to keep the user turn "
+            "concrete and program-shaped like the benchmark.\n"
+            "- **Language Consistency**: Match the benchmark template's language (English/Chinese/etc.) for "
+            "instructions and comments unless the source intrinsically requires otherwise.\n"
+            "- **Code Formatting**: Match the benchmark's code presentation style—markdown fences only if the "
+            "benchmark uses them, indentation depth, newline conventions, etc.\n"
+            "- **Content Boundaries**: Omit hidden tests or solution leaks if the benchmark keeps them out of user "
+            "messages. Do not reference specific public benchmarks or datasets by name.\n\n"
+            "**Rejection Policy:**\n"
+            "- DEFAULT: accept=true and rewrite when source is plausibly relevant to user_query\n"
+            "- ONLY reject when clearly non-code or impossible to align with benchmark template without fabricating "
+            "entire content\n"
+            "- For 'explain this code' records, refactor into benchmark's completion style while preserving code "
+            "context in user message\n\n"
+            "**Output Format (JSON only, no markdown):**\n"
+            "1) Accept and rewrite:\n"
+            '{"accept": true, "record": {"dataset_type": "SFT", "messages": [...], "id": "...", "meta": {...}}}\n'
+            "2) Reject:\n"
+            '{"accept": false, "reject_mapping": true, "reasoning": "<brief explanation>"}\n\n'
+            f"User Dataset Goal:\n{user_query}\n\n"
+            "Benchmark Template (style and structure reference):\n"
+            f"{json.dumps(benchmark_template, ensure_ascii=False)}\n\n"
+            f"{CODEGEN_INTERMEDIATE_SFT_SCHEMA_DOC}\n\n"
+            "Record to rewrite (full JSON; may be truncated if very long):\n"
+            f"{record_json}\n"
+        )
+        messages_list = [
+            SystemMessage(content=self.compute_prompt()),
+            HumanMessage(content=prompt),
+        ]
+        response = await _await_llm_with_timeout(
+            self.llm, messages_list, DEFAULT_LLM_TIMEOUT_SECONDS, "codegen_rewrite_training_record"
+        )
+        text = _strip_llm_json_text(response.content.strip())
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            inner = parsed.get("record")
+            if parsed.get("accept") is not False and isinstance(inner, dict):
+                _ensure_record_has_system(inner, user_query)
+        return parsed
+
+
+def _merge_record_identity(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+    if source.get("id") and not target.get("id"):
+        target["id"] = source["id"]
+    if source.get("meta") and isinstance(source["meta"], dict):
+        tm = target.get("meta")
+        if not isinstance(tm, dict):
+            target["meta"] = copy.deepcopy(source["meta"])
+        else:
+            for k, v in source["meta"].items():
+                tm.setdefault(k, v)
+
+
 def domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
     """
     领域工具：针对代码生成数据的特定清洗 (多语言支持版)
@@ -3504,12 +3919,13 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
     )
     
     # === 配置部分 ===
-    BATCH_SIZE = 64  # 设置并发 Batch 大小
+    BATCH_SIZE = 502  # 设置并发 Batch 大小
     agent_config = state.get("constructor", {}) or {}
     
     # 初始化 Agent
     domain_agent = None
     repair_agent = None
+    format_agent: Optional[CodeGenBenchmarkFormatAgent] = None
     try:
         domain_agent = CodeGenDomainAgent(
             model_name=agent_config.get("model_path"),
@@ -3527,6 +3943,50 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
         logger.error(f"Failed to initialize Agents: {e}")
         raise e
 
+    user_query = _extract_user_query_for_cleaning(state)
+    benchmark_bundle = load_benchmark_raw_for_codegen(state)
+    use_benchmark_pipeline = bool(benchmark_bundle and user_query)
+    benchmark_template: Optional[Dict[str, Any]] = None
+    run_diag: Dict[str, Any] = {
+        "codegen_benchmark_pipeline": False,
+        "codegen_phase_a_ok": False,
+        "codegen_phase_b_rejected": 0,
+        "codegen_phase_b_parse_errors": 0,
+        "codegen_phase_b_reject_samples": [],
+    }
+    if use_benchmark_pipeline:
+        try:
+            format_agent = CodeGenBenchmarkFormatAgent(
+                model_name=agent_config.get("model_path"),
+                base_url=agent_config.get("base_url"),
+                api_key=agent_config.get("api_key"),
+                temperature=0.1,
+            )
+            format_agent._rewrite_record_json_max_chars = rewrite_record_prompt_json_max_chars(
+                agent_config
+            )
+            benchmark_template = await format_agent.canonicalize_benchmark(
+                user_query, benchmark_bundle
+            )
+            if benchmark_template:
+                run_diag["codegen_benchmark_pipeline"] = True
+                run_diag["codegen_phase_a_ok"] = True
+                logger.info("domain_code_gen_cleaner: Phase A benchmark template ready")
+            else:
+                use_benchmark_pipeline = False
+                logger.warning(
+                    "domain_code_gen_cleaner: Phase A failed; using legacy codegen pipeline"
+                )
+        except Exception as e:
+            logger.error(f"domain_code_gen_cleaner: Phase A error {e}; legacy pipeline", exc_info=True)
+            use_benchmark_pipeline = False
+            format_agent = None
+    else:
+        if benchmark_bundle and not user_query:
+            logger.info(
+                "domain_code_gen_cleaner: benchmark present but user_query empty; legacy pipeline"
+            )
+
     # === 内部辅助函数 ===
     
     def _extract_code_from_record(record: Dict[str, Any]) -> Tuple[str, str]:
@@ -3534,7 +3994,7 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
         从记录中提取代码和用户查询
         
         Returns:
-            (code, user_query) 元组
+            (code, record_user_text) 元组；后者为条内 user 侧文本，勿与全局任务 user_query 混淆。
         """
         messages = record.get("messages", [])
         # 提取 assistant 的代码
@@ -3624,13 +4084,69 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
             logger.info(f"Filtered out {filtered_count} records with unsupported languages")
         logger.info(f"Code generation records with supported languages: {len(codegen_records)}/{file_total}")
         
+        # Benchmark 路径：Phase B 逐条改写或拒绝映射
+        if use_benchmark_pipeline and format_agent and benchmark_template:
+            logger.info(f"[{os.path.basename(file_path)}] Phase B: benchmark-guided rewrite...")
+            reject_sample_cap = 20
+
+            async def _phase_b_one(item: Dict[str, Any]) -> Dict[str, Any]:
+                orig_record = item["record"]
+                try:
+                    parsed = await format_agent.rewrite_training_record(
+                        user_query, benchmark_template, orig_record
+                    )
+                except Exception as ex:
+                    logger.warning(f"Phase B LLM error: {ex}")
+                    run_diag["codegen_phase_b_parse_errors"] += 1
+                    return {"kind": "keep_original", "item": item}
+                if not isinstance(parsed, dict):
+                    run_diag["codegen_phase_b_parse_errors"] += 1
+                    return {"kind": "keep_original", "item": item}
+                kind = parse_codegen_phase_b_response(parsed)
+                if kind == "reject":
+                    reasoning = str(parsed.get("reasoning", "") or "")
+                    run_diag["codegen_phase_b_rejected"] += 1
+                    samples_list = run_diag["codegen_phase_b_reject_samples"]
+                    if isinstance(samples_list, list) and len(samples_list) < reject_sample_cap:
+                        samples_list.append({"reasoning": reasoning[:500]})
+                    return {"kind": "reject", "item": item}
+                if kind == "accept":
+                    new_rec = parsed.get("record")
+                    if isinstance(new_rec, dict):
+                        _merge_record_identity(new_rec, orig_record)
+                        new_item = dict(item)
+                        new_item["record"] = new_rec
+                        return {"kind": "accept", "item": new_item}
+                run_diag["codegen_phase_b_parse_errors"] += 1
+                return {"kind": "keep_original", "item": item}
+
+            phase_b_items: List[Dict[str, Any]] = []
+            total_cb = len(codegen_records)
+            for j in range(0, total_cb, BATCH_SIZE):
+                chunk = codegen_records[j : j + BATCH_SIZE]
+                pb_results = await asyncio.gather(
+                    *[_phase_b_one(it) for it in chunk], return_exceptions=True
+                )
+                for pr in pb_results:
+                    if isinstance(pr, Exception):
+                        logger.error(f"Phase B task error: {pr}")
+                        continue
+                    if pr.get("kind") == "reject":
+                        continue
+                    phase_b_items.append(pr["item"])
+            codegen_records = phase_b_items
+            logger.info(
+                f"[{os.path.basename(file_path)}] After Phase B: {len(codegen_records)} records "
+                f"(rejected_unrelated={run_diag['codegen_phase_b_rejected']})"
+            )
+        
         # 第二步：使用tree-sitter检查语法
         logger.info(f"[{os.path.basename(file_path)}] Step 2: Checking syntax with tree-sitter...")
         processed_records = []
         
         for item in codegen_records:
             record = item["record"]
-            code, user_query = _extract_code_from_record(record)
+            code, record_user_text = _extract_code_from_record(record)
             language = item["language"]
             
             if not code:
@@ -3639,7 +4155,7 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
                     "valid": False,
                     "error": "No code found",
                     "retry_count": 0,
-                    "user_query": user_query,
+                    "user_query": record_user_text,
                     "language": language,
                     "is_syntax_error": True
                 })
@@ -3658,7 +4174,7 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
                         "valid": False,
                         "error": error_msg,
                         "retry_count": 0,
-                        "user_query": user_query,
+                        "user_query": record_user_text,
                         "language": language,
                         "is_syntax_error": True
                     })
@@ -3670,7 +4186,7 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
         async def _repair_single_item(item):
             """处理单条数据的修复逻辑"""
             record = item["record"]
-            current_code, user_query = _extract_code_from_record(record)
+            current_code, record_user_text = _extract_code_from_record(record)
             language = item.get("language", "python")
             
             if not current_code:
@@ -3682,7 +4198,7 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
                 new_code, is_codegen = await repair_agent.repair_code(
                     code=current_code,
                     error_msg=item["error"],
-                    user_query=user_query,
+                    user_query=record_user_text,
                     language=language,
                     syntax_error=item.get("is_syntax_error", True)
                 )
@@ -3866,8 +4382,150 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
         f"valid: {result.valid_records}, "
         f"invalid: {result.invalid_records}"
     )
-    
+    result.diagnostics = run_diag
+    logger.info(
+        "domain_code_gen_cleaner diagnostics - "
+        f"benchmark_pipeline={run_diag.get('codegen_benchmark_pipeline')}, "
+        f"phase_a_ok={run_diag.get('codegen_phase_a_ok')}, "
+        f"phase_b_rejected={run_diag.get('codegen_phase_b_rejected')}, "
+        f"phase_b_parse_errors={run_diag.get('codegen_phase_b_parse_errors')}"
+    )
+
     return result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DataFlow + Alpagasus（normal_data 第二步质量过滤）
+# 与 loopai/agents/Constructor/tools/cot_filter_tool.py 中 bootstrap 逻辑对齐
+# ──────────────────────────────────────────────────────────────────────────────
+
+_DATAFLOW_ROOT = "/mnt/paper2any/xbr/financial/DataFlow"
+_SERVING_PKG = "dataflow.serving"
+_SERVING_MODULE = "dataflow.serving.api_llm_serving_request"
+
+
+def _bootstrap_dataflow_for_alpagasus(api_key: str = "") -> None:
+    """向 sys.path 注入 DataFlow，并绕过重量级 serving/__init__.py。"""
+    if _DATAFLOW_ROOT not in sys.path:
+        sys.path.insert(0, _DATAFLOW_ROOT)
+
+    if api_key:
+        os.environ["DF_API_KEY"] = api_key
+
+    if _SERVING_PKG not in sys.modules:
+        pkg = types.ModuleType(_SERVING_PKG)
+        pkg.__path__ = [os.path.join(_DATAFLOW_ROOT, "dataflow", "serving")]
+        pkg.__package__ = _SERVING_PKG
+        sys.modules[_SERVING_PKG] = pkg
+
+    if _SERVING_MODULE not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            _SERVING_MODULE,
+            os.path.join(_DATAFLOW_ROOT, "dataflow", "serving", "api_llm_serving_request.py"),
+            submodule_search_locations=[],
+        )
+        mod = importlib.util.module_from_spec(spec)
+        mod.__package__ = _SERVING_PKG
+        sys.modules[_SERVING_MODULE] = mod
+        spec.loader.exec_module(mod)
+
+
+def _make_chat_completions_url_for_dataflow(base_url: str) -> str:
+    """将 OpenAI 兼容 base_url（常以 /v1 结尾）转为 DataFlow APILLMServing 需要的 chat/completions 端点。"""
+    url = (base_url or "").rstrip("/")
+    if not url.endswith("/chat/completions"):
+        url = url + "/chat/completions"
+    return url
+
+
+def _normal_data_run_alpagasus_filter(
+    adapted_rows: List[Dict[str, Any]],
+    *,
+    api_url: str,
+    model_name: str,
+    api_key: str,
+    min_score: int = 3,
+    max_score: int = 5,
+    max_workers: int = 502,
+) -> Tuple[Set[str], Optional[str]]:
+    """
+    对已适配为 instruction/input/output/_tmp_id 的行运行 AlpagasusFilter。
+
+    Returns:
+        (通过过滤的 _tmp_id 集合, 错误信息或 None)
+    """
+    if not adapted_rows:
+        return set(), None
+
+    try:
+        _bootstrap_dataflow_for_alpagasus(api_key=api_key)
+        from dataflow.serving.api_llm_serving_request import APILLMServing_request
+        from dataflow.operators.text_sft import AlpagasusFilter
+        from dataflow.utils.storage import FileStorage
+    except Exception as e:
+        return set(), f"DataFlow import/bootstrap failed: {e}"
+
+    with tempfile.TemporaryDirectory(prefix="loopai_normal_alpa_") as tmpdir:
+        input_tmp = os.path.join(tmpdir, "input.jsonl")
+        cache_dir = os.path.join(tmpdir, "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+
+        try:
+            with open(input_tmp, "w", encoding="utf-8") as f:
+                for rec in adapted_rows:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+            llm = APILLMServing_request(
+                api_url=api_url,
+                model_name=model_name,
+                max_workers=max_workers,
+            )
+            # requests 默认读取 HTTP(S)_PROXY；本机代理未启动时会导致 Alpagasus 全失败，故对 LLM 直连。
+            if getattr(llm, "session", None) is not None:
+                llm.session.trust_env = False
+            alpa = AlpagasusFilter(
+                llm_serving=llm,
+                min_score=min_score,
+                max_score=max_score,
+                dimension="quality",
+            )
+            storage = FileStorage(
+                first_entry_file_name=input_tmp,
+                cache_path=cache_dir,
+                file_name_prefix="normal_alpa",
+                cache_type="jsonl",
+            )
+            alpa.run(
+                storage=storage.step(),
+                input_instruction_key="instruction",
+                input_input_key="input",
+                input_output_key="output",
+                output_key="AlpagasusScore",
+            )
+        except Exception as e:
+            return set(), f"AlpagasusFilter run failed: {e}"
+
+        out_path = os.path.join(cache_dir, "normal_alpa_step1.jsonl")
+        if not os.path.isfile(out_path):
+            return set(), f"Alpagasus output not found: {out_path}"
+
+        passing: Set[str] = set()
+        try:
+            with open(out_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    tid = row.get("_tmp_id")
+                    if tid is not None and str(tid).strip() != "":
+                        passing.add(str(tid))
+        except OSError as e:
+            return set(), f"Failed to read Alpagasus output: {e}"
+
+        return passing, None
 
 
 def domain_normal_data_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResult:
@@ -3876,12 +4534,12 @@ def domain_normal_data_cleaner(data_path: str, state: LoopAIState) -> BaseCleanR
     
     清洗流程：
     1. 第一步：并发判断每条记录是否与 user_query 领域相关
-    2. 第二步：对相关的记录调用 Agent 完善回答并验证质量
+    2. 第二步：对相关的记录进行 Alpagasus 质量打分过滤（不改写回答）
     3. 第三步：输出清洗后的数据
     
     Args:
         data_path: 数据文件路径
-        state: 当前状态（包含 obtainer.user_query 用于领域判断）
+        state: 当前状态（constructor.user_query 用于领域判断；LLM 配置用于 Alpagasus）
     
     Returns:
         包含清洗结果的字典，格式：
@@ -3915,10 +4573,9 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
         logger.warning("user_query is empty, cannot perform domain filtering")
         return result
     
-    # 初始化 Agent
+    # 初始化 Agent（领域相关性 + query 改写）；第二步质量过滤走 DataFlow AlpagasusFilter
     domain_agent = None
     query_rewrite_agent = None
-    repair_agent = None
     try:
         domain_agent = NormalDomainAgent(
             model_name=agent_config.get("model_path"),
@@ -3927,12 +4584,6 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
             temperature=0.1
         )
         query_rewrite_agent = NormalDomainQueryRewriteAgent(
-            model_name=agent_config.get("model_path"),
-            base_url=agent_config.get("base_url"),
-            api_key=agent_config.get("api_key"),
-            temperature=0.1
-        )
-        repair_agent = NormalRepairAgent(
             model_name=agent_config.get("model_path"),
             base_url=agent_config.get("base_url"),
             api_key=agent_config.get("api_key"),
@@ -3967,9 +4618,9 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
         return user_content, assistant_content
     
     # === 内部函数：处理单个文件 ===
-    async def _process_single_file(file_path: str) -> Tuple[List[Dict], int, int, int]:
+    async def _process_single_file(file_path: str) -> Tuple[List[Dict], int, int, int, Optional[str]]:
         """
-        处理单个JSONL文件，返回 (有效记录列表, 总数, 有效数, 无效数)
+        处理单个JSONL文件，返回 (有效记录列表, 总数, 有效数, 无效数, 错误信息或None)
         """
         all_records = []
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -4035,91 +4686,73 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
             logger.info(f"Filtered out {filtered_count} records not related to the domain")
         logger.info(f"Domain-related records: {len(related_records)}/{file_total}")
         
-        # 第二步：完善回答并验证
-        logger.info(f"[{os.path.basename(file_path)}] Step 2: Improving answers and validating quality...")
-        processed_records = []
-        
-        total_related = len(related_records)
-        for i in range(0, total_related, BATCH_SIZE):
-            batch = related_records[i : i + BATCH_SIZE]
-            logger.info(f"  > Processing improvement batch {i//BATCH_SIZE + 1}/{(total_related + BATCH_SIZE - 1)//BATCH_SIZE} (size: {len(batch)})")
-            
-            async def _improve_single_item(item):
-                """处理单条数据的完善逻辑"""
-                record = item["record"]
-                user_content, assistant_content = _extract_content_from_record(record)
-                
-                if not user_content or not assistant_content:
-                    item["valid"] = False
-                    item["error"] = "Missing user or assistant content"
-                    return False
-                
-                try:
-                    improved_content, is_valid, error_msg = await repair_agent.improve_and_validate(
-                        user_content=user_content,
-                        assistant_content=assistant_content,
-                        user_query=effective_query
-                    )
-                    
-                    if not is_valid:
-                        item["valid"] = False
-                        item["error"] = error_msg
-                        return False
-                    
-                    content_updated = False
-                    for msg in record.get("messages", []):
-                        if msg.get("role") == "assistant":
-                            msg["content"] = improved_content
-                            content_updated = True
-                            break
-                    
-                    if not content_updated:
-                        if "assistant" in record:
-                            record["assistant"] = improved_content
-                        else:
-                            if "messages" not in record:
-                                record["messages"] = []
-                            assistant_found = False
-                            for msg in record["messages"]:
-                                if msg.get("role") == "assistant":
-                                    msg["content"] = improved_content
-                                    assistant_found = True
-                                    break
-                            if not assistant_found:
-                                record["messages"].append({"role": "assistant", "content": improved_content})
-                    
-                    item["valid"] = True
-                    item["record"] = record
-                    item["error"] = None
-                    return True
-                    
-                except Exception as e:
-                    item["error"] = f"Agent Error: {str(e)}"
-                    item["valid"] = False
-                    return False
-            
-            tasks = [_improve_single_item(item) for item in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for item, r in zip(batch, results):
-                if isinstance(r, Exception):
-                    logger.error(f"Error in improvement: {r}")
-                    item["valid"] = False
-                    item["error"] = f"Exception: {str(r)}"
-                processed_records.append(item)
-        
-        # 第三步：收集有效记录
-        logger.info(f"[{os.path.basename(file_path)}] Step 3: Collecting valid records...")
-        final_valid_records = []
-        
-        for item in processed_records:
-            if item.get("valid", False):
-                final_valid_records.append(item["record"])
-        
+        # 第二步：Alpagasus 质量过滤（不改写回答，仅按分数筛留）
+        logger.info(f"[{os.path.basename(file_path)}] Step 2: Alpagasus quality filtering...")
+        if not related_records:
+            logger.info(f"[{os.path.basename(file_path)}] No related records; skip Alpagasus.")
+            return [], file_total, 0, file_total, None
+
+        model_name = (agent_config.get("model_path") or state.get("analyze_model_path") or "").strip()
+        base_url = (agent_config.get("base_url") or state.get("analyze_base_url") or "").strip()
+        api_key = (agent_config.get("api_key") or state.get("analyze_api_key") or "").strip()
+        if not (model_name and base_url and api_key):
+            msg = "Missing LLM config (model_path / base_url / api_key) for Alpagasus"
+            logger.warning(msg)
+            return [], file_total, 0, file_total, msg
+
+        adapted_rows: List[Dict[str, Any]] = []
+        id_to_record: Dict[str, Dict[str, Any]] = {}
+        for item in related_records:
+            rec = item["record"]
+            user_content, assistant_content = _extract_content_from_record(rec)
+            if not user_content or not assistant_content:
+                continue
+            tid = str(uuid.uuid4())
+            adapted_rows.append(
+                {
+                    "instruction": user_content,
+                    "input": "",
+                    "output": assistant_content,
+                    "_tmp_id": tid,
+                }
+            )
+            id_to_record[tid] = rec
+
+        if not adapted_rows:
+            logger.info(
+                f"[{os.path.basename(file_path)}] All related records missing user/assistant content; "
+                "skip Alpagasus."
+            )
+            return [], file_total, 0, file_total, None
+
+        api_url = _make_chat_completions_url_for_dataflow(base_url)
+        passing_ids, alpa_err = await asyncio.to_thread(
+            _normal_data_run_alpagasus_filter,
+            adapted_rows,
+            api_url=api_url,
+            model_name=model_name,
+            api_key=api_key,
+        )
+        if alpa_err:
+            logger.error(f"[{os.path.basename(file_path)}] Alpagasus failed: {alpa_err}")
+            return [], file_total, 0, file_total, alpa_err
+
+        final_valid_records: List[Dict[str, Any]] = []
+        for row in adapted_rows:
+            tid = row["_tmp_id"]
+            if tid in passing_ids:
+                final_valid_records.append(id_to_record[tid])
+
         file_valid = len(final_valid_records)
         file_invalid = file_total - file_valid
-        
-        return final_valid_records, file_total, file_valid, file_invalid
+
+        # 第三步：结果已在 final_valid_records 中
+        logger.info(
+            f"[{os.path.basename(file_path)}] Step 3: Alpagasus kept {file_valid}/{file_total} records "
+            f"(related_input={len(adapted_rows)})"
+        )
+
+        return final_valid_records, file_total, file_valid, file_invalid, None
 
     # === 数据读取与预处理 ===
     if not os.path.exists(data_path):
@@ -4136,11 +4769,18 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
             result.error_message = f"Unsupported file format (expect .jsonl): {data_path}"
             return result
         
-        final_valid_records, file_total, file_valid, file_invalid = await _process_single_file(data_path)
-        
+        final_valid_records, file_total, file_valid, file_invalid, ferr = await _process_single_file(
+            data_path
+        )
+
         result.total_records = file_total
         result.valid_records = file_valid
         result.invalid_records = file_invalid
+        if ferr:
+            result.success = False
+            result.error_message = ferr
+            result.cleaned_data_path = data_path
+            return result
 
         base_dir = os.path.dirname(data_path)
         base_name = os.path.basename(data_path)
@@ -4178,11 +4818,18 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
             output_path = os.path.join(cleaned_dir, filename)
             
             try:
-                final_valid_records, file_total, file_valid, file_invalid = await _process_single_file(input_path)
-                
+                final_valid_records, file_total, file_valid, file_invalid, ferr = await _process_single_file(
+                    input_path
+                )
+
                 result.total_records += file_total
                 result.valid_records += file_valid
                 result.invalid_records += file_invalid
+                if ferr:
+                    result.success = False
+                    result.error_message = ferr
+                    logger.warning(f"Alpagasus failed for {input_path}: {ferr}")
+                    continue
 
                 if file_valid > 0:
                     any_valid = True
@@ -4247,24 +4894,24 @@ def benchmark_data_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResul
         invalid_records=0
     )
     
-    # 获取 benchmark 文件路径
-    benchmark_path = state.get("banckmark_jsonl_path", "")
-    if not benchmark_path:
-        logger.info("No benchmark_jsonl_path specified, skipping benchmark cleaning")
-        return result
-    
-    if not os.path.exists(benchmark_path):
-        logger.warning(f"Benchmark file not found: {benchmark_path}, skipping benchmark cleaning")
-        return result
-    
-    # 获取数据类别（PT或SFT）- 从 state.obtainer.category 获取
+    # 获取 benchmark 源目录
     constructor_state = state.get("constructor", {})
+    benchmark_path = constructor_state.get("benchmark_source_dir", "")
+    if not benchmark_path:
+        logger.info("No benchmark_source_dir specified, skipping benchmark cleaning")
+        return result
+
+    if not os.path.exists(benchmark_path):
+        logger.warning(f"Benchmark source directory not found: {benchmark_path}, skipping benchmark cleaning")
+        return result
+
+    # 获取数据类别（PT或SFT）
     category = constructor_state.get("category", "PT").upper()
     if category not in ["PT", "SFT"]:
         logger.warning(f"Unknown category '{category}', defaulting to SFT for benchmark cleaning")
         category = "SFT"
-    
-    logger.info(f"benchmark_data_cleaner: Category = {category}, Benchmark path = {benchmark_path}")
+
+    logger.info(f"benchmark_data_cleaner: Category = {category}, Benchmark source dir = {benchmark_path}")
     
     # === 内部辅助函数 ===
     
@@ -4392,6 +5039,18 @@ def benchmark_data_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResul
     benchmark_full = {}  # 完整内容字典
     benchmark_count = 0
     
+    def _load_benchmark_record(record: Dict[str, Any]) -> None:
+        nonlocal benchmark_count
+        benchmark_count += 1
+        if category == "SFT":
+            user_content, assistant_content, combined_key = _extract_record_signature_sft(record)
+            benchmark_sigs.add(combined_key)
+            benchmark_full[combined_key] = (user_content, assistant_content)
+        else:  # PT
+            text_content, text_key = _extract_record_signature_pt(record)
+            benchmark_sigs.add(text_key)
+            benchmark_full[text_key] = text_content
+
     try:
         # 支持单个文件或目录
         benchmark_files = []
@@ -4412,20 +5071,11 @@ def benchmark_data_cleaner(data_path: str, state: LoopAIState) -> BaseCleanResul
                         continue
                     try:
                         record = json.loads(line)
-                        benchmark_count += 1
-                        
-                        if category == "SFT":
-                            user_content, assistant_content, combined_key = _extract_record_signature_sft(record)
-                            benchmark_sigs.add(combined_key)
-                            benchmark_full[combined_key] = (user_content, assistant_content)
-                        else:  # PT
-                            text_content, text_key = _extract_record_signature_pt(record)
-                            benchmark_sigs.add(text_key)
-                            benchmark_full[text_key] = text_content
+                        _load_benchmark_record(record)
                             
                     except json.JSONDecodeError:
                         continue
-        
+
         logger.info(f"Loaded {benchmark_count} benchmark records, {len(benchmark_sigs)} unique signatures")
         
     except Exception as e:

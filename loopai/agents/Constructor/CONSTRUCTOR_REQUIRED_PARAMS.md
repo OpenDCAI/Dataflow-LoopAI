@@ -31,7 +31,10 @@
 
 ## 四、Constructor 专有配置（非必填，均有默认）
 
-- `constructor.max_samples_before_cleaning`（默认 `20000`）
+- `constructor.postprocess_version`（默认 `agent_v2`）：`legacy` 走旧版 `postprocess_node`；`agent_v2` 走新版 Postprocess 子 Agent。
+- `constructor.benchmark_source_dir`（默认空）：**agent_v2** 下作为 `run_postprocess_agent_v2(..., benchmark_dir=...)` 的数据集根目录；空则跳过外部 benchmark（仍兼容全局 `banckmark_jsonl_path`）。
+- `constructor.benchmark_pool_path` / `constructor.benchmark_pool_size`：采样池输出路径与大小（清洗等阶段可用）。
+- `constructor.max_samples_before_cleaning`（默认 `20000`）：**清洗子图入口**在 `basic_data_flitter` 之前，将预算在全部 `.jsonl` 文件间**均分**并随机采样；`0` 表示不限制条数。
 - `constructor.llm_timeout`（默认 `120.0`）
 - `constructor.max_retries`（默认 `3`）
 - `constructor.max_concurrent_mapping`（默认 `10`）
@@ -46,5 +49,6 @@
   - 任务上下文：`user_query/datasets_background/category/subtasks`
   - 构造配置：`llm_timeout/max_retries/max_concurrent_mapping/max_samples_before_cleaning/default_mapping_format/debug`
   - 映射运行态：`intermediate_data_path/confirmed_format/pending_format/mapping_auto_mode/confirmation_result/mapping_user_intent/mapping_selected_format_id/mapping_custom_description`
+  - 后处理 v2 / benchmark：`postprocess_version/benchmark_source_dir/benchmark_pool_path/benchmark_pool_size`
 
 建议：新接入方优先直接写 `state["constructor"]`，逐步去掉对 `state["obtainer"]` 的依赖。

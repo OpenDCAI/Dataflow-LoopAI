@@ -1,13 +1,15 @@
 """
-Data load tool for the Postprocess dataset agent.
-Loads various data formats and returns 1-3 sample records so the LLM
-can inspect the actual data structure.
+Load small samples from tabular / JSON-like data files inside a dataset directory.
+
+Supports multiple text encodings, rejects likely-binary files, caps file size and
+per-cell / total JSON size so tool output cannot blow the LLM context.
 """
 from __future__ import annotations
 
+import io
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
@@ -16,244 +18,400 @@ from loopai.logger import get_logger
 
 logger = get_logger()
 
-MAX_SAMPLES = 3
-MAX_PREVIEW_CHARS = 6000
+DATA_EXTENSIONS = {
+    ".json",
+    ".jsonl",
+    ".csv",
+    ".tsv",
+    ".parquet",
+    ".arrow",
+    ".txt",
+}
+
+# Encodings to try for line-based / pandas text files (order: BOM variants first, then common locales).
+_TEXT_ENCODINGS: tuple[str, ...] = (
+    "utf-8-sig",
+    "utf-8",
+    "gb18030",
+    "gbk",
+    "big5",
+    "utf-16",
+    "utf-16-le",
+    "utf-16-be",
+    "latin-1",
+    "cp1252",
+    "iso-8859-1",
+)
+
+_MAX_FILE_BYTES = int(os.getenv("POSTPROCESS_DATA_LOAD_MAX_FILE_BYTES", str(80 * 1024 * 1024)))
+_MAX_CELL_CHARS = int(os.getenv("POSTPROCESS_DATA_LOAD_MAX_CELL_CHARS", "2500"))
+_MAX_JSON_CHARS = int(os.getenv("POSTPROCESS_DATA_LOAD_MAX_JSON_CHARS", str(100_000)))
+_MAX_DICT_KEYS = int(os.getenv("POSTPROCESS_DATA_LOAD_MAX_DICT_KEYS", "48"))
+_MAX_LIST_ITEMS = int(os.getenv("POSTPROCESS_DATA_LOAD_MAX_LIST_ITEMS", "48"))
+_BINARY_SNIFF_BYTES = int(os.getenv("POSTPROCESS_DATA_LOAD_BINARY_SNIFF_BYTES", str(16_384)))
 
 
 class DataLoadInput(BaseModel):
-    file_path: str = Field(
-        ..., description="Absolute path to the data file to sample"
-    )
-    num_samples: int = Field(
-        3, ge=1, le=5, description="Number of sample records to return (1-5)"
-    )
+    file_path: str = Field(..., description="Path to the data file, relative to dataset root or absolute under dataset root")
+    max_rows: int = Field(8, ge=1, le=50, description="Maximum sample rows to return")
 
 
-def _try_load_with_datasets(file_path: str) -> Optional[Tuple[List[str], List[Dict], int]]:
-    """Try loading with HuggingFace datasets library."""
+def _dict_row(row: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(row, dict):
+        return row
     try:
-        from datasets import load_dataset, Dataset, DatasetDict
+        return dict(row)
+    except Exception:
+        return None
 
-        ext = os.path.splitext(file_path)[1].lower()
+
+def _is_likely_binary_file(path: str) -> bool:
+    """Heuristic: NUL in head, or extreme control-byte ratio (ASCII-ish)."""
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(_BINARY_SNIFF_BYTES)
+    except OSError:
+        return True
+    if not chunk:
+        return False
+    if b"\x00" in chunk:
+        return True
+    # UTF-16 BOM — text
+    if chunk.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return False
+    # If almost all bytes are ASCII graphic / whitespace, treat as text
+    allowed = 0
+    for b in chunk:
+        if b in (9, 10, 13) or 32 <= b <= 126:
+            allowed += 1
+    if len(chunk) >= 512 and allowed / len(chunk) < 0.25:
+        return True
+    return False
+
+
+def _shrink_value(val: Any, max_str: int, depth: int = 0) -> Any:
+    if depth > 14:
+        return "<nested_too_deep>"
+    if val is None or isinstance(val, (bool, int, float)):
+        return val
+    if isinstance(val, bytes):
+        return f"<bytes len={len(val)}>"
+    if isinstance(val, str):
+        if len(val) <= max_str:
+            return val
+        return val[:max_str] + f"...(truncated,len={len(val)})"
+    if isinstance(val, dict):
+        items = list(val.items())[:_MAX_DICT_KEYS]
+        out = {str(k): _shrink_value(v, max_str, depth + 1) for k, v in items}
+        if len(val) > _MAX_DICT_KEYS:
+            out["__truncated_keys__"] = len(val) - _MAX_DICT_KEYS
+        return out
+    if isinstance(val, (list, tuple)):
+        n = len(val)
+        head = val[:_MAX_LIST_ITEMS]
+        out = [_shrink_value(x, max_str, depth + 1) for x in head]
+        if n > _MAX_LIST_ITEMS:
+            out.append(f"...({n - _MAX_LIST_ITEMS} more items)")
+        return out
+    s = str(val)
+    return s[:max_str] + (f"...(truncated,len={len(s)})" if len(s) > max_str else "")
+
+
+def _sanitize_records(records: List[Dict[str, Any]], max_cell: int) -> List[Dict[str, Any]]:
+    return [_shrink_value(r, max_cell, 0) for r in records]  # type: ignore[list-item]
+
+
+def _json_dumps_bounded(payload: Dict[str, Any]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, default=str)
+    if len(raw) <= _MAX_JSON_CHARS:
+        return raw
+    # Shrink samples further
+    samples = payload.get("sample_records") or []
+    note = payload.get("note") or ""
+    while len(samples) > 1 and len(raw) > _MAX_JSON_CHARS:
+        samples = samples[:-1]
+        payload = {
+            **payload,
+            "sample_records": _sanitize_records(samples, max(500, _MAX_CELL_CHARS // 4)),
+            "note": (note + " output_truncated_row_count;").strip(),
+        }
+        raw = json.dumps(payload, ensure_ascii=False, default=str)
+    if len(raw) > _MAX_JSON_CHARS:
+        payload["sample_records"] = []
+        payload["note"] = (note + " output_truncated_empty_samples;").strip()
+        payload["error"] = "serialized_payload_still_too_large_after_truncation"
+        raw = json.dumps(payload, ensure_ascii=False, default=str)[: _MAX_JSON_CHARS + 1]
+        if len(raw) > _MAX_JSON_CHARS:
+            raw = raw[:_MAX_JSON_CHARS] + "..."
+    return raw
+
+
+def _iter_jsonl_decoded(path: str, max_rows: int) -> Iterator[Dict[str, Any]]:
+    raw_lines: List[bytes] = []
+    with open(path, "rb") as f:
+        while len(raw_lines) < max_rows:
+            line = f.readline()
+            if not line:
+                break
+            if line.strip():
+                raw_lines.append(line)
+
+    last_err: Optional[Exception] = None
+    for enc in _TEXT_ENCODINGS:
+        try:
+            for raw in raw_lines:
+                s = raw.decode(enc).strip()
+                if not s:
+                    continue
+                yield json.loads(s)
+            return
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            last_err = e
+            continue
+    if last_err:
+        raise ValueError(f"jsonl decode failed ({last_err})") from last_err
+
+
+def _iter_csv_pandas(path: str, sep: str, max_rows: int) -> Iterator[Dict[str, Any]]:
+    import pandas as pd
+
+    cap = max_rows + 20
+    for enc in _TEXT_ENCODINGS:
+        try:
+            n = 0
+            _kw: Dict[str, Any] = dict(
+                sep=sep,
+                encoding=enc,
+                chunksize=50,
+                dtype=object,
+                engine="python",
+            )
+            try:
+                reader = pd.read_csv(path, on_bad_lines="skip", **_kw)
+            except TypeError:
+                reader = pd.read_csv(path, error_bad_lines=False, warn_bad_lines=False, **_kw)
+            for chunk in reader:
+                for _, row in chunk.iterrows():
+                    d = _dict_row(row.to_dict())
+                    if d is None:
+                        continue
+                    yield d
+                    n += 1
+                    if n >= cap:
+                        return
+            return
+        except Exception as e:
+            logger.debug(f"[data_load] csv try enc={enc} failed: {e}")
+            continue
+    raise ValueError("csv/tsv: could not read with supported encodings")
+
+
+def _iter_json_array_decoded(path: str, max_rows: int) -> Iterator[Dict[str, Any]]:
+    import pandas as pd
+
+    with open(path, "rb") as bf:
+        raw = bf.read(_MAX_FILE_BYTES + 1)
+    if len(raw) > _MAX_FILE_BYTES:
+        raise ValueError("json file larger than POSTPROCESS_DATA_LOAD_MAX_FILE_BYTES")
+
+    for enc in _TEXT_ENCODINGS:
+        try:
+            head = raw.decode(enc)
+            df = pd.read_json(io.StringIO(head))
+            for _, row in df.head(max_rows).iterrows():
+                d = _dict_row(row.to_dict())
+                if d is not None:
+                    yield d
+            return
+        except Exception as e:
+            logger.debug(f"[data_load] json array try enc={enc} failed: {e}")
+            continue
+    raise ValueError("json: could not parse with supported encodings")
+
+
+def _iter_file_rows(
+    file_path: str,
+    max_rows: int,
+    hf_datasets_cache_dir: Optional[str] = None,
+) -> Iterator[Dict[str, Any]]:
+    ext = os.path.splitext(file_path)[1].lower()
+
+    # Structured binary: libraries handle; still cap rows when materializing.
+    if ext in (".parquet", ".arrow"):
+        try:
+            import pandas as pd
+
+            df = pd.read_parquet(file_path)
+            for _, row in df.head(max_rows).iterrows():
+                d = _dict_row(row.to_dict())
+                if d is not None:
+                    yield d
+            return
+        except Exception as e:
+            logger.debug(f"[data_load] parquet failed: {e}")
+
+    # Line-oriented JSONL: encoding-safe, row cap without full-file pandas.
+    if ext == ".jsonl":
+        yield from _iter_jsonl_decoded(file_path, max_rows)
+        return
+
+    if ext == ".json":
+        yield from _iter_json_array_decoded(file_path, max_rows)
+        return
+
+    if ext == ".csv":
+        yield from _iter_csv_pandas(file_path, ",", max_rows)
+        return
+
+    if ext == ".tsv":
+        yield from _iter_csv_pandas(file_path, "\t", max_rows)
+        return
+
+    if ext == ".txt":
+        for enc in _TEXT_ENCODINGS:
+            try:
+                with open(file_path, "r", encoding=enc) as f:
+                    text = f.read(min(_MAX_FILE_BYTES, 2_000_000))
+                line = text.splitlines()[0] if text else ""
+                yield {"text": line[: _MAX_CELL_CHARS * 2], "_encoding": enc, "_preview_chars": len(text)}
+                return
+            except UnicodeDecodeError:
+                continue
+        raise ValueError("txt: unsupported encoding")
+
+    # Fallback: datasets + pandas (e.g. odd extensions symlinked)
+    try:
+        from datasets import DatasetDict, load_dataset
+
         builder_map = {
-            ".json": "json", ".jsonl": "json",
-            ".csv": "csv", ".tsv": "csv",
-            ".parquet": "parquet", ".arrow": "arrow",
+            ".json": "json",
+            ".jsonl": "json",
+            ".csv": "csv",
+            ".tsv": "csv",
+            ".parquet": "parquet",
+            ".arrow": "arrow",
             ".txt": "text",
         }
         builder = builder_map.get(ext)
-        if not builder:
-            return None
-
-        kwargs = {"data_files": file_path}
-        if ext == ".tsv":
-            kwargs["delimiter"] = "\t"
-
-        ds = load_dataset(builder, **kwargs, trust_remote_code=True)
-
-        if isinstance(ds, DatasetDict):
-            split_name = list(ds.keys())[0]
-            ds = ds[split_name]
-
-        columns = ds.column_names
-        total = len(ds)
-        samples = []
-        import random
-        indices = random.sample(range(total), min(MAX_SAMPLES, total))
-        for idx in indices:
-            samples.append(dict(ds[idx]))
-        return columns, samples, total
+        if builder:
+            kwargs: Dict[str, Any] = {"data_files": file_path}
+            if ext == ".tsv":
+                kwargs["delimiter"] = "\t"
+            load_kw: Dict[str, Any] = {"trust_remote_code": True}
+            if hf_datasets_cache_dir:
+                load_kw["cache_dir"] = hf_datasets_cache_dir
+            ds = load_dataset(builder, **kwargs, **load_kw)
+            n = 0
+            if isinstance(ds, DatasetDict):
+                for split_name in ds:
+                    for row in ds[split_name]:
+                        d = _dict_row(row)
+                        if d is not None:
+                            yield d
+                            n += 1
+                            if n >= max_rows:
+                                return
+                return
+            for row in ds:
+                d = _dict_row(row)
+                if d is not None:
+                    yield d
+                    n += 1
+                    if n >= max_rows:
+                        return
+            return
     except Exception as e:
-        logger.debug(f"[data_load] datasets lib failed for {file_path}: {e}")
-        return None
+        logger.debug(f"[data_load] datasets load failed for {file_path}: {e}")
 
 
-def _try_load_with_pandas(file_path: str) -> Optional[Tuple[List[str], List[Dict], int]]:
-    """Fallback: load with pandas."""
-    try:
-        import pandas as pd
-
-        ext = os.path.splitext(file_path)[1].lower()
-        if ext in (".json", ".jsonl"):
-            df = pd.read_json(file_path, lines=(ext == ".jsonl"), nrows=100)
-        elif ext == ".csv":
-            df = pd.read_csv(file_path, nrows=100)
-        elif ext == ".tsv":
-            df = pd.read_csv(file_path, sep="\t", nrows=100)
-        elif ext == ".parquet":
-            df = pd.read_parquet(file_path)
-            if len(df) > 100:
-                df = df.head(100)
-        elif ext == ".arrow":
-            import pyarrow as pa
-            table = pa.ipc.open_file(file_path).read_all()
-            df = table.to_pandas()
-            if len(df) > 100:
-                df = df.head(100)
-        else:
-            return None
-
-        columns = list(df.columns)
-        total = len(df)
-        samples = df.sample(min(MAX_SAMPLES, total)).to_dict(orient="records")
-        return columns, samples, total
-    except Exception as e:
-        logger.debug(f"[data_load] pandas fallback failed for {file_path}: {e}")
-        return None
-
-
-def _try_load_raw_jsonl(file_path: str) -> Optional[Tuple[List[str], List[Dict], int]]:
-    """Last resort: read JSONL line-by-line."""
-    try:
-        ext = os.path.splitext(file_path)[1].lower()
-        if ext not in (".json", ".jsonl"):
-            return None
-
-        records: List[Dict] = []
-        count = 0
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                count += 1
-                if len(records) < MAX_SAMPLES:
-                    try:
-                        records.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-                if count > 100_000:
-                    break
-
-        if not records:
-            return None
-        columns = list(records[0].keys())
-        return columns, records, count
-    except Exception as e:
-        logger.debug(f"[data_load] raw jsonl fallback failed: {e}")
-        return None
-
-
-def _truncate_sample(sample: Dict[str, Any], max_val_len: int = 500) -> Dict[str, Any]:
-    """Truncate overly long field values so the preview fits in context."""
-    out = {}
-    for k, v in sample.items():
-        sv = str(v)
-        if len(sv) > max_val_len:
-            out[k] = sv[:max_val_len] + f"...(truncated, {len(sv)} chars total)"
-        else:
-            out[k] = v
-    return out
-
-
-def _is_list_of_dicts(value: Any) -> bool:
-    return isinstance(value, list) and bool(value) and all(isinstance(v, dict) for v in value)
-
-
-def _collect_field_paths(
-    obj: Any,
-    prefix: str = "",
-    *,
-    max_depth: int = 2,
-    _depth: int = 0,
-    _out: Optional[List[str]] = None,
-) -> List[str]:
-    out = _out if _out is not None else []
-    if _depth > max_depth:
-        return out
-
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            path = f"{prefix}.{key}" if prefix else key
-            out.append(path)
-            _collect_field_paths(value, path, max_depth=max_depth, _depth=_depth + 1, _out=out)
-        return out
-
-    if isinstance(obj, list) and obj:
-        first = obj[0]
-        if isinstance(first, dict):
-            _collect_field_paths(first, f"{prefix}.0" if prefix else "0", max_depth=max_depth, _depth=_depth + 1, _out=out)
-    return out
-
-
-def _analyze_preview_structure(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
-    if not samples:
-        return {
-            "top_level_type": "empty",
-            "candidate_record_paths": [],
-            "sample_path_fields": [],
-        }
-
-    candidate_paths = set()
-    for sample in samples:
-        if not isinstance(sample, dict):
-            continue
-        for k, v in sample.items():
-            if _is_list_of_dicts(v):
-                candidate_paths.add(k)
-
-    path_fields: List[str] = []
-    for sample in samples[:2]:
-        if isinstance(sample, dict):
-            path_fields.extend(_collect_field_paths(sample, max_depth=2))
-
-    dedup_paths = sorted(set(path_fields))[:40]
-    return {
-        "top_level_type": "list_of_records",
-        "candidate_record_paths": sorted(candidate_paths),
-        "sample_path_fields": dedup_paths,
-    }
-
-
-def create_data_load_tool(dataset_dir: str):
-    """Factory that returns a @tool-decorated data_load scoped to *dataset_dir*."""
+def create_data_load_tool(dataset_dir: str, hf_datasets_cache_dir: Optional[str] = None):
+    abs_dataset = os.path.abspath(dataset_dir)
 
     @tool(args_schema=DataLoadInput)
-    def data_load(file_path: str, num_samples: int = 3) -> str:
-        """Load a data file and return sample records for inspection.
-        Supports JSON, JSONL, CSV, TSV, Parquet, Arrow formats.
-        Returns column names, total record count, and 1-3 sample records
-        so you can understand the actual data structure."""
+    def data_load(file_path: str, max_rows: int = 8) -> str:
+        """Load a small sample of rows from a data file (json/jsonl/csv/tsv/parquet/txt).
+        Uses multiple text encodings, rejects likely-binary files, truncates large fields.
+        Paths must stay inside the dataset directory."""
 
-        abs_path = os.path.abspath(file_path)
-        abs_dataset = os.path.abspath(dataset_dir)
+        raw = file_path
+        if not os.path.isabs(raw):
+            abs_path = os.path.abspath(os.path.join(abs_dataset, raw))
+        else:
+            abs_path = os.path.abspath(raw)
 
         if not abs_path.startswith(abs_dataset):
-            return f"Error: path '{file_path}' is outside the dataset directory."
+            return json.dumps({"error": "path outside dataset directory"}, ensure_ascii=False)
 
         if not os.path.isfile(abs_path):
-            return f"Error: '{file_path}' does not exist or is not a file."
+            return json.dumps({"error": f"not a file: {raw}"}, ensure_ascii=False)
 
-        strategies = [
-            ("datasets", _try_load_with_datasets),
-            ("pandas", _try_load_with_pandas),
-            ("raw_jsonl", _try_load_raw_jsonl),
-        ]
+        try:
+            size = os.path.getsize(abs_path)
+        except OSError as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
-        for name, loader in strategies:
-            result = loader(abs_path)
-            if result is not None:
-                columns, samples, total = result
-                samples = [_truncate_sample(s) for s in samples[:num_samples]]
-                structure_info = _analyze_preview_structure(samples)
-                preview = {
-                    "file": os.path.basename(abs_path),
-                    "loader": name,
-                    "columns": columns,
-                    "total_records": total,
-                    "num_samples": len(samples),
-                    "samples": samples,
-                    "structure": structure_info,
-                }
-                text = json.dumps(preview, indent=2, ensure_ascii=False, default=str)
-                if len(text) > MAX_PREVIEW_CHARS:
-                    text = text[:MAX_PREVIEW_CHARS] + "\n...(truncated)"
-                logger.info(
-                    f"[data_load] Loaded {abs_path} via '{name}': "
-                    f"{len(columns)} cols, {total} records"
-                )
-                return text
+        if size > _MAX_FILE_BYTES:
+            return json.dumps(
+                {
+                    "error": "file_too_large",
+                    "hint": f"size={size} bytes exceeds POSTPROCESS_DATA_LOAD_MAX_FILE_BYTES={_MAX_FILE_BYTES}",
+                    "file_path": raw,
+                },
+                ensure_ascii=False,
+            )
 
-        return f"Error: unable to load '{os.path.basename(file_path)}' with any strategy."
+        _, ext = os.path.splitext(abs_path.lower())
+        if ext not in DATA_EXTENSIONS:
+            return json.dumps({"error": f"unsupported data extension {ext}"}, ensure_ascii=False)
+
+        # Parquet/arrow are binary by design; skip NUL heuristic for them.
+        if ext not in (".parquet", ".arrow") and _is_likely_binary_file(abs_path):
+            return json.dumps(
+                {
+                    "error": "likely_binary_file",
+                    "hint": "File head looks binary (e.g. NUL bytes). Not loaded as text to avoid context blow-up.",
+                    "file_path": raw,
+                    "size_bytes": size,
+                },
+                ensure_ascii=False,
+            )
+
+        samples: List[Dict[str, Any]] = []
+        columns: List[str] = []
+        total_seen = 0
+        err: Optional[str] = None
+        try:
+            for row in _iter_file_rows(abs_path, max_rows, hf_datasets_cache_dir):
+                total_seen += 1
+                if not columns and row:
+                    columns = list(row.keys())
+                if len(samples) < max_rows:
+                    samples.append(row)
+        except Exception as e:
+            err = str(e)
+            logger.info(f"[data_load] iterate failed {abs_path}: {e}")
+
+        if not samples and err:
+            return json.dumps(
+                {
+                    "error": err,
+                    "file_path": raw,
+                    "hint": "Try another file, or check encoding / whether file is binary.",
+                },
+                ensure_ascii=False,
+            )
+
+        sanitized = _sanitize_records(samples, _MAX_CELL_CHARS)
+        payload: Dict[str, Any] = {
+            "file_path": raw,
+            "columns": columns,
+            "sample_records": sanitized,
+            "rows_sampled": len(sanitized),
+            "rows_seen_hint": total_seen,
+            "max_cell_chars": _MAX_CELL_CHARS,
+        }
+        if err and samples:
+            payload["partial_error"] = err
+        return _json_dumps_bounded(payload)
 
     return data_load

@@ -8,6 +8,7 @@
 import i18n from '@/js/i18n.js'
 import { mapActions } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
+import { useLoopAI } from '@/stores/loopAI'
 
 export default {
     name: 'App',
@@ -28,10 +29,29 @@ export default {
     methods: {
         ...mapActions(useAppConfig, {
             reviseI18N: 'reviseI18N',
+            reviseConfig: 'reviseConfig',
             setScreenWidth: 'setScreenWidth'
         }),
-        i18nInit() {
+        ...mapActions(useLoopAI, ['getConfigs']),
+        async i18nInit() {
             this.reviseI18N(i18n)
+            await this.refreshLanguage()
+        },
+        async refreshLanguage() {
+            await this.getConfigs()
+                .then((res) => {
+                    let language = 'en'
+                    try {
+                        language = res.data.states.default.language.value
+                    } catch (error) {}
+                    if (!language) language = 'en'
+                    this.reviseConfig({
+                        language: language
+                    })
+                })
+                .catch((error) => {
+                    console.log(error)
+                })
         },
         timerInit() {
             this.clearTimer()

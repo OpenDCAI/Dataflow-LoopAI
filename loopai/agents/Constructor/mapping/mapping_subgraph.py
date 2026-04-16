@@ -197,26 +197,24 @@ class MappingSubgraph:
     
     def _wrap_node(self, node_func: Callable) -> Callable:
         """
-        包装节点函数，注入 store，并在执行前后发送进度事件
+        包装节点函数，注入 store；节点结束后发送一条进度事件（避免每节点两次 custom）。
         """
         node_name = node_func.__name__
         progress_range = MAPPING_NODE_PROGRESS.get(node_name, (0.0, 1.0))
 
         def wrapped(state: LoopAIState) -> LoopAIState:
             current = state.get("current", "ConstructorAgent.mapping_subgraph")
-            progress_start, progress_end = progress_range
-            _emit_mapping_progress(
-                current,
-                f"Constructor: 格式映射 - {node_name} 开始",
-                progress=progress_start,
-                data={"node": node_name, "phase": "mapping"},
-            )
+            _, progress_end = progress_range
             result = node_func(state, store=self.store)
             _emit_mapping_progress(
                 current,
                 f"Constructor: 格式映射 - {node_name} 完成",
                 progress=progress_end,
-                data={"node": node_name, "phase": "mapping"},
+                data={
+                    "node": node_name,
+                    "phase": "mapping",
+                    "status": "done",
+                },
             )
             return result
         return wrapped
@@ -236,7 +234,6 @@ class MappingSubgraph:
         """
         logger.info("=== Mapping Subgraph: Entry Check Node ===")
         current = state.get("current", "ConstructorAgent.mapping_subgraph")
-        _emit_mapping_progress(current, "Constructor: 格式映射 - 入口检查", progress=0.02, data={"phase": "mapping"})
 
         # 确保 constructor 字典存在
         if "constructor" not in state:
@@ -282,7 +279,21 @@ class MappingSubgraph:
             logger.info("No default format specified, proceeding with user interaction")
             state["constructor"]["mapping_auto_mode"] = False
 
-        _emit_mapping_progress(current, "Constructor: 格式映射 - 入口检查完成", progress=0.06, data={"phase": "mapping"})
+        c = state.get("constructor", {})
+        confirmed = c.get("confirmed_format") or {}
+        _emit_mapping_progress(
+            current,
+            "Constructor: 格式映射 - 入口检查完成",
+            progress=0.06,
+            data={
+                "phase": "mapping",
+                "node": "entry_check_node",
+                "status": "done",
+                "default_mapping_format": c.get("default_mapping_format", ""),
+                "mapping_auto_mode": bool(c.get("mapping_auto_mode")),
+                "confirmed_format_id": confirmed.get("format_id", "") if isinstance(confirmed, dict) else "",
+            },
+        )
         return state
     
     @staticmethod
@@ -461,7 +472,8 @@ def mapping_node(state: LoopAIState) -> LoopAIState:
     # 检查中间数据是否存在（使用嵌套结构）
     intermediate_path = constructor_state.get("intermediate_data_path", "")
     if not intermediate_path or not os.path.exists(intermediate_path):
-        logger.warning("No intermediate data found, skipping mapping")
+        logger.error(f"No intermediate data found for mapping: {intermediate_path}")
+        state["exception"] = f"Intermediate data path does not exist: {intermediate_path}"
         return state
     
     # 如果直接调用，提示用户使用子图

@@ -31,7 +31,7 @@
                     v-model="value"
                     :options="options"
                     :item-border-radius="30"
-                    background="rgba(250, 250, 250, 0.8)"
+                    background="rgba(255, 255, 255, 0.6)"
                     class="command-bar"
                 >
                     <template v-slot:optionItem="x">
@@ -67,20 +67,18 @@
                                 foreground="rgba(255, 255, 255, 1)"
                                 border-color="rgba(255, 255, 255, 0.3)"
                                 border-radius="30"
-                                :disabled="(!currentTask || !currentTask.task_id) && !isRunning"
+                                :disabled="
+                                    ((!currentTask || !currentTask.task_id) && !isRunning) ||
+                                    !lock.runBtn
+                                "
                                 :reveal-background-color="[
                                     'rgba(255, 255, 255, 0.5)',
                                     'rgba(103, 105, 251, 0.6)'
                                 ]"
                                 @click="handleExecute"
                             >
-                                <i
-                                    class="ms-Icon"
-                                    :class="[`ms-Icon--${isRunning ? 'CheckboxFill' : 'Play'}`]"
-                                    style="margin-right: 5px"
-                                ></i>
                                 <fv-progress-ring
-                                    v-show="!lock.loading"
+                                    v-if="!lock.loading || !lock.runBtn"
                                     loading="true"
                                     :r="10"
                                     :border-width="2"
@@ -88,7 +86,13 @@
                                     :color="'white'"
                                     style="margin-right: 5px"
                                 ></fv-progress-ring>
-                                <p>{{ isRunning ? this.local('Stop') : this.local('Run') }}</p>
+                                <i
+                                    v-else
+                                    class="ms-Icon"
+                                    :class="[`ms-Icon--${isRunning ? 'CheckboxFill' : 'Play'}`]"
+                                    style="margin-right: 5px"
+                                ></i>
+                                <p>{{ isRunning ? local('Stop') : local('Run') }}</p>
                             </fv-button>
                             <i
                                 class="ms-Icon ms-Icon--FullCircleMask status-coin"
@@ -190,7 +194,7 @@ export default {
                         graphClsPrefix: 'ConfigerAgent',
                         include_nodes: ['config_node'],
                         icon: 'Settings',
-                        nodeInfo: 'Trainer Agent for Training',
+                        nodeInfo: 'Configer Agent for configuring the state of sub agents.',
                         iconColor: 'rgba(45, 45, 45, 1)',
                         background:
                             'linear-gradient(130deg, rgba(201, 122, 162, 0.8), rgba(252, 252, 252, 0.8))',
@@ -226,7 +230,7 @@ export default {
                         graphClsPrefix: 'ObtainerAgent',
                         include_nodes: ['obtain_node'],
                         icon: 'GiftboxOpen',
-                        nodeInfo: 'Trainer Agent for Training',
+                        nodeInfo: 'Obtainer Agent for obtaining the data from external datasets and run the data synthesis.',
                         iconColor: 'rgba(90, 45, 133, 1)',
                         reverseHandle: true,
                         borderColor: 'rgba(90, 45, 133, 0.8)'
@@ -243,7 +247,7 @@ export default {
                         graphClsPrefix: 'WebCrawlerAgent',
                         include_nodes: ['webcrawler_dataset_node'],
                         icon: 'GiftboxOpen',
-                        nodeInfo: 'Webcrawler',
+                        nodeInfo: 'Webcrawler Agent for crawling the web and obtaining the data.',
                         iconColor: 'rgba(207, 85, 128, 1)',
                         reverseHandle: true,
                         borderColor: 'rgba(207, 85, 128, 0.8)'
@@ -278,7 +282,7 @@ export default {
                         graphClsPrefix: 'JudgerAgent',
                         include_nodes: ['judge_node'],
                         icon: 'Bug',
-                        nodeInfo: 'Trainer Agent for Training',
+                        nodeInfo: 'Judger Agent for evaluate the model performance with vllm.',
                         iconColor: 'rgba(89, 169, 133, 1)',
                         background:
                             'linear-gradient(130deg, rgba(116, 220, 175, 0.8), rgba(252, 252, 252, 0.8))',
@@ -296,7 +300,7 @@ export default {
                         graphClsPrefix: 'AnalyzerAgent',
                         include_nodes: ['analyze_node'],
                         icon: 'AreaChart',
-                        nodeInfo: 'Trainer Agent for Training',
+                        nodeInfo: 'Analyzer Agent for analyzing the model performance from the results of Judger.',
                         iconColor: 'rgba(98, 84, 191, 1)',
                         background:
                             'linear-gradient(130deg, rgba(150, 167, 222, 0.8), rgba(252, 252, 252, 0.8))',
@@ -415,13 +419,15 @@ export default {
                 fullScreen: false
             },
             lock: {
-                loading: true
+                loading: true,
+                runBtn: true
             }
         }
     },
     watch: {
         'taskStatus.running'(val) {
             if (val) this.getStatus()
+            this.lock.runBtn = true
         },
         'currentTask.task_id'(val, oldVal) {
             if (oldVal !== null && val !== oldVal) this.stop()
@@ -463,20 +469,20 @@ export default {
                 let running = this.taskStatus.running
                 if (running && !this.taskStatus.state && !this.currentTask) {
                     this.stop()
-                    this.$barWarning('Detect running task without task id, stop it.', {
+                    this.$barWarning(this.local('Detect running task without task id, stop it.'), {
                         status: 'default'
                     })
                     return
                 }
                 let task_id = this.taskStatus.state.task_id
                 if (running && task_id && !this.currentTask) {
-                    this.$barWarning('Detect running task, obtaining task info.', {
+                    this.$barWarning(this.local('Detect running task, obtaining task info.'), {
                         status: 'default'
                     })
                     this.$api.task.getTask(task_id).then((res) => {
                         if (res.code === 200) {
                             this.currentTask = res.data
-                            this.$barWarning('Running task info obtained', {
+                            this.$barWarning(this.local('Running task info obtained'), {
                                 status: 'correct'
                             })
                         } else {
@@ -491,13 +497,14 @@ export default {
         },
         handleSaveClick() {},
         handleExecute() {
+            this.lock.runBtn = false
             if (this.isRunning) this.stop()
             else this.execute()
         },
         stop() {
             this.$api.starter.stopAgent().then((res) => {
                 if (res.code === 200) {
-                    this.$barWarning('Stop signal sent', {
+                    this.$barWarning(this.local('Stop signal sent'), {
                         status: 'correct'
                     })
                 }

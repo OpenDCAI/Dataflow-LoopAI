@@ -11,13 +11,16 @@ import re
 from typing import Dict, Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.types import interrupt
 from langgraph.store.base import BaseStore
 
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 from .__mapping_prompts import get_prompt
+from loopai.agents.Constructor.utils.openai_compat_chat import (
+    OpenAIChatParams,
+    chat_completion_sync,
+)
 
 logger = get_logger()
 
@@ -101,13 +104,22 @@ Please describe the fields and data structure you need:"""
         return state
     
     try:
-        llm = ChatOpenAI(
+        model_name = constructor.get("model_path")
+        base_url = constructor.get("base_url")
+        api_key = constructor.get("api_key")
+        temperature = constructor.get("temperature", 0.7)
+        top_p = constructor.get("top_p", 0.95)
+        max_completion_tokens = constructor.get("max_completion_tokens", 4096)
+
+        params = OpenAIChatParams(
+            model=model_name,
             base_url=base_url,
             api_key=api_key,
-            model=model_name,
-            temperature=temperature
+            temperature=temperature,
+            top_p=top_p,
+            max_completion_tokens=max_completion_tokens,
         )
-        
+
         if previous_format and is_modification:
             previous_schema = json.dumps(previous_format.get("schema", {}), ensure_ascii=False, indent=2)
             previous_example = json.dumps(previous_format.get("example", {}), ensure_ascii=False, indent=2)
@@ -142,8 +154,8 @@ Generate corresponding schema and example data. Only output JSON object."""
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
         ]
-        
-        response = llm.invoke(messages)
+
+        response = chat_completion_sync(params, messages, timeout_seconds=300.0)
         response_text = response.content.strip()
         
         logger.debug(f"LLM response: {response_text}")

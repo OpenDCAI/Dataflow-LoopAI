@@ -114,6 +114,35 @@ class DatasetSamplePreview(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Relevance verdict (postprocess v2 — no field mapping)
+# ---------------------------------------------------------------------------
+
+class DatasetRelevanceVerdict(BaseModel):
+    """Relevance to the task plus benchmark-leak guard (exclude eval/benchmark from train export)."""
+
+    related: bool = Field(
+        ...,
+        description=(
+            "True if the dataset is relevant to user_query and benchmark reference "
+            "(semantically on-topic, same domain/task, or partially overlapping)."
+        ),
+    )
+    is_benchmark_data: bool = Field(
+        default=False,
+        description=(
+            "True if this dataset is (or is substantially) the same as the evaluation benchmark: "
+            "e.g. identical/near-identical samples vs provided benchmark references, README or path "
+            "identifies HumanEval/MBPP/official test split, or it is clearly the held-out eval set. "
+            "Such data must not be exported as training data to avoid leakage."
+        ),
+    )
+    reason: str = Field(
+        "",
+        description="Short justification; mention both related and (if applicable) benchmark-leak findings.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Mapping plan (final structured output of the dataset agent)
 # ---------------------------------------------------------------------------
 
@@ -239,6 +268,7 @@ class DatasetAgentResult(BaseModel):
     source_type: str
     dataset_dir: str
     success: bool = False
+    relevance_verdict: Optional[DatasetRelevanceVerdict] = None
     mapping_plan: Optional[DatasetMappingPlan] = None
     knowledge_summary: Optional[DatasetKnowledgeSummary] = None
     records_processed: int = 0

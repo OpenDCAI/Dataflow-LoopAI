@@ -14,14 +14,16 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         states: {}
     })
     const getConfigs = async () => {
-        await proxy.$api.config.getConfig().then((res) => {
+        let resp = await proxy.$api.config.getConfig().then((res) => {
             if (res.data) {
                 configId.value = res.data.id
                 let { system, states } = res.data
                 config.value.system = system
                 config.value.states = states
             }
+            return res
         })
+        return resp
     }
 
     const resources = ref([])
