@@ -82,6 +82,9 @@ LoopAI 将 LLM 的优化流程重构为一个**基于图的执行框架（Graph 
 ### 4.1 安装
 
 ```bash
+conda create -n loopai python=3.12
+conda activate loopai
+
 pip install -e .
 ```
 

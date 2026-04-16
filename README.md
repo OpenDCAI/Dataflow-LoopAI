@@ -82,6 +82,9 @@ LoopAI reformulates the LLM optimization pipeline into a **graph-based execution
 ### 4.1 Installation
 
 ```bash
+conda create -n loopai python=3.12
+conda activate loopai
+
 pip install -e .
 ```
 
