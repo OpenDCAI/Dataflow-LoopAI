@@ -4011,6 +4011,7 @@ __metadata:
     onecolor: "npm:^4.1.0"
     pinia: "npm:^2.1.7"
     prettier: "npm:^3.0.3"
+    sass: "npm:^1.89.2"
     vite: "npm:^5.1.6"
     vue: "npm:^3.4.21"
     vue-chartjs: "npm:^5.3.3"
