@@ -971,9 +971,9 @@ class JudgerState(BaseModel):
     eval_task_type: str = Field(
         default="code",
         title="评估任务类型",
-        description="评估任务类型",
+        description="评估任务类型, 支持代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text)",
         json_schema_extra={"ui_type": "list", "ui_group": "评估模型",
-                           "allowed_values": ["code", "text2sql"]}
+                           "allowed_values": ["code", "text2sql", "general_text"]}
     )
     eval_base_url: str = Field(
         default=None,
@@ -1154,7 +1154,7 @@ class AnalyzerState(BaseModel):
     analyze_task_type: str = Field(
         default="code",
         title="分析任务类型",
-        description="分析任务类型",
+        description="分析任务类型, 支持代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text)",
         json_schema_extra={
             "ui_type": "list",
             "ui_group": "分析模型",
