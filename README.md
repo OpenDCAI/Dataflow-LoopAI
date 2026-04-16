@@ -16,7 +16,7 @@
 
 <br>
 
-English | [简体中文](./README_zh.md)
+English | [简体中文](./docs/README_zh.md)
 
 LoopAI is an intelligent system designed for **self-optimization of LLMs in domain-specific scenarios**. It automatically detects and evaluates generation deficiencies, and continuously improves model performance through **dialog-driven data acquisition and closed-loop optimization**.
 
@@ -26,7 +26,7 @@ User  ⇄  Starter (Supervisor)  ⇄  Sub-Agent
                   ├── Common Question → Direct Response
                   └── Complex Task → Graph Execution
                                  (Evaluation → Data Collection → Training)
-````
+```
 
 <p align="center">
   <img src="docs/assets/workflow.svg" alt="LoopAI Workflow" width="90%"/>
@@ -91,16 +91,30 @@ pip install -e .
 
 LoopAI supports two modes:
 
-#### ✅ Option A: API Mode (Recommended)
+#### ✅ Option A: WebUI API Mode (Recommended)
+
+For production or normal WebUI use, install the published frontend dist first. The backend serves `api/dist` directly, so you do not need to build or run the frontend dev server.
+
+```bash
+python scripts/download_ui_release.py
+```
+
+If the release asset cannot be downloaded automatically, download the frontend dist archive from the GitHub Release page manually, then extract it into `api/dist`.
 
 ```bash
 python api/start.py
 ```
 
-API will be available at:
+The WebUI and API will be available at:
 
 ```
-http://0.0.0.0:8855
+http://localhost:8855
+```
+
+API docs are available at:
+
+```
+http://localhost:8855/docs
 ```
 
 ---
@@ -109,74 +123,11 @@ http://0.0.0.0:8855
   <img src="./docs/assets/UI.png" alt="LoopAI UI" width="90%"/>
 </p>
 
-### 🖥️ Frontend Setup
-
-#### 1. Install NVM
-
-```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-```
-
-#### 2. Activate NVM
-
-```bash
-source ~/.bashrc  # or ~/.zshrc
-```
-
-#### 3. Install Node.js
-
-```bash
-nvm install 20
-nvm use 20
-nvm alias default 20
-```
-
-#### 4. Verify Installation
-
-```bash
-node -v
-npm -v
-```
-
-#### 5. Install Yarn
-
-```bash
-corepack enable
-corepack prepare yarn@stable --activate
-```
-
-#### 6. Install Dependencies
-
-```bash
-yarn
-```
-
-#### 7. Configure Backend Proxy
-
-Edit `vite.config.js`:
-
-```javascript
-server: {
-  host: '0.0.0.0',
-  proxy: {
-    '/api': {
-      target: 'http://<host>:8855/',
-      changeOrigin: true,
-      rewrite: path => path.replace(/^\/api/, '')
-    }
-  }
-}
-```
-
-#### 8. Start Frontend
-
-```bash
-yarn dev
-```
+Frontend source setup, Vite proxy configuration, and UI release publishing are covered in [docs/Dev_README.md](./docs/Dev_README.md).
 
 ---
 
-#### ✅ Option A: Backend (Terminal Mode)
+#### ✅ Option B: Terminal Mode
 
 1. Copy configuration file:
 
