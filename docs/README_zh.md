@@ -87,7 +87,34 @@ pip install -e .
 
 ---
 
-### 4.2 启动服务
+### 4.2 配置 LoopAI
+
+所有运行模式都需要在项目根目录准备 `starter.yaml`。
+
+1. 将 starter 配置复制到项目根目录：
+
+```bash
+cp examples/config/starter.yaml ./starter.yaml
+```
+
+2. 编辑 `starter.yaml`，并至少自行填写以下 `system` 字段：
+
+```yaml
+system:
+  starter_api_key: ""
+  starter_model_path: ""
+  starter_model_name: ""
+  starter_base_url: ""
+  tavily_api_key: ""
+  kaggle_username: ""
+  kaggle_key: ""
+```
+
+这些字段用于配置 Starter 模型服务，以及 LoopAI 使用的外部数据搜索凭据。
+
+---
+
+### 4.3 启动服务
 
 LoopAI 支持两种运行模式：
 
@@ -131,15 +158,7 @@ http://localhost:8855/docs
 
 #### ✅ 方式二：命令行模式
 
-1. 复制配置文件：
-
-```bash
-cp examples/config/starter.yaml ./starter.yaml
-```
-
-2. 修改 `starter.yaml` 中的系统配置
-
-3. 启动 LoopAI：
+启动 LoopAI：
 
 ```bash
 python examples/scripts/run_starter.py

@@ -87,11 +87,40 @@ pip install -e .
 
 ---
 
-### 4.2 Start Services
+### 4.2 Configure LoopAI
+
+All run modes require a root-level `starter.yaml`.
+
+1. Copy the starter configuration to the repository root:
+
+```bash
+cp examples/config/starter.yaml ./starter.yaml
+```
+
+2. Edit `starter.yaml` and fill at least the following `system` fields:
+
+```yaml
+system:
+  starter_api_key: ""
+  starter_model_path: ""
+  starter_model_name: ""
+  starter_base_url: ""
+  tavily_api_key: ""
+  kaggle_username: ""
+  kaggle_key: ""
+```
+
+These values configure the Starter model provider and the external data-search credentials used by LoopAI.
+
+---
+
+### 4.3 Start Services
 
 LoopAI supports two modes:
 
 #### ✅ Option A: WebUI API Mode (Recommended)
+
+1. Install the published frontend dist.
 
 For production or normal WebUI use, install the published frontend dist first. The backend serves `api/dist` directly, so you do not need to build or run the frontend dev server.
 
@@ -100,6 +129,8 @@ python scripts/download_ui_release.py
 ```
 
 If the release asset cannot be downloaded automatically, download the frontend dist archive from the GitHub Release page manually, then extract it into `api/dist`.
+
+2. Start the backend:
 
 ```bash
 python api/start.py
@@ -129,15 +160,7 @@ Frontend source setup, Vite proxy configuration, and UI release publishing are c
 
 #### ✅ Option B: Terminal Mode
 
-1. Copy configuration file:
-
-```bash
-cp examples/config/starter.yaml ./starter.yaml
-```
-
-2. Modify system settings in `starter.yaml`
-
-3. Start LoopAI:
+Start LoopAI:
 
 ```bash
 python examples/scripts/run_starter.py
