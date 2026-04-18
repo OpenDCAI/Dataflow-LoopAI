@@ -98,6 +98,7 @@ import basePanel from '@/components/general/basePanel.vue'
 import dataInfo from './preview/dataInfo.vue'
 import tableInfo from './preview/tableInfo.vue'
 import textInfo from './preview/textInfo.vue'
+import codeInfo from './preview/codeInfo.vue'
 import directorySelector from '@/components/general/directorySelector.vue'
 
 import resourceIcon from '@/assets/flow/resources.svg'
@@ -111,6 +112,7 @@ export default {
         dataInfo,
         tableInfo,
         textInfo,
+        codeInfo,
         directorySelector,
     },
     props: {
@@ -266,10 +268,14 @@ export default {
         },
         computedUI(item) {
             if (!item || !item.file_type) return textInfo
-            let file_type = item.file_type;
+            let file_type = item.file_type.toLowerCase()
             let tableExts = ['.csv', '.tsv', '.json', '.jsonl']
+            let codeExts = ['.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf']
             if (tableExts.includes(file_type)) {
                 return tableInfo
+            }
+            if (codeExts.includes(file_type)) {
+                return codeInfo
             }
             return textInfo
         }
