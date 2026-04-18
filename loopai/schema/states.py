@@ -1078,72 +1078,53 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     # ===== 通用文本 / DataFlow Eval =====
-    output_summary_path: str = Field(
-        default="",
-        title="通用文本评测摘要路径",
-        description="eval_general_text_node 生成的摘要 JSON 路径",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    )
     cuda_visible_devices: str = Field(
         default="0",
         title = "通用文本可见GPU编号",
         description="通用文本任务指定运行GPU",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
-
-    output_summary_txt_path: str = Field(
-        default="",
-        title="通用文本评测摘要文本路径",
-        description="eval_general_text_node 生成的摘要 TXT 路径",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    )
-    analyze_max_tokens: int = Field(
-        default=2048,
-        title="分析模型最大输出 Token",
-        description="通用文本评测阶段调用模型的最大输出 token 数",
-        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
-    )
     tensor_parallel_size: int = Field(
         default=1,
         title="张量并行数",
         description="通用文本评测时模型推理使用的张量并行数",
-        json_schema_extra={"ui_type": "number", "ui_group": "分析模型"}
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
     is_api: bool = Field(
         default=False,
         title="是否 API 模式",
         description="是否通过 API 调用分析模型",
-        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
     )
     bench_name: str = Field(
         default="",
         title="评测集名称",
         description="通用文本评测使用的评测集名称",
-        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
     bench_dataflow_eval_type: str = Field(
         default="",
         title="通用文本评测类型",
         description="One-Eval DataFlow 评测类型，例如 key2_qa / key1_text_score",
-        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
-    )
-    bench_config: Dict[str, Any] = Field(
-        default_factory=dict,
-        title="通用文本评测配置",
-        description="通用文本评测的 bench 配置，如 eval_type、key_mapping 等",
-        json_schema_extra={"ui_type": "json_viewer", "ui_group": "分析模型"}
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
     key_mapping: Dict[str, Any] = Field(
         default_factory=dict,
         title="字段映射",
         description="DataFlow 评测字段映射，如 input_question_key / input_target_key / input_pred_key",
-        json_schema_extra={"ui_type": "json_viewer", "ui_group": "分析模型"}
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "评估模型"}
     )
     skip_dataflow_eval: bool = Field(
         default=False,
         title="跳过 DataFlow 正式评测",
         description="为 True 时仅准备 bench / records，不调用 DataFlowEvalTool.run_eval",
-        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"}
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
+    )
+    output_dir: str = Field(
+        default="",
+        title="通用文本输出路径",
+        description="通用文本任务结束后输出路径",
+        json_schema_ectra={"ui_type":"text","ui_group":"评估模型"}
     )
 
 class AnalyzerState(BaseModel):

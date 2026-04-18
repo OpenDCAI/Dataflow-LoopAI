@@ -64,10 +64,8 @@ def _write_jsonl(path: Path, rows: List[Dict[str, Any]]):
 
 
 def _ensure_outdir(state: LoopAIState) -> Path:
-    cfg = _judger(state)
-
     base_outdir = Path(
-        cfg.get("output_dir") or state.get("output_dir") or "./outputs"
+        state.get("output_dir") or "./outputs"
     )
 
     task_id = state.get("task_id") or "default_task"
@@ -497,11 +495,6 @@ def eval_general_text_node(state: LoopAIState):
     )
     summary_json_path, summary_txt_path = _write_summary_files(outdir, summary, run_ts)
 
-    state.setdefault("analyzer", {})
-    state["analyzer"]["analyze_output_result_path"] = analyze_output_result_path
-    state["analyzer"]["analyze_output_summary_path"] = summary_json_path
-    state["analyzer"]["analyze_output_summary_txt_path"] = summary_txt_path
-
     state["bench"] = bench
 
     _emit(
@@ -509,7 +502,7 @@ def eval_general_text_node(state: LoopAIState):
         "通用文本评测完成",
         progress=1.0,
         data={
-            "result_path": state["analyzer"]["analyze_output_result_path"],
+            "result_path": analyze_output_result_path,
             "summary_json": summary_json_path,
             "summary_txt": summary_txt_path,
             "stats": stats,
@@ -519,7 +512,7 @@ def eval_general_text_node(state: LoopAIState):
         }
     )
 
-    logger.info(f"[general_text] detail/result path: {state['analyzer']['analyze_output_result_path']}")
+    logger.info(f"[general_text] detail/result path: {analyze_output_result_path}")
     logger.info(f"[general_text] summary json: {summary_json_path}")
     logger.info(f"[general_text] summary txt: {summary_txt_path}")
 
