@@ -14,7 +14,7 @@ from loopai.agents import BaseAgent
 from .utils.oj.generate import generate_sample_code, generate_sample_text2sql
 from .utils.oj.evaluate import evaluate_sample_code, evaluate_sample_text2sql
 from .utils.oj.format import data_format
-from .utils.oj.data import check_file, check_jsonl_fields
+from .utils.oj.data import check_jsonl_fields
 from .utils.oj.vllm_starter import start_vllm_openai_api_server
 from .utils.oj.vllm_killer import kill_vllm_openai_api_server
 from .utils.oj.vllm_check import check_vllm_running
@@ -79,7 +79,7 @@ class JudgerAgent(BaseAgent):
                 'default':["output_dir", "task_id"]
             }
             missing_fields = get_missing_fields(required_fields, state)
-
+            
             if not missing_fields:
                 # judger无模型参数则去查看trainer是否提供
                 if _isNotNone(state.get("judger", {}).get("eval_model_path", "")) is not True :
@@ -96,7 +96,9 @@ class JudgerAgent(BaseAgent):
 
             """vllm启动检查"""
             base_url = state.get("judger", {}).get("eval_base_url", None)
-            if(_isNotNone(base_url)):
+            task_type = state.get("judger", {}).get("eval_task_type", "")
+            logger.info(f"base_url:{base_url}")
+            if(_isNotNone(base_url) and task_type!="general_text"):
                 if writer:
                     writer(StreamEvent(
                         current=state['current'],
@@ -128,24 +130,24 @@ class JudgerAgent(BaseAgent):
                     missing_fields.setdefault("judger", []).append("eval_base_url")
 
             """数据有效检查"""
-            check_result = check_file(state)
-            for key, value in check_result.items():
-                is_true = bool(value)
-                if not is_true:
-                    missing_fields.setdefault("judger", []).append(key)
+            automated_query = self.prompt_loader(
+                    "automated_query", "judger_missing_fields_prompt")
+            problem_path = state.get("judger", {}).get("eval_problem_path", "")
+            if not os.path.exists(problem_path):
+                logger.info(f"problem_path {problem_path} not exists")
+                automated_query = f"{automated_query}\nDetail: {problem_path} does not exist and make sure it is a valid file."
+                missing_fields.setdefault("judger", []).append("eval_problem_path")
                     
             """检查text2sql必要字段"""
             if not missing_fields:
                 if state.get("judger", {}).get("eval_task_type", "") == "text2sql":
                     missing_fields = get_missing_fields({'judger':["eval_text2sql_dir"]}, state)
-            
             if missing_fields:
                 logger.info("$"*50)
                 logger.info(missing_fields)
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
-                state['automated_query'] = self.prompt_loader(
-                    "automated_query", "judger_missing_fields_prompt")
+                state['automated_query'] = automated_query
                 state.setdefault('configer',{})['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
                 goto_node = runtime.context['exception_navigate']
                 logger.info(f'found missing fields, goto {goto_node}')
@@ -154,17 +156,22 @@ class JudgerAgent(BaseAgent):
                     goto=goto_node,
                     graph=Command.PARENT
                 )
+            
 
-            if state.get("judger", {}).get("eval_task_type", "") == "code":
+            if task_type == "code":
                 if state.get("judger", {}).get("eval_format_type", "") == "mbpp":
                     required_fields = ["text", "code", "task_id", "challenge_test_list", "test_list"]
                 elif state.get("judger", {}).get("eval_format_type", "") == "human-eval":
                     required_fields = ["task_id", "prompt", "entry_point", "canonical_solution", "test"]
                 else:
                     required_fields = ["task_id", "prompt", "entry_point", "canonical_solution", "test_list"]
-            elif state.get("judger", {}).get("eval_task_type", "") == "text2sql":
+            elif task_type == "text2sql":
                 required_fields = ["task_id", "prompt", "db_id", "question", "ground_truth"]
-            check_file_fields = check_jsonl_fields(state.get("judger", {}).get("eval_problem_path", ""), required_fields)
+            elif task_type == "general_text":
+                check_file_fields = True
+            
+            if task_type == "code" or task_type =="text2sql":
+                check_file_fields = check_jsonl_fields(state.get("judger", {}).get("eval_problem_path", ""), required_fields)
 
             if check_file_fields is not True:
                 logger.info("$"*50)

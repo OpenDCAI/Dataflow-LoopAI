@@ -16,7 +16,7 @@
 
 <br>
 
-English | [简体中文](./README_zh.md)
+English | [简体中文](./docs/README_zh.md)
 
 LoopAI is an intelligent system designed for **self-optimization of LLMs in domain-specific scenarios**. It automatically detects and evaluates generation deficiencies, and continuously improves model performance through **dialog-driven data acquisition and closed-loop optimization**.
 
@@ -26,7 +26,7 @@ User  ⇄  Starter (Supervisor)  ⇄  Sub-Agent
                   ├── Common Question → Direct Response
                   └── Complex Task → Graph Execution
                                  (Evaluation → Data Collection → Training)
-````
+```
 
 <p align="center">
   <img src="docs/assets/workflow.svg" alt="LoopAI Workflow" width="90%"/>
@@ -82,25 +82,73 @@ LoopAI reformulates the LLM optimization pipeline into a **graph-based execution
 ### 4.1 Installation
 
 ```bash
+conda create -n loopai python=3.12
+conda activate loopai
+
 pip install -e .
 ```
 
 ---
 
-### 4.2 Start Services
+### 4.2 Configure LoopAI
+
+All run modes require a root-level `starter.yaml`.
+
+1. Copy the starter configuration to the repository root:
+
+```bash
+cp examples/config/starter.yaml ./starter.yaml
+```
+
+2. Edit `starter.yaml` and fill at least the following `system` fields:
+
+```yaml
+system:
+  starter_api_key: ""
+  starter_model_path: ""
+  starter_model_name: ""
+  starter_base_url: ""
+  tavily_api_key: ""
+  kaggle_username: ""
+  kaggle_key: ""
+```
+
+These values configure the Starter model provider and the external data-search credentials used by LoopAI.
+
+---
+
+### 4.3 Start Services
 
 LoopAI supports two modes:
 
-#### ✅ Option A: API Mode (Recommended)
+#### ✅ Option A: WebUI API Mode (Recommended)
+
+1. Install the published frontend dist.
+
+For production or normal WebUI use, install the published frontend dist first. The backend serves `api/dist` directly, so you do not need to build or run the frontend dev server.
+
+```bash
+python scripts/download_ui_release.py
+```
+
+If the release asset cannot be downloaded automatically, download the frontend dist archive from the GitHub Release page manually, then extract it into `api/dist`.
+
+2. Start the backend:
 
 ```bash
 python api/start.py
 ```
 
-API will be available at:
+The WebUI and API will be available at:
 
 ```
-http://0.0.0.0:8855
+http://localhost:8855
+```
+
+API docs are available at:
+
+```
+http://localhost:8855/docs
 ```
 
 ---
@@ -109,88 +157,49 @@ http://0.0.0.0:8855
   <img src="./docs/assets/UI.png" alt="LoopAI UI" width="90%"/>
 </p>
 
-### 🖥️ Frontend Setup
-
-#### 1. Install NVM
-
-```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-```
-
-#### 2. Activate NVM
-
-```bash
-source ~/.bashrc  # or ~/.zshrc
-```
-
-#### 3. Install Node.js
-
-```bash
-nvm install 20
-nvm use 20
-nvm alias default 20
-```
-
-#### 4. Verify Installation
-
-```bash
-node -v
-npm -v
-```
-
-#### 5. Install Yarn
-
-```bash
-corepack enable
-corepack prepare yarn@stable --activate
-```
-
-#### 6. Install Dependencies
-
-```bash
-yarn
-```
-
-#### 7. Configure Backend Proxy
-
-Edit `vite.config.js`:
-
-```javascript
-server: {
-  host: '0.0.0.0',
-  proxy: {
-    '/api': {
-      target: 'http://<host>:8855/',
-      changeOrigin: true,
-      rewrite: path => path.replace(/^\/api/, '')
-    }
-  }
-}
-```
-
-#### 8. Start Frontend
-
-```bash
-yarn dev
-```
+Frontend source setup, Vite proxy configuration, and UI release publishing are covered in [docs/Dev_README.md](./docs/Dev_README.md).
 
 ---
 
-#### ✅ Option A: Backend (Terminal Mode)
+#### ✅ Option B: Terminal Mode
 
-1. Copy configuration file:
-
-```bash
-cp examples/config/starter.yaml ./starter.yaml
-```
-
-2. Modify system settings in `starter.yaml`
-
-3. Start LoopAI:
+Start LoopAI:
 
 ```bash
 python examples/scripts/run_starter.py
 ```
+
+---
+
+### 4.4 Optional Runtime Dependencies
+
+`pip install -e .` installs the core LoopAI package, API service, graph orchestration, and common data-processing dependencies. Some Agents call heavy ML runtimes that are easier to keep in separate Conda environments because their CUDA, PyTorch, and serving requirements may conflict.
+
+Recommended layout:
+
+```bash
+# Core LoopAI runtime
+conda create -n loopai python=3.12
+
+# Local OpenAI-compatible inference for Judger / Analyzer
+conda create -n loopai-vllm python=3.10
+
+# Local training with LlamaFactory
+conda create -n loopai-llamafactory python=3.10
+
+# Local training with verl
+conda create -n loopai-verl python=3.10
+```
+
+Install `vllm`, `LLaMA-Factory`, and `verl` according to their upstream instructions and your CUDA/PyTorch version. They are not pinned in LoopAI because GPU environments are usually machine-specific.
+
+Agent-specific notes:
+
+* **JudgerAgent**: for local model evaluation, install `vllm` in a separate environment and set `judger.eval_vllm_env_path` to the Python executable, for example `/path/to/miniconda3/envs/loopai-vllm/bin/python`. When `judger.eval_base_url` is empty, Judger uses this interpreter to start a local vLLM OpenAI-compatible API server in a subprocess, with parameters such as `eval_vllm_port`, `eval_vllm_tensor_parallel_size`, `eval_vllm_gpu_memory_utilization`, and `eval_env_configs`. If you already run a compatible service yourself, set `judger.eval_base_url` and Judger will use that service instead.
+* **AnalyzerAgent**: Analyzer calls an OpenAI-compatible chat endpoint through `analyzer.analyze_base_url`, `analyzer.analyze_model_path`, and `analyzer.analyze_api_key`. For local analysis, you can serve the analysis model with vLLM in the same vLLM environment and point `analyze_base_url` to it. Analyzer does not currently start vLLM by itself.
+* **TrainerAgent**: local training normally requires `LLaMA-Factory` or `verl`. Set `trainer.train_framework` to `llamafactory` or `verl`. For LlamaFactory, set `trainer.llamafactory_dir` to the LLaMA-Factory repository and `trainer.llamafactory_env_path` to the environment root or `bin` directory, for example `/path/to/miniconda3/envs/loopai-llamafactory/bin`. For verl, provide `verl_dir` and `verl_env_path` in the trainer or system config. Trainer starts training asynchronously through an internal task manager, which launches the selected framework as a subprocess and streams logs back to LoopAI.
+
+These fields can be provided through the WebUI Configer flow, in Agent state, or in `starter.yaml` under the corresponding `judger`, `analyzer`, `trainer`, or `system` sections.
 
 ---
 

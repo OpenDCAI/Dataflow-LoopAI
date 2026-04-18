@@ -213,7 +213,35 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
 
             except Exception as map_err:
                 logger.error(f"Error when mapping WebCrawler dataset via Constructor: {map_err}", exc_info=True)
-        
+
+            # ── 为下游 Constructor 流水线准备状态 ──────────────────────────────────
+            # 将生成的数据集目录写入 constructor.intermediate_data_path，
+            # Constructor.has_successful_downloads 检测到该字段后会跳过 postprocess，
+            # 直接进入 data_cleaning → mapping_subgraph 完整流程。
+            if "constructor" not in state:
+                state["constructor"] = {}
+            ctor = state["constructor"]
+            # 指向整个 dataset 目录（同时包含 SFT 和 PT 文件）
+            ctor["intermediate_data_path"] = dataset_dir
+            ctor["webcrawler_dataset_dir"] = dataset_dir
+            # 清除 script_mapping_node 写入的 confirmed_format，
+            # 确保 Constructor 的 MappingSubgraph 能正常运行格式选择流程
+            ctor.pop("confirmed_format", None)
+            # 设置类别：优先 SFT（已有 SFT 记录），否则 PT
+            if not ctor.get("category"):
+                ctor["category"] = "SFT" if result.get("sft_count", 0) > 0 else "PT"
+            # 若 constructor 缺少 LLM 配置，从 webcrawler 补充
+            if not ctor.get("model_path") and model_name:
+                ctor["model_path"] = model_name
+            if not ctor.get("base_url") and base_url:
+                ctor["base_url"] = base_url
+            if not ctor.get("api_key") and api_key:
+                ctor["api_key"] = api_key
+            logger.info(
+                f"WebCrawler Dataset: constructor state prepared for downstream pipeline "
+                f"(intermediate_data_path={dataset_dir}, category={ctor.get('category')})"
+            )
+
         writer(StreamEvent(
             current=state['current'],
             message="数据集收集完成",

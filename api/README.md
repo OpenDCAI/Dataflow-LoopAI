@@ -1,397 +1,261 @@
-# 🚀 LLaMA Factory Remote Training Service
+# LoopAI WebUI Backend
 
-## 📖 项目概述
+English | [简体中文](./README_zh.md)
 
-LLaMA Factory Remote Training Service 是一个基于 FastAPI 的远程训练服务，旨在将原本需要在本地执行的 LLaMA Factory 训练任务转换为可远程调用的 API 服务。通过这个服务，客户端无需安装复杂的训练环境，只需要通过简单的 HTTP 请求即可触发模型训练任务。
+`api/` is the FastAPI backend for the LoopAI WebUI. It manages WebUI configuration, task records, data resources, hardware/runtime status, and starts the integrated `loopai` Starter workflow for a selected task.
 
-### 🎯 核心目标
+The Trainer is now part of LoopAI's agent graph and is normally launched through `StarterAgent`, not as a standalone API service. The remaining `/train/*` routes are kept for compatibility and for training logs, metrics, and direct LLaMA Factory task utilities used by existing UI flows.
 
-将原本的本地命令：
-```bash
-llamafactory-cli train examples/train_lora/llama3_lora_sft.yaml
+## Overall API Framework
+
+```text
+Browser / WebUI
+      |
+      | same-origin HTTP / SSE
+      v
+FastAPI app (api/app/main.py)
+      |
+      +-- /config    global Starter config and state schema
+      +-- /task      WebUI task CRUD and task-state snapshots
+      +-- /resource  data/resource registry and file preview
+      +-- /starter   start, stop, resume, stream LoopAI StarterAgent
+      +-- /train     compatibility training task/log/metric endpoints
+      |
+      +-- SQLite     api/db/db.sqlite3
+      +-- Files      api/dist, api/logs, api/runs, api/configs
+      +-- loopai     graph agents, memory, checkpointer, store
 ```
 
-转换为远程 API 调用：
-```bash
-curl -X POST http://server:8000/train -d '{"config": "..."}'
+At startup `api/app/main.py`:
+
+- registers Tortoise ORM with `api/db/db.sqlite3`;
+- includes the `config`, `task`, `resource`, `starter`, and `train` routers;
+- serves `api/dist/index.html` from `/`;
+- serves Vite assets from `/assets/*`;
+- exposes OpenAPI docs at `/docs`.
+
+## Directory Layout
+
+```text
+api/
+├── start.py                 # Backend launcher used by production and local WebUI runs
+├── README.md
+├── app/
+│   ├── main.py              # FastAPI app, router registration, static dist hosting
+│   ├── controllers/         # API route modules
+│   │   ├── config.py        # Starter config and state schema
+│   │   ├── task.py          # WebUI task records and persisted task state
+│   │   ├── resource.py      # Data/resource registry and previews
+│   │   ├── starter.py       # LoopAI StarterAgent runtime control and streaming
+│   │   └── train.py         # Compatibility training/log/metric routes
+│   ├── models/              # Request/response and DB models
+│   └── utils/               # Backend helpers for starter, config, resource, monitor, train
+├── configs/                 # Runtime config files created by backend flows
+├── db/                      # SQLite database directory
+├── dist/                    # Published frontend dist served by FastAPI
+├── logs/                    # Runtime logs
+└── runs/                    # Runtime task outputs
 ```
 
-## ✨ 功能特性
+## WebUI Dist Release And Installation
 
-- ✅ **REST API 接口** - 完整的 RESTful API 设计
-- ✅ **多种配置上传方式** - 支持 JSON 和文件上传两种方式
-- ✅ **异步训练执行** - 后台异步执行，不阻塞 API 请求
-- ✅ **实时状态查询** - 查询训练任务的实时状态
-- ✅ **日志管理** - 实时获取训练日志
-- ✅ **任务管理** - 创建、查询、取消训练任务
-- ✅ **健康检查** - 服务健康状态监控
-- ✅ **错误处理** - 完善的异常处理机制
-- ✅ **资源清理** - 自动清理已完成的任务
-
-## 🏗️ 架构设计
-
-### 整体架构
-
-```
-┌─────────────────┐    HTTP API     ┌─────────────────┐
-│   Client App    │ ───────────────▶ │   FastAPI App   │
-│                 │                 │                 │
-│ - Trainer Agent │                 │ - API Endpoints │
-│ - Web UI        │                 │ - Task Manager  │
-│ - CLI Tools     │                 │ - File Handler  │
-└─────────────────┘                 └─────────────────┘
-                                              │
-                                              ▼
-                                    ┌─────────────────┐
-                                    │ Background Exec │
-                                    │                 │
-                                    │ subprocess.Popen│
-                                    │ llamafactory-cli│
-                                    └─────────────────┘
-                                              │
-                                              ▼
-                                    ┌─────────────────┐
-                                    │   File System   │
-                                    │                 │
-                                    │ - configs/      │
-                                    │ - logs/         │
-                                    │ - runs/         │
-                                    └─────────────────┘
-```
-
-### 核心组件
-
-#### 1. FastAPI Application (`app/main.py`)
-- **职责**: HTTP 请求处理、路由管理、响应格式化
-- **主要端点**:
-  - `POST /train` - 启动训练任务
-  - `GET /status/{task_id}` - 查询任务状态
-  - `GET /logs/{task_id}` - 获取任务日志
-  - `GET /tasks` - 获取所有任务
-  - `DELETE /tasks/{task_id}` - 取消任务
-
-#### 2. Task Manager (`app/tasks.py`)
-- **职责**: 训练任务的生命周期管理
-- **核心功能**:
-  - 任务创建和状态跟踪
-  - 后台进程执行和监控
-  - 任务取消和资源清理
-  - 线程池管理
-
-#### 3. Data Models (`app/models.py`)
-- **职责**: API 数据结构定义
-- **主要模型**:
-  - `TrainRequest` - 训练请求数据
-  - `TaskStatusResponse` - 任务状态响应
-  - `LogResponse` - 日志响应数据
-
-#### 4. Utilities (`app/utils.py`)
-- **职责**: 通用工具函数
-- **主要功能**:
-  - 文件操作（保存配置、读取日志）
-  - YAML 格式验证
-  - 时间戳生成
-  - 目录管理
-
-## 🚀 快速开始
-
-### 环境要求
-
-#### 服务端必须安装：
-```bash
-# Python 环境
-Python 3.8+
-
-# 深度学习环境（可选，用于 GPU 训练）
-CUDA 11.8+ / ROCm（AMD GPU）
-
-# Python 包依赖
-pip install -r requirements.txt
-
-# LLaMA Factory（核心训练框架）
-pip install llamafactory-cli
-```
-
-#### 客户端要求：
-- 无特殊要求，只需要能发送 HTTP 请求的工具或库
-
-### 安装步骤
-
-1. **配置 LLaMA Factory**
-
-从`examples/config`拷贝`starter.yaml`至项目根目录并指定`llamafactory_dir`和`llamafactory_env_path`
-
-```yaml
-llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/"
-llamafactory_env_path: "/home/lpc/miniconda3/envs/lmf/bin/"
-```
-
-1. **启动服务**
-```bash
-python cpi/start.py
-```
-或者：
-```bash
-uvicorn api.app.main:app --host 0.0.0.0 --port 8000
-```
-
-1. **验证服务**
-```bash
-# 健康检查
-curl http://localhost:8000/health
-
-# API 文档
-打开浏览器访问: http://localhost:8000/docs
-```
-
-### 前端 dist 发布和安装
-
-FastAPI 会从 `api/dist` 托管前端：
-
-- `GET /` 返回 `api/dist/index.html`
-- `GET /assets/*` 返回 Vite 构建后的静态资源
-- 生产环境前端请求同源 API 原路径，例如 `/train`、`/config/config`
-
-推荐前端 release tag 使用 `ui-v*`，避免和 Python 包版本 tag 混在一起：
-
-```bash
-cd ui
-yarn version --new-version 0.1.0 --no-git-tag-version
-git add package.json yarn.lock
-git commit -m "chore(ui): release 0.1.0"
-git tag ui-v0.1.0
-git push origin main ui-v0.1.0
-```
-
-仓库里的 GitHub Actions 会在 `ui-v*` tag 推送后构建 `ui/`，创建 GitHub Release，并上传 `loopai-ui-dist.tar.gz`。
-
-服务端安装最新公开前端 release：
+Production does not require Node.js, Yarn, or a Vite dev server. Install the published frontend build into `api/dist`, then run the backend.
 
 ```bash
 python scripts/download_ui_release.py
+python api/start.py
 ```
 
-如果 tag 前缀或仓库不同，可以显式指定：
+The service will be available at:
+
+```text
+http://localhost:8855
+```
+
+If `scripts/download_ui_release.py` cannot fetch the release asset, manually download the frontend dist archive from the GitHub Release page and extract it into:
+
+```text
+api/dist
+```
+
+After extraction, `api/dist/index.html` should exist.
+
+You can customize the release source:
 
 ```bash
-python scripts/download_ui_release.py --repo OpenDCAI/Dataflow-LoopAI --tag-prefix ui-v --output-dir api/dist
+python scripts/download_ui_release.py \
+  --repo OpenDCAI/Dataflow-LoopAI \
+  --tag-prefix ui-v \
+  --output-dir api/dist
 ```
 
-## 📚 API 文档
+Frontend development and release publishing are documented in `docs/Dev_README.md`. In short, frontend maintainers can run:
 
-### 1. 启动训练任务
-
-#### POST /train - JSON 配置方式
 ```bash
-curl -X POST "http://localhost:8000/train" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "config": "model_name: llama3\nstage: sft\ndo_train: true\nfinetuning_type: lora\ndataset: alpaca_gpt4_en",
-    "task_name": "我的训练任务"
-  }'
+bash scripts/release_ui.sh [optional-version]
 ```
 
-**响应示例:**
-```json
-{
-  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "status": "running",
-  "message": "Training task started successfully"
-}
-```
+The script creates a `ui-v<version>` tag and pushes it, which triggers GitHub Actions to publish the WebUI dist release asset.
 
-#### POST /train/upload - 文件上传方式
+## Running The Backend
+
+Install the Python package in editable mode from the repository root:
+
 ```bash
-curl -X POST "http://localhost:8000/train/upload" \
-  -F "file=@config.yaml" \
-  -F "task_name=我的训练任务"
+pip install -e .
 ```
 
-### 2. 查询任务状态
+Create the runtime configuration:
 
-#### GET /status/{task_id}
 ```bash
-curl "http://localhost:8000/status/a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+cp examples/config/starter.yaml ./starter.yaml
 ```
 
-**响应示例:**
-```json
-{
-  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "status": "running",
-  "created_at": "2025-11-30T10:30:00.123456",
-  "started_at": "2025-11-30T10:30:02.456789",
-  "completed_at": null,
-  "error_message": null
-}
-```
-
-**状态说明:**
-- `pending` - 任务已创建，等待执行
-- `running` - 任务正在执行
-- `completed` - 任务成功完成
-- `failed` - 任务执行失败
-- `cancelled` - 任务被取消
-
-### 3. 获取训练日志
-
-#### GET /logs/{task_id}
-```bash
-# 获取全部日志
-curl "http://localhost:8000/logs/a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-
-# 获取最近100行日志
-curl "http://localhost:8000/logs/a1b2c3d4-e5f6-7890-abcd-ef1234567890?max_lines=100"
-```
-
-**响应示例:**
-```json
-{
-  "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "logs": "2025-11-30 10:30:15,123 - INFO - Starting training...\n2025-11-30 10:30:16,456 - INFO - Loading model...",
-  "total_lines": 1245
-}
-```
-
-### 4. 任务管理
-
-#### GET /tasks - 获取所有任务
-```bash
-curl "http://localhost:8000/tasks"
-```
-
-#### DELETE /tasks/{task_id} - 取消任务
-```bash
-curl -X DELETE "http://localhost:8000/tasks/a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-```
-
-### 5. 健康检查
-
-#### GET /health
-```bash
-curl "http://localhost:8000/health"
-```
-
-## 🔧 配置文件格式
-
-服务支持标准的 LLaMA Factory YAML 配置格式：
+Edit `starter.yaml` for your model providers, output paths, data paths, and training environment. The current launcher validates the Trainer/LLaMA Factory fields in `default_states.trainer`, because training is still available inside the LoopAI graph:
 
 ```yaml
-# 模型配置
-model_name: llama3
-model_name_or_path: /path/to/llama3-8b-hf
-
-# 数据集配置
-dataset: alpaca_gpt4_en
-template: llama3
-
-# 训练参数
-stage: sft
-do_train: true
-finetuning_type: lora
-lora_target: q_proj,v_proj
-lora_rank: 8
-lora_alpha: 16
-lora_dropout: 0.1
-
-# 数据集参数
-dataset_dir: data
-cutoff_len: 1024
-max_samples: 1000
-overwrite_cache: true
-preprocessing_num_workers: 8
-
-# 输出配置
-output_dir: saves/llama3/lora/sft
-logging_steps: 10
-save_steps: 500
-plot_loss: true
-overwrite_output_dir: true
-
-# 训练超参数
-per_device_train_batch_size: 1
-gradient_accumulation_steps: 8
-learning_rate: 5.0e-5
-lr_scheduler_type: cosine
-warmup_steps: 100
-num_train_epochs: 3.0
-max_grad_norm: 1.0
-bf16: true
-
-# 评估配置
-evaluation_strategy: steps
-eval_steps: 500
-per_device_eval_batch_size: 1
-load_best_model_at_end: true
-metric_for_best_model: eval_loss
+default_states:
+  trainer:
+    llamafactory_dir: "/path/to/LLaMA-Factory"
+    llamafactory_env_path: "/path/to/env/bin"
 ```
 
-## 💡 实现逻辑详解
+Start the backend:
 
-### 任务执行流程
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant FastAPI
-    participant TaskManager
-    participant FileSystem
-    participant LLamaFactory
-
-    Client->>FastAPI: POST /train (YAML config)
-    FastAPI->>FastAPI: 验证 YAML 格式
-    FastAPI->>FileSystem: 保存配置文件
-    FastAPI->>TaskManager: 创建训练任务
-    TaskManager->>TaskManager: 生成唯一 task_id
-    TaskManager->>Client: 返回 task_id (status: running)
-    
-    TaskManager->>LLamaFactory: subprocess.Popen(llamafactory-cli)
-    LLamaFactory->>FileSystem: 写入训练日志
-    LLamaFactory->>FileSystem: 保存模型检查点
-    
-    loop 训练过程中
-        Client->>FastAPI: GET /status/{task_id}
-        FastAPI->>TaskManager: 查询任务状态
-        TaskManager->>Client: 返回当前状态
-        
-        Client->>FastAPI: GET /logs/{task_id}
-        FastAPI->>FileSystem: 读取日志文件
-        FileSystem->>Client: 返回日志内容
-    end
-    
-    LLamaFactory->>TaskManager: 训练完成/失败
-    TaskManager->>TaskManager: 更新任务状态
+```bash
+python api/start.py
 ```
 
-### 核心设计原理
+Useful URLs:
 
-#### 1. 异步执行机制
-- 使用 `ThreadPoolExecutor` 管理训练任务
-- `subprocess.Popen` 启动独立的训练进程
-- 非阻塞式 API 响应，支持并发请求
-
-#### 2. 任务状态管理
-```python
-# 任务状态流转
-PENDING → RUNNING → (COMPLETED | FAILED | CANCELLED)
-
-# 状态存储结构
-task_info = {
-    'task_id': str,
-    'status': TaskStatus,
-    'created_at': datetime,
-    'started_at': datetime,
-    'completed_at': datetime,
-    'process': subprocess.Popen,
-    'error_message': str
-}
+```text
+WebUI:       http://localhost:8855
+API docs:    http://localhost:8855/docs
+Health:      http://localhost:8855/health
+Service info http://localhost:8855/info
 ```
 
-#### 3. 文件系统组织
+For local frontend source development, run the Vite server from `ui/`. It proxies `/api/*` to `http://127.0.0.1:8855/`, while production uses the static files in `api/dist`.
+
+## API Documents
+
+The canonical API reference is generated by FastAPI:
+
+```text
+http://localhost:8855/docs
+http://localhost:8855/openapi.json
 ```
-api/
-├── configs/           # 训练配置文件
-│   └── {task_id}.yaml
-└── logs/             # 训练日志
-    └── {task_id}.log
+
+The route overview below matches the current project structure.
+
+### Config API
+
+Mounted at `/config`.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/config/config` | Read global Starter configuration. |
+| `POST` | `/config/config` | Update global Starter configuration. |
+| `GET` | `/config/state_schema?language=zh` | Read configurable LoopAI state schema for the WebUI. |
+| `GET` | `/config/list_dir?path=/some/path` | List files/directories for path pickers. |
+
+Example:
+
+```bash
+curl http://localhost:8855/config/config
 ```
+
+### Task API
+
+Mounted at `/task`.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/task/task` | Create a WebUI task and snapshot its config. |
+| `GET` | `/task/task/{task_id}` | Read one task by `task_id`. |
+| `GET` | `/task/list_tasks` | List tasks with optional `search`, `offset`, and `limit`. |
+| `PUT` | `/task/task` | Update a task name/config. |
+| `DELETE` | `/task/task/{id}` | Delete a task by DB id. |
+| `GET` | `/task/train_status` | Read Trainer metrics from a task output directory. |
+
+### Resource API
+
+Mounted at `/resource`.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/resource/resource` | List registered resources. |
+| `GET` | `/resource/resource/count` | Count registered resources. |
+| `POST` | `/resource/resource` | Register a data/resource path. |
+| `PUT` | `/resource/resource/{resource_id}` | Update resource metadata. |
+| `DELETE` | `/resource/resource/{resource_id}` | Delete a resource record. |
+| `POST` | `/resource/resource/preview` | Preview JSON/JSONL, CSV/TSV, text, Markdown, HTML, or log files. |
+
+Preview can use either a DB resource id or a direct file URL:
+
+```bash
+curl -X POST "http://localhost:8855/resource/resource/preview?resource_id=file:///tmp/data.jsonl&limit=5"
+```
+
+### Starter API
+
+Mounted at `/starter`. This is the main runtime API for the WebUI.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/starter/agent/start?task_id=<task_id>` | Initialize and start `StarterAgent` for a task. |
+| `POST` | `/starter/agent/input?text=...` | Send user input to the running agent. |
+| `POST` | `/starter/agent/stop` | Stop the agent and persist task state. |
+| `GET` | `/starter/agent/status` | Poll current agent state and persist it. |
+| `GET` | `/starter/agent/messages` | Read current state messages. |
+| `GET` | `/starter/agent/message/stream` | Stream current agent messages with SSE. |
+| `GET` | `/starter/agent/hardware_usage` | Read GPU/NPU, CPU, and memory usage. |
+
+Typical flow:
+
+```bash
+curl -X POST "http://localhost:8855/starter/agent/start?task_id=<task_id>"
+curl -X POST "http://localhost:8855/starter/agent/input?text=Improve%20my%20model"
+curl "http://localhost:8855/starter/agent/status"
+```
+
+### Train Compatibility API
+
+Mounted at `/train`.
+
+These endpoints are not the primary way to start the integrated LoopAI Trainer workflow. Use the Starter API for normal WebUI operation. The train routes remain available for direct/legacy training tasks and UI access to logs, SwanLab folders, and metrics.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/train/` | Start a direct training task from JSON config. |
+| `POST` | `/train/upload` | Start a direct training task from uploaded YAML. |
+| `GET` | `/train/status/{task_id}` | Read direct training task status. |
+| `GET` | `/train/logs/{task_id}` | Read direct training logs. |
+| `GET` | `/train/tasks` | List direct training tasks. |
+| `DELETE` | `/train/tasks/{task_id}` | Cancel a direct training task. |
+| `GET` | `/train/swanlab-logs/{task_id}` | Read SwanLab log path for one task. |
+| `GET` | `/train/swanlab-logs` | List SwanLab log folders. |
+| `GET` | `/train/metrics/{task_id}` | Read recent training metrics. |
+| `GET` | `/train/metrics/{task_id}/file` | Download/read metrics file. |
+| `DELETE` | `/train/metrics/{task_id}` | Delete metrics for one task. |
+
+## Data And Runtime Files
+
+The backend stores lightweight WebUI state locally:
+
+```text
+api/db/db.sqlite3    # Tortoise ORM SQLite database
+api/dist/            # Installed frontend build
+api/logs/            # Runtime logs
+api/runs/            # Runtime outputs
+api/configs/         # Generated or uploaded configs
+```
+
+LoopAI task output paths are also controlled by `starter.yaml` and the task config snapshot created by the WebUI.
+
+## Troubleshooting
+
+- `GET /` returns `Frontend dist is not installed.`: run `python scripts/download_ui_release.py`, or manually extract the release dist to `api/dist`.
+- `python api/start.py` reports `starter.yaml not found`: copy `examples/config/starter.yaml` to the repository root and edit it.
+- `LLaMA Factory CLI not found`: update `default_states.trainer.llamafactory_dir` and `default_states.trainer.llamafactory_env_path` in `starter.yaml`.
+- WebUI dev server cannot reach the backend: check `ui/vite.config.js` and make sure the proxy target points to `http://127.0.0.1:8855/` or your backend host.
