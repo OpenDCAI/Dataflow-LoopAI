@@ -167,6 +167,40 @@ http://localhost:8855/docs
 python examples/scripts/run_starter.py
 ```
 
+---
+
+### 4.4 可选运行时依赖
+
+`pip install -e .` 会安装 LoopAI 主框架、API 服务、图编排和常用数据处理依赖。部分 Agent 会调用较重的机器学习运行时，这些依赖通常和 CUDA、PyTorch、推理/训练框架版本强相关，建议拆到独立 Conda 环境中维护。
+
+推荐环境划分：
+
+```bash
+# LoopAI 主运行环境
+conda create -n loopai python=3.12
+
+# Judger / Analyzer 本地推理服务环境
+conda create -n loopai-vllm python=3.10
+
+# LlamaFactory 训练环境
+conda create -n loopai-llamafactory python=3.10
+
+# verl 训练环境
+conda create -n loopai-verl python=3.10
+```
+
+请根据本机 CUDA/PyTorch 版本，分别按照 `vllm`、`LLaMA-Factory`、`verl` 的官方安装方式安装依赖。LoopAI 不在主依赖里固定这些包的版本，因为 GPU 环境通常需要按机器单独适配。
+
+各 Agent 依赖说明：
+
+* **JudgerAgent**：如果需要本地评测模型，通常需要在独立环境中安装 `vllm`，并将 `judger.eval_vllm_env_path` 配置为该环境的 Python 可执行文件，例如 `/path/to/miniconda3/envs/loopai-vllm/bin/python`。当 `judger.eval_base_url` 为空时，Judger 会使用这个解释器在子进程中启动本地 vLLM OpenAI 兼容服务，并读取 `eval_vllm_port`、`eval_vllm_tensor_parallel_size`、`eval_vllm_gpu_memory_utilization`、`eval_env_configs` 等参数。如果你已经手动启动了兼容服务，则填写 `judger.eval_base_url` 即可。
+* **AnalyzerAgent**：Analyzer 通过 `analyzer.analyze_base_url`、`analyzer.analyze_model_path`、`analyzer.analyze_api_key` 调用 OpenAI 兼容聊天接口。本地分析时，可以复用 vLLM 环境启动分析模型，并将 `analyze_base_url` 指向该服务。当前 Analyzer 不会自动拉起 vLLM。
+* **TrainerAgent**：本地训练通常需要 `LLaMA-Factory` 或 `verl`。将 `trainer.train_framework` 设置为 `llamafactory` 或 `verl`。使用 LlamaFactory 时，需要配置 `trainer.llamafactory_dir` 为 LLaMA-Factory 仓库路径，并配置 `trainer.llamafactory_env_path` 为环境根目录或 `bin` 目录，例如 `/path/to/miniconda3/envs/loopai-llamafactory/bin`。使用 verl 时，可在 trainer 或 system 配置中提供 `verl_dir` 和 `verl_env_path`。Trainer 会通过内部任务管理器异步启动训练，在子线程中拉起对应训练框架的子进程，并持续回传日志。
+
+这些字段可以通过 WebUI 的 Configer 流程、Agent state，或 `starter.yaml` 中对应的 `judger`、`analyzer`、`trainer`、`system` 配置段提供。
+
+---
+
 ## 🧠 5. 核心 Agents
 
 LoopAI 中的每个 Agent 都被实现为一个**可独立运行、可组合的子图模块**。
