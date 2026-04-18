@@ -14,7 +14,7 @@ from loopai.agents import BaseAgent
 from .utils.oj.generate import generate_sample_code, generate_sample_text2sql
 from .utils.oj.evaluate import evaluate_sample_code, evaluate_sample_text2sql
 from .utils.oj.format import data_format
-from .utils.oj.data import check_file, check_jsonl_fields
+from .utils.oj.data import check_jsonl_fields
 from .utils.oj.vllm_starter import start_vllm_openai_api_server
 from .utils.oj.vllm_killer import kill_vllm_openai_api_server
 from .utils.oj.vllm_check import check_vllm_running
@@ -130,11 +130,13 @@ class JudgerAgent(BaseAgent):
                     missing_fields.setdefault("judger", []).append("eval_base_url")
 
             """数据有效检查"""
-            check_result = check_file(state)
-            for key, value in check_result.items():
-                is_true = bool(value)
-                if not is_true:
-                    missing_fields.setdefault("judger", []).append(key)
+            automated_query = self.prompt_loader(
+                    "automated_query", "judger_missing_fields_prompt")
+            problem_path = state.get("judger", {}).get("eval_problem_path", "")
+            if not os.path.exists(problem_path):
+                logger.info(f"problem_path {problem_path} not exists")
+                automated_query = f"{automated_query}\nDetail: {problem_path} does not exist and make sure it is a valid file."
+                missing_fields.setdefault("judger", []).append("eval_problem_path")
                     
             """检查text2sql必要字段"""
             if not missing_fields:
@@ -145,8 +147,7 @@ class JudgerAgent(BaseAgent):
                 logger.info(missing_fields)
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
-                state['automated_query'] = self.prompt_loader(
-                    "automated_query", "judger_missing_fields_prompt")
+                state['automated_query'] = automated_query
                 state.setdefault('configer',{})['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
                 goto_node = runtime.context['exception_navigate']
                 logger.info(f'found missing fields, goto {goto_node}')
