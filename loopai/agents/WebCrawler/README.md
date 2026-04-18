@@ -12,6 +12,8 @@ WebCrawler Agent 采用多阶段顺序执行架构：
    结束       结束         结束         结束
 ```
 
+> **异常处理机制：** 当某节点发生错误时，会将错误信息写入 `state["exception"]`，后续节点（爬取节点、数据集生成节点）在执行开始时会检查该字段，若存在异常则跳过本节点的实际逻辑并直接流转到下一节点，最终由结束节点汇总错误信息。
+
 ### 1. 启动节点 (Start Node)
 
 **功能：** 初始化配置参数，验证必需参数，设置默认值
@@ -114,6 +116,12 @@ WebCrawler Agent 采用多阶段顺序执行架构：
 - `webcrawler.dataset_pt_mapped_path`: 映射后的 PT 数据集文件路径
 - `webcrawler.dataset_mapping_results`: 数据集映射结果详情
 
+同时，该节点会向 `constructor` 字典写入以下字段，供下游 Constructor 流水线使用：
+- `constructor.intermediate_data_path`: 指向整个 dataset 目录（同时包含 SFT 和 PT 文件）
+- `constructor.webcrawler_dataset_dir`: 同 `intermediate_data_path`，dataset 目录路径
+- `constructor.category`: 数据集类别（优先 `"SFT"`，无 SFT 记录时为 `"PT"`）
+- `constructor.model_path` / `constructor.base_url` / `constructor.api_key`: 若 constructor 配置缺失，自动从 webcrawler 配置补充
+
 ### 4. 结束节点 (End Node)
 
 **功能：** 生成任务摘要，返回结果到父图
@@ -132,6 +140,7 @@ WebCrawler Agent 采用多阶段顺序执行架构：
 **输出：**
 - 更新 `messages` 列表，添加任务摘要
 - 设置 `next_to` 为 `"query_node"`
+- 设置 `automated_query` 为提示下游使用 Constructor 进行数据清洗与格式映射的引导语
 
 ## 📝 使用方法
 
@@ -190,9 +199,15 @@ if 'dataset_summary' in webcrawler:
 
 ```python
 initial_state = {
-    'messages': [HumanMessage(content="搜索机器学习模型训练最佳实践")],
+    # 顶层必要字段
+    'task_id': 'webcrawler_002',
     'output_dir': './output',
-    
+    'exception': '',
+    'current': 'webcrawl',
+    'next_to': '',
+    'automated_query': '',
+    'messages': [HumanMessage(content="搜索机器学习模型训练最佳实践")],
+
     'webcrawler': {
         # API 配置
         'deepseek_api_key': 'your-deepseek-api-key',
@@ -260,7 +275,7 @@ initial_state = {
 | `webcrawler.concurrent_pages` | int | ❌ | 3 | 并发爬取页面数 |
 | `webcrawler.min_text_length` | int | ❌ | 500 | 最小文本长度（字符） |
 | `webcrawler.min_code_length` | int | ❌ | 50 | 最小代码长度（字符） |
-| `webcrawler.min_relevance_score` | int/float | ❌ | 6/0.6 | 最小相关性分数（爬取阶段：1-10，数据集阶段：0.0-1.0） |
+| `webcrawler.min_relevance_score` | int | ❌ | 6 | 最小相关性分数，取值范围 1-10，统一用于爬取阶段和数据集生成阶段（由 `start_node` 强制转为整数）|
 | `webcrawler.url_patterns` | str | ❌ | None | URL 模式匹配规则 |
 | `webcrawler.request_delay` | float | ❌ | 2.0 | 请求之间的延迟（秒） |
 | `webcrawler.timeout` | int | ❌ | 30 | 请求超时时间（秒） |
@@ -366,6 +381,8 @@ sft_result = await generate_sft_records(
     webpage_url="https://example.com",
     code_blocks=[...],
     max_records=10,
+    min_relevance_score=6,       # 最小相关性分数（1-10）
+    max_content_length=50000,    # LLM 处理的最大内容长度
 )
 
 # 生成 PT 记录
@@ -377,6 +394,8 @@ pt_result = await generate_pt_records(
     webpage_content="内容",
     webpage_url="https://example.com",
     max_records=10,
+    min_relevance_score=6,       # 最小相关性分数（1-10）
+    max_content_length=50000,    # LLM 处理的最大内容长度
 )
 
 # 生成摘要和相关性评分

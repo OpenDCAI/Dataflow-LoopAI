@@ -250,6 +250,31 @@ class ConstructorAgent(BaseAgent):
                        f"base_url: {constructor.get('base_url')}, "
                        f"debug: {debug_mode}")
             
+            # Manual-trigger support: when webcrawler_dataset_dir is not
+            # already set (i.e. no auto-pipeline from WebCrawlerAgent),
+            # probe the default output directory for historical data.
+            if not constructor.get("webcrawler_dataset_dir"):
+                default_wc_dir = os.path.join(
+                    state.get("output_dir", "./output"), "webcrawler_dataset"
+                )
+                if os.path.isdir(default_wc_dir):
+                    try:
+                        has_jsonl = any(
+                            f.endswith(".jsonl")
+                            for f in os.listdir(default_wc_dir)
+                            if not f.startswith(".")
+                        )
+                    except OSError:
+                        has_jsonl = False
+                    if has_jsonl:
+                        constructor["webcrawler_dataset_dir"] = default_wc_dir
+                        if not constructor.get("intermediate_data_path"):
+                            constructor["intermediate_data_path"] = default_wc_dir
+                        logger.info(
+                            f"start_node: auto-detected webcrawler dataset "
+                            f"at {default_wc_dir}"
+                        )
+
             ConstructorAgent._emit_stream_event(
                 state,
                 message="Constructor: 配置完成",
@@ -401,6 +426,17 @@ class ConstructorAgent(BaseAgent):
             },
         )
         
+        # Clear one-shot webcrawler routing state so that subsequent
+        # Constructor runs (e.g. for Obtainer data) are not hijacked
+        # into the WebCrawler path again.
+        ctor = state.get("constructor", {})
+        if ctor.get("webcrawler_dataset_dir"):
+            logger.info(
+                "ConstructorAgent end_node: clearing webcrawler_dataset_dir "
+                "to allow subsequent Obtainer-driven runs"
+            )
+            ctor.pop("webcrawler_dataset_dir", None)
+
         # Set next_to to query_node to return to parent graph
         state["next_to"] = "query_node"
         return state
@@ -727,6 +763,55 @@ class ConstructorAgent(BaseAgent):
             return "end_node"
 
     @staticmethod
+    def route_after_start(state: LoopAIState) -> str:
+        """
+        Top-level routing after start_node.
+
+        Adds a **new** WebCrawler entry path while keeping the original
+        Obtainer path (has_successful_downloads) completely unchanged.
+
+        Priority:
+        1. WebCrawler dataset (constructor.webcrawler_dataset_dir with .jsonl
+           files) → "data_cleaning_start" (skip postprocess, data is already
+           structured by webcrawler_dataset_node).
+        2. Otherwise → delegate to has_successful_downloads which returns
+           "postprocess_node" or "end_node" as before.
+        """
+        constructor_state = state.get("constructor", {})
+        webcrawler_dataset_dir = constructor_state.get("webcrawler_dataset_dir", "")
+
+        if webcrawler_dataset_dir and os.path.isdir(webcrawler_dataset_dir):
+            try:
+                has_jsonl = any(
+                    f.endswith(".jsonl")
+                    for f in os.listdir(webcrawler_dataset_dir)
+                    if not f.startswith(".")
+                )
+            except OSError:
+                has_jsonl = False
+
+            if has_jsonl:
+                logger.info(
+                    f"route_after_start: WebCrawler dataset detected at "
+                    f"'{webcrawler_dataset_dir}', routing to data_cleaning_start"
+                )
+                ConstructorAgent._emit_stream_event(
+                    state,
+                    message="Constructor: 检测到 WebCrawler 数据集，直接进入数据清洗",
+                    progress=0.05,
+                    data={
+                        "phase": "routing",
+                        "route_to": "data_cleaning_start",
+                        "source": "webcrawler",
+                        "webcrawler_dataset_dir": webcrawler_dataset_dir,
+                    },
+                    current=state.get("current", "ConstructorAgent.start_node"),
+                )
+                return "data_cleaning_start"
+
+        return ConstructorAgent.has_successful_downloads(state)
+
+    @staticmethod
     def should_run_data_cleaning(state: LoopAIState) -> str:
         """
         Conditional: skip data_cleaning subgraph when no intermediate_data_path (nothing to clean).
@@ -812,11 +897,14 @@ class ConstructorAgent(BaseAgent):
         builder.add_node("end_node", self.end_node)
         builder.set_entry_point("start_node")
         
-        # start_node -> postprocess_node (检查是否有成功下载)
+        # start_node routing:
+        #   route_after_start checks for WebCrawler dataset first (new path),
+        #   then falls through to the original has_successful_downloads logic.
         builder.add_conditional_edges(
             "start_node",
-            self.has_successful_downloads,
+            self.route_after_start,
             {
+                "data_cleaning_start": "data_cleaning_start",
                 "postprocess_node": "postprocess_node",
                 "end_node": "end_node",
             }
