@@ -79,7 +79,7 @@ class JudgerAgent(BaseAgent):
                 'default':["output_dir", "task_id"]
             }
             missing_fields = get_missing_fields(required_fields, state)
-
+            
             if not missing_fields:
                 # judger无模型参数则去查看trainer是否提供
                 if _isNotNone(state.get("judger", {}).get("eval_model_path", "")) is not True :
@@ -96,7 +96,9 @@ class JudgerAgent(BaseAgent):
 
             """vllm启动检查"""
             base_url = state.get("judger", {}).get("eval_base_url", None)
-            if(_isNotNone(base_url)):
+            task_type = state.get("judger", {}).get("eval_task_type", "")
+            logger.info(f"base_url:{base_url}")
+            if(_isNotNone(base_url) and task_type!="general_text"):
                 if writer:
                     writer(StreamEvent(
                         current=state['current'],
@@ -138,7 +140,6 @@ class JudgerAgent(BaseAgent):
             if not missing_fields:
                 if state.get("judger", {}).get("eval_task_type", "") == "text2sql":
                     missing_fields = get_missing_fields({'judger':["eval_text2sql_dir"]}, state)
-            
             if missing_fields:
                 logger.info("$"*50)
                 logger.info(missing_fields)
@@ -154,19 +155,25 @@ class JudgerAgent(BaseAgent):
                     goto=goto_node,
                     graph=Command.PARENT
                 )
+            
 
-            if state.get("judger", {}).get("eval_task_type", "") == "code":
+            if task_type == "code":
                 if state.get("judger", {}).get("eval_format_type", "") == "mbpp":
                     required_fields = ["text", "code", "task_id", "challenge_test_list", "test_list"]
                 elif state.get("judger", {}).get("eval_format_type", "") == "human-eval":
                     required_fields = ["task_id", "prompt", "entry_point", "canonical_solution", "test"]
                 else:
                     required_fields = ["task_id", "prompt", "entry_point", "canonical_solution", "test_list"]
-            elif state.get("judger", {}).get("eval_task_type", "") == "text2sql":
+            elif task_type == "text2sql":
                 required_fields = ["task_id", "prompt", "db_id", "question", "ground_truth"]
-            check_file_fields = check_jsonl_fields(state.get("judger", {}).get("eval_problem_path", ""), required_fields)
+            elif task_type == "general_text":
+                check_file_fields = True
+            
+            if task_type == "code" or task_type =="text2sql":
+                check_file_fields = check_jsonl_fields(state.get("judger", {}).get("eval_problem_path", ""), required_fields)
 
             if check_file_fields is not True:
+                print("field error")
                 logger.info("$"*50)
                 logger.info(["eval_problem_path"])
                 state['exception'] = 'ConfigerError'

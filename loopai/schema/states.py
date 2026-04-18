@@ -1084,6 +1084,12 @@ class JudgerState(BaseModel):
         description="eval_general_text_node 生成的摘要 JSON 路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
+    cuda_visible_devices: str = Field(
+        default="0",
+        title = "通用文本可见GPU编号",
+        description="通用文本任务指定运行GPU",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+    )
 
     output_summary_txt_path: str = Field(
         default="",

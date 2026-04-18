@@ -40,10 +40,10 @@ def _emit(writer, message: str, *, progress=None, data=None):
         ).json())
 
 
-def _analyzer(state: LoopAIState) -> dict:
+def _judger(state: LoopAIState) -> dict:
     if "analyzer" not in state:
         raise KeyError("state 中缺少 analyzer 配置，请在 graph.invoke 中传入 analyzer")
-    return state["analyzer"]
+    return state["judger"]
 
 
 def _read_jsonl(path: str) -> List[Dict[str, Any]]:
@@ -64,7 +64,7 @@ def _write_jsonl(path: Path, rows: List[Dict[str, Any]]):
 
 
 def _ensure_outdir(state: LoopAIState) -> Path:
-    cfg = _analyzer(state)
+    cfg = _judger(state)
 
     base_outdir = Path(
         cfg.get("output_dir") or state.get("output_dir") or "./outputs"
@@ -72,7 +72,7 @@ def _ensure_outdir(state: LoopAIState) -> Path:
 
     task_id = state.get("task_id") or "default_task"
 
-    outdir = base_outdir / task_id / "analyzer"
+    outdir = base_outdir / task_id / "judger"
     outdir.mkdir(parents=True, exist_ok=True)
 
     return outdir
@@ -80,14 +80,13 @@ def _ensure_outdir(state: LoopAIState) -> Path:
 
 def _build_model_config(cfg: Dict[str, Any]) -> ModelConfig:
     model_name_or_path = (
-        cfg.get("analyze_model_path")
-        or cfg.get("model_name_or_path")
+        cfg.get("eval_model_path")
         or "dummy"
     )
 
     is_api = bool(cfg.get("is_api", False))
 
-    api_url = cfg.get("analyze_base_url", "")
+    api_url = cfg.get("eval_base_url", "")
     if is_api and api_url and api_url.rstrip("/").endswith("/v1"):
         api_url = api_url.rstrip("/") + "/chat/completions"
 
@@ -96,10 +95,10 @@ def _build_model_config(cfg: Dict[str, Any]) -> ModelConfig:
         is_api=is_api,
         api_url=api_url,
         api_key="",
-        temperature=float(cfg.get("analyze_temperature", 0.0)),
-        top_p=float(cfg.get("analyze_top_p", 1.0)),
+        temperature=float(cfg.get("eval_temperature", 0.0)),
+        top_p=float(cfg.get("eval_top_p", 1.0)),
         tensor_parallel_size=int(cfg.get("tensor_parallel_size", 1)),
-        max_tokens=int(cfg.get("analyze_max_tokens", cfg.get("max_tokens", 2048))),
+        max_tokens=int(cfg.get("eval_max_tokens", cfg.get("max_tokens", 2048))),
     )
 
 
@@ -205,7 +204,6 @@ def _prepare_bench_from_state(
     2. 否则尝试从 state["benches"][eval_cursor] 取
     3. 再不行，才从结果路径 + bench_config 动态构造
     """
-    analyzer_cfg = state.get("analyzer") or {}
     judger_cfg = state.get("judger") or {}
 
     outdir = _ensure_outdir(state)
@@ -266,13 +264,10 @@ def _prepare_bench_from_state(
 
         return bench, eval_type, dataset_cache_path_str, key_mapping, outdir, run_ts
 
-    eval_result_path = (
-        analyzer_cfg.get("eval_result_path")
-        or judger_cfg.get("eval_result_path")
-        or judger_cfg.get("out_result_path")
-    )
+    eval_result_path = judger_cfg.get("eval_problem_path")
+    print("eval_result_path:",eval_result_path)
     if not eval_result_path:
-        raise ValueError("缺少评测输入路径：请提供 analyzer.eval_result_path 或 judger.out_result_path")
+        raise ValueError("缺少评测输入路径：请提供  judger.eval_problem_path")
 
     if not os.path.exists(eval_result_path):
         raise FileNotFoundError(f"评测输入路径不存在：{eval_result_path}")
@@ -285,17 +280,21 @@ def _prepare_bench_from_state(
 
     eval_type = (
         bench_cfg.get("bench_dataflow_eval_type")
-        or bench_cfg.get("eval_type")
-        or cfg.get("bench_dataflow_eval_type")
-        or cfg.get("analyze_dataflow_eval_type")
-        or analyzer_cfg.get("analyze_task_type")
+        or judger_cfg.get("bench_dataflow_eval_type")
     )
     if not eval_type:
         raise ValueError(
-            "通用文本评测缺少 eval_type。请在 bench_config.bench_dataflow_eval_type / bench_config.eval_type / analyzer.analyze_task_type 中提供"
+            "通用文本评测缺少 eval_type。请在 bench_config.bench_dataflow_eval_type / judger.bench_dataflow_eval_type 中提供"
         )
-
+    
+    # 获取bench_cfg或者从judger中获取 key_mapping映射关系
     key_mapping = bench_cfg.get("key_mapping") or cfg.get("key_mapping") or {}
+
+    if isinstance(key_mapping, str):
+        try:
+            key_mapping = json.loads(key_mapping)
+        except Exception as e:
+            raise ValueError(f"Failed to parse key_mapping as JSON: {key_mapping}, error: {e}")
 
     _emit(
         writer,
@@ -322,7 +321,7 @@ def _prepare_bench_from_state(
     )
 
     bench = BenchAdapter(
-        bench_name=bench_cfg.get("bench_name", analyzer_cfg.get("bench_name", "general_text_eval")),
+        bench_name=bench_cfg.get("bench_name", judger_cfg.get("bench_name", "general_text_eval")),
         dataset_cache=str(dataset_cache_path),
         bench_dataflow_eval_type=eval_type,
         meta={},
@@ -335,14 +334,18 @@ def _prepare_bench_from_state(
     dataset_cache_path_str = str(dataset_cache_path.resolve())
     return bench, eval_type, dataset_cache_path_str, key_mapping, outdir, run_ts
 
+def _set_gpu(state:LoopAIState):
+    os.environ['CUDA_VISIBLE_DEVICES'] = state["judger"].get("cuda_visible_devices","0")
+    logger.info(f"CUDA_VISIBLE_DEVICES:{os.environ['CUDA_VISIBLE_DEVICES']} 设置完成")
 
 def eval_general_text_node(state: LoopAIState):
     """
     通用文本评测节点：
     按 DataFlowEvalNode 的逻辑完整接入到 LoopAI。
     """
+    _set_gpu(state)
     writer = get_stream_writer()
-    cfg = _analyzer(state)
+    cfg = _judger(state)
 
     bench, eval_type, dataset_cache_path, key_mapping, outdir, run_ts = _prepare_bench_from_state(
         state, cfg, writer
@@ -355,8 +358,8 @@ def eval_general_text_node(state: LoopAIState):
         "One-Eval Phase4 配置完成，准备调用 DataFlowEvalTool",
         progress=0.35,
         data={
-            "bench_name": bench.bench_name,
-            "eval_type": bench.bench_dataflow_eval_type,
+            "bench_name": cfg["bench_name"],
+            "eval_type": cfg["bench_dataflow_eval_type"],
             "model_name_or_path": getattr(model_config, "model_name_or_path", None),
             "is_api": getattr(model_config, "is_api", None),
             "max_tokens": getattr(model_config, "max_tokens", None),
@@ -405,7 +408,7 @@ def eval_general_text_node(state: LoopAIState):
 
             logger.info(f"[{bench.bench_name}] bench.key_mapping={getattr(bench, 'key_mapping', {})}")
             logger.info(f"[{bench.bench_name}] bench.meta.key_mapping={(bench.meta or {}).get('key_mapping', {})}")
-
+            logger.info(f"{model_config}")
             result = tool.run_eval(bench, model_config)
 
             if not bench.meta:
@@ -454,6 +457,7 @@ def eval_general_text_node(state: LoopAIState):
             logger.info(f"[{bench.bench_name}] 评测完成。Stats: {stats}")
 
         except Exception as e:
+            print("CUDA_VISIBLE_DEVICES from environment:", os.environ.get("CUDA_VISIBLE_DEVICES"))
             logger.error(f"[{bench.bench_name}] 评测失败: {e}")
             bench.eval_status = "failed"
             if not bench.meta:
