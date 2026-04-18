@@ -457,7 +457,7 @@ def eval_general_text_node(state: LoopAIState):
             logger.info(f"[{bench.bench_name}] 评测完成。Stats: {stats}")
 
         except Exception as e:
-            print("CUDA_VISIBLE_DEVICES from environment:", os.environ.get("CUDA_VISIBLE_DEVICES"))
+            logger.info("CUDA_VISIBLE_DEVICES from environment:", os.environ.get("CUDA_VISIBLE_DEVICES"))
             logger.error(f"[{bench.bench_name}] 评测失败: {e}")
             bench.eval_status = "failed"
             if not bench.meta:
