@@ -27,6 +27,7 @@
         "markdown-it-sub": "^2.0.0",
         "markdown-it-sup": "^2.0.0",
         "markdown-it-texmath": "^1.0.0",
+        "monaco-editor": "0.55.1",
         "office-ui-fabric-core": "^11.1.0",
         "onecolor": "^4.1.0",
         "pinia": "^2.1.7",
