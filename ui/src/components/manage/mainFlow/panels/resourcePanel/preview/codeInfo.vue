@@ -26,32 +26,14 @@ import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 
 export default {
     props: {
-        item: {
-            type: Object,
-            default: () => ({})
-        },
-        showBack: {
-            type: Boolean,
-            default: true
-        }
+        item: { type: Object, default: () => ({}) },
+        showBack: { type: Boolean, default: true }
     },
     data() {
-        return {
-            txtInfo: '',
-            monaco: null,
-            editorInstance: null,
-            num_per_page: 60
-        }
+        return { txtInfo: '', monaco: null, editorInstance: null, fileExt: 'ini', num_per_page: 60 }
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
-        fileExt() {
-            if (!this.item || !this.item.id) return ''
-            let path = this.item.id.split('?')[0]
-            let fileName = path.split('/').pop() || ''
-            if (!fileName.includes('.')) return ''
-            return fileName.split('.').pop().toLowerCase()
-        },
         codeLanguage() {
             const map = {
                 yaml: 'yaml',
@@ -75,7 +57,7 @@ export default {
         }
     },
     async mounted() {
-        await this.ensureEditor()
+        this.ensureEditor()
         this.getData()
     },
     beforeUnmount() {
@@ -133,10 +115,14 @@ export default {
             if (!this.item.id) return
             this.$api.resource.previewResource(this.item.id, 0, this.num_per_page).then((res) => {
                 if (res.code === 200) {
-                    const { samples } = res.data
+                    const { samples, ext } = res.data
                     this.txtInfo = samples.join('\n')
-                    this.updateEditor()
+                    this.fileExt = ext.toLowerCase().replace('.', '')
+                } else {
+                    this.txtInfo = 'Not Found'
+                    this.fileExt = 'ini'
                 }
+                // this.updateEditor()
             })
         }
     }
