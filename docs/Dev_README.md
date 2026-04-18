@@ -1,9 +1,11 @@
 # Dataflow-LoopAI
 
-Dataflow-LoopAI is an intelligent system with self-optimization capabilities that automatically detects and evaluates generation deficiencies in LLMs within specific domains. Through dialog-based active data retrieval and self-driven optimization mechanisms, it enables continuous co-evolution between data and models.
+简体中文 | [English](./Dev_README_en.md)
+
+Dataflow-LoopAI 是一个具备自优化能力的智能系统，能够自动检测并评估特定领域大语言模型的生成缺陷。它通过对话式主动数据获取与自驱优化机制，实现数据与模型的持续协同演进。
 
 ```markdown
-User  ⇄  Manager（控制逻辑） ⇄  LangGraph（状态机）
+用户  ⇄  管理器（控制逻辑） ⇄  LangGraph（状态机）
                  │
                  ├── 普通问答：直接返回
                  └── 复杂任务：进入图（评估 → 挖掘 → 训练）
@@ -12,7 +14,7 @@ User  ⇄  Manager（控制逻辑） ⇄  LangGraph（状态机）
 ## 🧠 整体框架
 
 <p align="center">
-  <img src="docs/assets/workflow.png" alt="Dataflow-LoopAI 工作流程图" width="50%"/>
+  <img src="assets/workflow.svg" alt="Dataflow-LoopAI 工作流程图" width="90%"/>
 </p>
 
 ---
@@ -23,6 +25,12 @@ User  ⇄  Manager（控制逻辑） ⇄  LangGraph（状态机）
 
 ```
 Dataflow-LoopAI/
+├── api/                       # WebUI 后端，FastAPI 服务与静态前端 dist 托管
+│   ├── app/controllers/       # config / task / resource / starter 等 API 路由
+│   ├── app/utils/             # Starter 进程、资源预览、硬件监控等后端工具
+│   ├── db/                    # SQLite 数据库目录
+│   └── dist/                  # 发布版前端产物，生产环境由 FastAPI 直接托管
+│
 ├── examples/                  # 示例脚本与运行用例
 │   └── scripts/               # 启动、测试等脚本
 │
@@ -46,6 +54,13 @@ Dataflow-LoopAI/
 │   │
 │   └── ...                    # 其它框架相关内容
 │
+├── scripts/                   # 发布、下载等项目脚本
+│   ├── download_ui_release.py # 下载 GitHub 发布页中的前端 dist 到 api/dist
+│   └── release_ui.sh          # 打 UI 标签并触发 GitHub Actions 发布
+│
+├── ui/                        # Vue 3 + Vite 前端源码
+│   └── src/                   # 页面、组件、路由、API 调用封装
+│
 └── docs/                      # 文档与资源
     └── assets/                # 图片与素材
 ```
@@ -56,7 +71,7 @@ Dataflow-LoopAI/
 
 ### ✅ `StarterAgent`
 
-作为系统的 **总调度 supervisor**，负责：
+作为系统的 **总调度器**，负责：
 
 * 与用户对话
 * 解析任务意图
@@ -84,8 +99,8 @@ Dataflow-LoopAI/
 作为系统的交互式配置专家，负责：
 
 * 与用户对话修改配置信息
-* 缺失信息反馈和修改再校验(TODO)
-* 继续执行中断节点(TODO)
+* 缺失信息反馈和修改再校验（待实现）
+* 继续执行中断节点（待实现）
 
 ### ✅ `ObtainerAgent`
 
@@ -93,7 +108,7 @@ Dataflow-LoopAI/
 
 * 将用户的需求进行分析并调研
 * 收集相关数据集信息
-* 收集相关网页数据信息(TODO)
+* 收集相关网页数据信息（待实现）
 * 整理各种格式的数据至可以直接用于训练的格式
 ---
 
@@ -105,15 +120,101 @@ pip install -e .
 
 ## ✅ 快速使用指南 (终端)
 
-1. Copy `config/starter.yaml` to `./starter.yaml` and modify it to configure the `system` parameters.
+1. 将 `examples/config/starter.yaml` 复制到 `./starter.yaml`，并修改其中的 `system` 配置参数。
 
-2. Run the `run_starter.py` script to start LoopAI.
+2. 运行 `run_starter.py` 脚本启动 LoopAI。
 
 ```bash
 python examples/scripts/run_starter.py
 ```
 
-## ✅ 快速Dev指南
+## ✅ 快速开发指南
+
+### 0️⃣ WebUI 前端开发
+
+生产环境推荐直接下载已发布的前端 dist：
+
+```bash
+python scripts/download_ui_release.py
+```
+
+本节只用于需要修改或调试 `ui/` 源码的开发场景。
+
+#### 1. 安装 NVM
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+```
+
+#### 2. 激活 NVM
+
+```bash
+source ~/.bashrc  # 或 ~/.zshrc
+```
+
+#### 3. 安装 Node.js
+
+```bash
+nvm install 20
+nvm use 20
+nvm alias default 20
+```
+
+#### 4. 验证安装
+
+```bash
+node -v
+npm -v
+```
+
+#### 5. 安装 Yarn
+
+```bash
+corepack enable
+corepack prepare yarn@stable --activate
+```
+
+#### 6. 安装依赖
+
+```bash
+cd ui
+yarn
+```
+
+#### 7. 配置后端代理
+
+如果后端没有运行在 `127.0.0.1:8855`，请编辑 `ui/vite.config.js`：
+
+```javascript
+server: {
+  host: '0.0.0.0',
+  proxy: {
+    '/api': {
+      target: 'http://<host>:8855/',
+      changeOrigin: true,
+      rewrite: path => path.replace(/^\/api/, '')
+    }
+  }
+}
+```
+
+#### 8. 启动前端
+
+```bash
+yarn dev
+```
+
+Vite 开发服务器会将 `/api/*` 代理到 FastAPI 后端；生产环境则由 `python api/start.py` 直接从 `api/dist` 托管静态前端。
+
+#### 9. 发布前端 dist
+
+前端改动准备好后，在仓库根目录运行发布脚本：
+
+```bash
+bash scripts/release_ui.sh [可选版本号]
+```
+
+如果省略版本号，脚本会交互式要求输入版本。它会更新 `ui/package.json`，创建 `ui-v<version>` 标签，并推送分支和标签；随后 GitHub Action 会构建并发布前端 dist 产物。
 
 ### 1️⃣ 启动 vLLM 服务
 
@@ -144,19 +245,19 @@ bash examples/scripts/run_manager_vllm.sh
 ```bash
 python examples/scripts/run_judger.py
 ```
-## Running Obtainer Node Example
+## 运行 Obtainer 节点示例
 
-### Configuration
+### 配置
 
-1. **Model Configuration**: Copy `config/starter.yaml` to `./starter.yaml` and modify it to configure the Obtainer-related model paths and parameters.
-   - Note: RAG currently supports only API-based embedding models.
+1. **模型配置**：将 `examples/config/starter.yaml` 复制到 `./starter.yaml`，并修改 Obtainer 相关模型路径与参数。
+   - 注意：RAG 当前仅支持基于 API 的嵌入模型。
 
-2. **Required API Keys**:
-   - **Kaggle Credentials**: Obtain your API credentials from [Kaggle](https://www.kaggle.com/) and configure them in the YAML file.
-   - **Tavily API Key**: Create a `tavily_api_key.txt` file in the `examples/scripts/` directory with your API key from [Tavily](https://www.tavily.com/).
-   - **RAG API Key**: Create a `rag_api_key.txt` file in the project root with your embedding model API key.
+2. **必要 API 密钥**：
+   - **Kaggle 凭据**：从 [Kaggle](https://www.kaggle.com/) 获取 API 凭据，并在 YAML 配置中填写。
+   - **Tavily API 密钥**：在 `examples/scripts/` 目录创建 `tavily_api_key.txt`，写入从 [Tavily](https://www.tavily.com/) 获取的 API 密钥。
+   - **RAG API 密钥**：在项目根目录创建 `rag_api_key.txt`，写入嵌入模型 API 密钥。
 
-### Execution
+### 执行
 
 ```bash
 bash examples/scripts/run_obtainer.sh
@@ -265,7 +366,7 @@ self.prompt_loader = PromptLoader(prompt_template_dir)
 
 ---
 
-### Tool Calls
+### 工具调用
 
 由于我们重写了ReAct节点, 我们观察到, 尽管Sub-Agent采用不同LLM_Node时可能限定定义了不同的工具, 但是Sub-Agent仍然可能受到上下文影响调用本不属于它可使用的工具。因此, 如果你需要自定义工具, 切记返回的为对象`dict`, 避免造成StarterAgent及其它Sub-Agent在校验时无法解析结果而报错。
 
@@ -277,13 +378,13 @@ self.prompt_loader = PromptLoader(prompt_template_dir)
 @property
 @abstractmethod
 def system_prompt_type(self) -> str:
-    """System prompt type"""
+    """系统 Prompt 类型"""
     return "system"
 
 @property
 @abstractmethod
 def system_prompt_name(self) -> str:
-    """System prompt name"""
+    """系统 Prompt 名称"""
     pass
 ```
 

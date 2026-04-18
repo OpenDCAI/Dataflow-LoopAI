@@ -1,0 +1,30 @@
+2026-04-17 17:37:17 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: dummy (is_api=False)
+2026-04-17 17:42:48 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: dummy (is_api=False)
+2026-04-17 17:52:12 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: dummy (is_api=False)
+2026-04-17 20:20:11 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-17 20:22:28 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-17 20:22:51 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-17 20:25:43 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-17 20:28:11 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-17 20:36:55 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-17 20:52:59 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-17 20:53:48 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:329 | [general_text_eval] Initial Key Mapping: {}
+2026-04-17 20:53:48 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:410 | [general_text_eval] Running Step 1: Generator (general_text)
+2026-04-17 20:53:49 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:465 | [general_text_eval] Running Step 2: Evaluator
+2026-04-18 00:55:43 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-18 00:58:20 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-18 00:58:43 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-18 01:01:00 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-18 01:01:46 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:329 | [gsm8k] Initial Key Mapping: {
+  "input_question_key": "question",
+  "input_target_key": "answer"
+}
+2026-04-18 01:01:46 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:410 | [gsm8k] Running Step 1: Generator (key2_qa)
+2026-04-18 01:02:57 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:465 | [gsm8k] Running Step 2: Evaluator
+2026-04-18 01:13:41 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:160 | Initializing LLM Serving: /data/laipeichao/Qwen2.5-7B-Instruct/ (is_api=False)
+2026-04-18 01:14:25 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:329 | [gsm8k] Initial Key Mapping: {
+  "input_question_key": "question",
+  "input_target_key": "answer"
+}
+2026-04-18 01:14:25 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:410 | [gsm8k] Running Step 1: Generator (key2_qa)
+2026-04-18 01:15:36 | INFO     | DataFlowEvalTool | dataflow_eval_tool.py:465 | [gsm8k] Running Step 2: Evaluator

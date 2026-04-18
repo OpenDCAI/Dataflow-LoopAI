@@ -3,7 +3,7 @@ import axios from 'axios'
 let ax = axios.create();
 
 const devURL = '/api'
-const prodURL = '/api'
+const prodURL = '/'
 
 const getBaseURL = () => {
     if (process.env.NODE_ENV == 'production') {

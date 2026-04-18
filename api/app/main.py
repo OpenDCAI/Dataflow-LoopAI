@@ -1,8 +1,10 @@
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from tortoise.contrib.fastapi import register_tortoise
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from .utils.starter.starter import starter_process
 
@@ -21,6 +23,7 @@ CONFIGS_DIR = os.path.join(BASE_DIR, "configs")
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 RUNS_DIR = os.path.join(BASE_DIR, "runs")
 DB_PATH = os.path.join(BASE_DIR, "db", "db.sqlite3")
+DIST_DIR = Path(BASE_DIR) / "dist"
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
@@ -63,8 +66,14 @@ app.include_router(task_router, prefix="/task", tags=["task"])
 app.include_router(train_router, prefix="/train", tags=["train"])
 app.include_router(resource_router, prefix="/resource", tags=["resource"])
 
+app.mount(
+    "/assets",
+    StaticFiles(directory=DIST_DIR / "assets", check_dir=False),
+    name="frontend-assets",
+)
 
-@app.get("/")
+
+@app.get("/info")
 async def root():
     """根路径"""
     return {
@@ -79,6 +88,20 @@ async def root():
             "swanlab-logs-all": "GET /train/swanlab-logs - 获取所有SwanLab日志文件夹"
         }
     }
+
+
+@app.get("/", include_in_schema=False)
+async def frontend_root():
+    index_path = DIST_DIR / "index.html"
+    if index_path.is_file():
+        return FileResponse(index_path)
+    return JSONResponse(
+        status_code=404,
+        content={
+            "message": "Frontend dist is not installed.",
+            "hint": "Build ui/ or run scripts/download_ui_release.py to populate api/dist.",
+        },
+    )
 
 
 @app.get("/health")
