@@ -2,7 +2,9 @@
     <div class="value-preview-row-item">
         <div class="not-overflow"></div>
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
-        <span v-if="computedUIType === 'default'" class="none-value">{{ thisValue }}</span>
+        <span v-if="computedUIType === 'default'" class="none-value" @click="copyText">{{
+            thisValue
+        }}</span>
         <editor-preview
             v-if="computedUIType === 'editor'"
             :model-value="thisValue"
@@ -74,6 +76,8 @@
         <div v-if="computedUIType === 'dir'" class="value-preview-row-item">
             <fv-breadcrumb
                 v-model="dirModel"
+                class="path-preview"
+                :root-icon="'View'"
                 :border-radius="6"
                 :font-size="'10px'"
                 :disabled="true"
@@ -272,6 +276,25 @@ export default {
         overflow-wrap: anywhere;
         user-select: none;
         overflow: hidden;
+    }
+
+    .path-preview {
+        height: 30px;
+        background: rgba(255, 255, 255, 0.3);
+        border: rgba(199, 168, 252, 0) solid 2px;
+        box-sizing: border-box;
+        transition: all 0.3s;
+        filter: grayscale(0);
+        cursor: pointer;
+
+        &:hover {
+            background: rgba(255, 255, 255, 0.9);
+            border: rgba(199, 168, 252, 0.3) solid 2px;
+        }
+
+        &:active {
+            background: rgba(239, 239, 239, 0.8);
+        }
     }
 }
 </style>
