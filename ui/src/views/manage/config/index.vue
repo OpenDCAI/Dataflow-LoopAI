@@ -117,7 +117,7 @@ import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
 import { useLoopAI } from '@/stores/loopAI'
 
-import valueInput from '@/components/manage/config/valueInput.vue'
+import valueInput from '@/components/manage/config/valueInput/index.vue'
 import resourcePanel from '@/components/manage/mainFlow/panels/resourcePanel/index.vue'
 
 export default {

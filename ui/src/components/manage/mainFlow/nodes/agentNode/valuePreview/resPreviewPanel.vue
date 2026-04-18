@@ -8,7 +8,7 @@
         :teleport="true"
     >
         <template v-slot:content>
-            <div class="panel-resource-preview-content-block">
+            <div v-if="thisValue" class="panel-resource-preview-content-block">
                 <component
                     :is="computedUI"
                     :is-show="thisValue"
@@ -38,31 +38,18 @@ import { useTheme } from '@/stores/theme'
 import basePanel from '@/components/general/basePanel.vue'
 import tableInfo from '@/components/manage/mainFlow/panels/resourcePanel/preview/tableInfo.vue'
 import textInfo from '@/components/manage/mainFlow/panels/resourcePanel/preview/textInfo.vue'
+import codeInfo from '@/components/manage/mainFlow/panels/resourcePanel/preview/codeInfo.vue'
 
 export default {
-    components: {
-        basePanel,
-        tableInfo,
-        textInfo
-    },
+    components: { basePanel, tableInfo, textInfo, codeInfo },
     props: {
-        modelValue: {
-            default: false
-        },
-        filePath: {
-            default: ''
-        },
-        title: {
-            default: 'Resource Previewer'
-        },
-        readOnly: {
-            default: false
-        }
+        modelValue: { default: false },
+        filePath: { default: '' },
+        title: { default: 'Resource Previewer' },
+        readOnly: { default: false }
     },
     data() {
-        return {
-            thisValue: this.modelValue
-        }
+        return { thisValue: this.modelValue }
     },
     watch: {
         modelValue(val) {
@@ -78,10 +65,14 @@ export default {
         computedUI() {
             let path = this.filePath.split('/')
             let fileName = path[path.length - 1]
-            let fileExt = fileName.split('.').pop()
+            let fileExt = fileName.split('.').pop().toLowerCase()
             let supportTable = ['csv', 'tsv', 'json', 'jsonl']
+            let supportCode = ['yaml', 'yml', 'toml', 'ini', 'cfg', 'conf']
             if (supportTable.includes(fileExt)) {
                 return tableInfo
+            }
+            if (supportCode.includes(fileExt)) {
+                return codeInfo
             }
             return textInfo
         },

@@ -14,6 +14,7 @@
                         v-model="thisFilePath"
                         :readOnly="readOnly"
                         :border-radius="6"
+                        :root-icon="rootIcon"
                         style="width: 100%; flex-shrink: 0"
                         @item-click="handleDirClick"
                         @input-change="debounceGetFiles"
@@ -98,6 +99,9 @@ export default {
         },
         title: {
             default: 'Select Directory'
+        },
+        rootIcon: {
+            default: 'Folder'
         },
         filePath: {
             default: ''

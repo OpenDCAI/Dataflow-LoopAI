@@ -72,6 +72,7 @@
                         class="tool-msg-item"
                         :class="[{ long: computeLength(item.value) > 20 }]"
                         :key="index"
+                        @click="copyTextContent(item.value)"
                     >
                         <p class="tool-msg-key">{{ item.key }}</p>
                         <p class="tool-msg-value">{{ item.value }}</p>
@@ -290,6 +291,14 @@ export default {
                 this.timer.copyIcon = setTimeout(() => {
                     this.copyIcon = 'Set'
                 }, 1000)
+            })
+        },
+        copyTextContent (text) {
+            if(typeof(text) === 'object') text = JSON.stringify(text);
+            navigator.clipboard.writeText(text).then(() => {
+                this.$barWarning(this.local('Copied'), {
+                    status: "correct"
+                })
             })
         },
         computeLength(obj) {

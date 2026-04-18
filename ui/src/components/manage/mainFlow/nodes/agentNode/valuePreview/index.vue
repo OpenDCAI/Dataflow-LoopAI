@@ -1,42 +1,118 @@
 <template>
     <div class="value-preview-row-item">
-        <div class="not-overflow">
-
-        </div>
+        <div class="not-overflow"></div>
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
-        <span v-if="computedUIType === 'default'" class="none-value">{{ thisValue }}</span>
-        <fv-text-box v-if="computedUIType === 'text'" v-model="thisValue" :placeholder="local(modelKey)"
-            border-radius="6" :border-width="2" :reveal-border="true" :disabled="!lock"
-            :border-color="'rgba(120, 120, 120, 0.1)'" :focus-border-color="foreground" :is-box-shadow="true" underline
-            style="width: 100%; height: 30px; margin-bottom: 3px" readonly></fv-text-box>
-        <fv-toggle-switch v-if="computedUIType === 'bool'" v-model="thisValue" :on="local('True')" :off="local('False')"
-            :width="65" :height="25" :switch-on-background="foreground" :inside-content="true"
-            :disabled="!lock"></fv-toggle-switch>
-        <fv-combobox v-if="computedUIType === 'list'" v-model="listValueModel" :placeholder="modelKey"
-            :options="formatAllowedValues"></fv-combobox>
+        <span v-if="computedUIType === 'default'" class="none-value" @click="copyText">{{
+            thisValue
+        }}</span>
+        <editor-preview
+            v-if="computedUIType === 'editor'"
+            :model-value="thisValue"
+            :language="editorLanguage"
+        ></editor-preview>
+        <fv-text-box
+            v-if="computedUIType === 'text'"
+            v-model="thisValue"
+            :placeholder="local(modelKey)"
+            border-radius="6"
+            :border-width="2"
+            :reveal-border="true"
+            :disabled="!lock"
+            :border-color="'rgba(120, 120, 120, 0.1)'"
+            :focus-border-color="foreground"
+            :is-box-shadow="true"
+            icon="Set"
+            underline
+            style="width: 100%; height: 30px; margin-bottom: 3px"
+            readonly
+            @icon-click="copyText"
+        ></fv-text-box>
+        <fv-toggle-switch
+            v-if="computedUIType === 'bool'"
+            v-model="thisValue"
+            :on="local('True')"
+            :off="local('False')"
+            :width="65"
+            :height="25"
+            :switch-on-background="foreground"
+            :inside-content="true"
+            :disabled="!lock"
+        ></fv-toggle-switch>
+        <fv-combobox
+            v-if="computedUIType === 'list'"
+            v-model="listValueModel"
+            :placeholder="modelKey"
+            :options="formatAllowedValues"
+        ></fv-combobox>
         <div v-if="computedUIType === 'slider'" class="value-preview-row-item">
-            <fv-slider v-model="slideValueModel" :showLabel="true" :unit="1" :color="foreground" :disabled="!lock"
-                background="rgba(255, 255, 255, 0.8)" style="margin: 5px 0px; flex: 1">
+            <fv-slider
+                v-model="slideValueModel"
+                :showLabel="true"
+                :unit="1"
+                :color="foreground"
+                :disabled="!lock"
+                background="rgba(255, 255, 255, 0.8)"
+                style="margin: 5px 0px; flex: 1"
+            >
                 <template v-slot="prop">
                     <span>{{ prop.modelValue / 100 }}</span>
                 </template>
             </fv-slider>
-            <fv-text-box v-model="thisValue" :placeholder="local(modelKey)" border-radius="3" :border-width="2"
-                :reveal-border="true" :disabled="!lock" :border-color="'rgba(120, 120, 120, 0.1)'"
-                :focus-border-color="foreground" :is-box-shadow="true" underline style="width: 80px" readonly></fv-text-box>
+            <fv-text-box
+                v-model="thisValue"
+                :placeholder="local(modelKey)"
+                border-radius="3"
+                :border-width="2"
+                :reveal-border="true"
+                :disabled="!lock"
+                :border-color="'rgba(120, 120, 120, 0.1)'"
+                :focus-border-color="foreground"
+                :is-box-shadow="true"
+                underline
+                style="width: 80px"
+                readonly
+            ></fv-text-box>
         </div>
         <div v-if="computedUIType === 'dir'" class="value-preview-row-item">
-            <fv-breadcrumb v-model="dirModel" :border-radius="6" :font-size="'10px'" :disabled="true" :title="thisValue"
-                style="flex: 1; flex-shrink: 0" @click="show.dir = true">
+            <fv-breadcrumb
+                v-model="dirModel"
+                class="path-preview"
+                :root-icon="'View'"
+                :border-radius="6"
+                :font-size="'10px'"
+                :disabled="true"
+                :title="thisValue"
+                style="flex: 1; flex-shrink: 0"
+                @click="show.dir = true"
+            >
             </fv-breadcrumb>
-            <component :is="dirComponent" v-model="show.dir" v-model:filePath="dirModel" :readOnly="true"></component>
+            <component
+                :is="dirComponent"
+                v-model="show.dir"
+                v-model:filePath="dirModel"
+                :readOnly="true"
+            ></component>
         </div>
-        <fv-button v-show="false" theme="dark" background="rgba(111, 92, 196, 1)" border-radius="30"
-            style="width: 25px; height: 25px; flex-shrink: 0" :title="local('Set as Default')" @click="setDefault">
+        <fv-button
+            v-show="false"
+            theme="dark"
+            background="rgba(111, 92, 196, 1)"
+            border-radius="30"
+            style="width: 25px; height: 25px; flex-shrink: 0"
+            :title="local('Set as Default')"
+            @click="setDefault"
+        >
             <i class="ms-Icon ms-Icon--Leaf"></i>
         </fv-button>
-        <fv-button v-show="false" theme="dark" background="rgba(200, 38, 45, 1)" border-radius="30"
-            style="width: 25px; height: 25px; flex-shrink: 0" :title="local('Clear as None')" @click="clearNone">
+        <fv-button
+            v-show="false"
+            theme="dark"
+            background="rgba(200, 38, 45, 1)"
+            border-radius="30"
+            style="width: 25px; height: 25px; flex-shrink: 0"
+            :title="local('Clear as None')"
+            @click="clearNone"
+        >
             <i class="ms-Icon ms-Icon--Delete"></i>
         </fv-button>
     </div>
@@ -49,37 +125,20 @@ import { useLoopAI } from '@/stores/loopAI'
 import { useTheme } from '@/stores/theme'
 
 import resPreviewPanel from './resPreviewPanel.vue'
+import editorPreview from './editorPreview.vue'
 import directorySelector from '@/components/general/directorySelector.vue'
 
 export default {
-    components: {
-        resPreviewPanel,
-        directorySelector
-    },
+    components: { resPreviewPanel, directorySelector, editorPreview },
     props: {
-        modelValue: {
-            default: () => ({})
-        },
-        modelKey: {
-            default: ''
-        },
-        stateKey: {
-            default: ''
-        },
-        foreground: {
-            default: ''
-        },
-        lock: {
-            default: true
-        }
+        modelValue: { default: () => ({}) },
+        modelKey: { default: '' },
+        stateKey: { default: '' },
+        foreground: { default: '' },
+        lock: { default: true }
     },
     data() {
-        return {
-            thisValue: this.modelValue,
-            show: {
-                dir: false
-            }
-        }
+        return { thisValue: this.modelValue, show: { dir: false } }
     },
     watch: {
         modelValue() {
@@ -113,15 +172,20 @@ export default {
                 return 'list'
             if (this.thisValue === null || this.thisValue === undefined) return 'none'
             if (this.schemaModel.ui_type === 'file_path') return 'dir'
-            if (
-                this.schemaModel.ui_type === 'text' ||
-                this.schemaModel.ui_type === 'textarea' ||
-                this.schemaModel.ui_type === 'password'
-            )
+            if (this.schemaModel.ui_type === 'textarea') return 'editor'
+            if (this.schemaModel.ui_type === 'text' || this.schemaModel.ui_type === 'password')
                 return 'text'
-            if (this.schemaModel.ui_type === 'toggle_switch' || this.schemaModel.ui_type === 'switch') return 'bool'
+            if (
+                this.schemaModel.ui_type === 'toggle_switch' ||
+                this.schemaModel.ui_type === 'switch'
+            )
+                return 'bool'
             if (this.schemaModel.ui_type === 'slider') return 'slider'
             return 'text'
+        },
+        editorLanguage() {
+            if (!this.schemaModel || !this.schemaModel.language) return 'plaintext'
+            return this.schemaModel.language
         },
         listValueModel: {
             get() {
@@ -137,10 +201,7 @@ export default {
             if (!this.schemaModel) return []
             const raw = this.schemaModel.allowed_values || this.schemaModel.options
             if (!raw || !raw.length) return []
-            return raw.map((item) => ({
-                key: item,
-                text: item
-            }))
+            return raw.map((item) => ({ key: item, text: item }))
         },
         dirModel: {
             get() {
@@ -152,10 +213,24 @@ export default {
             }
         },
         dirComponent() {
-            const allowedExts = ['csv', 'tsv', 'txt', 'md', 'json', 'jsonl', 'html']
+            const allowedExts = [
+                'csv',
+                'tsv',
+                'txt',
+                'md',
+                'json',
+                'jsonl',
+                'html',
+                'yaml',
+                'yml',
+                'toml',
+                'ini',
+                'cfg',
+                'conf'
+            ]
             let path = this.thisValue.split('/')
             let fileName = path[path.length - 1]
-            let fileExt = fileName.split('.').pop()
+            let fileExt = fileName.split('.').pop().toLowerCase()
             if (allowedExts.includes(fileExt)) {
                 return resPreviewPanel
             } else {
@@ -169,6 +244,11 @@ export default {
         },
         clearNone() {
             this.thisValue = null
+        },
+        copyText() {
+            navigator.clipboard.writeText(this.thisValue).then(() => {
+                this.$barWarning(this.local('Copied'), { status: 'correct' })
+            })
         }
     }
 }
@@ -196,6 +276,25 @@ export default {
         overflow-wrap: anywhere;
         user-select: none;
         overflow: hidden;
+    }
+
+    .path-preview {
+        height: 30px;
+        background: rgba(255, 255, 255, 0.3);
+        border: rgba(199, 168, 252, 0) solid 2px;
+        box-sizing: border-box;
+        transition: all 0.3s;
+        filter: grayscale(0);
+        cursor: pointer;
+
+        &:hover {
+            background: rgba(255, 255, 255, 0.9);
+            border: rgba(199, 168, 252, 0.3) solid 2px;
+        }
+
+        &:active {
+            background: rgba(239, 239, 239, 0.8);
+        }
     }
 }
 </style>
