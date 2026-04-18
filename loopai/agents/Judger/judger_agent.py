@@ -173,7 +173,6 @@ class JudgerAgent(BaseAgent):
                 check_file_fields = check_jsonl_fields(state.get("judger", {}).get("eval_problem_path", ""), required_fields)
 
             if check_file_fields is not True:
-                print("field error")
                 logger.info("$"*50)
                 logger.info(["eval_problem_path"])
                 state['exception'] = 'ConfigerError'

@@ -263,7 +263,7 @@ def _prepare_bench_from_state(
         return bench, eval_type, dataset_cache_path_str, key_mapping, outdir, run_ts
 
     eval_result_path = judger_cfg.get("eval_problem_path")
-    print("eval_result_path:",eval_result_path)
+    logger.info(f"eval_result_path:{eval_result_path}")
     if not eval_result_path:
         raise ValueError("缺少评测输入路径：请提供  judger.eval_problem_path")
 
