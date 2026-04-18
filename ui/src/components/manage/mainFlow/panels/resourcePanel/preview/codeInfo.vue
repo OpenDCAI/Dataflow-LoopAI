@@ -17,6 +17,7 @@
 
 <script>
 import { mapState } from 'pinia'
+import { markRaw } from 'vue'
 import { useAppConfig } from '@/stores/appConfig'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
@@ -30,7 +31,7 @@ export default {
         showBack: { type: Boolean, default: true }
     },
     data() {
-        return { txtInfo: '', monaco: null, editorInstance: null, fileExt: 'ini', num_per_page: 60 }
+        return { txtInfo: '', monaco: null, editorInstance: null, fileExt: 'ini', num_per_page: 1000 }
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
@@ -56,7 +57,7 @@ export default {
             return map[this.fileExt] || 'plaintext'
         }
     },
-    async mounted() {
+    mounted() {
         this.ensureEditor()
         this.getData()
     },
@@ -82,18 +83,20 @@ export default {
             if (this.editorInstance) return
             this.ensureMonacoWorker()
             const monaco = await import('monaco-editor')
-            this.monaco = monaco
-            this.editorInstance = monaco.editor.create(this.$refs.editorContainer, {
-                value: '',
-                language: this.codeLanguage,
-                readOnly: true,
-                automaticLayout: true,
-                minimap: { enabled: false },
-                scrollBeyondLastLine: false,
-                wordWrap: 'on',
-                renderLineHighlight: 'none',
-                theme: 'vs'
-            })
+            this.monaco = markRaw(monaco)
+            this.editorInstance = markRaw(
+                monaco.editor.create(this.$refs.editorContainer, {
+                    value: '',
+                    language: this.codeLanguage,
+                    readOnly: true,
+                    automaticLayout: true,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    wordWrap: 'on',
+                    renderLineHighlight: 'none',
+                    theme: 'vs'
+                })
+            )
         },
         disposeEditor() {
             if (!this.editorInstance) return
@@ -122,7 +125,7 @@ export default {
                     this.txtInfo = 'Not Found'
                     this.fileExt = 'ini'
                 }
-                // this.updateEditor()
+                this.updateEditor()
             })
         }
     }
