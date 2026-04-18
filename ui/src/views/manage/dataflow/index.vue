@@ -194,7 +194,7 @@ export default {
                         graphClsPrefix: 'ConfigerAgent',
                         include_nodes: ['config_node'],
                         icon: 'Settings',
-                        nodeInfo: 'Trainer Agent for Training',
+                        nodeInfo: 'Configer Agent for configuring the state of sub agents.',
                         iconColor: 'rgba(45, 45, 45, 1)',
                         background:
                             'linear-gradient(130deg, rgba(201, 122, 162, 0.8), rgba(252, 252, 252, 0.8))',
@@ -230,7 +230,7 @@ export default {
                         graphClsPrefix: 'ObtainerAgent',
                         include_nodes: ['obtain_node'],
                         icon: 'GiftboxOpen',
-                        nodeInfo: 'Trainer Agent for Training',
+                        nodeInfo: 'Obtainer Agent for obtaining the data from external datasets and run the data synthesis.',
                         iconColor: 'rgba(90, 45, 133, 1)',
                         reverseHandle: true,
                         borderColor: 'rgba(90, 45, 133, 0.8)'
@@ -247,7 +247,7 @@ export default {
                         graphClsPrefix: 'WebCrawlerAgent',
                         include_nodes: ['webcrawler_dataset_node'],
                         icon: 'GiftboxOpen',
-                        nodeInfo: 'Webcrawler',
+                        nodeInfo: 'Webcrawler Agent for crawling the web and obtaining the data.',
                         iconColor: 'rgba(207, 85, 128, 1)',
                         reverseHandle: true,
                         borderColor: 'rgba(207, 85, 128, 0.8)'
@@ -282,7 +282,7 @@ export default {
                         graphClsPrefix: 'JudgerAgent',
                         include_nodes: ['judge_node'],
                         icon: 'Bug',
-                        nodeInfo: 'Trainer Agent for Training',
+                        nodeInfo: 'Judger Agent for evaluate the model performance with vllm.',
                         iconColor: 'rgba(89, 169, 133, 1)',
                         background:
                             'linear-gradient(130deg, rgba(116, 220, 175, 0.8), rgba(252, 252, 252, 0.8))',
@@ -300,7 +300,7 @@ export default {
                         graphClsPrefix: 'AnalyzerAgent',
                         include_nodes: ['analyze_node'],
                         icon: 'AreaChart',
-                        nodeInfo: 'Trainer Agent for Training',
+                        nodeInfo: 'Analyzer Agent for analyzing the model performance from the results of Judger.',
                         iconColor: 'rgba(98, 84, 191, 1)',
                         background:
                             'linear-gradient(130deg, rgba(150, 167, 222, 0.8), rgba(252, 252, 252, 0.8))',

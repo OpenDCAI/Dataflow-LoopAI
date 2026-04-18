@@ -11,12 +11,15 @@ import random
 from typing import Dict, Any, List, Optional, Callable
 
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
 from langgraph.store.base import BaseStore
 
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 from .__mapping_prompts import get_prompt
+from loopai.agents.Constructor.utils.openai_compat_chat import (
+    OpenAIChatParams,
+    chat_completion_sync,
+)
 
 logger = get_logger()
 
@@ -91,15 +94,25 @@ def llm_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState
             fixed_sample_records = random.sample(records, num_samples)
         
         logger.info("Step 1: Generating mapping function using LLM with triple verification...")
-        llm = ChatOpenAI(
+
+        model_name = constructor.get("model_path")
+        base_url = constructor.get("base_url")
+        api_key = constructor.get("api_key")
+        temperature = constructor.get("temperature", 0.0)
+        top_p = constructor.get("top_p", 0.95)
+        max_completion_tokens = constructor.get("max_completion_tokens", 4096)
+
+        params = OpenAIChatParams(
+            model=model_name,
             base_url=base_url,
             api_key=api_key,
-            model=model_name,
-            temperature=temperature
+            temperature=temperature,
+            top_p=top_p,
+            max_completion_tokens=max_completion_tokens,
         )
-        
+
         mapping_func = _generate_mapping_function_with_verification(
-            llm=llm,
+            params=params,
             sample_records=fixed_sample_records,
             target_schema=schema,
             target_example=example,
@@ -161,7 +174,7 @@ def llm_mapping_node(state: LoopAIState, store: BaseStore = None) -> LoopAIState
 
 
 def _generate_mapping_function_with_verification(
-    llm: ChatOpenAI,
+    params: OpenAIChatParams,
     sample_records: List[Dict[str, Any]],
     target_schema: Dict[str, Any],
     target_example: Dict[str, Any],
@@ -169,16 +182,16 @@ def _generate_mapping_function_with_verification(
 ) -> Optional[Callable]:
     """
     Generate mapping function using LLM with triple verification
-    
+
     Generates mapping function three times and verifies consistency
     """
     mapping_functions = []
-    
+
     # Generate mapping function three times
     for attempt in range(3):
         logger.info(f"Generating mapping function (attempt {attempt + 1}/3)...")
         mapping_func = _generate_single_mapping_function(
-            llm=llm,
+            params=params,
             sample_records=sample_records,
             target_schema=target_schema,
             target_example=target_example,
@@ -202,7 +215,7 @@ def _generate_mapping_function_with_verification(
 
 
 def _generate_single_mapping_function(
-    llm: ChatOpenAI,
+    params: OpenAIChatParams,
     sample_records: List[Dict[str, Any]],
     target_schema: Dict[str, Any],
     target_example: Dict[str, Any],
@@ -210,21 +223,21 @@ def _generate_single_mapping_function(
 ) -> Optional[Callable]:
     """
     Generate a single mapping function using LLM (internal method)
-    
+
     LLM analyzes sample data and target format, generates a Python function
     """
-    
+
     try:
         system_prompt = get_prompt("system", "llm_mapping_function_generator_prompt")
     except Exception as e:
         logger.warning(f"Failed to load prompt, using default: {e}")
         system_prompt = "You are a Python expert. Generate a map_record function to transform data."
-    
+
     samples_text = "\n\n".join([
         f"Sample {i+1}:\n{json.dumps(record, ensure_ascii=False, indent=2)}"
         for i, record in enumerate(sample_records)
     ])
-    
+
     user_prompt = f"""Input data samples (intermediate format):
 {samples_text}
 
@@ -237,14 +250,14 @@ Target format example:
 User requirements: {description}
 
 Please write map_record function to convert input format to target format. Only output function code."""
-    
+
     try:
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
         ]
-        
-        response = llm.invoke(messages)
+
+        response = chat_completion_sync(params, messages, timeout_seconds=300.0)
         code = response.content.strip()
         
         logger.debug(f"LLM generated code:\n{code}")

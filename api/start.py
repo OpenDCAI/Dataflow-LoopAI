@@ -62,8 +62,8 @@ def main():
     
     # 启动服务
     print("🚀 Starting LLaMA Factory Training Service...")
-    print("📖 API Documentation: http://localhost:8855/docs")
-    print("💡 Health Check: http://localhost:8855/health")
+    print("📖 API Documentation: http://localhost:8011/docs")
+    print("💡 Health Check: http://localhost:8011/health")
     
     try:
         # 切换到LLaMA Factory目录
@@ -80,7 +80,7 @@ def main():
             "-m", "uvicorn",
             "api.app.main:app",
             "--host", "0.0.0.0",
-            "--port", "8855",
+            "--port", "8011",
         ]
         
         print(f"🔧 Running FastAPI")

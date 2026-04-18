@@ -69,9 +69,9 @@ async def update_config(config: ConfigModel):
 
 
 @router.get("/state_schema", operation_id='getStateSchema', summary="获取State的配置Schema")
-async def get_state_schema():
+async def get_state_schema(language: str="zh"):
     """获取State的配置Schema"""
-    schema = get_state_config_schema()
+    schema = get_state_config_schema(language)
     return response_body(data=schema)()
 
 

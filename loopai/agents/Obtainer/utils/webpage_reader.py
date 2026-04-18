@@ -30,7 +30,7 @@ class WebPageReader(BaseAgent):
     
     def __init__(
         self,
-        model_name: str = "gpt-4o",
+        model_name: str = "gpt-4o-mini",
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.7,

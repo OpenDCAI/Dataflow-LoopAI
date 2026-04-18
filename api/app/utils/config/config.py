@@ -50,23 +50,45 @@ async def get_state_config(base_dir):
     config = await check_config_from_db(base_dir)
     config_data = json.loads(config.config)
     states_data = config_data.get('default_states', {})
-    nested_states_schema = get_state_config_schema()
-    nested_keys = nested_states_schema.keys()
+    language = states_data.get('language', 'zh')
+    nested_states_schema = get_state_config_schema(language)
+    default_schema = nested_states_schema.get('default', {})
+    nested_keys = list(nested_states_schema.keys())
+    nested_keys.remove('default')
     result = {}
-    for series_key in states_data:
+    for series_key in dict.fromkeys(list(states_data.keys()) + list(default_schema.keys())):
         if series_key not in nested_keys:
-            result.setdefault('default', {})[series_key] = wrap_attr(states_data[series_key])
-    for series_key in nested_keys:
-        result.setdefault(series_key, {})
-        for key in nested_states_schema.get(series_key, {}):
-            if key in states_data.get(series_key, {}):
-                cur_val = wrap_attr(states_data.get(series_key, {})[key])
+            key = series_key
+            schema_val = default_schema.get(key, {})
+            if key in states_data:
+                cur_val = wrap_attr(states_data[key])
+            elif "default" in schema_val:
+                cur_val = wrap_attr(schema_val["default"])
             else:
                 cur_val = {
                     'value': None,
                     'default_value': None,
+                    'type': 'none',
                 }
+            result.setdefault('default', {})[key] = {
+                **schema_val,
+                **cur_val,
+            }
+    for series_key in nested_keys:
+        result.setdefault(series_key, {})
+        for key in nested_states_schema.get(series_key, {}):
             schema_val = nested_states_schema[series_key].get(key, {})
+            if key in states_data.get(series_key, {}):
+                cur_val = wrap_attr(states_data.get(series_key, {})[key])
+            elif "default" in schema_val:
+                # 与 Pydantic model_json_schema 对齐：缺失键时用字段默认值，避免前端把 value=null 渲染成不可编辑的 None
+                cur_val = wrap_attr(schema_val["default"])
+            else:
+                cur_val = {
+                    'value': None,
+                    'default_value': None,
+                    'type': 'none',
+                }
             result[series_key][key] = {
                 **schema_val,
                 **cur_val,

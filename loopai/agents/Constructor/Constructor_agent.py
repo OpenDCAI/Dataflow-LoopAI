@@ -124,7 +124,10 @@ class ConstructorAgent(BaseAgent):
                 "mapping_auto_mode", "confirmation_result", "mapping_user_intent",
                 "mapping_selected_format_id", "mapping_custom_description",
                 "default_mapping_format", "llm_timeout", "max_retries",
-                "max_concurrent_mapping", "max_samples_before_cleaning", "debug",
+                "max_concurrent_mapping", "max_samples_before_cleaning",
+                "cleaning_random_seed", "debug",
+                "postprocess_version", "benchmark_source_dir", "benchmark_pool_path",
+                "benchmark_pool_size",
             ]
             for key in fallback_keys:
                 if key not in constructor and key in obtainer_state:
@@ -188,6 +191,13 @@ class ConstructorAgent(BaseAgent):
             # If empty or not set, go through user interaction flow
             if "default_mapping_format" not in constructor:
                 constructor["default_mapping_format"] = "alpaca"  # Default to alpaca format
+
+            if "postprocess_version" not in constructor or not str(constructor.get("postprocess_version") or "").strip():
+                constructor["postprocess_version"] = "agent_v2"
+            if "benchmark_pool_path" not in constructor or not str(constructor.get("benchmark_pool_path") or "").strip():
+                constructor["benchmark_pool_path"] = "outputs/benchmark_load/benchmark_pool.jsonl"
+            if constructor.get("benchmark_pool_size") is None:
+                constructor["benchmark_pool_size"] = 500
             
             # Handle debug mode
             debug_mode = constructor.get("debug", False)
@@ -309,25 +319,45 @@ class ConstructorAgent(BaseAgent):
         if state.get("exception"):
             summary_parts.append(f"执行过程中出现错误: {state.get('exception')}")
         else:
-            # Summarize post-process results
-            postprocess_results = constructor_state.get("postprocess_results", {})
-            if postprocess_results:
-                total_records = postprocess_results.get("total_records_processed", 0)
-                if total_records > 0:
-                    category = constructor_state.get("category", "PT")
-                    summary_parts.append(f"后处理完成: 共处理 {total_records} 条 {category} 数据记录")
-                    output_dir = postprocess_results.get("output_dir", "")
-                    if output_dir:
-                        summary_parts.append(f"中间格式输出目录: {output_dir}")
-            
-            # Summarize mapping results
-            mapping_results = constructor_state.get("mapping_results", {})
-            if mapping_results:
-                mm = ConstructorAgent._canonical_mapping_metrics(mapping_results)
+            # postprocess v2 的 total_records_processed 是多数据源「导出累计」（清洗前），
+            # 清洗后会少很多；若已跑映射，应用映射阶段的条数作为「实际产出」说明，避免误报。
+            category = constructor_state.get("category", "PT")
+            postprocess_results = constructor_state.get("postprocess_results") or {}
+            mapping_results = constructor_state.get("mapping_results") or {}
+            mm = (
+                ConstructorAgent._canonical_mapping_metrics(mapping_results)
+                if mapping_results
+                else None
+            )
+
+            exported = int(postprocess_results.get("total_records_processed") or 0)
+            output_dir_pp = postprocess_results.get("output_dir", "")
+
+            merged_postprocess_mapping_line = False
+            if exported > 0:
+                if mm is not None and (
+                    mm["total_records"] > 0 or mm["total_mapped_records"] > 0
+                ):
+                    summary_parts.append(
+                        f"后处理与映射: v2 导出相关样本累计 {exported} 条（清洗前、多数据源汇总）；"
+                        f"清洗后进入映射 {mm['total_records']} 条，成功映射输出 "
+                        f"{mm['total_mapped_records']} 条 {category} 记录"
+                    )
+                    merged_postprocess_mapping_line = True
+                else:
+                    summary_parts.append(
+                        f"后处理完成: 共处理 {exported} 条 {category} 数据记录"
+                    )
+                if output_dir_pp:
+                    summary_parts.append(f"中间格式输出目录: {output_dir_pp}")
+
+            if mm is not None:
                 final_output_dir = mm["final_output_dir"]
-                total_mapped_records = mm["total_mapped_records"]
                 if final_output_dir:
-                    summary_parts.append(f"格式映射完成: 共映射 {total_mapped_records} 条记录")
+                    if not merged_postprocess_mapping_line:
+                        summary_parts.append(
+                            f"格式映射完成: 共映射 {mm['total_mapped_records']} 条记录"
+                        )
                     summary_parts.append(f"最终输出目录: {final_output_dir}")
         
         # Create summary message
@@ -351,7 +381,7 @@ class ConstructorAgent(BaseAgent):
         
         state["messages"].append(AIMessage(content=summary_text))
         logger.info(f"ConstructorAgent: Added summary to messages: {summary_text[:100]}...")
-        state["automated_query"]="我收集完也处理完数据了，进入trainer"
+        state["automated_query"]="constructor subagent complete"
         postprocess_results = constructor_state.get("postprocess_results", {})
         mapping_results = constructor_state.get("mapping_results", {})
         mm = ConstructorAgent._canonical_mapping_metrics(mapping_results)
@@ -363,7 +393,9 @@ class ConstructorAgent(BaseAgent):
                 "phase": "constructor_end",
                 "stage": "completed",
                 "summary_text": summary_text,
+                # v2 导出累计（清洗前）；最终条数见 total_mapped_records / records_before_mapping
                 "total_records_processed": postprocess_results.get("total_records_processed", 0),
+                "records_before_mapping": mm["total_records"],
                 "total_mapped_records": mm["total_mapped_records"],
                 "final_output_dir": mm["final_output_dir"],
             },
@@ -387,17 +419,19 @@ class ConstructorAgent(BaseAgent):
         constructor = state.get("constructor", {})
         version = constructor.get("postprocess_version", "agent_v2")
 
-        ConstructorAgent._emit_stream_event(
-            state,
-            message=f"Constructor: 后处理开始 (version={version})",
-            progress=0.0,
-            data={
-                "phase": "postprocess",
-                "stage": "start",
-                "version": version,
-                "category": constructor.get("category", ""),
-            },
-        )
+        # agent_v2: progress/events come from postprocess_agent._emit_postprocess_v2 (no duplicate wrapper start/end).
+        if version != "agent_v2":
+            ConstructorAgent._emit_stream_event(
+                state,
+                message=f"Constructor: 后处理开始 (version={version})",
+                progress=0.0,
+                data={
+                    "phase": "postprocess",
+                    "stage": "start",
+                    "version": version,
+                    "category": constructor.get("category", ""),
+                },
+            )
 
         try:
             if version == "agent_v2":
@@ -413,6 +447,18 @@ class ConstructorAgent(BaseAgent):
                 progress=1.0,
                 data={"error": str(e), "phase": "postprocess", "stage": "failed"},
             )
+            return state
+
+        if version == "agent_v2":
+            if state.get("exception"):
+                err = str(state["exception"])
+                ConstructorAgent._emit_stream_event(
+                    state,
+                    message=f"Constructor: 后处理失败: {err[:200]}",
+                    progress=1.0,
+                    data={"error": err, "phase": "postprocess", "stage": "failed"},
+                )
+            return state
 
         res = state.get("constructor", {}).get("postprocess_results", {})
         ConstructorAgent._emit_stream_event(
@@ -467,6 +513,11 @@ class ConstructorAgent(BaseAgent):
             or os.getenv("TAVILY_API_KEY", "")
         )
 
+        benchmark_dir = (
+            (constructor.get("benchmark_source_dir") or "").strip()
+            or (state.get("banckmark_jsonl_path") or "").strip()
+        )
+
         result = run_postprocess_agent_v2(
             download_dir=download_dir,
             user_query=user_query,
@@ -480,6 +531,8 @@ class ConstructorAgent(BaseAgent):
             store=None,
             thread_id=state.get("task_id", "default"),
             event_name=state.get("current", "ConstructorAgent.postprocess_node"),
+            benchmark_dir=benchmark_dir,
+            enable_benchmark_reference=True,
         )
 
         if "exception" in result:
@@ -491,11 +544,31 @@ class ConstructorAgent(BaseAgent):
                 "total_records_processed": result.get("total_records_processed", 0),
                 "processed_sources_count": result.get("processed_sources_count", 0),
                 "output_dir": result.get("output_dir", ""),
+                "related_jsonl_dir": result.get("related_jsonl_dir", ""),
+                "benchmark_source_count": result.get("benchmark_source_count", 0),
+                "benchmark_sampled_count": result.get("benchmark_sampled_count", 0),
+                "benchmark_samples_file": result.get("benchmark_samples_file", ""),
             }
+            state["constructor"]["benchmark_samples_path"] = result.get("benchmark_samples_file", "")
             out_dir = result.get("output_dir", "")
-            if out_dir and os.path.exists(out_dir):
-                state["constructor"]["intermediate_data_path"] = out_dir
-                logger.info(f"Postprocess v2: intermediate data at {out_dir}")
+            related_dir = (result.get("related_jsonl_dir") or "").strip()
+            intermediate = ""
+            if related_dir and os.path.isdir(related_dir):
+                try:
+                    has_jsonl = any(
+                        fn.endswith(".jsonl")
+                        and os.path.isfile(os.path.join(related_dir, fn))
+                        for fn in os.listdir(related_dir)
+                    )
+                except OSError:
+                    has_jsonl = False
+                if has_jsonl:
+                    intermediate = related_dir
+            if not intermediate and out_dir and os.path.exists(out_dir):
+                intermediate = out_dir
+            if intermediate:
+                state["constructor"]["intermediate_data_path"] = intermediate
+                logger.info(f"Postprocess v2: intermediate data at {intermediate}")
 
         return state
 
@@ -609,11 +682,16 @@ class ConstructorAgent(BaseAgent):
                 output_dir = state.get("output_dir", "./output")
                 download_dir = os.path.join(output_dir, "downloads")
         
-        has_download_files = os.path.exists(download_dir) and any(
-            os.path.isfile(os.path.join(download_dir, f)) or os.path.isdir(os.path.join(download_dir, f))
-            for f in os.listdir(download_dir)
-            if not f.startswith('.') and f not in ['processed_output', '.tmp', '.cache']
-        )
+        has_download_files = False
+        if os.path.isdir(download_dir):
+            try:
+                has_download_files = any(
+                    os.path.isfile(os.path.join(download_dir, f)) or os.path.isdir(os.path.join(download_dir, f))
+                    for f in os.listdir(download_dir)
+                    if not f.startswith('.') and f not in ['processed_output', '.tmp', '.cache']
+                )
+            except OSError as e:
+                logger.warning(f"Failed to inspect download directory '{download_dir}': {e}")
         
         if successful_downloads or has_download_files:
             logger.info(f"Found {len(successful_downloads)} successful downloads or files in download directory, routing to postprocess_node")

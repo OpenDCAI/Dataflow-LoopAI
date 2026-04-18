@@ -136,6 +136,12 @@ class PostprocessMemoryManager:
             "plan": plan,
         })
 
+    def write_relevance_verdict(self, source_type: str, dataset_name: str, verdict: Dict[str, Any]) -> None:
+        self._put(self._dataset_ns(source_type, dataset_name), "relevance_verdict", {
+            "event": "relevance_verdict_finalized",
+            "verdict": verdict,
+        })
+
     # ------------------------------------------------------------------
     # Read helpers
     # ------------------------------------------------------------------

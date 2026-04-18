@@ -36,11 +36,16 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
             output_dir = state.get("output_dir", "./output")
             download_dir = os.path.join(output_dir, "downloads")
     
-    has_download_files = os.path.exists(download_dir) and any(
-        os.path.isfile(os.path.join(download_dir, f)) or os.path.isdir(os.path.join(download_dir, f))
-        for f in os.listdir(download_dir)
-        if not f.startswith('.') and f not in ['processed_output', '.tmp', '.cache']
-    )
+    has_download_files = False
+    if os.path.isdir(download_dir):
+        try:
+            has_download_files = any(
+                os.path.isfile(os.path.join(download_dir, f)) or os.path.isdir(os.path.join(download_dir, f))
+                for f in os.listdir(download_dir)
+                if not f.startswith('.') and f not in ['processed_output', '.tmp', '.cache']
+            )
+        except OSError as e:
+            logger.warning(f"Failed to inspect download directory '{download_dir}': {e}")
     
     if not successful_downloads and not has_download_files:
         logger.info("No successful downloads found and no files in download directory, skipping post-process node")
