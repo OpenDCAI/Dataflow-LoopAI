@@ -1,12 +1,14 @@
 <template>
-    <div class="value-preview-editor">
-        <div ref="editorContainer" class="value-preview-editor-container"></div>
+    <div class="value-input-editor">
+        <textarea
+            v-model="textModel"
+            class="value-input-editor-textarea"
+            :disabled="!lock"
+        ></textarea>
     </div>
 </template>
 
 <script>
-import * as monaco from 'monaco-editor'
-
 export default {
     props: {
         modelValue: {
@@ -14,47 +16,25 @@ export default {
         },
         language: {
             default: 'plaintext'
+        },
+        lock: {
+            default: true
         }
     },
+    emits: ['update:modelValue'],
     data() {
         return {
-            editorInstance: null
+            thisValue: this.normalizeValue(this.modelValue)
         }
     },
     watch: {
         modelValue(value) {
-            if (!this.editorInstance) return
             const next = this.normalizeValue(value)
-            if (this.editorInstance.getValue() !== next) {
-                this.editorInstance.setValue(next)
-            }
+            if (next === this.thisValue) return
+            this.thisValue = next
         },
-        language(value) {
-            if (!this.editorInstance) return
-            const model = this.editorInstance.getModel()
-            if (model) {
-                monaco.editor.setModelLanguage(model, value || 'plaintext')
-            }
-        }
-    },
-    mounted() {
-        this.editorInstance = monaco.editor.create(this.$refs.editorContainer, {
-            value: this.normalizeValue(this.modelValue),
-            language: this.language || 'plaintext',
-            readOnly: true,
-            automaticLayout: true,
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            wordWrap: 'on',
-            lineNumbersMinChars: 3,
-            renderLineHighlight: 'none',
-            theme: 'vs'
-        })
-    },
-    beforeUnmount() {
-        if (this.editorInstance) {
-            this.editorInstance.dispose()
-            this.editorInstance = null
+        thisValue(value) {
+            this.$emit('update:modelValue', value)
         }
     },
     methods: {
@@ -68,23 +48,48 @@ export default {
                 return String(value)
             }
         }
+    },
+    computed: {
+        textModel: {
+            get() {
+                return this.thisValue
+            },
+            set(value) {
+                this.thisValue = this.normalizeValue(value)
+            }
+        }
     }
 }
 </script>
 
 <style lang="scss">
-.value-preview-editor {
+.value-input-editor {
+    width: 100%;
+}
+
+.value-input-editor-textarea {
     width: 100%;
     min-height: 120px;
     height: 160px;
-    border: 1px solid rgba(120, 120, 120, 0.15);
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+    color: rgba(60, 60, 60, 1);
+    border: 2px solid rgba(120, 120, 120, 0.15);
     border-radius: 6px;
-    overflow: hidden;
+    resize: vertical;
+    outline: none;
     background: rgba(255, 255, 255, 0.9);
+    box-sizing: border-box;
 }
 
-.value-preview-editor-container {
-    width: 100%;
-    height: 100%;
+.value-input-editor-textarea:focus {
+    border-color: rgba(80, 120, 220, 0.6);
+}
+
+.value-input-editor-textarea:disabled {
+    cursor: not-allowed;
+    opacity: 0.8;
 }
 </style>

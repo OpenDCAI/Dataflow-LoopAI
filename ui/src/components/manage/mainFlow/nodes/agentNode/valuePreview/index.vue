@@ -209,10 +209,24 @@ export default {
             }
         },
         dirComponent() {
-            const allowedExts = ['csv', 'tsv', 'txt', 'md', 'json', 'jsonl', 'html']
+            const allowedExts = [
+                'csv',
+                'tsv',
+                'txt',
+                'md',
+                'json',
+                'jsonl',
+                'html',
+                'yaml',
+                'yml',
+                'toml',
+                'ini',
+                'cfg',
+                'conf'
+            ]
             let path = this.thisValue.split('/')
             let fileName = path[path.length - 1]
-            let fileExt = fileName.split('.').pop()
+            let fileExt = fileName.split('.').pop().toLowerCase()
             if (allowedExts.includes(fileExt)) {
                 return resPreviewPanel
             } else {
