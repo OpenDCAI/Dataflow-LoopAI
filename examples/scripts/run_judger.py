@@ -1,50 +1,53 @@
-# %%
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+import torch
+from multiprocessing import freeze_support
 from loopai.agents import JudgerAgent
 from loopai.memory import checkpointer, store
-from loopai.agents.Starter.tools.check_motivation import check_motivation
-
 from rich.console import Console
-from rich.live import Live
-from rich.text import Text
 
 console = Console()
 
-# with open('api_key.txt', 'r') as f:
-#     api_key = f.read().strip()
+def main():
+    sg = JudgerAgent(checkpointer=checkpointer, store=store)
+    config = {"configurable": {"thread_id": "1"}}
 
-sg = JudgerAgent(checkpointer=checkpointer, store=store)
+    graph = sg()
 
-# %%
-config = {"configurable": {"thread_id": "1"}}
+    key_mapping = {
+        "input_question_key": "question",
+        "input_target_key": "answer"
+    }
 
-# %%
-graph = sg()
+    result = graph.invoke({
+        "judger": {
+            'eval_model_path': '/data/laipeichao/Qwen2.5-7B-Instruct/',
+            'eval_base_url': '',
+            'eval_api_key': "EMPTY",
+            'eval_temperature': 0,
+            'eval_top_p': 0.95,
+            'eval_task_type': 'general_text',
+            'eval_problem_path': '',
+            'eval_format_type': '',
+            'eval_batch_size': 4,
+            'eval_case_num': 1,
+            'eval_vllm_port': 8911,
+            'eval_vllm_env_path': '/home/laipeichao/miniconda3/envs/zx312/bin/python',
+            'tensor_parallel_size': 1,
+            'eval_vllm_gpu_memory_utilization': 0.9,
+            'eval_env_configs': '{"CUDA_VISIBLE_DEVICES": "5","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
+            'cuda_visible_devices': '5',
+            'key_mapping': key_mapping,
+            'bench_name': 'gsm8k',
+            'bench_dataflow_eval_type': 'key2_qa'
+        },
+        "task_id": '20260002',
+        'output_dir': '../output'
+    }, config=config)
+    
+    print("Evaluation completed successfully!")
+    return result
 
-graph.invoke({
-    "judger":{
-        'eval_model_path': '/root/brjverl/models/sft1000/',
-        # 'eval_base_url': 'http://127.0.0.1:8911/v1',
-        'eval_base_url': '',
-        'eval_api_key': "EMPTY",
-        'eval_temperature': 0,
-        'eval_top_p': 0.95,
-        'eval_task_type': 'text2sql',
-        'eval_problem_path': '/root/brjverl/dataflow/examples/scripts/data/dev_bird_for_oj.jsonl',
-        'eval_format_type': '',
-        'eval_text2sql_dir': '/root/brjverl/dataflow/examples/scripts/database/',
-        'eval_batch_size': 20,
-        'eval_case_num': 1,
-        'eval_vllm_port': 8911,
-        'eval_vllm_env_path': '/root/miniconda3/envs/loopai/bin/python3',
-        'eval_vllm_tensor_parallel_size': 2,
-        'eval_vllm_gpu_memory_utilization': 0.9,
-        'eval_env_configs':'{"CUDA_VISIBLE_DEVICES": "0,1","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}'
-    },
-    "trainer":{
-        "trainer_task_id":"ceshi"
-    },
-    "task_id": 20260002,
-    'output_dir': '/root/brjverl/dataflow/examples/scripts/output/',
-}, config=config)
-
-# %%
+if __name__ == '__main__':
+    freeze_support()
+    main()
