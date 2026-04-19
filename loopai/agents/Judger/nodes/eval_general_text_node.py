@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 
 from langgraph.config import get_stream_writer
 
+from loopai.agents.Judger.utils.oj.const import field_mapping
 from loopai.schema.events import StreamEvent
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
@@ -41,8 +42,6 @@ def _emit(writer, message: str, *, progress=None, data=None):
 
 
 def _judger(state: LoopAIState) -> dict:
-    if "analyzer" not in state:
-        raise KeyError("state 中缺少 analyzer 配置，请在 graph.invoke 中传入 analyzer")
     return state["judger"]
 
 
@@ -98,6 +97,83 @@ def _build_model_config(cfg: Dict[str, Any]) -> ModelConfig:
         tensor_parallel_size=int(cfg.get("tensor_parallel_size", 1)),
         max_tokens=int(cfg.get("eval_max_tokens", cfg.get("max_tokens", 2048))),
     )
+
+def _generate_key_mapping(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    根据eval_type构造key_mapping
+    判断key_mapping是否为空，如果为空或者解析json错误则 直接读取文件
+    """
+    key_mapping = {}
+
+    # 用户没有传入key_mapping 或者传入的key_mapping 是错的 从 问题集 中直接读取key_mapping
+    eval_type = cfg["bench_dataflow_eval_type"]
+    eval_problem_path = cfg["eval_problem_path"]
+    count = 0
+    
+    # 打开文件读取前三行
+    with open(eval_problem_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+                
+                # 开始处理每行数据，将字段名设置为列表
+                keys = list(data.keys())
+                # 根据任务类型进行分类
+                # 例如: key1 时 检测 keys中的词是否是text_key 如果是则加入即可
+                for key in keys:
+                    if eval_type == "key1_text_score":
+                        # key 在候选词集合中
+                        if key in field_mapping["text"]:
+                            key_mapping["input_text_key"] = key
+                    else:
+                        if key in field_mapping["question"]:
+                            key_mapping["input_question_key"] = key
+                        elif eval_type == "key2_qa":
+                            # key2_qa
+                            if key in field_mapping["target"]:
+                                key_mapping["input_target_key"] = key
+                            elif key in field_mapping["prediction"]:
+                                key_mapping["input_pred_key"] = key
+                        elif eval_type == "key2_q_ma":
+                            # key2_q_ma
+                            if key in field_mapping["targets"]:
+                                key_mapping["input_targets_key"] = key
+                            elif key in field_mapping["prediction"]:
+                                key_mapping["input_pred_key"] = key
+                        elif eval_type == "key3_q_choices_a":
+                            # key3_q_choices_a
+                            if key in field_mapping["choices"]:
+                                key_mapping["input_choices_key"] = key
+                            elif key in field_mapping["label"]:
+                                key_mapping["input_label_key"] = key
+                        elif eval_type == "key3_q_choices_as":
+                            # key3_q_choices_as
+                            if key in field_mapping["choices"]:
+                                key_mapping["input_choices_key"] = key
+                            elif key in field_mapping["labels"]:
+                                key_mapping["input_labels_key"] = key
+                            # key3_q_a_rejected
+                        elif eval_type == "key3_q_a_rejected":
+                            if key in field_mapping["answer"]:
+                                key_mapping["input_answer_key"] = key
+                            elif key in field_mapping["rejected"]:
+                                key_mapping["input_rejected_key"] = key
+                count += 1
+                if count == 2:
+                    break
+            except json.JSONDecodeError:
+                # 可以添加异常处理，防止解析失败导致程序崩溃
+                continue
+
+    # 从文件中读取key_mapping
+    return key_mapping
+                
+    
+    
+    
 
 
 def _infer_pred_ref_keys(eval_type: str, final_key_mapping: Dict[str, Any]) -> Dict[str, Optional[str]]:
@@ -215,53 +291,6 @@ def _prepare_bench_from_state(
         if isinstance(benches, list) and 0 <= eval_cursor < len(benches):
             bench = benches[eval_cursor]
 
-    if bench is not None:
-        eval_type = bench.bench_dataflow_eval_type
-        bench_cfg = (
-            state.get("bench_config")
-            or cfg.get("bench_config")
-            or {}
-        )
-        key_mapping = (
-            getattr(bench, "key_mapping", None)
-            or (bench.meta or {}).get("key_mapping", {})
-            or bench_cfg.get("key_mapping", {})
-            or cfg.get("key_mapping", {})
-            or {}
-        )
-
-        if key_mapping:
-            if bench.meta is None:
-                bench.meta = {}
-            bench.meta["key_mapping"] = key_mapping
-            bench.key_mapping = key_mapping
-
-        dataset_cache_path_str = str(Path(bench.dataset_cache).resolve())
-
-        _emit(
-            writer,
-            "开始通用文本评测（One-Eval Phase4 / DataFlow）",
-            progress=0.0,
-            data={
-                "eval_result_path": bench.dataset_cache,
-                "eval_type": eval_type,
-                "key_mapping": key_mapping,
-            }
-        )
-
-        _emit(
-            writer,
-            "已读取传入 bench",
-            progress=0.20,
-            data={
-                "bench_name": bench.bench_name,
-                "dataset_cache": bench.dataset_cache,
-                "eval_type": bench.bench_dataflow_eval_type,
-            }
-        )
-
-        return bench, eval_type, dataset_cache_path_str, key_mapping, outdir, run_ts
-
     eval_result_path = judger_cfg.get("eval_problem_path")
     logger.info(f"eval_result_path:{eval_result_path}")
     if not eval_result_path:
@@ -270,30 +299,25 @@ def _prepare_bench_from_state(
     if not os.path.exists(eval_result_path):
         raise FileNotFoundError(f"评测输入路径不存在：{eval_result_path}")
 
-    bench_cfg = (
-        state.get("bench_config")
-        or cfg.get("bench_config")
-        or {}
-    )
-
-    eval_type = (
-        bench_cfg.get("bench_dataflow_eval_type")
-        or judger_cfg.get("bench_dataflow_eval_type")
-    )
+    eval_type = judger_cfg.get("bench_dataflow_eval_type")
     if not eval_type:
         raise ValueError(
-            "通用文本评测缺少 eval_type。请在 bench_config.bench_dataflow_eval_type / judger.bench_dataflow_eval_type 中提供"
+            "通用文本评测缺少 eval_type。请在 judger.bench_dataflow_eval_type 中提供"
         )
-    
+    # 1?
     # 获取bench_cfg或者从judger中获取 key_mapping映射关系
-    key_mapping = bench_cfg.get("key_mapping") or cfg.get("key_mapping") or {}
+    key_mapping = cfg.get("key_mapping") or {}
 
     if isinstance(key_mapping, str):
         try:
             key_mapping = json.loads(key_mapping)
         except Exception as e:
+            logger.warning(f"传入key_mapping{key_mapping}，解析错误，从文件中自动读取key_mapping")
+            key_mapping = _generate_key_mapping(judger_cfg)
             raise ValueError(f"Failed to parse key_mapping as JSON: {key_mapping}, error: {e}")
-
+    else:
+        logger.warning(f"传入key_mapping{key_mapping}，解析错误，从文件中自动读取key_mapping")
+        key_mapping = _generate_key_mapping(judger_cfg)
     _emit(
         writer,
         "开始通用文本评测（One-Eval Phase4 / DataFlow）",
@@ -304,7 +328,7 @@ def _prepare_bench_from_state(
             "key_mapping": key_mapping,
         }
     )
-
+    logger.info(f"keymapping:{key_mapping}")
     rows = _read_jsonl(eval_result_path)
     _emit(writer, "读取待评测样本完成", progress=0.10, data={"records": len(rows)})
 
@@ -319,7 +343,7 @@ def _prepare_bench_from_state(
     )
 
     bench = BenchAdapter(
-        bench_name=bench_cfg.get("bench_name", judger_cfg.get("bench_name", "general_text_eval")),
+        bench_name=judger_cfg.get("bench_name", "general_text_eval"),
         dataset_cache=str(dataset_cache_path),
         bench_dataflow_eval_type=eval_type,
         meta={},

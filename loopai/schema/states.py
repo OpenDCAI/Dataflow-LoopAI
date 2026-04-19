@@ -1106,7 +1106,8 @@ class JudgerState(BaseModel):
         default="",
         title="通用文本评测类型",
         description="One-Eval DataFlow 评测类型，例如 key2_qa / key1_text_score",
-        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "list", "ui_group": "评估模型",
+                            "allowed_values": ["key1_text_score","key2_qa","key2_q_ma","key3_q_choices_a","key3_q_choices_as","key3_q_a_rejected"]}
     )
     key_mapping: Dict[str, Any] = Field(
         default_factory=dict,

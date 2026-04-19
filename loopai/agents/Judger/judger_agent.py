@@ -79,7 +79,6 @@ class JudgerAgent(BaseAgent):
                 'default':["output_dir", "task_id"]
             }
             missing_fields = get_missing_fields(required_fields, state)
-            
             if not missing_fields:
                 # judger无模型参数则去查看trainer是否提供
                 if _isNotNone(state.get("judger", {}).get("eval_model_path", "")) is not True :
@@ -142,9 +141,15 @@ class JudgerAgent(BaseAgent):
             if not missing_fields:
                 if state.get("judger", {}).get("eval_task_type", "") == "text2sql":
                     missing_fields = get_missing_fields({'judger':["eval_text2sql_dir"]}, state)
+            """检查generaal_text必要字段"""
+            if not missing_fields:
+                if state.get("judger", {}).get("eval_task_type", "") == "general_text":
+                    missing_fields = get_missing_fields({'judger':["bench_dataflow_eval_type"]},state)
+            logger.info(f"missing_fields:{missing_fields}")
+            logger.info(f"bench_dataflow_eval_type:{state.get("judger", {}).get("bench_dataflow_eval_type")}")
             if missing_fields:
                 logger.info("$"*50)
-                logger.info(missing_fields)
+                logger.info(f"missing_fields:{missing_fields}")
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
                 state['automated_query'] = automated_query
