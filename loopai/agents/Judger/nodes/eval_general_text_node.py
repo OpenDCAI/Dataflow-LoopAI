@@ -304,7 +304,6 @@ def _prepare_bench_from_state(
         raise ValueError(
             "通用文本评测缺少 eval_type。请在 judger.bench_dataflow_eval_type 中提供"
         )
-    # 1?
     # 获取bench_cfg或者从judger中获取 key_mapping映射关系
     key_mapping = cfg.get("key_mapping") or {}
 
