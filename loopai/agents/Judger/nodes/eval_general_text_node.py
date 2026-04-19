@@ -161,6 +161,8 @@ def _generate_key_mapping(cfg: Dict[str, Any]) -> Dict[str, Any]:
                                 key_mapping["input_answer_key"] = key
                             elif key in field_mapping["rejected"]:
                                 key_mapping["input_rejected_key"] = key
+                            elif key in field_mapping["better"]:
+                                key_mapping["input_better_key"] = key
                 count += 1
                 if count == 2:
                     break
