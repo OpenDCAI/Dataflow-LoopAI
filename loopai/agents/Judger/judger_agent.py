@@ -141,7 +141,7 @@ class JudgerAgent(BaseAgent):
             if not missing_fields:
                 if state.get("judger", {}).get("eval_task_type", "") == "text2sql":
                     missing_fields = get_missing_fields({'judger':["eval_text2sql_dir"]}, state)
-            """检查generaal_text必要字段"""
+            """检查general_text必要字段"""
             if not missing_fields:
                 if state.get("judger", {}).get("eval_task_type", "") == "general_text":
                     missing_fields = get_missing_fields({'judger':["bench_dataflow_eval_type"]},state)
