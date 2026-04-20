@@ -1084,12 +1084,6 @@ class JudgerState(BaseModel):
         description="通用文本任务指定运行GPU",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
-    tensor_parallel_size: int = Field(
-        default=1,
-        title="张量并行数",
-        description="通用文本评测时模型推理使用的张量并行数",
-        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
-    )
     is_api: bool = Field(
         default=False,
         title="是否 API 模式",
