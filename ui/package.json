@@ -1,12 +1,12 @@
 {
     "name": "loopai_ui",
-    "version": "0.1.6",
+    "version": "0.1.8",
     "private": true,
     "packageManager": "yarn@4.9.2",
     "type": "module",
     "scripts": {
         "dev": "vite",
-        "build": "vite build",
+        "build": "NODE_OPTIONS=${NODE_OPTIONS:---max-old-space-size=4096} vite build",
         "preview": "vite preview",
         "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix --ignore-path .gitignore",
         "format": "prettier --write src/",

@@ -86,11 +86,12 @@ async def preview_resource(resource_id: str, offset: int = 0, limit: int = 15):
         samples, count = preview_json(path, offset, limit)
     elif ext in ['.csv', '.tsv']:
         samples, count = preview_csv(path, offset, limit)
-    elif ext in ['.txt', '.md', '.html', '.log']:
+    elif ext in ['.txt', '.md', '.html', '.log', '.yaml', '.yml', '.ini', '.xml']:
         samples, count = preview_text(path, offset, limit)
     else:
         return response_body(code=401, message="file type not supported")()
     return response_body(data={
         "samples": samples,
-        "count": count
+        "count": count,
+        "ext": ext
     })()
