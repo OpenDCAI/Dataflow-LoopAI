@@ -38,7 +38,7 @@ How to get it:
 
 1. Open https://www.kaggle.com/ and sign in or create an account.
 2. Open account settings: https://www.kaggle.com/settings
-3. In the `API` or `Legacy API Credentials` section, click `Create New API Token` or `Create Legacy API Key`.
+3. In the `API` or `Legacy API Credentials` section, click  `Create Legacy API Key`.
 4. Kaggle will download a `kaggle.json` file.
 5. Copy the `username` field from that file into `starter.yaml`:
 
