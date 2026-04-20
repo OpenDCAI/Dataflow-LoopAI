@@ -352,8 +352,8 @@ class JudgerAgent(BaseAgent):
                 writer(StreamEvent(
                     current=state['current'],
                     progress=1.0,
-                    message="任务数据格式化结束",
-                    data={"msg": '未设置[eval_format_type]参数，跳过数据格式化过程'}
+                    message="任务数据格式化结束,未设置[eval_format_type]参数，跳过数据格式化过程",
+                    # data={"msg": '未设置[eval_format_type]参数，跳过数据格式化过程'} -> 更新至 message 中
                 ).json())
         state["judger"]["output_problem_path"] = state["judger"]["eval_problem_path"]
         return state
