@@ -4,6 +4,7 @@ import json
 import time
 import traceback
 import multiprocessing as mp
+import queue as pyqueue
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -466,10 +467,10 @@ def eval_general_text_node(state: LoopAIState):
             logger.info(f"[{bench.bench_name}] bench.meta.key_mapping={(bench.meta or {}).get('key_mapping', {})}")
             logger.info(f"{model_config}")
             
-            # 启动子进程跑 通用文本 
-            # <=0 无限等待  
-            # todo：后续可以添加一些超时参数
-            run_timeout_s = int(cfg.get("eval_subprocess_timeout_s", 0) or 0)
+            # 启动子进程跑通用文本评测。
+            # 这里无限等待，但通过心跳事件持续上报进度，避免“假卡死”。
+            run_timeout_s = None
+
             result_queue: mp.Queue = mp.Queue()
             proc = mp.Process(
                 target=_run_eval_in_subprocess,
@@ -483,20 +484,41 @@ def eval_general_text_node(state: LoopAIState):
                 writer,
                 "DataFlowEvalTool 子进程已启动，等待评测完成",
                 progress=0.50,
-                data={"pid": proc.pid, "timeout_s": run_timeout_s},
+                data={"pid": proc.pid, "timeout_s": "infinite"},
             )
 
             try:
-                proc.join(timeout=run_timeout_s if run_timeout_s > 0 else None)
-                if proc.is_alive():
-                    raise TimeoutError(
-                        f"[{bench.bench_name}] run_eval 子进程超时（{run_timeout_s}s）未完成"
-                    )
-                if result_queue.empty():
-                    raise RuntimeError(
-                        f"[{bench.bench_name}] run_eval 子进程未返回结果，exitcode={proc.exitcode}"
-                    )
-                payload = result_queue.get()
+                wait_start = time.time()
+                heartbeat_interval_s = 5
+                payload = None
+                while proc.is_alive():
+                    try:
+                        # 子进程可能已产出结果，但因内部线程未退出导致进程仍存活；
+                        # 先尝试取结果，取到就不再继续等待 is_alive。
+                        payload = result_queue.get_nowait()
+                        break
+                    except pyqueue.Empty:
+                        pass
+                    proc.join(timeout=heartbeat_interval_s)
+                    if proc.is_alive():
+                        elapsed_s = int(time.time() - wait_start)
+                        _emit(
+                            state['current'],
+                            writer,
+                            "DataFlowEvalTool 子进程仍在运行，继续等待",
+                            progress=0.55,
+                            data={"pid": proc.pid, "waited_seconds": elapsed_s},
+                        )
+                if payload is None:
+                    try:
+                        payload = result_queue.get_nowait()
+                    except pyqueue.Empty:
+                        raise RuntimeError(
+                            f"[{bench.bench_name}] run_eval 子进程未返回结果，exitcode={proc.exitcode}"
+                        )
+                logger.info(
+                    f"[{bench.bench_name}] 已收到子进程结果: alive={proc.is_alive()}, exitcode={proc.exitcode}"
+                )
                 if not payload.get("ok"):
                     raise RuntimeError(
                         f"{payload.get('error', 'run_eval subprocess failed')}\n{payload.get('traceback', '')}"
@@ -514,14 +536,15 @@ def eval_general_text_node(state: LoopAIState):
                     if proc.is_alive():
                         proc.kill()
                         proc.join(timeout=3)
+                # 避免 join_thread 因管道状态异常导致阻塞
+                result_queue.cancel_join_thread()
                 result_queue.close()
-                result_queue.join_thread()
                 _emit(
                     state['current'],
                     writer,
                     "DataFlowEvalTool 子进程完成，评测过程完成，等待生成评测结果",
-                    progress=0.50,
-                    data={"pid": proc.pid, "timeout_s": run_timeout_s},
+                    progress=0.70,
+                    data={"pid": proc.pid, "timeout_s": "infinite"},
                 )
             # 运行结果输出
             logger.info(f"[result] : {result}")
@@ -585,15 +608,6 @@ def eval_general_text_node(state: LoopAIState):
                 f"执行发生异常，请解决异常后重新评测：{bench.meta['eval_error']}",
                 progress=1.0,
             )
-            # 关闭子进程
-            if proc.is_alive():
-                    proc.terminate()
-                    proc.join(timeout=3)
-                    if proc.is_alive():
-                        proc.kill()
-                        proc.join(timeout=3)
-            result_queue.close()
-            result_queue.join_thread()
             # 直接结束 Judger 当前节点，不再跳转父图异常路由
             return state
 
@@ -647,8 +661,8 @@ def eval_general_text_node(state: LoopAIState):
         }
     )
 
-    logger.info(f"[general_text] detail/result path: {step2_file_path}")
-    logger.info(f"[general_text] summary json: {summary_json_path}")
+    logger.info(f"[general_text] output_result_path: {step2_file_path}")
+    logger.info(f"[general_text] output_pred_path/summary json: {summary_json_path}")
     logger.info(f"[general_text] summary txt: {summary_txt_path}")
 
     return state
