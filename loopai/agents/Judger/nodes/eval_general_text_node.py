@@ -594,12 +594,8 @@ def eval_general_text_node(state: LoopAIState):
                         proc.join(timeout=3)
             result_queue.close()
             result_queue.join_thread()
-            goto_node = runtime.context['exception_navigate']
-            return Command(
-                update=state,
-                goto=goto_node,
-                graph=Command.PARENT
-            )
+            # 直接结束 Judger 当前节点，不再跳转父图异常路由
+            return state
 
     _emit(
         state['current'],
