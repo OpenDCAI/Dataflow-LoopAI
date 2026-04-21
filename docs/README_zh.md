@@ -115,6 +115,8 @@ system:
 
 这些字段用于配置 Starter 模型服务，以及 LoopAI 使用的外部数据搜索凭据。
 
+`tavily_api_key`、`kaggle_username` 和 `kaggle_key` 的获取位置可见 [API_KEYS_zh.md](./API_KEYS_zh.md)。请不要把真实凭据提交到仓库。
+
 ---
 
 ### 4.3 启动服务

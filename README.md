@@ -115,6 +115,8 @@ system:
 
 These values configure the Starter model provider and the external data-search credentials used by LoopAI.
 
+For where to obtain `tavily_api_key`, `kaggle_username`, and `kaggle_key`, see [docs/API_KEYS.md](./docs/API_KEYS.md). Do not commit real credentials to the repository.
+
 ---
 
 ### 4.3 Start Services
