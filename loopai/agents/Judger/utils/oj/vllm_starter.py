@@ -98,9 +98,9 @@ def start_vllm_openai_api_server(
     # ========== 使用当前运行环境的 python 启动 vllm ==========
     python_exec = f"{sys.executable}"
     # 轻量预检：解释器可执行 + 可导入 vllm
-    if os.path.sep in python_exec and not os.path.exists(python_exec):
+    if not os.path.exists(python_exec):
         raise Exception(f"指定的 Python 路径不存在：{python_exec}")
-    if os.path.sep in python_exec and not os.access(python_exec, os.X_OK):
+    if not os.access(python_exec, os.X_OK):
         raise Exception(f"指定的 Python 路径无执行权限：{python_exec}")
     try:
         check_cmd = [python_exec, "-c", "import vllm"]
