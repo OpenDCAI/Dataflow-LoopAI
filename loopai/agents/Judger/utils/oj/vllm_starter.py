@@ -14,6 +14,7 @@ from loopai.agents import BaseAgent
 
 from loopai.logger import get_logger
 logger = get_logger()
+DEFAULT_VLLM_PORT = 8911
 
 def parse_port_from_command_str(command_str: str) -> int:
     """
@@ -84,8 +85,6 @@ def _consume_subprocess_output(proc, stop_event):
 
 def start_vllm_openai_api_server(
     env_configs, 
-    vllm_env_path,  # 新增：指定环境的Python可执行文件路径
-    vllm_port, 
     vllm_tensor_parallel_size, 
     vllm_gpu_memory_utilization, 
     vllm_model,
@@ -96,15 +95,35 @@ def start_vllm_openai_api_server(
     启动vllm openai兼容api服务（保留shell=True+字符串命令，解决卡死问题）
     :return: (vllm子进程对象, 输出消费线程停止事件)
     """
-    # 校验环境路径（原有逻辑不变）
-    if not os.path.exists(vllm_env_path):
-        raise Exception(f"指定的环境Python路径不存在：{vllm_env_path}")
-    if not os.access(vllm_env_path, os.X_OK):
-        raise Exception(f"指定的Python路径无执行权限：{vllm_env_path}")
-    logger.info(f"已确认环境Python路径有效：{vllm_env_path}")
-
-    # ========== 保留你原有的字符串命令+shell=True ==========
-    vllm_command = f"{vllm_env_path} -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {vllm_port} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes"
+    # ========== 使用当前运行环境的 python 启动 vllm ==========
+    python_exec = f"{sys.executable}"
+    # 轻量预检：解释器可执行 + 可导入 vllm
+    if os.path.sep in python_exec and not os.path.exists(python_exec):
+        raise Exception(f"指定的 Python 路径不存在：{python_exec}")
+    if os.path.sep in python_exec and not os.access(python_exec, os.X_OK):
+        raise Exception(f"指定的 Python 路径无执行权限：{python_exec}")
+    try:
+        check_cmd = [python_exec, "-c", "import vllm"]
+        check_ret = subprocess.run(
+            check_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10.0,
+        )
+    except FileNotFoundError:
+        raise Exception(f"未找到 Python 可执行文件：{python_exec}")
+    except subprocess.TimeoutExpired:
+        raise Exception(f"校验 vllm 环境超时：{python_exec}")
+    if check_ret.returncode != 0:
+        err_text = (check_ret.stderr or "").strip()
+        raise Exception(
+            f"当前 Python 环境未安装或无法导入 vllm（python={python_exec}）。"
+            f"{' 错误: ' + err_text if err_text else ''}"
+        )
+    logger.info(f"使用解释器启动 vllm: {python_exec}")
+    vllm_command = f"{python_exec} -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {DEFAULT_VLLM_PORT} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes"
+    # 停止使用env_config -> 传入空字符串
     env_configs = json.loads(env_configs)
     port = parse_port_from_command_str(vllm_command)
     host = "localhost"
@@ -113,7 +132,7 @@ def start_vllm_openai_api_server(
     process_env = os.environ.copy()
     for key, value in env_configs.items():
         process_env[key] = value
-    logger.info("已设置GPU和NCCL环境变量")
+    #logger.info("已设置GPU和NCCL环境变量")
 
     # ========== 保留shell=True，仅优化缓冲区和进程参数 ==========
     proc = subprocess.Popen(
