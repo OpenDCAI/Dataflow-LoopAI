@@ -85,7 +85,11 @@ LoopAI reformulates the LLM optimization pipeline into a **graph-based execution
 conda create -n loopai python=3.12
 conda activate loopai
 
-pip install -e .
+pip install uv
+uv venv
+source .venv/bin/activate
+
+uv pip install -e .
 ```
 
 ---
