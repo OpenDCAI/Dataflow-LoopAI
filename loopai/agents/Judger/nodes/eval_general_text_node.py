@@ -54,8 +54,11 @@ def _run_eval_in_subprocess(
     在子进程中执行 DataFlowEvalTool.run_eval，并通过 Queue 回传结果/异常。
     """
     try:
+        logger.info("==== DataFlowEvalTool runEval starting ====")
         tool = DataFlowEvalTool(output_root=output_root)
         result = tool.run_eval(bench, model_config)
+        tool.release_serving()
+        logger.info("==== Released vLLM serving after workflow ====")
         result_queue.put({
             "ok": True,
             "result": result,
