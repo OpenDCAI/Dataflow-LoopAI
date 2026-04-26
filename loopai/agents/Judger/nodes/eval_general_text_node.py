@@ -54,8 +54,11 @@ def _run_eval_in_subprocess(
     在子进程中执行 DataFlowEvalTool.run_eval，并通过 Queue 回传结果/异常。
     """
     try:
+        logger.info("==== DataFlowEvalTool runEval starting ====")
         tool = DataFlowEvalTool(output_root=output_root)
         result = tool.run_eval(bench, model_config)
+        tool.release_serving()
+        logger.info("==== Released vLLM serving after workflow ====")
         result_queue.put({
             "ok": True,
             "result": result,
@@ -121,7 +124,7 @@ def _build_model_config(cfg: Dict[str, Any]) -> ModelConfig:
         model_name_or_path=model_name_or_path,
         is_api=is_api,
         api_url=api_url,
-        api_key="",
+        api_key=cfg.get("eval_api_key",""),
         temperature=float(cfg.get("eval_temperature", 0.0)),
         top_p=float(cfg.get("eval_top_p", 1.0)),
         tensor_parallel_size=int(cfg.get("eval_vllm_tensor_parallel_size", 1)),
@@ -392,7 +395,7 @@ def _prepare_bench_from_state(
 
     return bench, eval_type, dataset_cache_path, key_mapping, outdir, run_ts
 
-def _set_gpu(state:LoopAIState):
+def set_gpu(state:LoopAIState):
     os.environ['CUDA_VISIBLE_DEVICES'] = state["judger"].get("cuda_visible_devices","0")
     logger.info(f"CUDA_VISIBLE_DEVICES:{os.environ['CUDA_VISIBLE_DEVICES']} 设置完成")
 
@@ -401,7 +404,7 @@ def eval_general_text_node(state: LoopAIState):
     通用文本评测节点：
     按 DataFlowEvalNode 的逻辑完整接入到 LoopAI。
     """
-    _set_gpu(state)
+    set_gpu(state)
     writer = get_stream_writer()
     cfg = _judger(state)
 
@@ -660,9 +663,10 @@ def eval_general_text_node(state: LoopAIState):
             "eval_abnormality": (bench.meta or {}).get("eval_abnormality"),
         }
     )
-
-    logger.info(f"[general_text] output_result_path: {step2_file_path}")
-    logger.info(f"[general_text] output_pred_path/summary json: {summary_json_path}")
+    state['judger']['output_result_path'] = summary_json_path
+    state['judger']['output_pred_path'] = step2_file_path
+    logger.info(f"[general_text] output_pred_path: {step2_file_path}")
+    logger.info(f"[general_text] output_result_path/summary json: {summary_json_path}")
     logger.info(f"[general_text] summary txt: {summary_txt_path}")
 
     return state
