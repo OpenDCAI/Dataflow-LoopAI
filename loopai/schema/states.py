@@ -1085,6 +1085,12 @@ class JudgerState(BaseModel):
         description= "通用文本评测结束后产生的预测文件路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
+    bench: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Bench运行信息",
+        description="通用文本评测生成的 bench 信息，用于 Analyzer 后续指标计算",
+        json_schema_extra={"ui_type": "json_viewer", "ui_group": "评估模型"}
+    )
     # ===== 通用文本 / DataFlow Eval =====
     cuda_visible_devices: str = Field(
         default="0",
@@ -1732,6 +1738,7 @@ class LoopAIState(MessagesState):
 
     # === Judger (保持原样) ===
     judger: Annotated[Dict[str, Any], merge_dict]
+    bench: Annotated[Any, replace_value]
     # eval_model_path: str
     # eval_base_url: str
     # eval_api_key: str

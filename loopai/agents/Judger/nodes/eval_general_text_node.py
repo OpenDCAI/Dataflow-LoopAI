@@ -648,6 +648,14 @@ def eval_general_text_node(state: LoopAIState):
     summary_json_path, summary_txt_path = _write_summary_files(outdir, summary, run_ts)
 
     state["bench"] = bench
+    state["judger"]["bench"] = {
+        "bench_name": bench.bench_name,
+        "dataset_cache": bench.dataset_cache,
+        "bench_dataflow_eval_type": bench.bench_dataflow_eval_type,
+        "eval_status": bench.eval_status,
+        "meta": bench.meta or {},
+        "key_mapping": bench.key_mapping or {},
+    }
 
     _emit(
         state['current'],
