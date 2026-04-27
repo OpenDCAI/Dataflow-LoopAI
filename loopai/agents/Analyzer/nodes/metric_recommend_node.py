@@ -120,8 +120,12 @@ def metric_recommend_node(state: LoopAIState):
     bench = state.get("bench") or judger_cfg.get("bench")
 
     if bench is not None:
-        bench_name = getattr(bench, "bench_name", None) or "general_text_eval"
-        eval_type = getattr(bench, "bench_dataflow_eval_type", None) or "unknown"
+        if isinstance(bench, dict):
+            bench_name = bench.get("bench_name") or "general_text_eval"
+            eval_type = bench.get("bench_dataflow_eval_type") or "unknown"
+        else:
+            bench_name = getattr(bench, "bench_name", None) or "general_text_eval"
+            eval_type = getattr(bench, "bench_dataflow_eval_type", None) or "unknown"
     else:
         bench_name = (
             judger_cfg.get("bench_name")
@@ -168,9 +172,14 @@ def metric_recommend_node(state: LoopAIState):
     }
 
     if bench is not None:
-        if getattr(bench, "meta", None) is None:
-            bench.meta = {}
-        bench.meta["metric_plan"] = normalized
+        if isinstance(bench, dict):
+            if bench.get("meta", None) is None:
+                bench["meta"] = {}
+            bench["meta"]["metric_plan"] = normalized
+        else:
+            if getattr(bench, "meta", None) is None:
+                bench.meta = {}
+            bench.meta["metric_plan"] = normalized
 
     _emit(
         writer,

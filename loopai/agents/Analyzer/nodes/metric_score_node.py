@@ -82,7 +82,10 @@ def metric_score_node(state: LoopAIState):
 
         state["exception"] = f"metric_score_node bench error: {str(e)}"
         raise
-    bench_name = getattr(bench, "bench_name", None) or "general_text_eval"
+    if isinstance(bench, dict):
+        bench_name = bench.get("bench_name") or "general_text_eval"
+    else:
+        bench_name = getattr(bench, "bench_name", None) or "general_text_eval"
 
     metric_plan_obj = (
         state.get("metric_plan")
@@ -94,10 +97,15 @@ def metric_score_node(state: LoopAIState):
     metric_plan = _coerce_metric_plan(metric_plan_obj, bench_name)
 
     detail_path = None
-    if getattr(bench, "meta", None):
+    if isinstance(bench, dict):
+        bench_meta = bench.get("meta") or {}
+    else:
+        bench_meta = getattr(bench, "meta", {}) or {}
+
+    if bench_meta:
         detail_path = (
-           bench.meta.get("eval_detail_path")
-           or bench.meta.get("artifact_paths", {}).get("records_path")
+           bench_meta.get("eval_detail_path")
+           or bench_meta.get("artifact_paths", {}).get("records_path")
         )
 
     if not detail_path:
@@ -127,14 +135,24 @@ def metric_score_node(state: LoopAIState):
         }
     )
 
-    if getattr(bench, "meta", None) is None:
-        bench.meta = {}
+    if isinstance(bench, dict):
+        if bench.get("meta", None) is None:
+            bench["meta"] = {}
+        bench["meta"].setdefault("artifact_paths", {})
+        bench["meta"]["artifact_paths"]["records_path"] = detail_path
+        bench_meta = bench["meta"]
+    else:
+        if getattr(bench, "meta", None) is None:
+            bench.meta = {}
+        bench.meta.setdefault("artifact_paths", {})
+        bench.meta["artifact_paths"]["records_path"] = detail_path
+        bench_meta = bench.meta
 
-    bench.meta.setdefault("artifact_paths", {})
-    bench.meta["artifact_paths"]["records_path"] = detail_path
-
-    logger.info(f"[metric_score] records_path={bench.meta['artifact_paths']['records_path']}")
-    logger.info(f"[metric_score] dataset_cache={getattr(bench, 'dataset_cache', None)}")
+    logger.info(f"[metric_score] records_path={bench_meta['artifact_paths']['records_path']}")
+    if isinstance(bench, dict):
+        logger.info(f"[metric_score] dataset_cache={bench.get('dataset_cache', None)}")
+    else:
+        logger.info(f"[metric_score] dataset_cache={getattr(bench, 'dataset_cache', None)}")
     logger.info(f"[metric_score] metric_plan={metric_plan}")
 
     runner = MetricRunner()
@@ -158,8 +176,8 @@ def metric_score_node(state: LoopAIState):
     state["analyzer"]["metric_eval_results"] = metric_result
     state["eval_results"] = metric_result
 
-    bench.meta["metric_eval_result_path"] = str(metric_result_path.resolve())
-    bench.meta["metric_eval_results"] = metric_result
+    bench_meta["metric_eval_result_path"] = str(metric_result_path.resolve())
+    bench_meta["metric_eval_results"] = metric_result
 
     _emit(
         writer,
