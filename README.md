@@ -86,9 +86,6 @@ conda create -n loopai python=3.12
 conda activate loopai
 
 pip install uv
-uv venv
-source .venv/bin/activate
-
 uv pip install -e .
 ```
 
