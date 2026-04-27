@@ -653,7 +653,6 @@ def eval_general_text_node(state: LoopAIState):
     bench.meta["artifact_paths"]["records_path"] = step2_file_path
     bench.meta["eval_detail_path"] = step2_file_path
 
-    state["bench"] = bench
     state["judger"]["bench"] = {
         "bench_name": bench.bench_name,
         "dataset_cache": bench.dataset_cache,
