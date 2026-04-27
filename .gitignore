@@ -20,3 +20,4 @@ api/vite.config.js
 app_config.json
 starter.yaml
 CLAUDE.md
+.codex

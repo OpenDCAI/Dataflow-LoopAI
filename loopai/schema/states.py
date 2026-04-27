@@ -975,12 +975,12 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "list", "ui_group": "评估模型",
                            "allowed_values": ["code", "text2sql", "general_text"]}
     )
-    eval_base_url: str = Field(
-        default=None,
-        title="评估模型 Base URL",
-        description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
-        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
-    )
+    #eval_base_url: str = Field(
+    #    default=None,
+    #    title="评估模型 Base URL",
+    #    description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
+    #    json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+    #)
     eval_api_key: str = Field(
         default="EMPTY",
         title="评估模型 API Key",
@@ -1029,18 +1029,19 @@ class JudgerState(BaseModel):
         description="评估模型text2sql数据库目录，仅text2sql任务下生效，并且数据文件中需要以字段db_id标注出相应的数据库文件夹至路径目录下",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
-    eval_env_configs: str = Field(
-        default='{"CUDA_VISIBLE_DEVICES": "0,1","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
-        title="评估模型vllm启动环境参数",
-        description="评估模型vllm启动环境参数，需要完整字符串配置，为空则认为已启动vllm将会跳过启动vllm的过程",
-        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
-    )
-    eval_vllm_port: int = Field(
-        default=8911,
-        title="vllm本地启动参数——port",
-        description="vllm本地启动参数——port，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
-        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
-    )
+    # 统一vllm配置删除
+    #eval_env_configs: str = Field(
+    #    default='{"NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
+    #    title="评估模型vllm启动环境参数",
+    #    description="评估模型vllm启动环境参数，需要完整字符串配置，为空则认为已启动vllm将会跳过启动vllm的过程",
+    #    json_schema_extra={"ui_type": "textarea", "language": "json", "ui_group": "评估模型"}
+    #)
+    #eval_vllm_port: int = Field(
+    #    default=8911,
+    #    title="vllm本地启动参数——port",
+    #    description="vllm本地启动参数——port，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
+    #    json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    #)
     eval_vllm_tensor_parallel_size: int = Field(
         default=2,
         title="vllm本地启动参数——tensor_parallel_size",
@@ -1053,12 +1054,13 @@ class JudgerState(BaseModel):
         description="vllm本地启动参数——gpu_memory_utilization，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
         json_schema_extra={"ui_type": "slider", "ui_group": "评估模型"}
     )
-    eval_vllm_env_path: str = Field(
-        default="",
-        title="vllm本地启动参数——启动环境",
-        description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动。参数需要具体到python目录，格式应为<path>/miniconda3/envs/<env_name>/bin/python",
-        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    )
+    # 统一vllm配置删除 默认使用本地解释器
+    #eval_vllm_env_path: str = Field(
+    #    default="",
+    #    title="vllm本地启动参数——启动环境",
+    #    description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动。参数需要具体到python目录，格式应为<path>/miniconda3/envs/<env_name>/bin/python",
+    #    json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    #)
     output_result_path: str = Field(
         default="",
         title="评测结果文件保存路径",
@@ -1077,6 +1079,12 @@ class JudgerState(BaseModel):
         description="评测格式化后问题集，该参数不支持用户自定义，运行后由程序根据任务ID等参数生成，如未使用格式化模版该路径即为原始问题文件的路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
+    output_pred_path: str = Field(
+        default="",
+        title="评测预测结果保存路径",
+        description= "通用文本评测结束后产生的预测文件路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
+    )
     # ===== 通用文本 / DataFlow Eval =====
     cuda_visible_devices: str = Field(
         default="0",
@@ -1084,18 +1092,12 @@ class JudgerState(BaseModel):
         description="通用文本任务指定运行GPU",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
-    tensor_parallel_size: int = Field(
-        default=1,
-        title="张量并行数",
-        description="通用文本评测时模型推理使用的张量并行数",
-        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
-    )
-    is_api: bool = Field(
-        default=False,
-        title="是否 API 模式",
-        description="是否通过 API 调用分析模型",
-        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
-    )
+    #is_api: bool = Field(
+    #    default=False,
+    #    title="是否 API 模式",
+    #    description="是否通过 API 调用模型",
+    #    json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
+    #)
     bench_name: str = Field(
         default="",
         title="评测集名称",
@@ -1105,8 +1107,9 @@ class JudgerState(BaseModel):
     bench_dataflow_eval_type: str = Field(
         default="",
         title="通用文本评测类型",
-        description="One-Eval DataFlow 评测类型，例如 key2_qa / key1_text_score",
-        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+        description="通用文本 One-Eval DataFlow 评测类型，例如 key2_qa / key1_text_score",
+        json_schema_extra={"ui_type": "list", "ui_group": "评估模型",
+                            "allowed_values": ["key1_text_score","key2_qa","key2_q_ma","key3_q_choices_a","key3_q_choices_as","key3_q_a_rejected"]}
     )
     key_mapping: Dict[str, Any] = Field(
         default_factory=dict,
@@ -1453,7 +1456,7 @@ class TrainerState(BaseModel):
         default={},
         title="数据检查结果",
         description="数据检查结果",
-        json_schema_extra={"ui_type": "json", "ui_group": "训练模型"}
+        json_schema_extra={"ui_type": "textarea", "language": "json", "ui_group": "训练模型"}
     )
     data_check_report_path: str = Field(
         default="",
@@ -1552,17 +1555,77 @@ class TrainerState(BaseModel):
         description="SwanLab 日志路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
+    train_config: str = Field(
+        default="",
+        title="训练配置",
+        description="训练配置",
+        json_schema_extra={"ui_type": "textarea", "language": "json", "ui_group": "训练模型"}
+    )
     training_checkpoints: List[str] = Field(
         default_factory=list,
         title="训练 Checkpoint 列表",
         description="训练产生的所有 checkpoint 目录名列表，如 ['checkpoint-100', 'checkpoint-200']",
-        json_schema_extra={"ui_type": "json", "ui_group": "训练模型"}
+        json_schema_extra={"ui_type": "textarea", "language": "json", "ui_group": "训练模型"}
     )
     training_step_losses: List[Dict[str, Any]] = Field(
         default_factory=list,
         title="关键 Step Loss 记录",
         description="训练过程中各 step 的 loss 值记录，从 trainer_log.jsonl 解析",
-        json_schema_extra={"ui_type": "json", "ui_group": "训练模型"}
+        json_schema_extra={"ui_type": "textarea", "language": "json", "ui_group": "训练模型"}
+    )
+    trainer_data_check_result: str = Field(
+        default="",
+        title="Trainer 数据检查结果",
+        description="Trainer 数据检查结果",
+        json_schema_extra={"ui_type": "textarea", "language": "plaintext", "ui_group": "训练模型"}
+    )
+    train_output_config_path: str = Field(
+        default="",
+        title="训练配置路径",
+        description="训练配置路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    train_output_data_check_report_path: str = Field(
+        default="",
+        title="数据检查报告路径",
+        description="数据检查报告路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    trainer_config_explanation_path: str = Field(
+        default="",
+        title="Trainer 配置解释路径",
+        description="Trainer 配置解释路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    train_output_training_log_path: str = Field(
+        default="",
+        title="训练日志路径",
+        description="训练日志路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    train_output_training_report_path: str = Field(
+        default="",
+        title="训练报告路径",
+        description="训练报告路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    trainer_training_task_id: str = Field(
+        default="",
+        title="Trainer 训练任务 ID",
+        description="Trainer 训练任务 ID",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    trainer_training_execution_time: float = Field(
+        default=0,
+        title="Trainer 训练执行时间",
+        description="Trainer 训练执行时间",
+        json_schema_extra={"ui_type": "number", "ui_group": "训练模型"}
+    )
+    trainer_training_final_status: str = Field(
+        default={},
+        title="Trainer 训练最终状态",
+        description="Trainer 训练最终状态",
+        json_schema_extra={"ui_type": "textarea", "language": "json", "ui_group": "训练模型"}
     )
 
 

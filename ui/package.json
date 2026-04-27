@@ -1,12 +1,12 @@
 {
     "name": "loopai_ui",
-    "version": "0.1.6",
+    "version": "0.1.9",
     "private": true,
     "packageManager": "yarn@4.9.2",
     "type": "module",
     "scripts": {
         "dev": "vite",
-        "build": "vite build",
+        "build": "NODE_OPTIONS=${NODE_OPTIONS:---max-old-space-size=4096} vite build",
         "preview": "vite preview",
         "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix --ignore-path .gitignore",
         "format": "prettier --write src/",
@@ -27,6 +27,7 @@
         "markdown-it-sub": "^2.0.0",
         "markdown-it-sup": "^2.0.0",
         "markdown-it-texmath": "^1.0.0",
+        "monaco-editor": "0.55.1",
         "office-ui-fabric-core": "^11.1.0",
         "onecolor": "^4.1.0",
         "pinia": "^2.1.7",

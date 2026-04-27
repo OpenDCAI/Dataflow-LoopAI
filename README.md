@@ -85,7 +85,8 @@ LoopAI reformulates the LLM optimization pipeline into a **graph-based execution
 conda create -n loopai python=3.12
 conda activate loopai
 
-pip install -e .
+pip install uv
+uv pip install -e .
 ```
 
 ---
@@ -114,6 +115,8 @@ system:
 ```
 
 These values configure the Starter model provider and the external data-search credentials used by LoopAI.
+
+For where to obtain `tavily_api_key`, `kaggle_username`, and `kaggle_key`, see [docs/API_KEYS.md](./docs/API_KEYS.md). Do not commit real credentials to the repository.
 
 ---
 
@@ -168,6 +171,38 @@ Start LoopAI:
 ```bash
 python examples/scripts/run_starter.py
 ```
+
+---
+
+### 4.4 Optional Runtime Dependencies
+
+`pip install -e .` installs the core LoopAI package, API service, graph orchestration, and common data-processing dependencies. Some Agents call heavy ML runtimes that are easier to keep in separate Conda environments because their CUDA, PyTorch, and serving requirements may conflict.
+
+Recommended layout:
+
+```bash
+# Core LoopAI runtime
+conda create -n loopai python=3.12
+
+# Local OpenAI-compatible inference for Judger / Analyzer
+conda create -n loopai-vllm python=3.10
+
+# Local training with LlamaFactory
+conda create -n loopai-llamafactory python=3.10
+
+# Local training with verl
+conda create -n loopai-verl python=3.10
+```
+
+Install `vllm`, `LLaMA-Factory`, and `verl` according to their upstream instructions and your CUDA/PyTorch version. They are not pinned in LoopAI because GPU environments are usually machine-specific.
+
+Agent-specific notes:
+
+* **JudgerAgent**: for local model evaluation, install `vllm` in a separate environment and set `judger.eval_vllm_env_path` to the Python executable, for example `/path/to/miniconda3/envs/loopai-vllm/bin/python`. When `judger.eval_base_url` is empty, Judger uses this interpreter to start a local vLLM OpenAI-compatible API server in a subprocess, with parameters such as `eval_vllm_port`, `eval_vllm_tensor_parallel_size`, `eval_vllm_gpu_memory_utilization`, and `eval_env_configs`. If you already run a compatible service yourself, set `judger.eval_base_url` and Judger will use that service instead.
+* **AnalyzerAgent**: Analyzer calls an OpenAI-compatible chat endpoint through `analyzer.analyze_base_url`, `analyzer.analyze_model_path`, and `analyzer.analyze_api_key`. For local analysis, you can serve the analysis model with vLLM in the same vLLM environment and point `analyze_base_url` to it. Analyzer does not currently start vLLM by itself.
+* **TrainerAgent**: local training normally requires `LLaMA-Factory` or `verl`. Set `trainer.train_framework` to `llamafactory` or `verl`. For LlamaFactory, set `trainer.llamafactory_dir` to the LLaMA-Factory repository and `trainer.llamafactory_env_path` to the environment root or `bin` directory, for example `/path/to/miniconda3/envs/loopai-llamafactory/bin`. For verl, provide `verl_dir` and `verl_env_path` in the trainer or system config. Trainer starts training asynchronously through an internal task manager, which launches the selected framework as a subprocess and streams logs back to LoopAI.
+
+These fields can be provided through the WebUI Configer flow, in Agent state, or in `starter.yaml` under the corresponding `judger`, `analyzer`, `trainer`, or `system` sections.
 
 ---
 

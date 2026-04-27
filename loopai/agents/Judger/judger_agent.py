@@ -14,11 +14,13 @@ from loopai.agents import BaseAgent
 from .utils.oj.generate import generate_sample_code, generate_sample_text2sql
 from .utils.oj.evaluate import evaluate_sample_code, evaluate_sample_text2sql
 from .utils.oj.format import data_format
-from .utils.oj.data import check_file, check_jsonl_fields
+from .utils.oj.data import check_jsonl_fields
 from .utils.oj.vllm_starter import start_vllm_openai_api_server
+from .utils.oj.vllm_starter import DEFAULT_VLLM_PORT
 from .utils.oj.vllm_killer import kill_vllm_openai_api_server
 from .utils.oj.vllm_check import check_vllm_running
-from .nodes.eval_general_text_node import eval_general_text_node
+from .nodes.eval_general_text_node import eval_general_text_node 
+from .nodes.eval_general_text_node import set_gpu
 
 from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
@@ -73,13 +75,12 @@ class JudgerAgent(BaseAgent):
             writer = get_stream_writer()
             required_fields = {
                 'judger':["eval_api_key", "eval_temperature",
-                        "eval_top_p", "eval_problem_path", "eval_batch_size", 
+                        "eval_top_p", "eval_problem_path",
                         "eval_case_num", "eval_task_type"
                 ],
                 'default':["output_dir", "task_id"]
             }
             missing_fields = get_missing_fields(required_fields, state)
-            
             if not missing_fields:
                 # judger无模型参数则去查看trainer是否提供
                 if _isNotNone(state.get("judger", {}).get("eval_model_path", "")) is not True :
@@ -130,23 +131,30 @@ class JudgerAgent(BaseAgent):
                     missing_fields.setdefault("judger", []).append("eval_base_url")
 
             """数据有效检查"""
-            check_result = check_file(state)
-            for key, value in check_result.items():
-                is_true = bool(value)
-                if not is_true:
-                    missing_fields.setdefault("judger", []).append(key)
+            automated_query = self.prompt_loader(
+                    "automated_query", "judger_missing_fields_prompt")
+            problem_path = state.get("judger", {}).get("eval_problem_path", "")
+            if not os.path.exists(problem_path):
+                logger.info(f"problem_path {problem_path} not exists")
+                automated_query = f"{automated_query}\nDetail: {problem_path} does not exist and make sure it is a valid file."
+                missing_fields.setdefault("judger", []).append("eval_problem_path")
                     
             """检查text2sql必要字段"""
             if not missing_fields:
                 if state.get("judger", {}).get("eval_task_type", "") == "text2sql":
                     missing_fields = get_missing_fields({'judger':["eval_text2sql_dir"]}, state)
+            """检查general_text必要字段"""
+            if not missing_fields:
+                if state.get("judger", {}).get("eval_task_type", "") == "general_text":
+                    missing_fields = get_missing_fields({'judger':["bench_dataflow_eval_type"]},state)
+            logger.info(f"missing_fields:{missing_fields}")
+            logger.info(f"bench_dataflow_eval_type:{state.get("judger", {}).get("bench_dataflow_eval_type")}")
             if missing_fields:
                 logger.info("$"*50)
-                logger.info(missing_fields)
+                logger.info(f"missing_fields:{missing_fields}")
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
-                state['automated_query'] = self.prompt_loader(
-                    "automated_query", "judger_missing_fields_prompt")
+                state['automated_query'] = automated_query
                 state.setdefault('configer',{})['configer_error'] = f'Missing required fields: {json.dumps({"missing_fields": missing_fields}, ensure_ascii=False)}'
                 goto_node = runtime.context['exception_navigate']
                 logger.info(f'found missing fields, goto {goto_node}')
@@ -274,15 +282,16 @@ class JudgerAgent(BaseAgent):
     @staticmethod
     @BaseAgent.set_current
     def vllm_start_node(state: LoopAIState) -> LoopAIState:
-        env_configs = state.get("judger", {}).get("eval_env_configs", None)
-        vllm_port = state.get("judger", {}).get("eval_vllm_port", 8911)
+        # 设置 cuda_visible_devices
+        set_gpu(state)
+
+        env_configs = state.get("judger", {}).get("eval_env_configs", "{}")
         vllm_tensor_parallel_size = state.get("judger", {}).get("eval_vllm_tensor_parallel_size", 1)
         vllm_gpu_memory_utilization = state.get("judger", {}).get("eval_vllm_gpu_memory_utilization", 0.9)
         vllm_model = state.get("judger", {}).get("eval_model_path", None)
-        vllm_env_path = state.get("judger", {}).get("eval_vllm_env_path", None)
 
         writer = get_stream_writer()
-        if(_isNotNone(env_configs) and _isNotNone(vllm_port) and _isNotNone(vllm_tensor_parallel_size) and _isNotNone(vllm_gpu_memory_utilization)):
+        if(_isNotNone(env_configs) and _isNotNone(vllm_tensor_parallel_size) and _isNotNone(vllm_gpu_memory_utilization)):
             if writer:
                 writer(StreamEvent(
                     current=state['current'],
@@ -290,26 +299,37 @@ class JudgerAgent(BaseAgent):
                     message="vllm准备启动",
                     data={"msg": f""}
                 ).json())
-            
-            if not _isNotNone(vllm_env_path):
-                vllm_env_path = "python"
+            # try 捕捉异常，上报给前端日志信息
+            try:
+                start_vllm_openai_api_server(env_configs, vllm_tensor_parallel_size, vllm_gpu_memory_utilization, vllm_model)
+                state["judger"]["eval_base_url"] = f"http://localhost:{DEFAULT_VLLM_PORT}/v1"
+                if writer:
+                    writer(StreamEvent(
+                        current=state['current'],
+                        progress=1.0,
+                        message="vllm已启动",
+                        data={"msg": f""}
+                    ).json())
 
-            start_vllm_openai_api_server(env_configs, vllm_env_path, vllm_port, vllm_tensor_parallel_size, vllm_gpu_memory_utilization, vllm_model)
-            state["judger"]["eval_base_url"] = f"http://localhost:{vllm_port}/v1"
-            if writer:
-                writer(StreamEvent(
-                    current=state['current'],
+            except Exception as e:
+                logger.info("CUDA_VISIBLE_DEVICES from environment:", os.environ.get("CUDA_VISIBLE_DEVICES"))
+                logger.error(f"[{bench.bench_name}] 评测失败: {e}")
+                # 上报错误 直接完成结束
+                _emit(
+                    state['current'],
+                    writer,
+                    f"vllm 启动异常 ,请解决后重新评测：{e}",
                     progress=1.0,
-                    message="vllm已启动",
-                    data={"msg": f""}
-                ).json())
+                )
+                # 直接结束 Judger 当前节点，不再跳转父图异常路由
+                return state
         else:
             if writer:
                 writer(StreamEvent(
                     current=state['current'],
                     progress=1.0,
                     message="vllm开启结束",
-                    data={"msg": f"因参数[env_configs]或[vllm_port]或[vllm_tensor_parallel_size]或[vllm_gpu_memory_utilization]未设置而跳过该过程"}
+                    data={"msg": f"因参数[env_configs]或[vllm_tensor_parallel_size]或[vllm_gpu_memory_utilization]未设置而跳过该过程"}
                 ).json())
         return state
     
@@ -346,8 +366,8 @@ class JudgerAgent(BaseAgent):
                 writer(StreamEvent(
                     current=state['current'],
                     progress=1.0,
-                    message="任务数据格式化结束",
-                    data={"msg": '未设置[eval_format_type]参数，跳过数据格式化过程'}
+                    message="任务数据格式化结束,未设置[eval_format_type]参数，跳过数据格式化过程",
+                    # data={"msg": '未设置[eval_format_type]参数，跳过数据格式化过程'} -> 更新至 message 中
                 ).json())
         state["judger"]["output_problem_path"] = state["judger"]["eval_problem_path"]
         return state
@@ -426,7 +446,7 @@ class JudgerAgent(BaseAgent):
         如果已完成则结束未完成则开启本地vllm
         """
         base_url = state.get("judger", {}).get("eval_base_url", None)
-        vllm_port = state.get("judger", {}).get("eval_vllm_port", None)
+        vllm_port = state.get("judger", {}).get("eval_vllm_port", DEFAULT_VLLM_PORT)
         # 判断是否为空，为空则开启本地
         if not _isNotNone(base_url):
             return "to_vllm_kill"
