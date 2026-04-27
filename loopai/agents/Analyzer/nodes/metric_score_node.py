@@ -88,11 +88,15 @@ def metric_score_node(state: LoopAIState):
 
     detail_path = None
     if getattr(bench, "meta", None):
-        detail_path = bench.meta.get("eval_detail_path")
+        detail_path = (
+           bench.meta.get("eval_detail_path")
+           or bench.meta.get("artifact_paths", {}).get("records_path")
+        )
 
     if not detail_path:
         detail_path = (
-            judger_cfg.get("output_result_path")
+            judger_cfg.get("output_pred_path")
+            or judger_cfg.get("output_result_path")
             or judger_cfg.get("out_result_path")
             or judger_cfg.get("eval_result_path")
             or analyzer_cfg.get("analyze_output_result_path")
