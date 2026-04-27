@@ -71,10 +71,17 @@ def metric_score_node(state: LoopAIState):
     judger_cfg = state.get("judger", {}) or {}
     analyzer_cfg = state.get("analyzer", {}) or {}
 
-    bench = judger_cfg.get("bench") or state.get("bench")
-    if bench is None:
-        raise ValueError("metric_score_node: 未找到 bench，请先执行 eval_general_text_node")
+    try:
+        bench = judger_cfg.get("bench") or state.get("bench")
 
+        if bench is None:
+            raise ValueError("metric_score_node: 未找到 bench，请先执行 eval_general_text_node")
+
+    except Exception as e:
+        logger.exception(f"[metric_score_node] bench加载失败: {e}")
+
+        state["exception"] = f"metric_score_node bench error: {str(e)}"
+        raise
     bench_name = getattr(bench, "bench_name", None) or "general_text_eval"
 
     metric_plan_obj = (

@@ -646,8 +646,22 @@ def eval_general_text_node(state: LoopAIState):
         dataset_cache_path=str(Path(dataset_cache_path).resolve()),
     )
     summary_json_path, summary_txt_path = _write_summary_files(outdir, summary, run_ts)
+    if bench.meta is None:
+        bench.meta = {}
+
+    bench.meta.setdefault("artifact_paths", {})
+    bench.meta["artifact_paths"]["records_path"] = step2_file_path
+    bench.meta["eval_detail_path"] = step2_file_path
 
     state["bench"] = bench
+    state["judger"]["bench"] = {
+        "bench_name": bench.bench_name,
+        "dataset_cache": bench.dataset_cache,
+        "bench_dataflow_eval_type": bench.bench_dataflow_eval_type,
+        "eval_status": bench.eval_status,
+        "meta": bench.meta or {},
+        "key_mapping": bench.key_mapping or {},
+    }
 
     _emit(
         state['current'],
