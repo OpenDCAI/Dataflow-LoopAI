@@ -353,12 +353,14 @@ def _prepare_bench_from_state(
     else:
         logger.warning(f"传入key_mapping{key_mapping}，解析错误，从文件中自动读取key_mapping")
         key_mapping = _generate_key_mapping(judger_cfg)
+    bench_name = judger_cfg.get("bench_name") or "general_text_eval"
     _emit(
         state['current'],
         writer,
         "开始通用文本评测（One-Eval Phase4 / DataFlow）",
         progress=0.0,
         data={
+            "bench_name": bench_name,
             "eval_result_path": eval_result_path,
             "eval_type": eval_type,
             "key_mapping": json.dumps(key_mapping, indent=4, ensure_ascii=False),
@@ -383,7 +385,7 @@ def _prepare_bench_from_state(
     state['judger']['output_problem_path'] = str(dataset_cache_path)
 
     bench = BenchAdapter(
-        bench_name=judger_cfg.get("bench_name", "general_text_eval"),
+        bench_name=bench_name,
         dataset_cache=str(dataset_cache_path),
         bench_dataflow_eval_type=eval_type,
         meta={},
@@ -395,9 +397,10 @@ def _prepare_bench_from_state(
 
     return bench, eval_type, dataset_cache_path, key_mapping, outdir, run_ts
 
-def set_gpu(state:LoopAIState):
-    os.environ['CUDA_VISIBLE_DEVICES'] = state["judger"].get("cuda_visible_devices","0")
-    logger.info(f"CUDA_VISIBLE_DEVICES:{os.environ['CUDA_VISIBLE_DEVICES']} 设置完成")
+def set_gpu(state):
+    os.environ["CUDA_VISIBLE_DEVICES"] = state["judger"].get(
+        "cuda_visible_devices", "2"
+    )
 
 def eval_general_text_node(state: LoopAIState):
     """
@@ -420,7 +423,7 @@ def eval_general_text_node(state: LoopAIState):
         "One-Eval Phase4 配置完成，正在调用 DataFlowEvalTool 进行评测",
         progress=0.35,
         data={
-            "bench_name": cfg["bench_name"],
+            "bench_name": bench.bench_name,
             "eval_type": cfg["bench_dataflow_eval_type"],
             "model_name_or_path": getattr(model_config, "model_name_or_path", None),
             "is_api": getattr(model_config, "is_api", None),

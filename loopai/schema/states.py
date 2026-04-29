@@ -1091,6 +1091,12 @@ class JudgerState(BaseModel):
         description="通用文本评测生成的 bench 信息，用于 Analyzer 后续指标计算",
         json_schema_extra={"ui_type": "json_viewer", "ui_group": "评估模型"}
     )
+    bench_name: str = Field(
+        default="general_text_eval",
+        title="评测集名称",
+        description="通用文本评测使用的评测集名称",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+    )
     # ===== 通用文本 / DataFlow Eval =====
     cuda_visible_devices: str = Field(
         default="0",
