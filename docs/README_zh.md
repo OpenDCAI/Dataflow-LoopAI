@@ -1,6 +1,6 @@
 <div align="center">
   <img src="./assets/LoopAI.svg" width="160" alt="LoopAI Logo" />
-  <h1>LoopAI：LLM自主闭环优化框架</h1>
+  <h1>LoopAI：面向 LLM 自主优化的闭环框架</h1>
 
   <p>
     <a href="https://www.python.org/">
