@@ -29,8 +29,9 @@
             ></i>
         </fv-button>
         <fv-button
-            :theme="theme"
+            theme="dark"
             class="editor-submit-button"
+            background="linear-gradient(120deg, rgba(149, 161, 219, 1), rgba(137, 120, 200, 1))"
             border-radius="8"
             :reveal-border-gradient-list="[
                 'rgba(129, 208, 246, 1)',
@@ -81,7 +82,7 @@ export default {
     },
     computed: {
         ...mapState(useAppConfig, ['local', 'language']),
-        ...mapState(useTheme, ['color']),
+        ...mapState(useTheme, ['color', 'gradient']),
         ...mapState(useLoopAI, ['taskStatus', 'msgStreamModel']),
         placeholder() {
             if (this.taskStatus.interrupt_value) return this.taskStatus.interrupt_value

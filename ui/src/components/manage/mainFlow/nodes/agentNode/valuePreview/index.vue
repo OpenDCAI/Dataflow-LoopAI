@@ -36,13 +36,14 @@
             :height="25"
             :switch-on-background="foreground"
             :inside-content="true"
-            :disabled="!lock"
+            :disabled="true"
         ></fv-toggle-switch>
         <fv-combobox
             v-if="computedUIType === 'list'"
             v-model="listValueModel"
             :placeholder="modelKey"
             :options="formatAllowedValues"
+            :disabled="true"
         ></fv-combobox>
         <div v-if="computedUIType === 'slider'" class="value-preview-row-item">
             <fv-slider
@@ -50,7 +51,7 @@
                 :showLabel="true"
                 :unit="1"
                 :color="foreground"
-                :disabled="!lock"
+                :disabled="true"
                 background="rgba(255, 255, 255, 0.8)"
                 style="margin: 5px 0px; flex: 1"
             >
