@@ -1703,6 +1703,12 @@ class DefaultState(BaseModel):
         json_schema_extra={"ui_type": "list",
                            "ui_group": "默认", "allowed_values": ["en", "zh"]}
     )
+    max_context_len: int = Field(
+        default=0,
+        title="最大上下文长度",
+        description="最大上下文长度, 0表示不限制上下文长度, 对于弱模型, 建议设置为10以内, 以增强模型遵循System Prompt的能力",
+        json_schema_extra={"ui_type": "number", "ui_group": "默认"}
+    )
     prompt_template_dir: str = Field(
         default="",
         title="提示模板目录",
@@ -1772,6 +1778,7 @@ class LoopAIState(MessagesState):
     task_id: str
     language: str
     mined_data: str
+    max_context_len: str
     prompt_template_dir: str
     output_dir: str  # 全局输出目录
 
