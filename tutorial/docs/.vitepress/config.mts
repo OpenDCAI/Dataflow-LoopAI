@@ -22,10 +22,31 @@ export default defineConfig({
           { text: '项目概览', link: '/' },
           { text: '快速开始', link: '/guide/quick-start' },
           { text: '可选环境', link: '/guide/optional-environments' },
-          { text: 'WebUI 教程', link: '/guide/webui-tutorial' },
-          { text: '终端教程', link: '/guide/cli-tutorial' },
           { text: '架构说明', link: '/guide/architecture' },
           { text: 'Agent 设计', link: '/guide/agents' }
+        ]
+      },
+      {
+        text: 'WebUI 教程',
+        items: [
+          { text: 'WebUI 总览教程', link: '/guide/webui-tutorial' }
+        ]
+      },
+      {
+        text: '终端教程',
+        items: [
+          { text: '终端总览教程', link: '/guide/cli-tutorial' }
+        ]
+      },
+      {
+        text: '详细指南',
+        items: [
+          { text: 'Judger Agent 详细指南', link: '/guide/details/judger-agent' },
+          { text: 'Analyzer Agent 详细指南', link: '/guide/details/analyzer-agent' },
+          { text: 'Obtainer Agent 详细指南', link: '/guide/details/obtainer-agent' },
+          { text: 'WebCrawler Agent 详细指南', link: '/guide/details/webcrawler-agent' },
+          { text: 'Constructor Agent 详细指南', link: '/guide/details/constructor-agent' },
+          { text: 'Trainer Agent 详细指南', link: '/guide/details/trainer-agent' }
         ]
       }
     ],
