@@ -313,7 +313,7 @@ class JudgerAgent(BaseAgent):
 
             except Exception as e:
                 logger.info("CUDA_VISIBLE_DEVICES from environment:", os.environ.get("CUDA_VISIBLE_DEVICES"))
-                logger.warning("==== vllm 启动失败 ====")
+                logger.error("==== vllm 启动失败 ====")
                 # 上报错误 直接完成结束
                 _emit(
                     state['current'],
