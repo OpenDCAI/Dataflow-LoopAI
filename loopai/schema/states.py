@@ -1004,12 +1004,12 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "list", "ui_group": "评估模型",
                            "allowed_values": ["code", "text2sql", "general_text"]}
     )
-    # eval_base_url: str = Field(
-    #    default=None,
-    #    title="评估模型 Base URL",
-    #    description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
-    #    json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
-    # )
+    eval_base_url: str = Field(
+        default=None,
+        title="评估模型 Base URL",
+        description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+    )
     eval_api_key: str = Field(
         default="EMPTY",
         title="评估模型 API Key",

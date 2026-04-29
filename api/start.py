@@ -80,7 +80,7 @@ def main():
             "-m", "uvicorn",
             "api.app.main:app",
             "--host", "0.0.0.0",
-            "--port", "8855",
+            "--port", "8811",
         ]
         
         print(f"🔧 Running FastAPI")
