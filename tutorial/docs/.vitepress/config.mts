@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
+  base: process.env.DOCS_BASE ?? '/',
   title: 'LoopAI',
   description: 'LoopAI 使用文档与教程',
   lang: 'zh-CN',

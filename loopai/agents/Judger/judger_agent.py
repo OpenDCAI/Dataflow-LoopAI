@@ -134,7 +134,7 @@ class JudgerAgent(BaseAgent):
             automated_query = self.prompt_loader(
                     "automated_query", "judger_missing_fields_prompt")
             problem_path = state.get("judger", {}).get("eval_problem_path", "")
-            if not os.path.exists(problem_path):
+            if not problem_path or not os.path.exists(problem_path):
                 logger.info(f"problem_path {problem_path} not exists")
                 automated_query = f"{automated_query}\nDetail: {problem_path} does not exist and make sure it is a valid file."
                 missing_fields.setdefault("judger", []).append("eval_problem_path")
