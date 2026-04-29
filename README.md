@@ -85,7 +85,8 @@ LoopAI reformulates the LLM optimization pipeline into a **graph-based execution
 conda create -n loopai python=3.12
 conda activate loopai
 
-pip install -e .
+pip install uv
+uv pip install -e .
 ```
 
 ---
@@ -114,6 +115,8 @@ system:
 ```
 
 These values configure the Starter model provider and the external data-search credentials used by LoopAI.
+
+For where to obtain `tavily_api_key`, `kaggle_username`, and `kaggle_key`, see [docs/API_KEYS.md](./docs/API_KEYS.md). Do not commit real credentials to the repository.
 
 ---
 

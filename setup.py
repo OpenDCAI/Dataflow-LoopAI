@@ -54,6 +54,8 @@ setup(
         "tree-sitter-yaml>=0.7.2",
         "tree-sitter-markdown>=0.5.1",
         "one-eval @ git+https://github.com/OpenDCAI/One-Eval.git@main",
+        "open-dataflow==1.0.10",
+        "vllm>=0.4.0"
     ],
     python_requires=">=3.12",
 )

@@ -71,11 +71,21 @@ def metric_score_node(state: LoopAIState):
     judger_cfg = state.get("judger", {}) or {}
     analyzer_cfg = state.get("analyzer", {}) or {}
 
-    bench = judger_cfg.get("bench") or state.get("bench")
-    if bench is None:
-        raise ValueError("metric_score_node: 未找到 bench，请先执行 eval_general_text_node")
+    try:
+        bench = judger_cfg.get("bench") or state.get("bench")
 
-    bench_name = getattr(bench, "bench_name", None) or "general_text_eval"
+        if bench is None:
+            raise ValueError("metric_score_node: 未找到 bench，请先执行 eval_general_text_node")
+
+    except Exception as e:
+        logger.exception(f"[metric_score_node] bench加载失败: {e}")
+
+        state["exception"] = f"metric_score_node bench error: {str(e)}"
+        raise
+    if isinstance(bench, dict):
+        bench_name = bench.get("bench_name") or "general_text_eval"
+    else:
+        bench_name = getattr(bench, "bench_name", None) or "general_text_eval"
 
     metric_plan_obj = (
         state.get("metric_plan")
@@ -87,12 +97,21 @@ def metric_score_node(state: LoopAIState):
     metric_plan = _coerce_metric_plan(metric_plan_obj, bench_name)
 
     detail_path = None
-    if getattr(bench, "meta", None):
-        detail_path = bench.meta.get("eval_detail_path")
+    if isinstance(bench, dict):
+        bench_meta = bench.get("meta") or {}
+    else:
+        bench_meta = getattr(bench, "meta", {}) or {}
+
+    if bench_meta:
+        detail_path = (
+           bench_meta.get("eval_detail_path")
+           or bench_meta.get("artifact_paths", {}).get("records_path")
+        )
 
     if not detail_path:
         detail_path = (
-            judger_cfg.get("output_result_path")
+            judger_cfg.get("output_pred_path")
+            or judger_cfg.get("output_result_path")
             or judger_cfg.get("out_result_path")
             or judger_cfg.get("eval_result_path")
             or analyzer_cfg.get("analyze_output_result_path")
@@ -116,14 +135,24 @@ def metric_score_node(state: LoopAIState):
         }
     )
 
-    if getattr(bench, "meta", None) is None:
-        bench.meta = {}
+    if isinstance(bench, dict):
+        if bench.get("meta", None) is None:
+            bench["meta"] = {}
+        bench["meta"].setdefault("artifact_paths", {})
+        bench["meta"]["artifact_paths"]["records_path"] = detail_path
+        bench_meta = bench["meta"]
+    else:
+        if getattr(bench, "meta", None) is None:
+            bench.meta = {}
+        bench.meta.setdefault("artifact_paths", {})
+        bench.meta["artifact_paths"]["records_path"] = detail_path
+        bench_meta = bench.meta
 
-    bench.meta.setdefault("artifact_paths", {})
-    bench.meta["artifact_paths"]["records_path"] = detail_path
-
-    logger.info(f"[metric_score] records_path={bench.meta['artifact_paths']['records_path']}")
-    logger.info(f"[metric_score] dataset_cache={getattr(bench, 'dataset_cache', None)}")
+    logger.info(f"[metric_score] records_path={bench_meta['artifact_paths']['records_path']}")
+    if isinstance(bench, dict):
+        logger.info(f"[metric_score] dataset_cache={bench.get('dataset_cache', None)}")
+    else:
+        logger.info(f"[metric_score] dataset_cache={getattr(bench, 'dataset_cache', None)}")
     logger.info(f"[metric_score] metric_plan={metric_plan}")
 
     runner = MetricRunner()
@@ -147,8 +176,8 @@ def metric_score_node(state: LoopAIState):
     state["analyzer"]["metric_eval_results"] = metric_result
     state["eval_results"] = metric_result
 
-    bench.meta["metric_eval_result_path"] = str(metric_result_path.resolve())
-    bench.meta["metric_eval_results"] = metric_result
+    bench_meta["metric_eval_result_path"] = str(metric_result_path.resolve())
+    bench_meta["metric_eval_results"] = metric_result
 
     _emit(
         writer,

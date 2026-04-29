@@ -270,7 +270,10 @@ def _infer_task_domain(state: LoopAIState) -> str:
     if analyzer.get("task_domain"):
         return analyzer["task_domain"]
 
-    meta = getattr(bench, "meta", {}) or {}
+    if isinstance(bench, dict):
+        meta = bench.get("meta", {}) or {}
+    else:
+        meta = getattr(bench, "meta", {}) or {}
     if meta.get("domain"):
         return meta["domain"]
 
@@ -291,8 +294,12 @@ def _build_summary(
     """
     judger = state.get("judger", {}) or {}
     bench = state.get("bench") or judger.get("bench")
-    bench_name = getattr(bench, "bench_name", "unknown_bench")
-    eval_type = getattr(bench, "bench_dataflow_eval_type", "unknown_eval_type")
+    if isinstance(bench, dict):
+        bench_name = bench.get("bench_name", "unknown_bench")
+        eval_type = bench.get("bench_dataflow_eval_type", "unknown_eval_type")
+    else:
+        bench_name = getattr(bench, "bench_name", "unknown_bench")
+        eval_type = getattr(bench, "bench_dataflow_eval_type", "unknown_eval_type")
     task_domain = _infer_task_domain(state)
 
     total = int(metric_result.get("num_samples", len(records)))

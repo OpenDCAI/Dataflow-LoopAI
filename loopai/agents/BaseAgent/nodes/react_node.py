@@ -76,7 +76,8 @@ def ReAct_Node(model: ChatOpenAI, tools: list[tool], prompt: str, messages_key: 
             'stream_message_state': 'start',
             'history': [message_to_dict(msg) for msg in state[messages_key]]
         }).json())
-        response = model.invoke([system_prompt] + state[messages_key], config)
+        max_context_len = state.get("max_context_len", 0)
+        response = model.invoke([system_prompt] + state[messages_key][-max_context_len:], config)
         writer(StreamEvent(current='llm_node', data={
             'stream_message_state': 'finished',
             'history': [message_to_dict(msg) for msg in state[messages_key]] + [message_to_dict(response)],

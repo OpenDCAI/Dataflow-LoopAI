@@ -21,3 +21,4 @@ app_config.json
 starter.yaml
 CLAUDE.md
 .codex
+*.log

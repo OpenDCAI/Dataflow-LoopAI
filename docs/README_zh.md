@@ -81,12 +81,20 @@ LoopAI 将 LLM 的优化流程重构为一个**基于图的执行框架（Graph 
 
 ### 4.1 安装
 
+建议使用 Conda 管理 Python 版本，并使用 `uv` 创建项目虚拟环境与安装依赖：
+
 ```bash
 conda create -n loopai python=3.12
 conda activate loopai
 
-pip install -e .
+pip install uv
+uv venv
+source .venv/bin/activate
+
+uv pip install -e .
 ```
+
+如果已经在合适的 Python 3.12 环境中，也可以只执行 `pip install uv` 之后的步骤。
 
 ---
 
@@ -114,6 +122,8 @@ system:
 ```
 
 这些字段用于配置 Starter 模型服务，以及 LoopAI 使用的外部数据搜索凭据。
+
+`tavily_api_key`、`kaggle_username` 和 `kaggle_key` 的获取位置可见 [API_KEYS_zh.md](./API_KEYS_zh.md)。请不要把真实凭据提交到仓库。
 
 ---
 
