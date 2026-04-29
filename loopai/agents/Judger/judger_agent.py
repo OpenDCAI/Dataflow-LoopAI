@@ -120,15 +120,14 @@ class JudgerAgent(BaseAgent):
                             data={"msg": f""}
                         ).json())
                 else:
-                    logger.info("未启动vllm")
+                    logger.info(f"未启动vllm, base_url:{base_url}")
                     if writer:
                         writer(StreamEvent(
                             current=state['current'],
                             progress=1.0,
-                            message="vllm未启动",
+                            message=f"{base_url} -> vllm未启动",
                             data={"msg": f""}
                         ).json())
-                    missing_fields.setdefault("judger", []).append("eval_base_url")
 
             """数据有效检查"""
             automated_query = self.prompt_loader(
@@ -313,14 +312,15 @@ class JudgerAgent(BaseAgent):
 
             except Exception as e:
                 logger.info("CUDA_VISIBLE_DEVICES from environment:", os.environ.get("CUDA_VISIBLE_DEVICES"))
-                logger.error(f"[{bench.bench_name}] 评测失败: {e}")
+                logger.error("==== vllm 启动失败 ====")
                 # 上报错误 直接完成结束
-                _emit(
-                    state['current'],
-                    writer,
-                    f"vllm 启动异常 ,请解决后重新评测：{e}",
-                    progress=1.0,
-                )
+                if writer:
+                    writer(StreamEvent(
+                        current=state['current'],
+                        progress=1.0,
+                        message="vllm 启动异常",
+                        data={"msg": f"vllm 启动异常 ,请解决后重新评测：{e}"}
+                    ).json())
                 # 直接结束 Judger 当前节点，不再跳转父图异常路由
                 return state
         else:
