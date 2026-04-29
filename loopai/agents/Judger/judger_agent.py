@@ -120,15 +120,14 @@ class JudgerAgent(BaseAgent):
                             data={"msg": f""}
                         ).json())
                 else:
-                    logger.info("未启动vllm")
+                    logger.info(f"未启动vllm, base_url:{base_url}")
                     if writer:
                         writer(StreamEvent(
                             current=state['current'],
                             progress=1.0,
-                            message="vllm未启动",
+                            message=f"{base_url} -> vllm未启动",
                             data={"msg": f""}
                         ).json())
-                    missing_fields.setdefault("judger", []).append("eval_base_url")
 
             """数据有效检查"""
             automated_query = self.prompt_loader(
