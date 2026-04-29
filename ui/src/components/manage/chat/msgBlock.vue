@@ -82,7 +82,7 @@
             <div v-show="thisValue.type !== 'tool'" class="msg-control-block">
                 <div class="msg-control-right-block">
                     <fv-button
-                        v-show="thisValue.type === 'human'"
+                        v-show="thisValue.type === 'human' && false"
                         :theme="theme"
                         :background="
                             theme === 'dark' ? 'rgba(50, 58, 71, 1)' : 'rgba(255, 255, 255, 1)'
@@ -293,11 +293,11 @@ export default {
                 }, 1000)
             })
         },
-        copyTextContent (text) {
-            if(typeof(text) === 'object') text = JSON.stringify(text);
+        copyTextContent(text) {
+            if (typeof text === 'object') text = JSON.stringify(text)
             navigator.clipboard.writeText(text).then(() => {
                 this.$barWarning(this.local('Copied'), {
-                    status: "correct"
+                    status: 'correct'
                 })
             })
         },
