@@ -60,7 +60,7 @@ def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         # 连接超时、被拒绝、端口未监听，均返回False
         return False
 
-# ========== 核心修复：后台线程持续消费缓冲区，避免阻塞 ==========
+# 后台线程持续消费缓冲区，避免阻塞 
 def _consume_subprocess_output(proc, stop_event):
     """
     后台线程持续读取子进程输出，消费缓冲区（解决卡死核心）
@@ -96,7 +96,7 @@ def start_vllm_openai_api_server(
     启动vllm openai兼容api服务（保留shell=True+字符串命令，解决卡死问题）
     :return: (vllm子进程对象, 输出消费线程停止事件)
     """
-    # ========== 使用当前运行环境的 python 启动 vllm ==========
+    # 使用当前运行环境的 python 启动 vllm
     python_exec = f"{sys.executable}"
     # 轻量预检：解释器可执行 + 可导入 vllm
     if not os.path.exists(python_exec):
@@ -135,7 +135,6 @@ def start_vllm_openai_api_server(
         process_env[key] = value
     #logger.info("已设置GPU和NCCL环境变量")
 
-    # ========== 保留shell=True，仅优化缓冲区和进程参数 ==========
     proc = subprocess.Popen(
         vllm_command,
         stdout=subprocess.PIPE,
@@ -148,7 +147,7 @@ def start_vllm_openai_api_server(
         close_fds=True  # 减少资源占用
     )
 
-    # ========== 启动后台线程消费缓冲区（卡死的核心解决方案） ==========
+    # 启动后台线程消费缓冲区（卡死的核心解决方案）
     stop_event = threading.Event()
     consume_thread = threading.Thread(
         target=_consume_subprocess_output,
@@ -158,7 +157,7 @@ def start_vllm_openai_api_server(
     consume_thread.start()
     logger.info("VLLM输出消费线程已启动，解决缓冲区阻塞问题")
 
-    # 端口检测逻辑（完全保留你原有代码）
+    # 端口检测逻辑
     logger.info(f"正在启动vllm服务，监听端口{port}，等待服务就绪（超时{max_timeout}秒）...")
     start_time = time.time()
 
@@ -185,7 +184,7 @@ def start_vllm_openai_api_server(
     # 返回子进程+停止事件（用于后续安全停止）
     return proc, stop_event
 
-# ========== 配套：安全停止vllm的函数 ==========
+# 安全停止vllm的函数
 def stop_vllm_server(proc: subprocess.Popen, stop_event: threading.Event):
     """安全停止vllm，确保消费线程也退出"""
     try:

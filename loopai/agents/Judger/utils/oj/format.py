@@ -82,7 +82,7 @@ def extract_before_and_func_def(code_text):
     :param code_text: 包含Python代码的文本字符串（支持\r\n/\n换行）
     :return: 提取结果（字符串）；无函数定义返回空字符串
     """
-    # 核心：.*? 兼容def开头无前置内容的场景
+    # .*? 兼容def开头无前置内容的场景
     pattern = r'^(.*?def\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\(.*?\)\s*:)'
     match = re.search(pattern, code_text, re.DOTALL | re.MULTILINE)
     

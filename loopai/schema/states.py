@@ -1004,12 +1004,12 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "list", "ui_group": "评估模型",
                            "allowed_values": ["code", "text2sql", "general_text"]}
     )
-    eval_base_url: str = Field(
-        default=None,
-        title="评估模型 Base URL",
-        description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
-        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
-    )
+    #eval_base_url: str = Field(
+    #    default=None,
+    #    title="评估模型 Base URL",
+    #    description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
+    #    json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
+    #)
     eval_api_key: str = Field(
         default="EMPTY",
         title="评估模型 API Key",
@@ -1034,13 +1034,13 @@ class JudgerState(BaseModel):
         description="评估模型问题路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
-    eval_format_type: str = Field(
-        default=None,
-        title="评估模型问题格式化类型",
-        description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"和\"mbpp\"，格式化后的文件将存至output_dir定义的目录下",
-        json_schema_extra={"ui_type": "list",
-                           "ui_group": "评估模型", "allowed_values": ["human-eval"]}
-    )
+    #eval_format_type: str = Field(
+    #    default=None,
+    #    title="评估模型问题格式化类型",
+    #    description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"和\"mbpp\"，格式化后的文件将存至output_dir定义的目录下",
+    #    json_schema_extra={"ui_type": "list",
+    #                       "ui_group": "评估模型", "allowed_values": ["human-eval"]}
+    #)
     eval_batch_size: int = Field(
         default=10,
         title="评估模型批量大小",
