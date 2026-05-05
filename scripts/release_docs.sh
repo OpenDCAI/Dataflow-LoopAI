@@ -44,6 +44,8 @@ if [[ "$current_branch" != "$BRANCH" ]]; then
   exit 1
 fi
 
+current_version="$(node -p "require('$DOCS_DIR/package.json').version")"
+
 tag="doc-v$version"
 if git -C "$ROOT_DIR" rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   echo "Tag already exists locally: $tag" >&2
@@ -66,10 +68,18 @@ case "$confirm" in
 esac
 
 cd "$DOCS_DIR"
-npm version --no-git-tag-version "$version"
+package_changed=false
+if [[ "$current_version" != "$version" ]]; then
+  npm version --no-git-tag-version "$version"
+  package_changed=true
+else
+  echo "tutorial/package.json is already at version $version; skipping version bump."
+fi
 
 cd "$ROOT_DIR"
-git add tutorial/package.json
-git commit -m "chore(docs): release $version"
+if [[ "$package_changed" == true ]]; then
+  git add tutorial/package.json
+  git commit -m "chore(docs): release $version"
+fi
 git tag "$tag"
 git push "$REMOTE" "$BRANCH" "$tag"
