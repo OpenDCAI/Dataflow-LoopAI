@@ -96,7 +96,8 @@ class JudgerAgent(BaseAgent):
                         missing_fields = get_missing_fields({'judger':["eval_model_path"]}, state)
 
             """vllm启动检查"""
-            base_url = state.get("judger", {}).get("eval_base_url", None)
+            # base_url = state.get("judger", {}).get("eval_base_url", None)
+            base_url = None
             task_type = state.get("judger", {}).get("eval_task_type", "")
             logger.info(f"base_url:{base_url}")
             if(_isNotNone(base_url) and task_type!="general_text"):
@@ -235,47 +236,50 @@ class JudgerAgent(BaseAgent):
     @staticmethod
     @BaseAgent.set_current
     def vllm_kill_node(state: LoopAIState) -> LoopAIState:
-        env_configs = state.get("judger", {}).get("eval_env_configs", None)
-        vllm_port = state.get("judger", {}).get("eval_vllm_port", None)
-        base_url = state.get("judger", {}).get("eval_base_url", None)
+        # env_configs = state.get("judger", {}).get("eval_env_configs", "{}")
+        # vllm_port = state.get("judger", {}).get("eval_vllm_port", DEFAULT_VLLM_PORT)
+        # base_url = state.get("judger", {}).get("eval_base_url", None)
+        # base_url = None
         writer = get_stream_writer()
         # 未设置base_url才会进入本地开启程序才会先关闭本地的vllm服务
-        if  (not _isNotNone(base_url)) or (base_url == f"http://localhost:{vllm_port}/v1"):
-            if(_isNotNone(env_configs) and _isNotNone(vllm_port)):
-                if writer:
-                    writer(StreamEvent(
-                        current=state['current'],
-                        progress=0.0,
-                        message="vllm关闭",
-                        data={"msg": f""}
-                    ).json())
-
-                res = kill_vllm_openai_api_server(vllm_port)
-
-                if res is True:
-                    if writer:
-                        writer(StreamEvent(
-                            current=state['current'],
-                            progress=1.0,
-                            message="vllm已关闭",
-                            data={"msg": f""}
-                        ).json())
-                else:
-                    if writer:
-                        writer(StreamEvent(
-                            current=state['current'],
-                            progress=1.0,
-                            message="vllm关闭失败",
-                            data={"msg": f""}
-                        ).json())
-            else:
-                if writer:
-                    writer(StreamEvent(
-                        current=state['current'],
-                        progress=1.0,
-                        message="vllm开启结束",
-                        data={"msg": f"因已开启自定义vllm服务而跳过该过程"}
-                    ).json())
+        logger.info("=== 准备关闭 vllm ===")
+        #if  (not _isNotNone(base_url)) or (base_url == f"http://localhost:{vllm_port}/v1"):
+            #if(_isNotNone(env_configs) and _isNotNone(vllm_port)):
+        if writer:
+            writer(StreamEvent(
+                current=state['current'],
+                progress=0.0,
+                message="vllm关闭",
+            data={"msg": f""}
+            ).json())
+        res = kill_vllm_openai_api_server(DEFAULT_VLLM_PORT)
+        
+        if res is True:
+            logger.info("=== vllm 关闭成功 ===")
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=1.0,
+                    message="vllm已关闭",
+                    data={"msg": f""}
+                ).json())
+        else:
+            logger.info("=== vllm 关闭失败 ===")
+            if writer:
+                writer(StreamEvent(
+                    current=state['current'],
+                    progress=1.0,
+                    message="vllm关闭失败",
+                    data={"msg": f""}
+                ).json())
+            #else:
+            #    if writer:
+            #        writer(StreamEvent(
+            #            current=state['current'],
+            #            progress=1.0,
+            #            message="vllm开启结束",
+            #            data={"msg": f"因已开启自定义vllm服务而跳过该过程"}
+            #        ).json())
         return state
 
     @staticmethod
@@ -468,6 +472,9 @@ class JudgerAgent(BaseAgent):
         if not _isNotNone(base_url):
             return "to_vllm_start"
         else:
+            state['judger']['eval_base_url'] = None
+            logger.info("==== 结束 ====")
+            logger.info(f"=== eval_base_url: {state['judger']['eval_base_url']}")
             return "to_end"
 
     def init_graph(self, **kwargs):
