@@ -1,4 +1,5 @@
 system:
+  api_port: 8855
   starter_api_key: "sk-..."
   starter_model_path: "gpt-4o-mini"
   starter_model_name: "gpt-4o-mini"

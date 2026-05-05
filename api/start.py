@@ -31,8 +31,10 @@ def main():
         return 1
     
     cfg = OmegaConf.load('./starter.yaml')
+    system_config = cfg.get('system', {})
     default_states_config = cfg.get('default_states', {})
     trainer_config = default_states_config.get('trainer', {})
+    api_port = system_config.get('api_port', 8855)
 
     # LLaMA Factory项目目录
     llamafactory_dir = trainer_config['llamafactory_dir']
@@ -62,8 +64,8 @@ def main():
     
     # 启动服务
     print("🚀 Starting LLaMA Factory Training Service...")
-    print("📖 API Documentation: http://localhost:8855/docs")
-    print("💡 Health Check: http://localhost:8855/health")
+    print(f"📖 API Documentation: http://localhost:{api_port}/docs")
+    print(f"💡 Health Check: http://localhost:{api_port}/health")
     
     try:
         # 切换到LLaMA Factory目录
@@ -80,7 +82,7 @@ def main():
             "-m", "uvicorn",
             "api.app.main:app",
             "--host", "0.0.0.0",
-            "--port", "8855",
+            "--port", str(api_port),
         ]
         
         print(f"🔧 Running FastAPI")
