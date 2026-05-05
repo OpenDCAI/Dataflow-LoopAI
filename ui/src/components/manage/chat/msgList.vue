@@ -5,7 +5,7 @@
             :class="[`ms-Icon--${isCollapsed ? 'ChevronLeft' : 'ChevronRight'}`]"
         ></i>
     </div>
-    <div class="loopai-msg-list-container" :class="{ collapsed: isCollapsed }">
+    <div class="loopai-msg-list-container" ref="list" :class="{ collapsed: isCollapsed }">
         <msg-block
             v-show="showMe(msg)"
             v-for="(msg, index) in taskMessages"
@@ -38,14 +38,18 @@ export default {
     },
     watch: {
         'msgStreamModel.msg'() {
-            this.$el.scrollTop = this.$el.scrollHeight
+            this.$nextTick(() => {
+                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
+            })
         },
         'msgStreamModel.loading'() {
-            this.$el.scrollTop = this.$el.scrollHeight
+            this.$.list.$nextTick(() => {
+                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
+            })
         },
         'taskMessages.length'() {
             this.$nextTick(() => {
-                this.$el.scrollTop = this.$el.scrollHeight
+                this.$.list.scrollTop = this.$.list.scrollHeight
             })
         }
     },

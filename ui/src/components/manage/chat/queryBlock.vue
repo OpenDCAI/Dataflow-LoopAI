@@ -85,7 +85,8 @@ export default {
         ...mapState(useTheme, ['color', 'gradient']),
         ...mapState(useLoopAI, ['taskStatus', 'msgStreamModel']),
         placeholder() {
-            if (this.taskStatus.interrupt_value) return this.taskStatus.interrupt_value
+            if (this.taskStatus.interrupt_value)
+                return this.taskStatus.interrupt_value + ' ' + this.local(`(Press Ctrl + Enter)`)
             return this.local(`Ask me anything (Press Ctrl + Enter)`)
         },
         holdon() {

@@ -75,6 +75,10 @@ export default {
         "en": "Ask me anything (Press Ctrl + Enter)",
         "zh": "有什么问题可以问我（按 Ctrl + Enter）"
     },
+    "(Press Ctrl + Enter)": {
+        "en": "(Press Ctrl + Enter)",
+        "zh": "按 Ctrl + Enter 提交"
+    },
     "Sorry, image is not supported in this chat.": {
         "en": "Sorry, image is not supported in this chat.",
         "zh": "抱歉，此会话不支持图片。"
