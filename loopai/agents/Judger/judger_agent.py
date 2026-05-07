@@ -26,9 +26,12 @@ from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
 
 from loopai.logger import get_logger
+from loopai.common.prompts import PromptLoader
+
 logger = get_logger()
 
 On = False
+Vllm_Start_Error = False
 
 def _isNotNone(value):
     return value != "" and value is not None
@@ -287,7 +290,7 @@ class JudgerAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
-    def vllm_start_node(state: LoopAIState) -> LoopAIState:
+    def vllm_start_node(state: LoopAIState) -> Union[LoopAIState, Command]:
         # 设置 cuda_visible_devices
         set_gpu(state)
 
@@ -328,8 +331,17 @@ class JudgerAgent(BaseAgent):
                         message="vllm 启动异常",
                         data={"msg": f"vllm 启动异常 ,请解决后重新评测：{e}"}
                     ).json())
-                # 直接结束 Judger 当前节点，不再跳转父图异常路由
-                return state
+                state['exception'] = 'ConfigerError'
+                state['next_to'] = 'config_node'
+                state['automated_query'] = "<automated_query>在上一轮执行中，`judger_agent` 因参数缺失而中断并跳转至 `configer_agent`。现在用户已经补全了缺失的参数。请询问用户是否需要继续执行 `judge` 操作。</automated_query>"
+                state.setdefault('configer',{})['configer_error'] = f'vllm 启动异常，请检查配置是否正确'
+                goto_node = END
+                logger.warning(f'vllm start error, goto {goto_node}')
+                return Command(
+                    update=state,
+                    goto=goto_node,
+                    graph=Command.PARENT
+                )
         else:
             if writer:
                 writer(StreamEvent(
@@ -340,6 +352,26 @@ class JudgerAgent(BaseAgent):
                 ).json())
         return state
     
+    #@staticmethod
+    #@BaseAgent.set_current
+    #def vllm_start_next(state: LoopAIState) -> str:
+    #    """
+    #    如果启动 vllm 发生异常直接 to_end
+    #    """
+    #    global Vllm_Start_Error
+    #    # Vllm启动异常
+    #    if not Vllm_Start_Error:
+    #        # 正常启动
+    #        return "to_data_format"
+    #    else:
+    #        # 异常则直接结束
+    #        Vllm_Start_Error = False
+    #        state['judger']['eval_base_url'] = None
+    #        logger.warning("==== 发生异常结束 ====")
+    #        logger.info("==== 结束 ====")
+    #        logger.info(f"=== eval_base_url: {state['judger']['eval_base_url']}")
+    #        return "to_end"
+
     @staticmethod
     @BaseAgent.set_current
     def data_format_node(state: LoopAIState) -> LoopAIState:
@@ -498,6 +530,15 @@ class JudgerAgent(BaseAgent):
         
         builder.set_entry_point("check_required_fields")
         builder.set_finish_point("eval_general_text")
+
+        #builder.add_conditional_edges(
+        #    source="vllm_start",
+        #    path=self.vllm_start_next,
+        #    path_map={
+        #        "to_data_format":"data_format",
+        #        "to_end": END,
+        #    }
+        #)
 
         builder.add_conditional_edges(
             source="check_param_type",  # 来源节点（从哪个节点跳转出来）
