@@ -103,9 +103,10 @@ def kill_vllm_openai_api_server(
                     logger.info("强制终止vllm进程成功")
                     break
 
-            # 超出等待时间，抛出异常
+            # 超出等待时间，退出循环
             if time.time() - start_kill_time > process_kill_wait:
-                raise Exception(f"旧vllm进程终止超时，超过{process_kill_wait}秒仍未终止")
+                logger.warning(f"旧vllm进程终止超时，超过{process_kill_wait}秒仍未终止")
+                break
 
             # 等待一段时间后重试校验
             time.sleep(1.0)

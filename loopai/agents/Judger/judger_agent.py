@@ -28,6 +28,8 @@ from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
 logger = get_logger()
 
+On = False
+
 def _isNotNone(value):
     return value != "" and value is not None
 
@@ -51,7 +53,7 @@ def find_best_checkpoint(checkpoints: List[str], training_step_losses: List[Dict
     # 使用 min 选择：先按距离排序，再按数值本身排序
     best_cp = min(checkpoints, key=lambda cp: (abs(extract_num(cp) - best_step), extract_num(cp)))
 
-    return best_cp
+    return best_cp  
 
 class JudgerAgent(BaseAgent):
     @property
@@ -74,7 +76,7 @@ class JudgerAgent(BaseAgent):
         def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
             writer = get_stream_writer()
             required_fields = {
-                'judger':["eval_api_key", "eval_temperature",
+                'judger':["eval_temperature",
                         "eval_top_p", "eval_problem_path",
                         "eval_case_num", "eval_task_type"
                 ],
@@ -96,8 +98,7 @@ class JudgerAgent(BaseAgent):
                         missing_fields = get_missing_fields({'judger':["eval_model_path"]}, state)
 
             """vllm启动检查"""
-            # base_url = state.get("judger", {}).get("eval_base_url", None)
-            base_url = None
+            base_url = state.get("judger", {}).get("eval_base_url", None)
             task_type = state.get("judger", {}).get("eval_task_type", "")
             logger.info(f"base_url:{base_url}")
             if(_isNotNone(base_url) and task_type!="general_text"):
@@ -178,18 +179,17 @@ class JudgerAgent(BaseAgent):
                 check_file_fields = True
             
             if task_type == "code" or task_type =="text2sql":
-                check_file_fields = check_jsonl_fields(state.get("judger", {}).get("eval_problem_path", ""), required_fields)
+                check_file_fields,error_details = check_jsonl_fields(state.get("judger", {}).get("eval_problem_path", ""), required_fields)
 
             if check_file_fields is not True:
                 logger.info("$"*50)
-                logger.info(["eval_problem_path"])
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
                 state['automated_query'] = self.prompt_loader(
                     "automated_query", "judger_missing_fields_prompt")
-                state.setdefault('configer',{})['configer_error'] = f'Wrong required fields: {json.dumps({"wrong_fields": "eval_problem_path"}, ensure_ascii=False)}'
+                state.setdefault('configer',{})['configer_error'] = json.dumps(error_details, ensure_ascii=False,indent=4)
                 goto_node = runtime.context['exception_navigate']
-                logger.info(f'found wrong fields, required fields missing in the file, goto {goto_node}')
+                logger.warning(f'found wrong fields, required fields missing in the file, goto {goto_node}')
                 return Command(
                     update=state,
                     goto=goto_node,
@@ -240,6 +240,7 @@ class JudgerAgent(BaseAgent):
         # vllm_port = state.get("judger", {}).get("eval_vllm_port", DEFAULT_VLLM_PORT)
         # base_url = state.get("judger", {}).get("eval_base_url", None)
         # base_url = None
+        global On
         writer = get_stream_writer()
         # 未设置base_url才会进入本地开启程序才会先关闭本地的vllm服务
         logger.info("=== 准备关闭 vllm ===")
@@ -280,6 +281,8 @@ class JudgerAgent(BaseAgent):
             #            message="vllm开启结束",
             #            data={"msg": f"因已开启自定义vllm服务而跳过该过程"}
             #        ).json())
+        state["judger"]["eval_base_url"] = None
+        On = not On
         return state
 
     @staticmethod
@@ -469,7 +472,7 @@ class JudgerAgent(BaseAgent):
         """
         base_url = state.get("judger", {}).get("eval_base_url", None)
         # 判断是否为空，为空则开启本地
-        if not _isNotNone(base_url):
+        if not _isNotNone(base_url) and On:
             return "to_vllm_start"
         else:
             state['judger']['eval_base_url'] = None

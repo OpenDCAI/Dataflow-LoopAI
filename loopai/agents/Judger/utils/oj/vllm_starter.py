@@ -198,13 +198,13 @@ def stop_vllm_server(proc: subprocess.Popen, stop_event: threading.Event):
     except Exception as e:
         logger.error(f"停止vllm失败: {e}")
 
-# ========== 调用示例（和你原有调用方式几乎一致） ==========
+# ========== 调用示例 ==========
 # if __name__ == "__main__":
 #     try:
 #         # 替换为你的环境路径
 #         ENV_PYTHON_PATH = "/root/miniconda3/envs/brjl/bin/python"
 
-#         # 调用函数（仅返回值多了stop_event，其他参数完全不变）
+#         # 调用函数
 #         vllm_proc, stop_event = start_vllm_openai_api_server(
 #             env_configs='{"CUDA_VISIBLE_DEVICES": "0","NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
 #             vllm_env_path=ENV_PYTHON_PATH,

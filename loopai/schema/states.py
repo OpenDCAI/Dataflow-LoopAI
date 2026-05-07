@@ -1010,12 +1010,12 @@ class JudgerState(BaseModel):
     #    description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
     #    json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     #)
-    eval_api_key: str = Field(
-        default="EMPTY",
-        title="评估模型 API Key",
-        description="评估模型 API Key",
-        json_schema_extra={"ui_type": "password", "ui_group": "评估模型"}
-    )
+    #eval_api_key: str = Field(
+    #    default="EMPTY",
+    #    title="评估模型 API Key",
+    #    description="评估模型 API Key",
+    #    json_schema_extra={"ui_type": "password", "ui_group": "评估模型"}
+    #)
     eval_temperature: float = Field(
         default=0,
         title="评估模型温度",
@@ -1127,13 +1127,14 @@ class JudgerState(BaseModel):
         description="通用文本评测使用的评测集名称",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
-    # ===== 通用文本 / DataFlow Eval =====
     cuda_visible_devices: str = Field(
         default="0",
-        title="通用文本可见GPU编号",
-        description="通用文本任务指定运行GPU",
+        title="可见GPU编号",
+        description="评测任务指定运行GPU",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
+    # ===== 通用文本 / DataFlow Eval =====
+    
     # is_api: bool = Field(
     #    default=False,
     #    title="是否 API 模式",
@@ -1159,18 +1160,18 @@ class JudgerState(BaseModel):
         description="DataFlow 评测字段映射，如 input_question_key / input_target_key / input_pred_key",
         json_schema_extra={"ui_type": "json_viewer", "ui_group": "评估模型"}
     )
-    skip_dataflow_eval: bool = Field(
-        default=False,
-        title="跳过 DataFlow 正式评测",
-        description="为 True 时仅准备 bench / records，不调用 DataFlowEvalTool.run_eval",
-        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
-    )
-    output_dir: str = Field(
-        default="",
-        title="通用文本输出路径",
-        description="通用文本任务结束后输出路径",
-        json_schema_ectra={"ui_type": "text", "ui_group": "评估模型"}
-    )
+    #skip_dataflow_eval: bool = Field(
+    #    default=False,
+    #    title="跳过 DataFlow 正式评测",
+    #    description="为 True 时仅准备 bench / records，不调用 DataFlowEvalTool.run_eval",
+    #    json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
+    #)
+    #output_dir: str = Field(
+    #    default="",
+    #    title="通用文本输出路径",
+    #    description="通用文本任务结束后输出路径",
+    #    json_schema_ectra={"ui_type": "text", "ui_group": "评估模型"}
+    #)
 
 
 class AnalyzerState(BaseModel):
