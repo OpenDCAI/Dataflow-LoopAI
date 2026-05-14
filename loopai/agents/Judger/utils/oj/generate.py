@@ -38,11 +38,11 @@ def generate_sample_code(state):
     model = init_model(
         model_path=judger_state['eval_model_path'],
         base_url=judger_state['eval_base_url'],
-        api_key=judger_state['eval_api_key'],
+        api_key=judger_state.get("eval_api_key","EMPTY"),
         temperature=judger_state['eval_temperature'],
         top_p=judger_state['eval_top_p']
     )
-    logger.info(f"模型路径:-> base_url: {judger_state['eval_base_url']}  ->api_key: {judger_state['eval_api_key']}")
+    logger.info(f"模型路径:-> base_url: {judger_state['eval_base_url']}  ->api_key: {judger_state.get("eval_api_key","EMPTY")}")
 
     output_dir = Path(state.get("output_dir"))
     problem_path = judger_state['eval_problem_path']
@@ -124,7 +124,7 @@ def generate_sample_text2sql(state):
     model = init_model(
         model_path=judger_state['eval_model_path'],
         base_url=judger_state['eval_base_url'],
-        api_key=judger_state['eval_api_key'],
+        api_key='EMPTY',
         temperature=judger_state['eval_temperature'],
         top_p=judger_state['eval_top_p']
     )

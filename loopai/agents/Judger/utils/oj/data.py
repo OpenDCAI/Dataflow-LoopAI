@@ -7,10 +7,7 @@ import gzip
 def read_problems(evalset_file) -> Dict[str, Dict]:
     return {task["task_id"]: task for task in stream_jsonl(evalset_file)}
 
-import json
-from typing import List
-
-def check_jsonl_fields(filepath: str, require_fields: List[str]) -> bool:
+def check_jsonl_fields(filepath: str, require_fields: List[str]) -> Tuple[bool, List[str]]:
     """
     检查 JSONL 文件中的每一行是否都包含指定的字段。
 
@@ -20,31 +17,43 @@ def check_jsonl_fields(filepath: str, require_fields: List[str]) -> bool:
 
     返回:
         如果所有行都包含所有字段，返回 True；否则返回 False
+        是否全部通过校验, 缺失字段或错误的详细信息列表
     """
+    error_details = []
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            for line_num, line in enumerate(f, start=1):
-                line = line.strip()
+        with open(filepath, 'rb') as f:
+            for line_num, line_bytes in enumerate(f, start=1):
+                try:
+                    # 去除首尾空白并解码
+                    line = line_bytes.decode('utf-8').strip()
+                except UnicodeDecodeError:
+                    error_details.append(f"第 {line_num} 行: 无法解码的字符编码")
+                    continue
+
                 if not line:  # 跳过空行
                     continue
+                
                 try:
                     data = json.loads(line)
                 except json.JSONDecodeError as e:
-                    print(f"第 {line_num} 行 JSON 解析错误: {e}")
-                    return False
-                
+                    error_details.append(f"第 {line_num} 行: JSON 解析失败 ({e})")
+                    continue  
+
                 # 检查每个必需字段
                 for field in require_fields:
                     if field not in data:
-                        print(f"第 {line_num} 行缺少字段 '{field}'")
-                        return False
-        return True
+                        error_details.append(f"第 {line_num} 行: 缺少必填字段 '{field}'")
+                        
+
     except FileNotFoundError:
-        print(f"文件不存在: {filepath}")
-        return False
+        return False, [f"文件未找到: {filepath}"]
+
     except Exception as e:
-        print(f"读取文件时发生错误: {e}")
-        return False
+        return False, [f"读取文件时发生未知错误: {e}"]
+
+    # 如果错误列表为空，说明校验通过
+    is_valid = len(error_details) == 0
+    return is_valid, error_details
     
 def stream_jsonl(filename: str) -> Iterable[Dict]:
     """

@@ -124,7 +124,7 @@ def _build_model_config(cfg: Dict[str, Any]) -> ModelConfig:
         model_name_or_path=model_name_or_path,
         is_api=is_api,
         api_url=api_url,
-        api_key=cfg.get("eval_api_key",""),
+        api_key=cfg.get("eval_api_key","EMPTY"),
         temperature=float(cfg.get("eval_temperature", 0.0)),
         top_p=float(cfg.get("eval_top_p", 1.0)),
         tensor_parallel_size=int(cfg.get("eval_vllm_tensor_parallel_size", 1)),
