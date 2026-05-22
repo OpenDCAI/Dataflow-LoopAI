@@ -28,9 +28,9 @@ Obtainer Agent 采用多阶段顺序执行架构：
 - **配置初始化：** 自动设置默认参数和 API 密钥
 
 **输出：**
-- `obtainer_category`: 任务类别（PT/SFT）
-- `obtainer_normalized_query`: 规范化后的查询
-- `obtainer_intent_type`: 查询意图类型
+- `obtainer.category`: 任务类别（PT/SFT）
+- `obtainer.normalized_query`: 规范化后的查询
+- `obtainer.intent_type`: 查询意图类型
 
 ### 2. 网络搜索节点 (Web Search Node)
 
@@ -57,9 +57,9 @@ Obtainer Agent 采用多阶段顺序执行架构：
   - 识别网页数据源
 
 **输出：**
-- `obtainer_subtasks`: 下载任务列表
-- `obtainer_research_summary`: 研究摘要
-- `obtainer_urls_visited`: 访问的 URL 列表
+- `obtainer.subtasks`: 下载任务列表
+- `obtainer.research_summary`: 研究摘要
+- `obtainer.urls_visited`: 访问的 URL 列表
 
 ### 3. 下载节点 (Download Node)
 
@@ -85,8 +85,8 @@ Obtainer Agent 采用多阶段顺序执行架构：
 **智能决策：** 使用 LLM 自动选择最佳下载方法
 
 **输出：**
-- `obtainer_subtasks`: 更新任务状态（completed_successfully/failed_to_download）
-- `obtainer_download_results`: 下载结果详情
+- `obtainer.subtasks`: 更新任务状态（completed_successfully/failed_to_download）
+- `obtainer.download_results`: 下载结果详情
 
 ### 4. 后处理节点 (Post-process Node)
 
@@ -105,8 +105,8 @@ Obtainer Agent 采用多阶段顺序执行架构：
 - **中间数据保存：** 保存转换后的中间格式数据
 
 **输出：**
-- `obtainer_intermediate_data_path`: 中间数据文件路径
-- `obtainer_postprocess_results`: 后处理结果统计
+- `obtainer.intermediate_data_path`: 中间数据文件路径
+- `obtainer.postprocess_results`: 后处理结果统计
 
 ### 5. 格式映射子图 (Mapping Subgraph)
 
@@ -130,8 +130,8 @@ Obtainer Agent 采用多阶段顺序执行架构：
 - 更多格式可扩展
 
 **输出：**
-- `obtainer_confirmed_format`: 确认的目标格式
-- `obtainer_final_data_path`: 最终数据文件路径
+- `obtainer.confirmed_format`: 确认的目标格式
+- `obtainer.mapping_results`: 映射结果详情，通常包含最终数据文件路径
 
 ## 📝 使用方法
 
@@ -154,14 +154,16 @@ obtainer = ObtainerAgent(
 obtainer_state = {
     # 必需字段
     'automated_query': '获取用于训练中文对话模型的数据集',
-    
-    # 可选字段
-    'obtainer_category': 'SFT',  # 或 'PT'，不设置则自动分类
-    'obtainer_model_path': 'qwen2.5-7b-instruct',
-    'obtainer_base_url': 'http://localhost:8000/v1',
-    'obtainer_api_key': 'your-api-key',
-    'obtainer_search_engine': 'tavily',
-    'obtainer_max_urls': 10,
+
+    # Obtainer 配置
+    'obtainer': {
+        'category': 'SFT',  # 或 'PT'，不设置则自动分类
+        'model_path': 'qwen2.5-7b-instruct',
+        'base_url': 'http://localhost:8000/v1',
+        'api_key': 'your-api-key',
+        'search_engine': 'tavily',
+        'max_urls': 10,
+    },
     'output_dir': './output/obtainer'
 }
 
@@ -177,32 +179,34 @@ result = graph.invoke(obtainer_state, config=config)
 # 使用自定义 RAG 配置
 obtainer_state = {
     'automated_query': '获取数学推理数据集',
-    'obtainer_category': 'SFT',
-    'obtainer_reset_rag': True,  # 重置 RAG 数据库
-    'obtainer_rag_embed_model': 'text-embedding-3-large',
-    'obtainer_rag_collection_name': 'math_datasets',
-    'obtainer_rag_api_base_url': 'http://localhost:8000/v1',
-    'obtainer_rag_api_key': 'your-embedding-api-key',
-    
-    # 深度探索配置
-    'obtainer_max_depth': 3,
-    'obtainer_concurrent_limit': 5,
-    'obtainer_topk_urls': 10,
-    'obtainer_url_timeout': 120,
-    
-    # 格式映射配置
-    'obtainer_default_mapping_format': 'alpaca',  # 跳过用户交互，直接使用 Alpaca 格式
+    'obtainer': {
+        'category': 'SFT',
+        'reset_rag': True,  # 重置 RAG 数据库
+        'rag_embed_model': 'text-embedding-3-large',
+        'rag_collection_name': 'math_datasets',
+        'rag_api_base_url': 'http://localhost:8000/v1',
+        'rag_api_key': 'your-embedding-api-key',
+
+        # 深度探索配置
+        'max_depth': 3,
+        'concurrent_limit': 5,
+        'topk_urls': 10,
+        'url_timeout': 120,
+
+        # 格式映射配置
+        'default_mapping_format': 'alpaca',  # 跳过用户交互，直接使用 Alpaca 格式
+    },
 }
 
 # Kaggle 配置
-obtainer_state.update({
-    'obtainer_kaggle_username': 'your-kaggle-username',
-    'obtainer_kaggle_key': 'your-kaggle-key',
+obtainer_state['obtainer'].update({
+    'kaggle_username': 'your-kaggle-username',
+    'kaggle_key': 'your-kaggle-key',
 })
 
 # Tavily API 配置
-obtainer_state.update({
-    'obtainer_tavily_api_key': 'your-tavily-api-key',
+obtainer_state['obtainer'].update({
+    'tavily_api_key': 'your-tavily-api-key',
     # 或设置环境变量 TAVILY_API_KEY
 })
 ```
@@ -214,44 +218,44 @@ obtainer_state.update({
 | 字段名 | 类型 | 必需 | 默认值 | 说明 |
 |-------|------|-----|--------|-----|
 | `automated_query` | str | ✅ | - | 用户查询或任务描述 |
-| `obtainer_category` | str | ❌ | 自动检测 | 任务类别：PT 或 SFT |
-| `obtainer_model_path` | str | ✅ | - | LLM 模型名称 |
-| `obtainer_base_url` | str | ✅ | - | LLM API 基础 URL |
-| `obtainer_api_key` | str | ✅ | - | LLM API 密钥 |
-| `obtainer_temperature` | float | ❌ | 0.7 | LLM 温度参数 |
-| `obtainer_search_engine` | str | ❌ | tavily | 搜索引擎类型 |
-| `obtainer_max_urls` | int | ❌ | 10 | 最大搜索 URL 数量 |
-| `obtainer_max_depth` | int | ❌ | 4 | 深度探索最大深度 |
-| `obtainer_concurrent_limit` | int | ❌ | 3 | 并发探索限制 |
-| `obtainer_topk_urls` | int | ❌ | 5 | 每页选择 Top-K URL |
-| `obtainer_url_timeout` | int | ❌ | 60 | URL 探索超时时间（秒） |
-| `obtainer_tavily_api_key` | str | ✅ | - | Tavily API 密钥 |
-| `obtainer_kaggle_username` | str | ✅ | - | Kaggle 用户名 |
-| `obtainer_kaggle_key` | str | ✅ | - | Kaggle API 密钥 |
-| `obtainer_reset_rag` | bool | ❌ | False | 是否重置 RAG 数据库 |
-| `obtainer_rag_embed_model` | str | ✅ | - | RAG 嵌入模型名称 |
-| `obtainer_rag_collection_name` | str | ❌ | rag_collection | RAG 集合名称 |
-| `obtainer_rag_api_base_url` | str | ✅ | - | RAG API 基础 URL |
-| `obtainer_rag_api_key` | str | ✅ | - | RAG API 密钥 |
-| `obtainer_default_mapping_format` | str | ❌ | alpaca | 默认映射格式（空则用户交互） |
-| `obtainer_debug` | bool | ❌ | False | 是否启用调试模式 |
+| `obtainer.category` | str | ❌ | 自动检测 | 任务类别：PT 或 SFT |
+| `obtainer.model_path` | str | ✅ | - | LLM 模型名称；为空时可从 Analyzer/Starter 配置继承 |
+| `obtainer.base_url` | str | ✅ | - | LLM API 基础 URL |
+| `obtainer.api_key` | str | ✅ | - | LLM API 密钥 |
+| `obtainer.temperature` | float | ❌ | 0.7 | LLM 温度参数 |
+| `obtainer.search_engine` | str | ❌ | tavily | 搜索引擎类型 |
+| `obtainer.max_urls` | int | ❌ | 10 | 最大搜索 URL 数量 |
+| `obtainer.max_depth` | int | ❌ | 2 | 深度探索最大深度 |
+| `obtainer.concurrent_limit` | int | ❌ | 5 | 并发探索限制 |
+| `obtainer.topk_urls` | int | ❌ | 3 | 每页选择 Top-K URL |
+| `obtainer.url_timeout` | int | ❌ | 30 | URL 探索超时时间（秒） |
+| `obtainer.tavily_api_key` | str | 按需 | - | Tavily API 密钥；也可用环境变量 `TAVILY_API_KEY` |
+| `obtainer.kaggle_username` | str | 按需 | - | Kaggle 用户名；也可用环境变量 `KAGGLE_USERNAME` |
+| `obtainer.kaggle_key` | str | 按需 | - | Kaggle API 密钥；也可用环境变量 `KAGGLE_KEY` |
+| `obtainer.reset_rag` | bool | ❌ | True | 是否重置 RAG 数据库 |
+| `obtainer.rag_embed_model` | str | 按需 | - | RAG 嵌入模型名称 |
+| `obtainer.rag_collection_name` | str | ❌ | rag_collection | RAG 集合名称 |
+| `obtainer.rag_api_base_url` | str | 按需 | - | RAG API 基础 URL |
+| `obtainer.rag_api_key` | str | 按需 | - | RAG API 密钥 |
+| `obtainer.default_mapping_format` | str | ❌ | 空 | 默认映射格式（非空则跳过用户交互） |
+| `obtainer.debug` | bool | ❌ | False | 是否启用调试模式 |
 | `output_dir` | str | ❌ | ./output | 输出目录 |
 
 ### 输出字段
 
 | 字段名 | 类型 | 说明 |
 |-------|------|-----|
-| `obtainer_category` | str | 检测到的任务类别 |
-| `obtainer_normalized_query` | str | 规范化后的查询 |
-| `obtainer_intent_type` | str | 查询意图类型 |
-| `obtainer_subtasks` | list | 下载任务列表 |
-| `obtainer_research_summary` | str | 研究摘要 |
-| `obtainer_urls_visited` | list | 访问的 URL 列表 |
-| `obtainer_download_results` | dict | 下载结果详情 |
-| `obtainer_intermediate_data_path` | str | 中间数据文件路径 |
-| `obtainer_postprocess_results` | dict | 后处理结果统计 |
-| `obtainer_confirmed_format` | str | 确认的目标格式 |
-|✳✳ `obtainer_final_data_path` | str | 最终数据文件路径 |
+| `obtainer.category` | str | 检测到的任务类别 |
+| `obtainer.normalized_query` | str | 规范化后的查询 |
+| `obtainer.intent_type` | str | 查询意图类型 |
+| `obtainer.subtasks` | list | 下载任务列表 |
+| `obtainer.research_summary` | str | 研究摘要 |
+| `obtainer.urls_visited` | list | 访问的 URL 列表 |
+| `obtainer.download_results` | dict | 下载结果详情 |
+| `obtainer.intermediate_data_path` | str | 中间数据文件路径 |
+| `obtainer.postprocess_results` | dict | 后处理结果统计 |
+| `obtainer.confirmed_format` | dict | 确认的目标格式 |
+| `obtainer.mapping_results` | dict | 映射结果详情，通常包含最终数据文件路径 |
 
 ## 🛠️ 工具类
 
@@ -381,7 +385,9 @@ result = kaggle_manager.download_dataset(
 启用调试模式：
 ```python
 obtainer_state = {
-    'obtainer_debug': True,
+    'obtainer': {
+        'debug': True,
+    },
     # ... 其他配置
 }
 ```
@@ -488,4 +494,3 @@ obtainer_state = {
 ---
 
 💡 **提示：** 查看 `examples/scripts/run_obtainer.py` 了解完整的使用示例。
-
