@@ -12,60 +12,60 @@
 
 通用前置字段包括：
 
-| 字段名                             | 类型     | 说明                                                                         |
-| ---------------------------------- | -------- | ---------------------------------------------------------------------------- |
-| `eval_task_type`                   | `str`    | 评测任务类型。目前支持 `code`、`text2sql`、`general_text`，默认值为 `code`。 |
-| `eval_model_path`                  | `str`    | 被评测的模型路径。                                                           |
-| `eval_temperature`                 | `double` | 模型温度参数。                                                               |
-| `eval_top_p`                       | `double` | top-p 采样的累计概率阈值。                                                   |
-| `eval_problem_path`                | `str`    | `jsonl` 格式的问题集文件路径。相关字段要求见下文“评测数据集字段”。           |
-| `eval_vllm_tensor_parallel_size`   | `int`    | 张量并行大小，默认值为 `1`。                                                 |
-| `eval_vllm_gpu_memory_utilization` | `double` | GPU 显存利用率。                                                             |
-| `cuda_visible_devices`             | `str`    | 评测任务指定的 GPU 编号，例如 `0,1`。默认值为 `0`。                          |
+| 字段名 | 类型 | 说明 |
+| --- | --- | --- |
+| `eval_task_type` | `str` | 评测任务类型。目前支持 `code`、`text2sql`、`general_text`，默认值为 `code`。 |
+| `eval_model_path` | `str` | 被评测的模型路径。 |
+| `eval_temperature` | `double` | 模型温度参数。 |
+| `eval_top_p` | `double` | top-p 采样的累计概率阈值。 |
+| `eval_problem_path` | `str` | `jsonl` 格式的问题集文件路径。相关字段要求见下文“评测数据集字段”。 |
+| `eval_vllm_tensor_parallel_size` | `int` | 张量并行大小，默认值为 `1`。 |
+| `eval_vllm_gpu_memory_utilization` | `double` | GPU 显存利用率。 |
+| `cuda_visible_devices` | `str` | 评测任务指定的 GPU 编号，例如 `0,1`。默认值为 `0`。 |
 
 ### `code` 任务前置字段
 
-| 字段名            | 类型  | 说明                     |
-| ----------------- | ----- | ------------------------ |
-| `eval_batch_size` | `int` | 生成样例的批处理大小。   |
-| `eval_case_num`   | `int` | 每条问题生成的样例数量。 |
+| 字段名 | 类型 | 说明 |
+| --- | --- | --- |
+| `eval_batch_size` | `int` | 生成样例的批处理大小。 |
+| `eval_case_num` | `int` | 每条问题生成的样例数量。 |
 
 ### `text2sql` 任务前置字段
 
-| 字段名              | 类型  | 说明                                              |
-| ------------------- | ----- | ------------------------------------------------- |
-| `eval_batch_size`   | `int` | 生成样例的批处理大小。                            |
-| `eval_case_num`     | `int` | 每条问题生成的样例数量。                          |
+| 字段名 | 类型 | 说明 |
+| --- | --- | --- |
+| `eval_batch_size` | `int` | 生成样例的批处理大小。 |
+| `eval_case_num` | `int` | 每条问题生成的样例数量。 |
 | `eval_text2sql_dir` | `str` | 数据库文件夹路径，例如 `path/to/your/database/`。 |
 
 ### `general_text` 任务前置字段
 
-| 字段名                     | 类型  | 说明                                                                                                                                                        |
-| -------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bench_dataflow_eval_type` | `str` | 通用文本任务类型，例如 `key2_qa` 或 `key1_text_score`。                                                                                                     |
-| `key_mapping`              | `str` | 问题集 JSON 字段映射。若未设置，系统会尝试自动识别。例如 `{"input_question_key":"question","input_target_key":"answer","input_pred_key":"generated_ans"}`。 |
+| 字段名 | 类型 | 说明 |
+| --- | --- | --- |
+| `bench_dataflow_eval_type` | `str` | 通用文本任务类型，例如 `key2_qa` 或 `key1_text_score`。 |
+| `key_mapping` | `str` | 问题集 JSON 字段映射。若未设置，系统会尝试自动识别。例如 `{"input_question_key":"question","input_target_key":"answer","input_pred_key":"generated_ans"}`。 |
 
 ## 评测数据集字段
 
 ### `code` 任务
 
-| 字段名               | 含义         | 说明                                                                  |
-| -------------------- | ------------ | --------------------------------------------------------------------- |
-| `task_id`            | 题目标号     | 格式可以是 `问题集名/序号` 或 `序号`。                                |
-| `prompt`             | 问题提示词   | 通常是函数定义加问题描述。为了减少后处理，模型生成结果应为完整函数。  |
-| `entry_point`        | 评测入口函数 | 例如 `return1`。                                                      |
-| `canonical_solution` | 标准程序     | 例如 `def return1():\n    return 1`，需要提供完整代码。               |
-| `test_list`          | 测试用例列表 | 例如 `["assert return1() == 1"]`，其中函数名应与 `entry_point` 一致。 |
+| 字段名 | 含义 | 说明 |
+| --- | --- | --- |
+| `task_id` | 题目标号 | 格式可以是 `问题集名/序号` 或 `序号`。 |
+| `prompt` | 问题提示词 | 通常是函数定义加问题描述。为了减少后处理，模型生成结果应为完整函数。 |
+| `entry_point` | 评测入口函数 | 例如 `return1`。 |
+| `canonical_solution` | 标准程序 | 例如 `def return1():\n    return 1`，需要提供完整代码。 |
+| `test_list` | 测试用例列表 | 例如 `["assert return1() == 1"]`，其中函数名应与 `entry_point` 一致。 |
 
 ### `text2sql` 任务
 
-| 字段名         | 含义       | 说明                                                                                    |
-| -------------- | ---------- | --------------------------------------------------------------------------------------- |
-| `task_id`      | 题目标号   | 格式可以是 `问题集名/序号` 或 `序号`。                                                  |
-| `prompt`       | 问题提示词 | 模型的输入提示。                                                                        |
-| `db_id`        | 数据库名称 | 若值为 `dbName`，则 `dbName.sqlite` 应位于 `{judger.eval_text2sql_dir}/dbName` 目录下。 |
-| `question`     | 问题内容   | 例如自然语言查询问题。                                                                  |
-| `ground_truth` | 标准答案   | 对应问题的标准 SQL。                                                                    |
+| 字段名 | 含义 | 说明 |
+| --- | --- | --- |
+| `task_id` | 题目标号 | 格式可以是 `问题集名/序号` 或 `序号`。 |
+| `prompt` | 问题提示词 | 模型的输入提示。 |
+| `db_id` | 数据库名称 | 若值为 `dbName`，则 `dbName.sqlite` 应位于 `{judger.eval_text2sql_dir}/dbName` 目录下。 |
+| `question` | 问题内容 | 例如自然语言查询问题。 |
+| `ground_truth` | 标准答案 | 对应问题的标准 SQL。 |
 
 ## 它的输入和输出可以怎么理解
 
