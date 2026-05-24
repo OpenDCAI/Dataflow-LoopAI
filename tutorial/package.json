@@ -1,7 +1,7 @@
 {
   "name": "loopai-tutorial",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "scripts": {
     "docs:dev": "vitepress dev docs --host 0.0.0.0 --port 5175",
     "docs:build": "vitepress build docs",
