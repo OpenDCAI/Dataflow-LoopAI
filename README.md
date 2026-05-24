@@ -36,7 +36,7 @@ User  ⇄  Starter (Supervisor)  ⇄  Sub-Agent
 
 ## 📰 1. News
 
-* **[2026-03] 🎉 LoopAI (v0.1.0) is officially open-sourced!**
+* **[2026-05] 🎉 LoopAI (v0.1.0) is officially open-sourced!**
   We are excited to release the first version of LoopAI, enabling full automation from **natural language instructions to model optimization**.
   Say goodbye to tedious manual pipelines—LLM evaluation and optimization are now as simple as chatting.
   ⭐ Feel free to star the project and follow future updates!
