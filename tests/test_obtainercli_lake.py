@@ -445,6 +445,54 @@ def test_cli_ingest_auto_embeds_with_openai_compatible_config(tmp_path: Path) ->
         server.shutdown()
 
 
+def test_cli_ingest_auto_embeds_when_lake_root_is_passed(tmp_path: Path) -> None:
+    server, base_url = _start_embedding_server()
+    try:
+        lake_root = tmp_path / "lake"
+        init_lake(
+            root=lake_root,
+            link_path=None,
+            if_not_exists=True,
+            embedding_provider="openai-compatible",
+            embedding_base_url=base_url,
+            embedding_model="root-config-model",
+        )
+        input_path = tmp_path / "input" / "records.jsonl"
+        _write_jsonl(input_path, [{"text": "root config embedding", "source_uri": "file://root.txt"}])
+
+        from loopai.obtainercli.cli import run
+
+        exit_code = run(
+            [
+                "ingest",
+                "path",
+                "--lake",
+                str(lake_root),
+                "--input",
+                str(input_path),
+                "--dataset",
+                "root_embed_seed",
+                "--domain",
+                "code",
+                "--processing-level",
+                "pretrain_ready",
+                "--source-kind",
+                "local",
+                "--idempotency-key",
+                "root-embed-seed",
+                "--json",
+            ]
+        )
+
+        embeddings = read_table(lake_root, "embeddings")
+        assert exit_code == 0
+        assert len(embeddings) == 1
+        assert embeddings[0]["embedding_model"] == "root-config-model"
+        assert _EmbeddingHandler.calls[0]["model"] == "root-config-model"
+    finally:
+        server.shutdown()
+
+
 def test_init_lake_writes_auto_embedding_defaults(tmp_path: Path) -> None:
     lake_root = tmp_path / "lake"
     link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"

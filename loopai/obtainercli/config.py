@@ -19,6 +19,16 @@ def read_lake_config(path: str | Path) -> Dict[str, str]:
     return _parse_simple_yaml(Path(path))
 
 
+def read_lake_config_for_lake(lake: str | Path) -> Dict[str, str]:
+    path = Path(lake)
+    if path.is_file():
+        return read_lake_config(path)
+    config_path = path / "lake.yaml"
+    if config_path.is_file():
+        return read_lake_config(config_path)
+    return {}
+
+
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
 

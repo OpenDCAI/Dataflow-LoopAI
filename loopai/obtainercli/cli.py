@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from .config import read_lake_config
+from .config import read_lake_config_for_lake
 from .errors import ObtainerCliError
 from .index import index_embeddings
 from .ingest import ingest_path
@@ -134,7 +134,7 @@ def run(argv: list[str] | None = None) -> int:
                 tags=[args.tags] if args.tags else [],
                 idempotency_key=args.idempotency_key or None,
             )
-            config = read_lake_config(args.lake) if Path(args.lake).is_file() else {}
+            config = read_lake_config_for_lake(args.lake)
             auto_embed = str(config.get("auto_embed", "false")).lower() in {"1", "true", "yes", "on"}
             should_index = not args.no_post_index and result.get("rows_written", 0) > 0 and (
                 args.post_index == "embedding" or auto_embed
