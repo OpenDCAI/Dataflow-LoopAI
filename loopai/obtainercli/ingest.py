@@ -87,6 +87,7 @@ def ingest_path(
         existing_record_ids = {row["record_id"] for row in read_table(lake_root, "records")}
         records = []
         tag_rows = []
+        quality_finding_rows = []
         rows_seen = len(rows)
         rows_quarantined = 0
         for index, row in enumerate(rows, 1):
@@ -111,6 +112,29 @@ def ingest_path(
             record, built_tags = build_record_tags(record, tag_map)
             records.append(record)
             tag_rows.extend(built_tags)
+            for finding_index, finding in enumerate(row.get("quality_findings") or [], 1):
+                if not isinstance(finding, dict):
+                    continue
+                quality_finding_rows.append(
+                    {
+                        "finding_id": "finding_"
+                        + sha256_text(f"{record['record_id']}:{finding_index}:{finding}")[:24],
+                        "record_id": record["record_id"],
+                        "dataset_id": dataset_id,
+                        "processing_level": processing_level,
+                        "source_kind": source_kind,
+                        "finding_type": str(finding.get("finding_type", "quality_signal")),
+                        "severity": str(finding.get("severity", "info")),
+                        "score": finding.get("score"),
+                        "metric_name": str(finding.get("metric_name", "")),
+                        "metric_value": finding.get("metric_value"),
+                        "detector": str(finding.get("detector", "")),
+                        "detector_version": str(finding.get("detector_version", "")),
+                        "details": finding.get("details", {}),
+                        "pipeline_run_id": ingest_run_id,
+                        "created_at": utc_now(),
+                    }
+                )
 
         dataset_rows = [
             {
@@ -148,6 +172,7 @@ def ingest_path(
         append_rows(lake_root, "assets", asset_rows)
         append_rows(lake_root, "records", records)
         append_rows(lake_root, "record_tags", tag_rows)
+        append_rows(lake_root, "quality_findings", quality_finding_rows)
         append_rows(
             lake_root,
             "ingest_runs",

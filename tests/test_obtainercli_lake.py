@@ -181,3 +181,53 @@ def test_sample_intersects_core_filters_and_tags_with_allow_smaller_warning(tmp_
     assert len(exported) == 1
     assert exported[0]["domain"] == "code"
     assert exported[0]["text"] == "python code sample"
+
+
+
+def test_ingest_synthetic_rows_can_write_quality_findings(tmp_path: Path) -> None:
+    lake_root = tmp_path / "lake"
+    link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    init_lake(root=lake_root, link_path=link_path, if_not_exists=True)
+    input_path = tmp_path / "input" / "synthetic.jsonl"
+    _write_jsonl(
+        input_path,
+        [
+            {
+                "text": "synthetic instruction response",
+                "source_uri": "synthetic://run/1",
+                "quality_findings": [
+                    {
+                        "finding_type": "low_diversity",
+                        "severity": "warning",
+                        "score": 0.42,
+                        "metric_name": "distinct_3",
+                        "metric_value": 0.18,
+                        "detector": "diversity_check",
+                        "detector_version": "v1",
+                        "details": {"window": 128},
+                    }
+                ],
+            }
+        ],
+    )
+
+    ingest_path(
+        lake=link_path,
+        input_path=input_path,
+        dataset="synthetic_seed",
+        stage="silver",
+        domain="code",
+        task_type="SFT",
+        processing_level="synthetic_validated",
+        source_kind="synthetic",
+        tags=["generator=qwen", "quality=medium"],
+        idempotency_key="synthetic",
+    )
+
+    records = read_table(lake_root, "records")
+    findings = read_table(lake_root, "quality_findings")
+    assert records[0]["source_kind"] == "synthetic"
+    assert records[0]["processing_level"] == "synthetic_validated"
+    assert findings[0]["record_id"] == records[0]["record_id"]
+    assert findings[0]["finding_type"] == "low_diversity"
+    assert findings[0]["metric_name"] == "distinct_3"
