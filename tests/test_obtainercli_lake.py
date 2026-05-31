@@ -10,7 +10,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.modules.setdefault("colorlog", types.SimpleNamespace(ColoredFormatter=logging.Formatter))
 
+from loopai.obtainercli.index import index_embeddings
 from loopai.obtainercli.ingest import ingest_path
+from loopai.obtainercli.lake_status import lake_status
+from loopai.obtainercli.tags import list_tags
 from loopai.obtainercli.lake_init import init_lake
 from loopai.obtainercli.sample import sample_records
 from loopai.obtainercli.tables import read_table
@@ -231,3 +234,50 @@ def test_ingest_synthetic_rows_can_write_quality_findings(tmp_path: Path) -> Non
     assert findings[0]["record_id"] == records[0]["record_id"]
     assert findings[0]["finding_type"] == "low_diversity"
     assert findings[0]["metric_name"] == "distinct_3"
+
+
+
+def test_status_tags_and_embedding_index(tmp_path: Path) -> None:
+    lake_root = tmp_path / "lake"
+    link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    init_lake(root=lake_root, link_path=link_path, if_not_exists=True)
+    input_path = tmp_path / "input" / "code.jsonl"
+    _write_jsonl(
+        input_path,
+        [
+            {"text": "alpha code", "source_uri": "file://alpha.txt"},
+            {"text": "beta code", "source_uri": "file://beta.txt"},
+        ],
+    )
+    ingest_path(
+        lake=link_path,
+        input_path=input_path,
+        dataset="code_seed",
+        stage="silver",
+        domain="code",
+        task_type="PT",
+        processing_level="pretrain_ready",
+        source_kind="local",
+        tags=["lang=python", "quality=high"],
+        idempotency_key="status-tags-index",
+    )
+
+    status = lake_status(lake=link_path)
+    tag_summary = list_tags(lake=link_path)
+    index_result = index_embeddings(
+        lake=link_path,
+        dataset="code_seed",
+        model="local-hash-v1",
+        backend="local-jsonl",
+        text_field="text",
+    )
+
+    embeddings = read_table(lake_root, "embeddings")
+    assert status["tables"]["records"] == 2
+    assert status["tables"]["record_tags"] >= 8
+    assert tag_summary["tags"]["lang"]["python"] == 2
+    assert tag_summary["tags"]["quality"]["high"] == 2
+    assert index_result["rows_indexed"] == 2
+    assert len(embeddings) == 2
+    assert {row["embedding_model"] for row in embeddings} == {"local-hash-v1"}
+    assert all(row["index_backend"] == "local-jsonl" for row in embeddings)

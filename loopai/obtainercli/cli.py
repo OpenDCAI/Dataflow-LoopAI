@@ -6,9 +6,12 @@ import sys
 from pathlib import Path
 
 from .errors import ObtainerCliError
+from .index import index_embeddings
 from .ingest import ingest_path
 from .lake_init import init_lake
+from .lake_status import lake_status
 from .sample import sample_records
+from .tags import list_tags
 
 
 def _print_json(payload: dict) -> None:
@@ -26,6 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--link", default=".loopai/lake.yaml")
     init.add_argument("--if-not-exists", action="store_true")
     init.add_argument("--json", action="store_true")
+    status = lake_sub.add_parser("status")
+    status.add_argument("--lake", required=True)
+    status.add_argument("--json", action="store_true")
 
     ingest = sub.add_parser("ingest")
     ingest_sub = ingest.add_subparsers(dest="ingest_command", required=True)
@@ -40,7 +46,27 @@ def build_parser() -> argparse.ArgumentParser:
     path.add_argument("--source-kind", default="local")
     path.add_argument("--tags", default="")
     path.add_argument("--idempotency-key", default="")
+    path.add_argument("--post-index", choices=["embedding"], default="")
+    path.add_argument("--embedding-model", default="local-hash-v1")
+    path.add_argument("--embedding-backend", default="local-jsonl")
+    path.add_argument("--embedding-text-field", default="text")
     path.add_argument("--json", action="store_true")
+
+    tag = sub.add_parser("tag")
+    tag_sub = tag.add_subparsers(dest="tag_command", required=True)
+    tag_list = tag_sub.add_parser("list")
+    tag_list.add_argument("--lake", required=True)
+    tag_list.add_argument("--json", action="store_true")
+
+    index = sub.add_parser("index")
+    index_sub = index.add_subparsers(dest="index_command", required=True)
+    embed = index_sub.add_parser("embed")
+    embed.add_argument("--lake", required=True)
+    embed.add_argument("--dataset")
+    embed.add_argument("--model", default="local-hash-v1")
+    embed.add_argument("--backend", default="local-jsonl")
+    embed.add_argument("--text-field", default="text")
+    embed.add_argument("--json", action="store_true")
 
     sample = sub.add_parser("sample")
     sample.add_argument("--lake", required=True)
@@ -69,6 +95,8 @@ def run(argv: list[str] | None = None) -> int:
                 link_path=Path(args.link),
                 if_not_exists=args.if_not_exists,
             )
+        elif args.command == "lake" and args.lake_command == "status":
+            result = lake_status(lake=args.lake)
         elif args.command == "ingest" and args.ingest_command == "path":
             result = ingest_path(
                 lake=args.lake,
@@ -81,6 +109,25 @@ def run(argv: list[str] | None = None) -> int:
                 source_kind=args.source_kind,
                 tags=[args.tags] if args.tags else [],
                 idempotency_key=args.idempotency_key or None,
+            )
+            if args.post_index == "embedding" and result.get("rows_written", 0) > 0:
+                index_result = index_embeddings(
+                    lake=args.lake,
+                    dataset=args.dataset,
+                    model=args.embedding_model,
+                    backend=args.embedding_backend,
+                    text_field=args.embedding_text_field,
+                )
+                result["post_index"] = index_result
+        elif args.command == "tag" and args.tag_command == "list":
+            result = list_tags(lake=args.lake)
+        elif args.command == "index" and args.index_command == "embed":
+            result = index_embeddings(
+                lake=args.lake,
+                dataset=args.dataset,
+                model=args.model,
+                backend=args.backend,
+                text_field=args.text_field,
             )
         elif args.command == "sample":
             result = sample_records(
