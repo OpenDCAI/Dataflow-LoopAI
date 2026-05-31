@@ -31,6 +31,56 @@ def _matching_tag_ids(index: dict[str, dict[str, set[str]]], include: dict[str, 
     return included - excluded
 
 
+def _equal_quotas(num_groups: int, budget: int) -> list[int]:
+    if num_groups <= 0:
+        return []
+    base = budget // num_groups
+    remainder = budget % num_groups
+    return [base + (1 if i < remainder else 0) for i in range(num_groups)]
+
+
+def _tag_values_by_record(tag_rows: list[dict], tag_name: str) -> dict[str, str]:
+    values = {}
+    for row in tag_rows:
+        if row.get("tag_name") == tag_name:
+            values[row["record_id"]] = str(row.get("tag_value", ""))
+    return values
+
+
+def _stratified_sample(
+    candidates: list[dict],
+    *,
+    tag_rows: list[dict],
+    balance_by: str,
+    n: int,
+    rng: random.Random,
+) -> list[dict]:
+    if not balance_by.startswith("tag:"):
+        raise ValueError("First version supports --balance-by tag:<name>")
+    tag_name = balance_by.split(":", 1)[1]
+    values = _tag_values_by_record(tag_rows, tag_name)
+    groups: dict[str, list[dict]] = {}
+    for record in candidates:
+        value = values.get(record["record_id"], "")
+        if value:
+            groups.setdefault(value, []).append(record)
+    if not groups:
+        return []
+    group_keys = sorted(groups.keys())
+    quotas = _equal_quotas(len(group_keys), n)
+    selected: list[dict] = []
+    leftovers: list[dict] = []
+    for key, quota in zip(group_keys, quotas):
+        group = list(groups[key])
+        rng.shuffle(group)
+        selected.extend(group[:quota])
+        leftovers.extend(group[quota:])
+    if len(selected) < min(n, len(candidates)):
+        rng.shuffle(leftovers)
+        selected.extend(leftovers[: n - len(selected)])
+    return selected[:n]
+
+
 def sample_records(
     *,
     lake: str | Path,
@@ -45,9 +95,10 @@ def sample_records(
     allow_smaller: bool = False,
     seed: int = 42,
     strategy: str = "random",
+    balance_by: str = "",
 ) -> dict:
-    if strategy != "random":
-        raise ValueError("First version supports strategy=random")
+    if strategy not in {"random", "stratified"}:
+        raise ValueError("First version supports strategy=random|stratified")
     lake_root = resolve_lake_root(lake)
     ensure_tables(lake_root)
     include = parse_tags(include_tags)
@@ -76,9 +127,14 @@ def sample_records(
     if len(candidates) < n and not allow_smaller:
         raise CandidateNotEnoughError(n, len(candidates))
     rng = random.Random(seed)
-    shuffled = list(candidates)
-    rng.shuffle(shuffled)
-    selected = shuffled[: min(n, len(shuffled))]
+    if strategy == "stratified":
+        if not balance_by:
+            raise ValueError("strategy=stratified requires balance_by")
+        selected = _stratified_sample(candidates, tag_rows=tag_rows, balance_by=balance_by, n=n, rng=rng)
+    else:
+        shuffled = list(candidates)
+        rng.shuffle(shuffled)
+        selected = shuffled[: min(n, len(shuffled))]
     write_jsonl(output, selected)
     warnings = []
     status = "success"
@@ -103,9 +159,10 @@ def sample_records(
                         "processing_level": processing_level,
                         "source_kind": source_kind,
                         "task_type": task_type,
-                        "include_tags": include,
-                        "exclude_tags": exclude,
-                    },
+                    "include_tags": include,
+                    "exclude_tags": exclude,
+                    "balance_by": balance_by,
+                },
                     "strategy": strategy,
                     "seed": seed,
                     "requested_size": n,

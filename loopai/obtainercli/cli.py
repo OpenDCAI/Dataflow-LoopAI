@@ -81,6 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     sample.add_argument("--allow-smaller", action="store_true")
     sample.add_argument("--seed", type=int, default=42)
     sample.add_argument("--strategy", default="random")
+    sample.add_argument("--balance-by", default="")
     sample.add_argument("--json", action="store_true")
     return parser
 
@@ -143,6 +144,7 @@ def run(argv: list[str] | None = None) -> int:
                 allow_smaller=args.allow_smaller,
                 seed=args.seed,
                 strategy=args.strategy,
+                balance_by=args.balance_by,
             )
         else:
             parser.error("Unsupported command")

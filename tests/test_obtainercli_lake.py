@@ -281,3 +281,67 @@ def test_status_tags_and_embedding_index(tmp_path: Path) -> None:
     assert len(embeddings) == 2
     assert {row["embedding_model"] for row in embeddings} == {"local-hash-v1"}
     assert all(row["index_backend"] == "local-jsonl" for row in embeddings)
+
+
+
+def test_stratified_sample_balances_by_tag(tmp_path: Path) -> None:
+    lake_root = tmp_path / "lake"
+    link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    init_lake(root=lake_root, link_path=link_path, if_not_exists=True)
+    a_path = tmp_path / "input" / "a.jsonl"
+    b_path = tmp_path / "input" / "b.jsonl"
+    _write_jsonl(
+        a_path,
+        [
+            {"text": "a1", "source_uri": "file://a1.txt"},
+            {"text": "a2", "source_uri": "file://a2.txt"},
+        ],
+    )
+    _write_jsonl(b_path, [{"text": "b1", "source_uri": "file://b1.txt"}])
+    ingest_path(
+        lake=link_path,
+        input_path=a_path,
+        dataset="a_seed",
+        stage="silver",
+        domain="code",
+        task_type="PT",
+        processing_level="postprocessed_high_quality",
+        source_kind="web",
+        tags=["source_domain=a.example", "quality=high"],
+        idempotency_key="a-seed",
+    )
+    ingest_path(
+        lake=link_path,
+        input_path=b_path,
+        dataset="b_seed",
+        stage="silver",
+        domain="code",
+        task_type="PT",
+        processing_level="postprocessed_high_quality",
+        source_kind="web",
+        tags=["source_domain=b.example", "quality=high"],
+        idempotency_key="b-seed",
+    )
+    output_path = tmp_path / "exports" / "balanced.jsonl"
+
+    result = sample_records(
+        lake=link_path,
+        output=output_path,
+        domain="code",
+        processing_level="postprocessed_high_quality",
+        include_tags=["quality=high"],
+        n=2,
+        strategy="stratified",
+        balance_by="tag:source_domain",
+        seed=11,
+    )
+
+    exported = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+    tag_rows = read_table(lake_root, "record_tags")
+    source_by_record = {
+        row["record_id"]: row["tag_value"]
+        for row in tag_rows
+        if row["tag_name"] == "source_domain"
+    }
+    assert result["actual_size"] == 2
+    assert {source_by_record[row["record_id"]] for row in exported} == {"a.example", "b.example"}
