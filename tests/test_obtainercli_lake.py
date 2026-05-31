@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import threading
 import types
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -345,3 +347,111 @@ def test_stratified_sample_balances_by_tag(tmp_path: Path) -> None:
     }
     assert result["actual_size"] == 2
     assert {source_by_record[row["record_id"]] for row in exported} == {"a.example", "b.example"}
+
+
+
+class _EmbeddingHandler(BaseHTTPRequestHandler):
+    calls: list[dict] = []
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("content-length", "0"))
+        payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        self.__class__.calls.append(payload)
+        inputs = payload["input"]
+        if isinstance(inputs, str):
+            inputs = [inputs]
+        response = {
+            "object": "list",
+            "data": [
+                {"object": "embedding", "index": index, "embedding": [float(index), float(len(text))]}
+                for index, text in enumerate(inputs)
+            ],
+            "model": payload["model"],
+        }
+        data = json.dumps(response).encode("utf-8")
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, format: str, *args) -> None:
+        return
+
+
+def _start_embedding_server() -> tuple[HTTPServer, str]:
+    _EmbeddingHandler.calls = []
+    server = HTTPServer(("127.0.0.1", 0), _EmbeddingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    return server, f"http://{host}:{port}/v1"
+
+
+def test_cli_ingest_auto_embeds_with_openai_compatible_config(tmp_path: Path) -> None:
+    server, base_url = _start_embedding_server()
+    try:
+        lake_root = tmp_path / "lake"
+        link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"
+        init_lake(
+            root=lake_root,
+            link_path=link_path,
+            if_not_exists=True,
+            embedding_provider="openai-compatible",
+            embedding_base_url=base_url,
+            embedding_model="test-embedding-model",
+        )
+        input_path = tmp_path / "input" / "records.jsonl"
+        _write_jsonl(
+            input_path,
+            [
+                {"text": "first embedding record", "source_uri": "file://first.txt"},
+                {"text": "second embedding record", "source_uri": "file://second.txt"},
+            ],
+        )
+
+        from loopai.obtainercli.cli import run
+
+        exit_code = run(
+            [
+                "ingest",
+                "path",
+                "--lake",
+                str(link_path),
+                "--input",
+                str(input_path),
+                "--dataset",
+                "embed_seed",
+                "--domain",
+                "code",
+                "--processing-level",
+                "pretrain_ready",
+                "--source-kind",
+                "local",
+                "--idempotency-key",
+                "embed-seed",
+                "--json",
+            ]
+        )
+
+        embeddings = read_table(lake_root, "embeddings")
+        assert exit_code == 0
+        assert len(embeddings) == 2
+        assert {row["embedding_model"] for row in embeddings} == {"test-embedding-model"}
+        assert {row["index_backend"] for row in embeddings} == {"local-jsonl"}
+        assert _EmbeddingHandler.calls[0]["model"] == "test-embedding-model"
+        assert len(_EmbeddingHandler.calls[0]["input"]) == 2
+    finally:
+        server.shutdown()
+
+
+def test_init_lake_writes_auto_embedding_defaults(tmp_path: Path) -> None:
+    lake_root = tmp_path / "lake"
+    link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    init_lake(root=lake_root, link_path=link_path, if_not_exists=True)
+
+    text = link_path.read_text(encoding="utf-8")
+    assert "auto_embed: true" in text
+    assert "embedding_provider: openai-compatible" in text
+    assert "embedding_model: BAAI/bge-small-zh-v1.5" in text
+    assert "embedding_base_url: http://127.0.0.1:8000/v1" in text

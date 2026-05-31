@@ -15,7 +15,27 @@ def _parse_simple_yaml(path: Path) -> Dict[str, str]:
     return values
 
 
-def write_lake_config(path: Path, *, root: Path, warehouse: Path | None = None) -> None:
+def read_lake_config(path: str | Path) -> Dict[str, str]:
+    return _parse_simple_yaml(Path(path))
+
+
+def _bool_text(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def write_lake_config(
+    path: Path,
+    *,
+    root: Path,
+    warehouse: Path | None = None,
+    auto_embed: bool = True,
+    embedding_provider: str = "openai-compatible",
+    embedding_base_url: str = "http://127.0.0.1:8000/v1",
+    embedding_api_key: str = "",
+    embedding_model: str = "BAAI/bge-small-zh-v1.5",
+    embedding_backend: str = "local-jsonl",
+    embedding_text_field: str = "text",
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     warehouse = warehouse or root / "warehouse"
     path.write_text(
@@ -26,6 +46,13 @@ def write_lake_config(path: Path, *, root: Path, warehouse: Path | None = None) 
                 f"warehouse: {warehouse}",
                 "catalog: local-jsonl",
                 "namespace: loopai",
+                f"auto_embed: {_bool_text(auto_embed)}",
+                f"embedding_provider: {embedding_provider}",
+                f"embedding_base_url: {embedding_base_url}",
+                f"embedding_api_key: {embedding_api_key}",
+                f"embedding_model: {embedding_model}",
+                f"embedding_backend: {embedding_backend}",
+                f"embedding_text_field: {embedding_text_field}",
                 "",
             ]
         ),
@@ -36,7 +63,7 @@ def write_lake_config(path: Path, *, root: Path, warehouse: Path | None = None) 
 def resolve_lake_root(lake: str | Path) -> Path:
     path = Path(lake)
     if path.is_file():
-        values = _parse_simple_yaml(path)
+        values = read_lake_config(path)
         root = values.get("root")
         if not root:
             raise ValueError(f"Lake config missing root: {path}")

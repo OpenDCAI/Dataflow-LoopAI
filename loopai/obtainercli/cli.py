@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
+from .config import read_lake_config
 from .errors import ObtainerCliError
 from .index import index_embeddings
 from .ingest import ingest_path
@@ -27,6 +29,13 @@ def build_parser() -> argparse.ArgumentParser:
     init = lake_sub.add_parser("init")
     init.add_argument("--root", required=True)
     init.add_argument("--link", default=".loopai/lake.yaml")
+    init.add_argument("--auto-embed", action=argparse.BooleanOptionalAction, default=True)
+    init.add_argument("--embedding-provider", default="openai-compatible")
+    init.add_argument("--embedding-base-url", default="http://127.0.0.1:8000/v1")
+    init.add_argument("--embedding-api-key", default="")
+    init.add_argument("--embedding-model", default="BAAI/bge-small-zh-v1.5")
+    init.add_argument("--embedding-backend", default="local-jsonl")
+    init.add_argument("--embedding-text-field", default="text")
     init.add_argument("--if-not-exists", action="store_true")
     init.add_argument("--json", action="store_true")
     status = lake_sub.add_parser("status")
@@ -47,6 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
     path.add_argument("--tags", default="")
     path.add_argument("--idempotency-key", default="")
     path.add_argument("--post-index", choices=["embedding"], default="")
+    path.add_argument("--no-post-index", action="store_true")
+    path.add_argument("--embedding-provider", default="")
+    path.add_argument("--embedding-base-url", default="")
+    path.add_argument("--embedding-api-key", default="")
     path.add_argument("--embedding-model", default="local-hash-v1")
     path.add_argument("--embedding-backend", default="local-jsonl")
     path.add_argument("--embedding-text-field", default="text")
@@ -63,6 +76,9 @@ def build_parser() -> argparse.ArgumentParser:
     embed = index_sub.add_parser("embed")
     embed.add_argument("--lake", required=True)
     embed.add_argument("--dataset")
+    embed.add_argument("--provider", default="local-hash")
+    embed.add_argument("--base-url", default="")
+    embed.add_argument("--api-key", default="")
     embed.add_argument("--model", default="local-hash-v1")
     embed.add_argument("--backend", default="local-jsonl")
     embed.add_argument("--text-field", default="text")
@@ -95,6 +111,13 @@ def run(argv: list[str] | None = None) -> int:
                 root=Path(args.root),
                 link_path=Path(args.link),
                 if_not_exists=args.if_not_exists,
+                auto_embed=args.auto_embed,
+                embedding_provider=args.embedding_provider,
+                embedding_base_url=args.embedding_base_url,
+                embedding_api_key=args.embedding_api_key,
+                embedding_model=args.embedding_model,
+                embedding_backend=args.embedding_backend,
+                embedding_text_field=args.embedding_text_field,
             )
         elif args.command == "lake" and args.lake_command == "status":
             result = lake_status(lake=args.lake)
@@ -111,21 +134,50 @@ def run(argv: list[str] | None = None) -> int:
                 tags=[args.tags] if args.tags else [],
                 idempotency_key=args.idempotency_key or None,
             )
-            if args.post_index == "embedding" and result.get("rows_written", 0) > 0:
-                index_result = index_embeddings(
-                    lake=args.lake,
-                    dataset=args.dataset,
-                    model=args.embedding_model,
-                    backend=args.embedding_backend,
-                    text_field=args.embedding_text_field,
-                )
-                result["post_index"] = index_result
+            config = read_lake_config(args.lake) if Path(args.lake).is_file() else {}
+            auto_embed = str(config.get("auto_embed", "false")).lower() in {"1", "true", "yes", "on"}
+            should_index = not args.no_post_index and result.get("rows_written", 0) > 0 and (
+                args.post_index == "embedding" or auto_embed
+            )
+            if should_index:
+                provider = args.embedding_provider or config.get("embedding_provider", "local-hash")
+                try:
+                    index_result = index_embeddings(
+                        lake=args.lake,
+                        dataset=args.dataset,
+                        provider=provider,
+                        base_url=args.embedding_base_url or config.get("embedding_base_url", ""),
+                        api_key=args.embedding_api_key
+                        or config.get("embedding_api_key", "")
+                        or os.getenv("OBTAINERCLI_EMBED_API_KEY", ""),
+                        model=args.embedding_model
+                        if args.embedding_model != "local-hash-v1"
+                        else config.get("embedding_model", args.embedding_model),
+                        backend=args.embedding_backend
+                        if args.embedding_backend != "local-jsonl"
+                        else config.get("embedding_backend", args.embedding_backend),
+                        text_field=args.embedding_text_field
+                        if args.embedding_text_field != "text"
+                        else config.get("embedding_text_field", args.embedding_text_field),
+                    )
+                    result["post_index"] = index_result
+                except Exception as exc:
+                    result.setdefault("warnings", []).append(
+                        {
+                            "code": "POST_INDEX_EMBEDDING_FAILED",
+                            "message": str(exc),
+                        }
+                    )
+                    result["status"] = "success_with_warnings"
         elif args.command == "tag" and args.tag_command == "list":
             result = list_tags(lake=args.lake)
         elif args.command == "index" and args.index_command == "embed":
             result = index_embeddings(
                 lake=args.lake,
                 dataset=args.dataset,
+                provider=args.provider,
+                base_url=args.base_url,
+                api_key=args.api_key,
                 model=args.model,
                 backend=args.backend,
                 text_field=args.text_field,
