@@ -57,5 +57,10 @@ setup(
         "open-dataflow==1.0.10",
         "vllm>=0.4.0"
     ],
+    entry_points={
+        "console_scripts": [
+            "obtainercli=loopai.obtainercli.cli:main",
+        ],
+    },
     python_requires=">=3.12",
 )
