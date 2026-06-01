@@ -6,8 +6,15 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import message_to_dict
 from tortoise.expressions import Q
-from ..models.body import response_body, ConfigModel
+from ..models.body import (
+    response_body,
+    ConfigModel,
+    StarterCodexRequest,
+    StarterCodexSessionInputRequest,
+    StarterCodexSessionResumeRequest,
+)
 from ..models.db_models import StarterConfig, TaskModel
+from ..services.starter import CodexStarterService, codex_session_store, load_starter_system_config
 from ..utils.starter import StarterManager
 from ..utils.task.task import update_task_state, get_task_state
 from ..utils.monitor.hw_stat import get_nvidia_gpu_usage, get_huawei_npu_usage, get_cpu_usage, get_memory_usage
@@ -19,6 +26,59 @@ BASE_DIR = os.path.dirname(os.path.dirname(CURRENT_DIR))
 LoopAI_DIR = os.path.dirname(BASE_DIR)
 
 router = APIRouter(tags=["starter"])
+
+
+@router.post("/codex/stream", operation_id="starterCodexStream", summary="Run codex-sdk with SSE streaming")
+async def starter_codex_stream(req: StarterCodexRequest):
+    system_config = await load_starter_system_config()
+    service = CodexStarterService(system_config=system_config, session_store=codex_session_store)
+    return StreamingResponse(
+        service.stream(prompt=req.prompt, workspace=req.workspace, session_id=req.session_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@router.get("/codex/session/{session_id}", operation_id="starterCodexSession", summary="Get codex session state")
+async def starter_codex_session(session_id: str):
+    session = codex_session_store.get(session_id)
+    if session is None:
+        return response_body(code=404, status="error", message="Codex session not found")()
+    return response_body(data=session)()
+
+
+@router.post("/codex/session/input", operation_id="starterCodexSessionInput", summary="Store codex session input")
+async def starter_codex_session_input(req: StarterCodexSessionInputRequest):
+    session = codex_session_store.merge_inputs(req.session_id, req.values)
+    if session is None:
+        return response_body(code=404, status="error", message="Codex session not found")()
+    codex_session_store.update(req.session_id, status="input_received")
+    return response_body(message="Codex session input stored", data=session)()
+
+
+@router.post("/codex/session/resume", operation_id="starterCodexSessionResume", summary="Resume codex session")
+async def starter_codex_session_resume(req: StarterCodexSessionResumeRequest):
+    session = codex_session_store.get(req.session_id)
+    if session is None:
+        return response_body(code=404, status="error", message="Codex session not found")()
+
+    system_config = await load_starter_system_config()
+    service = CodexStarterService(system_config=system_config, session_store=codex_session_store)
+    return StreamingResponse(
+        service.stream(
+            prompt=session.get("prompt") or "",
+            workspace=session.get("workspace"),
+            session_id=req.session_id,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 async def load_config(task_id=None):

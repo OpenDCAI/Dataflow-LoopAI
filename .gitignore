@@ -22,3 +22,5 @@ starter.yaml
 CLAUDE.md
 .codex
 *.log
+*_api_key.*
+codex_home/
