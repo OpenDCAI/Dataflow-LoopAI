@@ -580,3 +580,127 @@ Analyzer 与 Judger 配合后，可以形成完整的：
 ```
 
 闭环流程。
+
+---
+
+## 十、独立运行与断点续跑
+
+Analyzer 现在支持不经过 Starter 独立运行。独立入口只封装运行控制，不改变 Analyzer 原有业务节点、graph 拓扑、state 字段结构、输入格式或输出格式。
+
+### 1. Python runner
+
+可以直接调用：
+
+```python
+from loopai.agents import run_analyzer_standalone
+
+result = run_analyzer_standalone(
+    state={
+        "task_id": "analyzer-demo",
+        "output_dir": "./outputs",
+        "eval": {},
+        "analyzer": {
+            "analyze_task_type": "code",
+            "eval_result_path": "./outputs/result.jsonl",
+            "analyze_model_path": "gpt-4o-mini",
+            "analyze_base_url": "http://127.0.0.1:8000/v1",
+            "analyze_api_key": "EMPTY",
+            "analyze_temperature": 0.0,
+            "analyze_top_p": 0.95,
+            "analyze_batch_size": 20,
+            "analyze_max_concurrency": 5,
+            "analyze_chunk_size": 50,
+            "analyze_sampling_top_k": 5,
+            "output_brief": True,
+            "output_suggestion": True,
+            "quick_brief": True,
+            "quick_brief_limit": 10
+        }
+    },
+    thread_id="analyzer-demo-001",
+)
+```
+
+runner 内部仍然使用：
+
+```python
+AnalyzerAgent(checkpointer=checkpointer, store=store)
+graph.invoke(...)
+```
+
+返回值为 Analyzer graph 的最终 state / result。
+
+### 2. CLI 入口
+
+新增命令行入口：
+
+```bash
+python examples/scripts/run_analyzer_standalone.py \
+  --config-path examples/config/starter.yaml \
+  --thread-id analyzer-test-001
+```
+
+CLI 支持参数：
+
+- `--config-path`：YAML / JSON 配置路径。如果配置中包含 `default_states`，则使用 `default_states` 作为输入 state。
+- `--thread-id`：LangGraph checkpoint 使用的 thread id。
+- `--resume`：使用相同 `thread_id` 从 checkpoint 恢复。
+- `--from-node`：从指定 Analyzer 节点继续运行。
+- `--print-result`：将最终 state / result 打印为 JSON。
+
+### 3. 断点续跑
+
+使用相同 `thread_id` 恢复最近 checkpoint：
+
+```bash
+python examples/scripts/run_analyzer_standalone.py \
+  --config-path examples/config/starter.yaml \
+  --thread-id analyzer-test-001 \
+  --resume
+```
+
+从指定节点继续运行：
+
+```bash
+python examples/scripts/run_analyzer_standalone.py \
+  --config-path examples/config/starter.yaml \
+  --thread-id analyzer-test-001 \
+  --resume \
+  --from-node analyze_result
+```
+
+当前可用 Analyzer 节点名：
+
+```text
+check_required_fields
+route_eval
+eval_model
+metric_recommend
+metric_score
+analyze_metric_report
+analyze_result
+draw_conclusion
+finish
+```
+
+`from_node` 会优先使用 LangGraph checkpoint history 中“下一步将执行该节点”的快照继续运行，避免从头重跑已完成节点。如果没有可用历史快照，则使用 `graph.update_state(..., as_node=previous_node)` 作为兼容兜底。
+
+### 4. state 兼容性
+
+独立运行入口保持现有 state 格式不变，例如：
+
+```python
+{
+    "task_id": "...",
+    "output_dir": "...",
+    "eval": {...},
+    "analyzer": {...}
+}
+```
+
+runner 不重命名字段、不删除字段、不改变节点之间传递的 state 结构。
+
+### 5. 注意事项
+
+- 当前默认 `loopai.memory.checkpointer` 是内存型 checkpointer，因此跨进程 CLI 续跑需要替换为持久化 checkpointer 后才能保留历史 checkpoint。
+- 如果 Analyzer 在 standalone 模式下遇到原本要跳回 Starter 父图的配置补全流程，runner 会返回对应的 state update，例如 `exception=ConfigerError`、`next_to=config_node` 和 `configer.configer_error`，便于独立调试。
