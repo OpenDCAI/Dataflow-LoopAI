@@ -52,3 +52,18 @@ class ResourceItem(BaseModel):
     size: Optional[int] = None
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
+
+
+class StarterCodexRequest(BaseModel):
+    prompt: str
+    workspace: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class StarterCodexSessionInputRequest(BaseModel):
+    session_id: str
+    values: dict
+
+
+class StarterCodexSessionResumeRequest(BaseModel):
+    session_id: str
