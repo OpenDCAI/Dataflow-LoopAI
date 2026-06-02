@@ -1,11 +1,11 @@
-# `loopai.common.log_tool`
+# `loopai.common.event_tool`
 
 用于给指定 `context_id` 和 `agent_name` 生成一个基于 pickle 的事件 writer。
 
 推荐通过子模块直接导入：
 
 ```python
-from loopai.common.log_tool import StreamEvent, get_event_writer
+from loopai.common.event_tool import StreamEvent, get_event_writer
 ```
 
 ## 目标
@@ -18,7 +18,7 @@ from loopai.common.log_tool import StreamEvent, get_event_writer
 ## 快速开始
 
 ```python
-from loopai.common.log_tool import StreamEvent, get_event_writer
+from loopai.common.event_tool import StreamEvent, get_event_writer
 
 writer = get_event_writer(name="judger", context_id="task_001")
 
@@ -86,7 +86,7 @@ writer(StreamEvent(...).json())
 ## 读取事件
 
 ```python
-from loopai.common.log_tool import load_stream_events, dump_stream_events_json
+from loopai.common.event_tool import load_stream_events, dump_stream_events_json
 
 events = load_stream_events(name="judger", context_id="task_001")
 payload = dump_stream_events_json(name="judger", context_id="task_001")

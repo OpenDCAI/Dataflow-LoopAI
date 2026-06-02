@@ -7,7 +7,7 @@ Examples:
     from loopai.common.prompts import PromptLoader
     from loopai.common.exception import emit_success
     from loopai.common.db_tool import sqlite_db_session
-    from loopai.common.log_tool import StreamEvent, get_event_writer
+    from loopai.common.event_tool import StreamEvent, get_event_writer
 """
 
 __all__ = [
@@ -15,6 +15,6 @@ __all__ = [
     "exception",
     "i18n",
     "jsonl_dataset_sampling",
-    "log_tool",
+    "event_tool",
     "prompts",
 ]

@@ -12,7 +12,7 @@
 from loopai.common.prompts import PromptLoader
 from loopai.common.exception import emit_success, emit_error, ErrorCode
 from loopai.common.db_tool import sqlite_db_session
-from loopai.common.log_tool import StreamEvent, get_event_writer
+from loopai.common.event_tool import StreamEvent, get_event_writer
 ```
 
 ## 为什么这样设计
@@ -26,7 +26,7 @@ from loopai.common.log_tool import StreamEvent, get_event_writer
 - `loopai.common.prompts`: Prompt 加载工具
 - `loopai.common.exception`: 统一 success/error JSON 返回
 - `loopai.common.db_tool`: SQLite 与配置表读写
-- `loopai.common.log_tool`: 按 `context_id/agent_name` 写 pickle 事件数组
+- `loopai.common.event_tool`: 按 `context_id/agent_name` 写 pickle 事件数组
 - `loopai.common.i18n`: 国际化工具
 - `loopai.common.jsonl_dataset_sampling`: JSONL 数据采样工具
 
@@ -34,4 +34,4 @@ from loopai.common.log_tool import StreamEvent, get_event_writer
 
 - [db_tool/README.md](/home/lpc/repos/Dataflow-LoopAI/loopai/common/db_tool/README.md)
 - [exception/README.md](/home/lpc/repos/Dataflow-LoopAI/loopai/common/exception/README.md)
-- [log_tool/README.md](/home/lpc/repos/Dataflow-LoopAI/loopai/common/log_tool/README.md)
+- [event_tool/README.md](/home/lpc/repos/Dataflow-LoopAI/loopai/common/event_tool/README.md)
