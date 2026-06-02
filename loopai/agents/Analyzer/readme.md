@@ -644,6 +644,7 @@ CLI 支持参数：
 
 - `--config-path`：YAML / JSON 配置路径。如果配置中包含 `default_states`，则使用 `default_states` 作为输入 state。
 - `--thread-id`：LangGraph checkpoint 使用的 thread id。
+- `--checkpoint-path`：SQLite checkpoint 文件路径，默认 `outputs/analyzer_checkpoints.sqlite`。
 - `--resume`：使用相同 `thread_id` 从 checkpoint 恢复。
 - `--from-node`：从指定 Analyzer 节点继续运行。
 - `--print-result`：将最终 state / result 打印为 JSON。
@@ -656,6 +657,7 @@ CLI 支持参数：
 python examples/scripts/run_analyzer_standalone.py \
   --config-path examples/config/starter.yaml \
   --thread-id analyzer-test-001 \
+  --checkpoint-path outputs/analyzer_checkpoints.sqlite \
   --resume
 ```
 
@@ -665,8 +667,9 @@ python examples/scripts/run_analyzer_standalone.py \
 python examples/scripts/run_analyzer_standalone.py \
   --config-path examples/config/starter.yaml \
   --thread-id analyzer-test-001 \
+  --checkpoint-path outputs/analyzer_checkpoints.sqlite \
   --resume \
-  --from-node analyze_result
+  --from-node analyze_result_node
 ```
 
 当前可用 Analyzer 节点名：
@@ -683,7 +686,7 @@ draw_conclusion
 finish
 ```
 
-`from_node` 会优先使用 LangGraph checkpoint history 中“下一步将执行该节点”的快照继续运行，避免从头重跑已完成节点。如果没有可用历史快照，则使用 `graph.update_state(..., as_node=previous_node)` 作为兼容兜底。
+`resume` 和 `from_node` 使用同一套恢复入口逻辑：先从 SQLite checkpoint 读取 snapshot，再根据 `snapshot.next`、`state["current"]` 或用户指定的 `--from-node` 决定恢复节点，并临时构建以该节点为 entry point 的 Analyzer graph。这样中断在 `draw_conclusion_node` 时，续跑只会执行 `draw_conclusion_node -> finish_node`，不会重新执行 `eval_model_node` 和 `analyze_result_node`。
 
 ### 4. state 兼容性
 
@@ -702,5 +705,6 @@ runner 不重命名字段、不删除字段、不改变节点之间传递的 sta
 
 ### 5. 注意事项
 
-- 当前默认 `loopai.memory.checkpointer` 是内存型 checkpointer，因此跨进程 CLI 续跑需要替换为持久化 checkpointer 后才能保留历史 checkpoint。
+- CLI 默认使用 SQLite checkpointer，因此可以跨进程续跑。请保持 `--thread-id` 和 `--checkpoint-path` 一致。
+- `--print-result` 会脱敏 `api_key`、`analyze_api_key` 和所有 `*_key` 字段。
 - 如果 Analyzer 在 standalone 模式下遇到原本要跳回 Starter 父图的配置补全流程，runner 会返回对应的 state update，例如 `exception=ConfigerError`、`next_to=config_node` 和 `configer.configer_error`，便于独立调试。

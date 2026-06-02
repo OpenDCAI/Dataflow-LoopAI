@@ -6,6 +6,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "langgraph>=0.6.7",
+        "langgraph-checkpoint-sqlite>=3.0.0",
         "colorlog>=6.10.0",
         "rich>=13.0.0",
         "langchain>=0.3.27",
