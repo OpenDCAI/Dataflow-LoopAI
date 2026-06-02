@@ -15,6 +15,7 @@
 - 读取默认 `StarterConfig` 的 `system` / `states`
 - 读取指定 `task_id` 的 `system` / `states`
 - 读取指定 states 分组，如 `default` / `judger` / `analyzer`
+- 更新默认 `StarterConfig` 下某个 states 分组
 - 更新指定 `task_id` 下某个 states 分组，同时：
   - 覆盖已存在字段
   - 保留未修改字段
@@ -28,6 +29,7 @@ import asyncio
 from loopai.common.db_tool import (
     sqlite_db_session,
     get_default_system_config,
+    update_default_state_section_config,
     get_task_state_section_config,
     update_task_state_section_config,
 )
@@ -45,6 +47,13 @@ async def main():
             "judger",
         )
         print(judger_cfg)
+
+        await update_default_state_section_config(
+            "judger",
+            {
+                "eval_temperature": {"value": 0.1, "type": "float"},
+            },
+        )
 
         await update_task_state_section_config(
             "your-task-id",
@@ -146,6 +155,14 @@ if __name__ == "__main__":
     "eval_api_key": "xxx",
 }
 ```
+
+## 默认配置更新
+
+### `update_default_state_section_config(section_name, updates, starter_yaml_path=None)`
+
+更新默认 `StarterConfig.default_states` 下某个分组。
+
+支持的 `updates` 格式与 `update_task_state_section_config(...)` 相同。
 
 ## 返回结构说明
 

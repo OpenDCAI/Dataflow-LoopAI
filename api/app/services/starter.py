@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -57,12 +56,18 @@ class CodexSessionStore:
     def __init__(self) -> None:
         self.sessions: dict[str, dict[str, Any]] = {}
 
-    def create(self, prompt: str, workspace: str | None) -> dict[str, Any]:
+    def create(
+        self,
+        prompt: str,
+        workspace: str | None,
+        env_overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         session_id = str(uuid.uuid4())
         session = {
             "session_id": session_id,
             "prompt": prompt,
             "workspace": workspace,
+            "env_overrides": dict(env_overrides or {}),
             "status": "created",
             "inputs": {},
             "pending_request": None,
@@ -76,14 +81,22 @@ class CodexSessionStore:
     def get(self, session_id: str) -> dict[str, Any] | None:
         return self.sessions.get(session_id)
 
-    def get_or_create(self, session_id: str | None, prompt: str, workspace: str | None) -> dict[str, Any]:
+    def get_or_create(
+        self,
+        session_id: str | None,
+        prompt: str,
+        workspace: str | None,
+        env_overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if session_id:
             session = self.get(session_id)
             if session is not None:
                 session["prompt"] = prompt
                 session["workspace"] = workspace
+                if env_overrides is not None:
+                    session["env_overrides"] = dict(env_overrides)
                 return session
-        return self.create(prompt=prompt, workspace=workspace)
+        return self.create(prompt=prompt, workspace=workspace, env_overrides=env_overrides)
 
     def update(self, session_id: str, **kwargs: Any) -> dict[str, Any] | None:
         session = self.get(session_id)
@@ -108,7 +121,12 @@ class CodexStarterService:
         self.system_config = system_config
         self.session_store = session_store or codex_session_store
 
-    def _build_env(self, system_config: dict[str, Any], workspace: str | None) -> dict[str, str]:
+    def _build_env(
+        self,
+        system_config: dict[str, Any],
+        workspace: str | None,
+        env_overrides: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
         env = os.environ.copy()
         resolved_workspace = workspace or system_config.get("codex_workspace") or str(PROJECT_ROOT)
 
@@ -137,35 +155,21 @@ class CodexStarterService:
         else:
             env.pop("CODEX_USE_PROJECT_CONFIG", None)
 
-        return env
+        for key, value in (env_overrides or {}).items():
+            key = str(key)
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = str(value)
 
-    def _build_runtime_codex_home(self, workspace: str, base_url: str | None) -> tempfile.TemporaryDirectory[str]:
-        runtime_home = tempfile.TemporaryDirectory(prefix="loopai-codex-home-")
-        home_path = Path(runtime_home.name)
-        provider_name = "starter_http"
-        provider_base_url = base_url or "https://api.openai.com/v1"
-        config_text = "\n".join([
-            f'model_provider = "{provider_name}"',
-            "",
-            f"[model_providers.{provider_name}]",
-            'name = "Starter HTTP"',
-            f'base_url = "{provider_base_url}"',
-            'env_key = "CODEX_API_KEY"',
-            'wire_api = "responses"',
-            "supports_websockets = false",
-            "",
-            f'[projects."{workspace}"]',
-            'trust_level = "trusted"',
-            "",
-        ])
-        (home_path / "config.toml").write_text(config_text, encoding="utf-8")
-        return runtime_home
+        return env
 
     async def stream(
         self,
         prompt: str,
         workspace: str | None = None,
         session_id: str | None = None,
+        env_overrides: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]:
         prompt = (prompt or "").strip()
         if not prompt:
@@ -179,10 +183,15 @@ class CodexStarterService:
             session_id=session_id,
             prompt=prompt,
             workspace=workspace,
+            env_overrides=env_overrides,
         )
         session_id = session["session_id"]
         merged_system_config = dict(self.system_config)
         merged_system_config.update(session.get("inputs", {}))
+        merged_env_overrides = dict(session.get("env_overrides") or {})
+        if env_overrides is not None:
+            merged_env_overrides = dict(env_overrides)
+            self.session_store.update(session_id, env_overrides=merged_env_overrides)
 
         if not CODEX_RUNNER_DIR.exists():
             yield _sse({
@@ -192,20 +201,29 @@ class CodexStarterService:
             })
             return
 
-        env = self._build_env(merged_system_config, workspace)
+        env = self._build_env(
+            merged_system_config,
+            workspace,
+            env_overrides=merged_env_overrides,
+        )
         resolved_workspace = env.get("CODEX_WORKSPACE", str(PROJECT_ROOT))
+        if not DEFAULT_CODEX_HOME.exists():
+            yield _sse({
+                "type": "error",
+                "session_id": session_id,
+                "message": f"codex_home not found: {DEFAULT_CODEX_HOME}",
+            })
+            return
+
         self.session_store.update(
             session_id,
             workspace=resolved_workspace,
+            env_overrides=merged_env_overrides,
             status="running",
             last_error=None,
             final_result=None,
         )
-        runtime_codex_home = self._build_runtime_codex_home(
-            workspace=resolved_workspace,
-            base_url=env.get("CODEX_BASE_URL"),
-        )
-        env["CODEX_HOME"] = runtime_codex_home.name
+        env["CODEX_HOME"] = str(DEFAULT_CODEX_HOME)
 
         yield _sse({
             "type": "starter.codex.init",
@@ -215,6 +233,7 @@ class CodexStarterService:
             "model": env.get("CODEX_MODEL"),
             "base_url": env.get("CODEX_BASE_URL"),
             "codex_home": env.get("CODEX_HOME"),
+            "env_keys": sorted(merged_env_overrides.keys()),
         })
 
         try:
@@ -331,5 +350,10 @@ class CodexStarterService:
                 "returncode": returncode,
                 "result": final_result,
             })
-        finally:
-            runtime_codex_home.cleanup()
+        except Exception as exc:
+            self.session_store.update(session_id, status="failed", last_error=str(exc))
+            yield _sse({
+                "type": "error",
+                "session_id": session_id,
+                "message": f"unexpected starter stream error: {exc}",
+            })

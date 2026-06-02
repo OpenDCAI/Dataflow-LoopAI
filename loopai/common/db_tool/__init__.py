@@ -204,6 +204,28 @@ async def get_default_states_config(
     }
 
 
+async def update_default_state_section_config(
+    section_name: str,
+    updates: dict[str, Any],
+    starter_yaml_path: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    if starter_yaml_path is not None:
+        config = await ensure_default_starter_config(starter_yaml_path)
+    else:
+        config = await StarterConfig.filter(name="starter").first()
+        if config is None:
+            raise ValueError("starter config not found")
+
+    config_data = json.loads(config.config or "{}")
+    default_states = config_data.setdefault("default_states", {})
+    _merge_state_section(default_states, section_name, updates)
+
+    config.config = json.dumps(config_data, ensure_ascii=False)
+    await config.save()
+
+    return await get_default_states_config(section_name=section_name)
+
+
 async def get_task_config(task_id: str) -> dict[str, Any]:
     task = await TaskModel.get_or_none(task_id=task_id)
     if task is None:
