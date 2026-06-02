@@ -13,6 +13,7 @@ from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
 from .controllers.train import router as train_router
 from .controllers.resource import router as resource_router
+from .controllers.obtainer import router as obtainer_router
 
 import os
 import signal
@@ -65,6 +66,7 @@ app.include_router(starter_router, prefix="/starter", tags=["starter"])
 app.include_router(task_router, prefix="/task", tags=["task"])
 app.include_router(train_router, prefix="/train", tags=["train"])
 app.include_router(resource_router, prefix="/resource", tags=["resource"])
+app.include_router(obtainer_router, prefix="/obtainer", tags=["obtainer"])
 
 app.mount(
     "/assets",
