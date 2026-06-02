@@ -14,11 +14,12 @@ sys.modules.setdefault("colorlog", types.SimpleNamespace(ColoredFormatter=loggin
 
 from loopai.obtainercli.index import index_embeddings
 from loopai.obtainercli.ingest import ingest_path
+from loopai.obtainercli.config import write_lake_config
 from loopai.obtainercli.lake_status import lake_status
 from loopai.obtainercli.tags import list_tags
 from loopai.obtainercli.lake_init import init_lake
 from loopai.obtainercli.sample import sample_records
-from loopai.obtainercli.tables import read_table
+from loopai.obtainercli.tables import append_rows, read_table
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -41,6 +42,7 @@ def test_init_lake_uses_external_root_and_repo_pointer(tmp_path: Path) -> None:
     assert (lake_root / "lake.yaml").exists()
     assert link_path.exists()
     assert f"root: {lake_root}" in link_path.read_text(encoding="utf-8")
+    assert "catalog: local-parquet" in link_path.read_text(encoding="utf-8")
     for table in [
         "datasets",
         "assets",
@@ -52,7 +54,71 @@ def test_init_lake_uses_external_root_and_repo_pointer(tmp_path: Path) -> None:
         "ingest_runs",
         "exports",
     ]:
-        assert (lake_root / "warehouse" / "loopai.db" / table / "data.jsonl").exists()
+        table_root = lake_root / "warehouse" / "loopai.db" / table
+        assert (table_root / "data").is_dir()
+        assert (table_root / "_schema.json").exists()
+
+
+def test_parquet_catalog_writes_parquet_parts_and_reads_rows(tmp_path: Path) -> None:
+    lake_root = tmp_path / "lake"
+    link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    init_lake(root=lake_root, link_path=link_path, if_not_exists=True)
+    input_path = tmp_path / "input" / "records.jsonl"
+    _write_jsonl(
+        input_path,
+        [
+            {
+                "text": "parquet record",
+                "source_uri": "file://parquet.txt",
+                "messages": [{"role": "user", "content": "hello"}],
+                "quality_findings": [
+                    {
+                        "finding_type": "diversity",
+                        "severity": "info",
+                        "score": 0.9,
+                        "details": {"metric": "distinct_3"},
+                    }
+                ],
+            }
+        ],
+    )
+
+    result = ingest_path(
+        lake=link_path,
+        input_path=input_path,
+        dataset="parquet_seed",
+        stage="silver",
+        domain="code",
+        task_type="SFT",
+        processing_level="postprocessed_high_quality",
+        source_kind="synthetic",
+        tags=["quality=high", "generator=test"],
+        idempotency_key="parquet-seed",
+    )
+
+    records = read_table(lake_root, "records")
+    tags = read_table(lake_root, "record_tags")
+    findings = read_table(lake_root, "quality_findings")
+    parquet_parts = list((lake_root / "warehouse" / "loopai.db" / "records" / "data").glob("*.parquet"))
+    assert result["rows_written"] == 1
+    assert len(parquet_parts) == 1
+    assert not (lake_root / "warehouse" / "loopai.db" / "records" / "data.jsonl").exists()
+    assert records[0]["text"] == "parquet record"
+    assert records[0]["messages"] == [{"role": "user", "content": "hello"}]
+    assert records[0]["source_kind"] == "synthetic"
+    assert any(row["tag_name"] == "generator" and row["tag_value"] == "test" for row in tags)
+    assert findings[0]["details"] == {"metric": "distinct_3"}
+
+
+def test_jsonl_catalog_remains_supported_for_existing_lakes(tmp_path: Path) -> None:
+    lake_root = tmp_path / "jsonl-lake"
+    write_lake_config(lake_root / "lake.yaml", root=lake_root, catalog="local-jsonl")
+    append_rows(lake_root, "records", [{"record_id": "rec_1", "text": "legacy"}])
+
+    rows = read_table(lake_root, "records")
+
+    assert rows == [{"record_id": "rec_1", "text": "legacy"}]
+    assert (lake_root / "warehouse" / "loopai.db" / "records" / "data.jsonl").exists()
 
 
 def test_ingest_path_writes_records_tags_and_is_idempotent(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@
 
 本文档对应 v2 分支当前的 `loopai.obtainercli` 第一版实现。它的目标是把 Obtainer 的数据入湖、索引和出湖流程做成可被 CLI/Codex 稳定调用的接口。
 
-当前实现是 **local-jsonl catalog**：数据表以 JSONL 形式写在 lake root 下，接口和表语义按数据湖范式设计，后续可以替换为 Iceberg/Parquet catalog。本文只描述当前代码已经实现的能力。
+当前默认实现是 **local-parquet catalog**：表数据以 Parquet part 文件写在 lake root 下。旧的 `local-jsonl` catalog 仍保留为兼容路径，已有 JSONL lake 不会被强制迁移。
 
 ## 1. 环境准备
 
@@ -78,7 +78,7 @@ obtainercli lake init \
 ```yaml
 root: /mnt/paper2any/xbr/loopai0531/lakes/loopai-v2
 warehouse: /mnt/paper2any/xbr/loopai0531/lakes/loopai-v2/warehouse
-catalog: local-jsonl
+catalog: local-parquet
 namespace: loopai
 auto_embed: true
 embedding_provider: openai-compatible
@@ -98,15 +98,33 @@ lake-root/
   lake.yaml
   warehouse/
     loopai.db/
-      datasets/data.jsonl
-      assets/data.jsonl
-      records/data.jsonl
-      record_tags/data.jsonl
-      record_lineage/data.jsonl
-      embeddings/data.jsonl
-      quality_findings/data.jsonl
-      ingest_runs/data.jsonl
-      exports/data.jsonl
+      datasets/
+        _schema.json
+        data/*.parquet
+      assets/
+        _schema.json
+        data/*.parquet
+      records/
+        _schema.json
+        data/*.parquet
+      record_tags/
+        _schema.json
+        data/*.parquet
+      record_lineage/
+        _schema.json
+        data/*.parquet
+      embeddings/
+        _schema.json
+        data/*.parquet
+      quality_findings/
+        _schema.json
+        data/*.parquet
+      ingest_runs/
+        _schema.json
+        data/*.parquet
+      exports/
+        _schema.json
+        data/*.parquet
   staging/
   quarantine/
   reports/
@@ -617,7 +635,8 @@ obtainercli sample \
 尚未实现或后续可替换：
 
 - Iceberg/PyIceberg catalog
-- Parquet column stats 和真实分区裁剪
+- 跨 part 的 compaction 和 Parquet 分区布局优化
+- Parquet column stats 驱动的查询裁剪
 - 向量库 ANN 检索
 - 自动语义去重删除
 - 多 writer 高并发事务

@@ -24,7 +24,6 @@ def init_lake(
     if lake_root.exists() and any(lake_root.iterdir()) and not if_not_exists:
         raise FileExistsError(f"Lake root already exists: {lake_root}")
     lake_root.mkdir(parents=True, exist_ok=True)
-    ensure_tables(lake_root)
     config_kwargs = {
         "auto_embed": auto_embed,
         "embedding_provider": embedding_provider,
@@ -37,11 +36,13 @@ def init_lake(
     write_lake_config(lake_root / "lake.yaml", root=lake_root, **config_kwargs)
     if link_path is not None:
         write_lake_config(Path(link_path), root=lake_root, **config_kwargs)
+    ensure_tables(lake_root)
     return {
         "ok": True,
         "command": "lake init",
         "lake_root": str(lake_root),
         "lake_config": str(link_path) if link_path else str(lake_root / "lake.yaml"),
+        "catalog": "local-parquet",
         "status": "success",
         "warnings": [],
         "auto_embed": auto_embed,
