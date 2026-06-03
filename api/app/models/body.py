@@ -38,6 +38,7 @@ class TaskItem(BaseModel):
     name: Optional[str] = None
     config: Optional[str] = None
     state: Optional[str] = None
+    ai_thread_id: Optional[str] = None
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
 
@@ -58,12 +59,3 @@ class StarterCodexRequest(BaseModel):
     prompt: str
     workspace: Optional[str] = None
     session_id: Optional[str] = None
-
-
-class StarterCodexSessionInputRequest(BaseModel):
-    session_id: str
-    values: dict
-
-
-class StarterCodexSessionResumeRequest(BaseModel):
-    session_id: str

@@ -21,6 +21,7 @@ class TaskModel(BaseModel):
     name = fields.CharField(max_length=255)
     config = fields.TextField(null=True)
     state = fields.TextField(null=True)
+    ai_thread_id = fields.CharField(max_length=255, null=True)
     createdAt = fields.DatetimeField(auto_now_add=True)
     updatedAt = fields.DatetimeField(auto_now=True)
 

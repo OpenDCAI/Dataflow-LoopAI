@@ -1,19 +1,15 @@
 import os
 import json
-import uuid
 import asyncio
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from tortoise.expressions import Q
 from ..models.body import (
     response_body,
-    ConfigModel,
     StarterCodexRequest,
-    StarterCodexSessionInputRequest,
-    StarterCodexSessionResumeRequest,
 )
 from ..models.db_models import StarterConfig, TaskModel
-from ..services.starter import CodexStarterService, codex_session_store, load_starter_system_config
+from ..services.starter import CodexStarterService, codex_session_store, load_starter_system_config, load_codex_thread_history
 from ..services.task import build_initial_task_state
 from ..utils.monitor.hw_stat import get_nvidia_gpu_usage, get_huawei_npu_usage, get_cpu_usage, get_memory_usage
 
@@ -25,67 +21,153 @@ DB_PATH = os.path.join(BASE_DIR, "db", "db.sqlite3")
 router = APIRouter(tags=["starter"])
 
 
-@router.post("/codex/stream", operation_id="starterCodexStream", summary="Run codex-sdk with SSE streaming")
+@router.post("/codex/stream", operation_id="starterCodexStream", summary="Submit codex prompt")
 async def starter_codex_stream(req: StarterCodexRequest):
     system_config = await load_starter_system_config()
     service = CodexStarterService(
         system_config=system_config, session_store=codex_session_store)
-    return StreamingResponse(
-        service.stream(
-            prompt=req.prompt,
-            workspace=req.workspace,
-            session_id=req.session_id,
-            env_overrides={
-                'DB_PATH': DB_PATH
-            },
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
+    payload = await service.submit(
+        prompt=req.prompt,
+        workspace=req.workspace,
+        session_id=req.session_id,
+        env_overrides={
+            'DB_PATH': DB_PATH
         },
     )
+    message = "Codex prompt queued" if payload.get("type") == "queued" else "Codex prompt submitted"
+    return response_body(message=message, data=payload)()
 
 
 @router.get("/codex/session/{session_id}", operation_id="starterCodexSession", summary="Get codex session state")
 async def starter_codex_session(session_id: str):
     session = codex_session_store.get(session_id)
+    task = await TaskModel.get_or_none(task_id=session_id)
+    codex_history = None
+    persisted_thread_id = None
+    if task and task.ai_thread_id:
+        persisted_thread_id = task.ai_thread_id
+    elif session and session.get("codex_thread_id"):
+        persisted_thread_id = session.get("codex_thread_id")
+    if persisted_thread_id:
+        codex_history = load_codex_thread_history(str(persisted_thread_id))
     if session is None:
-        return response_body(code=404, status="error", message="Codex session not found")()
-    return response_body(data=session)()
+        return response_body(
+            message="Codex session not started",
+            data={
+                "session_id": session_id,
+                "status": "not_started",
+                "ai_thread_id": task.ai_thread_id if task else None,
+                "conversation": (codex_history or {}).get("conversation", []),
+                "conversation_source": (codex_history or {}).get("source", "starter"),
+                "conversation_path": (codex_history or {}).get("path"),
+                "events": [],
+                "pending_prompts": [],
+                "active_prompt": None,
+                "final_result": None,
+                "last_error": None,
+            },
+        )()
+    payload = dict(session)
+    payload["ai_thread_id"] = task.ai_thread_id if task else payload.get("codex_thread_id")
+    if codex_history and codex_history.get("conversation"):
+        payload["conversation"] = codex_history["conversation"]
+        payload["conversation_source"] = codex_history.get("source", "codex")
+        payload["conversation_path"] = codex_history.get("path")
+    else:
+        payload["conversation_source"] = "starter"
+    return response_body(data=payload)()
 
 
-@router.post("/codex/session/input", operation_id="starterCodexSessionInput", summary="Store codex session input")
-async def starter_codex_session_input(req: StarterCodexSessionInputRequest):
-    session = codex_session_store.merge_inputs(req.session_id, req.values)
+@router.get("/codex/session/{session_id}/stream", operation_id="starterCodexSessionStream", summary="Stream codex session events")
+async def starter_codex_session_stream(session_id: str):
+    session = codex_session_store.get(session_id)
     if session is None:
-        return response_body(code=404, status="error", message="Codex session not found")()
-    codex_session_store.update(req.session_id, status="input_received")
-    return response_body(message="Codex session input stored", data=session)()
+        return response_body(
+            message="Codex session not started",
+            data={
+                "session_id": session_id,
+                "status": "not_started",
+            },
+        )()
+    async def event_stream():
+        last_index = 0
 
+        def wrap_sse_data(data):
+            return f"data: {json.dumps(response_body(data=data)(), ensure_ascii=False)}\n\n"
 
-@router.post("/codex/session/resume", operation_id="starterCodexSessionResume", summary="Resume codex session")
-async def starter_codex_session_resume(req: StarterCodexSessionResumeRequest):
-    session = codex_session_store.get(req.session_id)
-    if session is None:
-        return response_body(code=404, status="error", message="Codex session not found")()
+        while True:
+            current = codex_session_store.get(session_id)
+            if current is None:
+                yield response_body(
+                    code=404,
+                    status="error",
+                    message="Codex session not found",
+                ).stream()
+                return
 
-    system_config = await load_starter_system_config()
-    service = CodexStarterService(
-        system_config=system_config, session_store=codex_session_store)
+            events = current.get("events", [])
+            while last_index < len(events):
+                payload = events[last_index].get("payload", {})
+                yield wrap_sse_data(payload)
+                last_index += 1
+
+            if current.get("status") not in {"submitted", "running", "finishing"}:
+                yield wrap_sse_data({
+                    "type": "session.snapshot",
+                    "session_id": session_id,
+                    "session": current,
+                })
+                return
+
+            await asyncio.sleep(0.5)
+
+    if session.get("status") not in {"submitted", "running", "finishing"}:
+        return response_body(
+            message="Codex session is not running",
+            data={
+                "session_id": session_id,
+                "status": session.get("status") or "not_started",
+            },
+        )()
+
     return StreamingResponse(
-        service.stream(
-            prompt=session.get("prompt") or "",
-            workspace=session.get("workspace"),
-            session_id=req.session_id,
-            env_overrides=session.get("env_overrides"),
-        ),
+        event_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
         },
     )
+
+
+@router.post("/codex/session/{session_id}/reset", operation_id="starterCodexSessionReset", summary="Reset codex session history")
+async def starter_codex_session_reset(session_id: str):
+    session = codex_session_store.get(session_id)
+    task = await TaskModel.get_or_none(task_id=session_id)
+    if session is None and task is None:
+        return response_body(code=404, status="error", message="Codex session not found")()
+    if session is not None and session.get("status") in {"submitted", "running", "finishing"}:
+        return response_body(code=409, status="error", message="Codex session is still running and cannot be reset")()
+    if task is not None:
+        task.ai_thread_id = None
+        await task.save()
+    if session is not None:
+        session = codex_session_store.reset(session_id)
+    else:
+        session = {
+            "session_id": session_id,
+            "status": "created",
+            "conversation": [],
+            "events": [],
+            "pending_prompts": [],
+            "active_prompt": None,
+            "final_result": None,
+            "last_error": None,
+            "ai_thread_id": None,
+        }
+    if isinstance(session, dict):
+        session["ai_thread_id"] = None
+    return response_body(message="Codex session reset", data=session)()
 
 
 async def load_config(task_id=None):

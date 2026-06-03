@@ -41,6 +41,7 @@ async def create_task(taskItem: TaskItem):
         'name': task.name,
         'config': task.config,
         'state': task.state,
+        'ai_thread_id': task.ai_thread_id,
         'createdAt': task.createdAt,
         'updatedAt': task.updatedAt,
     })()
@@ -57,6 +58,7 @@ async def get_task(task_id: str):
         'name': task.name,
         'config': task.config,
         'state': task.state,
+        'ai_thread_id': task.ai_thread_id,
         'createdAt': task.createdAt,
         'updatedAt': task.updatedAt,
     })()
@@ -80,6 +82,7 @@ async def get_tasks(search: str = None, offset: int = 0, limit: int = 50):
         "id": t.id,
         "task_id": t.task_id,
         "name": t.name,
+        "ai_thread_id": t.ai_thread_id,
         "createdAt": t.createdAt,
         "updatedAt": t.updatedAt,
     } for t in tasks])()
@@ -105,6 +108,7 @@ async def update_task(taskItem: TaskItem):
         'name': task.name,
         'config': task.config,
         'state': task.state,
+        'ai_thread_id': task.ai_thread_id,
         'createdAt': task.createdAt,
         'updatedAt': task.updatedAt,
     })()
