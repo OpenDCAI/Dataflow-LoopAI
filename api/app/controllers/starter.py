@@ -14,6 +14,7 @@ from ..models.body import (
 )
 from ..models.db_models import StarterConfig, TaskModel
 from ..services.starter import CodexStarterService, codex_session_store, load_starter_system_config
+from ..services.task import build_initial_task_state
 from ..utils.monitor.hw_stat import get_nvidia_gpu_usage, get_huawei_npu_usage, get_cpu_usage, get_memory_usage
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -99,6 +100,37 @@ async def load_config(task_id=None):
             return None
         config = taskItem.config
     return json.loads(config)
+
+
+@router.get("/agent/status", operation_id="getAgentStatus", summary="Get agent status by task_id")
+async def get_agent_status(task_id: str):
+    task = await TaskModel.get_or_none(task_id=task_id)
+    if not task:
+        return response_body(code=404, status='error', message='任务项不存在')()
+
+    try:
+        state = json.loads(task.state) if task.state else None
+    except Exception:
+        state = None
+
+    if not isinstance(state, dict):
+        state = await build_initial_task_state(task_id)
+
+    state["task_id"] = task_id
+    state.setdefault("messages", [])
+
+    return response_body(data={
+        "running": False,
+        "event_streaming": "not_ready",
+        "waiting_llm": False,
+        "current": state.get("current"),
+        "running_tasks": [],
+        "interrupt_value": None,
+        "state": state,
+        "custom_info": None,
+        "updated_custom_info": None,
+        "stream_message": None,
+    })()
 
 
 @router.get("/agent/hardware_usage", operation_id='getHardwareUsage', summary="Get the hardware usage")

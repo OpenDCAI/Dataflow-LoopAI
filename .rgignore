@@ -1,0 +1,10 @@
+ui/node_modules/
+api/dist/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+codex_output/

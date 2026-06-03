@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -15,6 +16,10 @@ from loopai.schema.states import get_state_config_schema
 
 def sqlite_db_url(db_path: str | os.PathLike[str]) -> str:
     return f"sqlite://{Path(db_path).resolve()}"
+
+
+def _sqlite_connect(db_path: str | os.PathLike[str]) -> sqlite3.Connection:
+    return sqlite3.connect(Path(db_path).resolve(), timeout=5)
 
 
 async def init_sqlite_db(db_path: str | os.PathLike[str]) -> None:
@@ -152,6 +157,182 @@ def _merge_state_section(default_states: dict[str, Any], section_name: str, upda
     return default_states
 
 
+def _ensure_default_starter_config_sync(
+    db_path: str | os.PathLike[str],
+    starter_yaml_path: str | os.PathLike[str],
+) -> tuple[int, str, str]:
+    con = _sqlite_connect(db_path)
+    try:
+        row = con.execute("select id, name, config from starterconfig where name=?", ("starter",)).fetchone()
+        if row is not None:
+            return row
+
+        cfg = OmegaConf.load(str(starter_yaml_path))
+        config_obj = OmegaConf.to_container(cfg, resolve=True)
+        config_json = json.dumps(config_obj, ensure_ascii=False)
+        cur = con.execute(
+            "insert into starterconfig(name, config) values(?, ?)",
+            ("starter", config_json),
+        )
+        con.commit()
+        return (int(cur.lastrowid), "starter", config_json)
+    finally:
+        con.close()
+
+
+def _get_default_starter_row_sync(
+    db_path: str | os.PathLike[str],
+    starter_yaml_path: str | os.PathLike[str] | None = None,
+) -> tuple[int, str, str]:
+    if starter_yaml_path is not None:
+        return _ensure_default_starter_config_sync(db_path, starter_yaml_path)
+
+    con = _sqlite_connect(db_path)
+    try:
+        row = con.execute("select id, name, config from starterconfig where name=?", ("starter",)).fetchone()
+    finally:
+        con.close()
+    if row is None:
+        raise ValueError("starter config not found")
+    return row
+
+
+def _get_task_row_sync(db_path: str | os.PathLike[str], task_id: str) -> tuple[int, str, str, str]:
+    con = _sqlite_connect(db_path)
+    try:
+        row = con.execute(
+            "select id, task_id, name, config from taskmodel where task_id=?",
+            (task_id,),
+        ).fetchone()
+    finally:
+        con.close()
+    if row is None:
+        raise ValueError(f"task not found: {task_id}")
+    return row
+
+
+def get_default_system_config_sync(
+    db_path: str | os.PathLike[str],
+    starter_yaml_path: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    config_id, name, raw_config = _get_default_starter_row_sync(db_path, starter_yaml_path)
+    config_data = json.loads(raw_config or "{}")
+    return {
+        "id": config_id,
+        "name": name,
+        "config": _normalize_system_config(config_data.get("system", {})),
+    }
+
+
+def get_default_states_config_sync(
+    db_path: str | os.PathLike[str],
+    starter_yaml_path: str | os.PathLike[str] | None = None,
+    section_name: str | None = None,
+) -> dict[str, Any]:
+    config_id, name, raw_config = _get_default_starter_row_sync(db_path, starter_yaml_path)
+    config_data = json.loads(raw_config or "{}")
+    states_config = _build_state_config(config_data.get("default_states", {}))
+    return {
+        "id": config_id,
+        "name": name,
+        "config": _extract_state_section(states_config, section_name) if section_name else states_config,
+    }
+
+
+def update_default_state_section_config_sync(
+    db_path: str | os.PathLike[str],
+    section_name: str,
+    updates: dict[str, Any],
+    starter_yaml_path: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    config_id, _, raw_config = _get_default_starter_row_sync(db_path, starter_yaml_path)
+    config_data = json.loads(raw_config or "{}")
+    default_states = config_data.setdefault("default_states", {})
+    _merge_state_section(default_states, section_name, updates)
+
+    con = _sqlite_connect(db_path)
+    try:
+        con.execute(
+            "update starterconfig set config=? where id=?",
+            (json.dumps(config_data, ensure_ascii=False), config_id),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    return get_default_states_config_sync(db_path, section_name=section_name)
+
+
+def get_task_config_sync(db_path: str | os.PathLike[str], task_id: str) -> dict[str, Any]:
+    row_id, row_task_id, name, raw_config = _get_task_row_sync(db_path, task_id)
+    config_data = json.loads(raw_config or "{}")
+    return {
+        "id": row_id,
+        "task_id": row_task_id,
+        "name": name,
+        "config": config_data,
+    }
+
+
+def get_task_system_config_sync(db_path: str | os.PathLike[str], task_id: str) -> dict[str, Any]:
+    task_config = get_task_config_sync(db_path, task_id)
+    system_config = task_config["config"].get("system", {})
+    return {
+        "id": task_config["id"],
+        "task_id": task_config["task_id"],
+        "name": task_config["name"],
+        "config": _normalize_system_config(system_config),
+    }
+
+
+def get_task_states_config_sync(
+    db_path: str | os.PathLike[str],
+    task_id: str,
+    section_name: str | None = None,
+) -> dict[str, Any]:
+    task_config = get_task_config_sync(db_path, task_id)
+    states_data = task_config["config"].get("default_states", {})
+    states_config = _build_state_config(states_data)
+    return {
+        "id": task_config["id"],
+        "task_id": task_config["task_id"],
+        "name": task_config["name"],
+        "config": _extract_state_section(states_config, section_name) if section_name else states_config,
+    }
+
+
+def get_task_state_section_config_sync(
+    db_path: str | os.PathLike[str],
+    task_id: str,
+    section_name: str,
+) -> dict[str, Any]:
+    return get_task_states_config_sync(db_path, task_id, section_name=section_name)
+
+
+def update_task_state_section_config_sync(
+    db_path: str | os.PathLike[str],
+    task_id: str,
+    section_name: str,
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    row_id, _, _, raw_config = _get_task_row_sync(db_path, task_id)
+    config_data = json.loads(raw_config or "{}")
+    default_states = config_data.setdefault("default_states", {})
+    _merge_state_section(default_states, section_name, updates)
+
+    con = _sqlite_connect(db_path)
+    try:
+        con.execute(
+            "update taskmodel set config=? where id=?",
+            (json.dumps(config_data, ensure_ascii=False), row_id),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    return get_task_states_config_sync(db_path, task_id, section_name=section_name)
+
+
 async def ensure_default_starter_config(
     starter_yaml_path: str | os.PathLike[str],
 ) -> StarterConfig:
@@ -171,37 +352,20 @@ async def ensure_default_starter_config(
 async def get_default_system_config(
     starter_yaml_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
-    if starter_yaml_path is not None:
-        config = await ensure_default_starter_config(starter_yaml_path)
-    else:
-        config = await StarterConfig.filter(name="starter").first()
-        if config is None:
-            raise ValueError("starter config not found")
-    config_data = json.loads(config.config or "{}")
-    return {
-        "id": config.id,
-        "name": config.name,
-        "config": _normalize_system_config(config_data.get("system", {})),
-    }
+    db_path = os.getenv("DB_PATH")
+    if not db_path:
+        raise ValueError("DB_PATH environment variable is required")
+    return get_default_system_config_sync(db_path, starter_yaml_path)
 
 
 async def get_default_states_config(
     starter_yaml_path: str | os.PathLike[str] | None = None,
     section_name: str | None = None,
 ) -> dict[str, Any]:
-    if starter_yaml_path is not None:
-        config = await ensure_default_starter_config(starter_yaml_path)
-    else:
-        config = await StarterConfig.filter(name="starter").first()
-        if config is None:
-            raise ValueError("starter config not found")
-    config_data = json.loads(config.config or "{}")
-    states_config = _build_state_config(config_data.get("default_states", {}))
-    return {
-        "id": config.id,
-        "name": config.name,
-        "config": _extract_state_section(states_config, section_name) if section_name else states_config,
-    }
+    db_path = os.getenv("DB_PATH")
+    if not db_path:
+        raise ValueError("DB_PATH environment variable is required")
+    return get_default_states_config_sync(db_path, starter_yaml_path, section_name)
 
 
 async def update_default_state_section_config(
@@ -209,61 +373,38 @@ async def update_default_state_section_config(
     updates: dict[str, Any],
     starter_yaml_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
-    if starter_yaml_path is not None:
-        config = await ensure_default_starter_config(starter_yaml_path)
-    else:
-        config = await StarterConfig.filter(name="starter").first()
-        if config is None:
-            raise ValueError("starter config not found")
-
-    config_data = json.loads(config.config or "{}")
-    default_states = config_data.setdefault("default_states", {})
-    _merge_state_section(default_states, section_name, updates)
-
-    config.config = json.dumps(config_data, ensure_ascii=False)
-    await config.save()
-
-    return await get_default_states_config(section_name=section_name)
+    db_path = os.getenv("DB_PATH")
+    if not db_path:
+        raise ValueError("DB_PATH environment variable is required")
+    return update_default_state_section_config_sync(db_path, section_name, updates, starter_yaml_path)
 
 
 async def get_task_config(task_id: str) -> dict[str, Any]:
-    task = await TaskModel.get_or_none(task_id=task_id)
-    if task is None:
-        raise ValueError(f"task not found: {task_id}")
-    config_data = json.loads(task.config or "{}")
-    return {
-        "id": task.id,
-        "task_id": task.task_id,
-        "name": task.name,
-        "config": config_data,
-    }
+    db_path = os.getenv("DB_PATH")
+    if not db_path:
+        raise ValueError("DB_PATH environment variable is required")
+    return get_task_config_sync(db_path, task_id)
 
 
 async def get_task_system_config(task_id: str) -> dict[str, Any]:
-    task_config = await get_task_config(task_id)
-    system_config = task_config["config"].get("system", {})
-    return {
-        "id": task_config["id"],
-        "task_id": task_config["task_id"],
-        "name": task_config["name"],
-        "config": _normalize_system_config(system_config),
-    }
+    db_path = os.getenv("DB_PATH")
+    if not db_path:
+        raise ValueError("DB_PATH environment variable is required")
+    return get_task_system_config_sync(db_path, task_id)
 
 
 async def get_task_states_config(task_id: str, section_name: str | None = None) -> dict[str, Any]:
-    task_config = await get_task_config(task_id)
-    states_data = task_config["config"].get("default_states", {})
-    states_config = _build_state_config(states_data)
-    return {
-        "id": task_config["id"],
-        "task_id": task_config["task_id"],
-        "name": task_config["name"],
-        "config": _extract_state_section(states_config, section_name) if section_name else states_config,
-    }
+    db_path = os.getenv("DB_PATH")
+    if not db_path:
+        raise ValueError("DB_PATH environment variable is required")
+    return get_task_states_config_sync(db_path, task_id, section_name)
 
 
 async def get_task_state_section_config(task_id: str, section_name: str) -> dict[str, Any]:
-    return await get_task_states_config(task_id, section_name=section_name)
+    db_path = os.getenv("DB_PATH")
+    if not db_path:
+        raise ValueError("DB_PATH environment variable is required")
+    return get_task_state_section_config_sync(db_path, task_id, section_name)
 
 
 async def update_task_state_section_config(
@@ -271,15 +412,7 @@ async def update_task_state_section_config(
     section_name: str,
     updates: dict[str, Any],
 ) -> dict[str, Any]:
-    task = await TaskModel.get_or_none(task_id=task_id)
-    if task is None:
-        raise ValueError(f"task not found: {task_id}")
-
-    config_data = json.loads(task.config or "{}")
-    default_states = config_data.setdefault("default_states", {})
-    _merge_state_section(default_states, section_name, updates)
-
-    task.config = json.dumps(config_data, ensure_ascii=False)
-    await task.save()
-
-    return await get_task_states_config(task_id, section_name=section_name)
+    db_path = os.getenv("DB_PATH")
+    if not db_path:
+        raise ValueError("DB_PATH environment variable is required")
+    return update_task_state_section_config_sync(db_path, task_id, section_name, updates)

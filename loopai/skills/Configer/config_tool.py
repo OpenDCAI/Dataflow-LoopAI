@@ -87,6 +87,31 @@ async def get_configer_state_schema_async(
     language: str = "zh",
     section_name: str | None = None,
 ) -> dict[str, Any]:
+    return get_configer_state_schema(language, section_name)
+
+
+async def get_configer_state_config_async(
+    section_name: str,
+    field_name: str | None = None,
+) -> dict[str, Any]:
+    return get_configer_state_config(section_name, field_name)
+
+
+async def update_configer_state_config_async(
+    section_name: str,
+    updates: str | dict[str, Any],
+) -> dict[str, Any]:
+    return update_configer_state_config(section_name, updates)
+
+
+def _run_async(coro: Any) -> Any:
+    return asyncio.run(coro)
+
+
+def get_configer_state_schema(
+    language: str = "zh",
+    section_name: str | None = None,
+) -> dict[str, Any]:
     try:
         from loopai.schema.states import get_state_config_schema
     except Exception as exc:
@@ -99,28 +124,20 @@ async def get_configer_state_schema_async(
             exc = ValueError(f"unknown state section: {section_name}")
             code = ErrorCode.INVALID_INPUT if ErrorCode else "INVALID_INPUT"
             return build_error_payload(exc, code=code, recoverable=False, message="Requested state section does not exist.")
-        states_schema = {
-            section_name: states_schema[section_name],
-        }
+        states_schema = {section_name: states_schema[section_name]}
 
     return build_success_payload(
-        data={
-            "states": states_schema,
-        },
+        data={"states": states_schema},
         message="Non-system state schema loaded.",
     )
 
 
-async def get_configer_state_config_async(
+def get_configer_state_config(
     section_name: str,
     field_name: str | None = None,
 ) -> dict[str, Any]:
     try:
-        from loopai.common.db_tool import (
-            get_default_states_config,
-            get_task_states_config,
-            sqlite_db_session,
-        )
+        from loopai.common.db_tool import get_default_states_config_sync, get_task_states_config_sync
 
         db_path = _get_db_path_from_env()
         task_id = _get_task_id_from_env()
@@ -129,16 +146,15 @@ async def get_configer_state_config_async(
         return build_error_payload(exc, code=code, recoverable=False, message="Invalid Configer read request.")
 
     try:
-        async with sqlite_db_session(db_path):
-            if task_id:
-                current_states = await get_task_states_config(task_id, section_name=section_name)
-                scope = "task"
-            else:
-                current_states = await get_default_states_config(section_name=section_name)
-                scope = "default"
+        if task_id:
+            current_states = get_task_states_config_sync(db_path, task_id, section_name=section_name)
+            scope = "task"
+        else:
+            current_states = get_default_states_config_sync(db_path, section_name=section_name)
+            scope = "default"
 
-            section_config = current_states["config"]
-            result_config = _extract_field_config(section_name, section_config, field_name)
+        section_config = current_states["config"]
+        result_config = _extract_field_config(section_name, section_config, field_name)
     except Exception as exc:
         code = ErrorCode.CONFIG_ERROR if ErrorCode else "CONFIG_ERROR"
         return build_error_payload(exc, code=code, recoverable=True, message="Failed to load non-system state config.")
@@ -155,17 +171,16 @@ async def get_configer_state_config_async(
     )
 
 
-async def update_configer_state_config_async(
+def update_configer_state_config(
     section_name: str,
     updates: str | dict[str, Any],
 ) -> dict[str, Any]:
     try:
         from loopai.common.db_tool import (
-            get_default_states_config,
-            get_task_states_config,
-            sqlite_db_session,
-            update_default_state_section_config,
-            update_task_state_section_config,
+            get_default_states_config_sync,
+            get_task_states_config_sync,
+            update_default_state_section_config_sync,
+            update_task_state_section_config_sync,
         )
 
         db_path = _get_db_path_from_env()
@@ -176,24 +191,23 @@ async def update_configer_state_config_async(
         return build_error_payload(exc, code=code, recoverable=False, message="Invalid Configer update request.")
 
     try:
-        async with sqlite_db_session(db_path):
-            if task_id:
-                current_states = await get_task_states_config(task_id)
-                scope = "task"
-            else:
-                current_states = await get_default_states_config()
-                scope = "default"
+        if task_id:
+            current_states = get_task_states_config_sync(db_path, task_id)
+            scope = "task"
+        else:
+            current_states = get_default_states_config_sync(db_path)
+            scope = "default"
 
-            validated_updates = _validate_section_updates_against_schema(
-                section_name,
-                parsed_updates,
-                current_states["config"],
-            )
+        validated_updates = _validate_section_updates_against_schema(
+            section_name,
+            parsed_updates,
+            current_states["config"],
+        )
 
-            if task_id:
-                updated = await update_task_state_section_config(task_id, section_name, validated_updates)
-            else:
-                updated = await update_default_state_section_config(section_name, validated_updates)
+        if task_id:
+            updated = update_task_state_section_config_sync(db_path, task_id, section_name, validated_updates)
+        else:
+            updated = update_default_state_section_config_sync(db_path, section_name, validated_updates)
     except Exception as exc:
         code = ErrorCode.CONFIG_ERROR if ErrorCode else "CONFIG_ERROR"
         return build_error_payload(exc, code=code, recoverable=True, message="Failed to update non-system state config.")
@@ -207,28 +221,3 @@ async def update_configer_state_config_async(
         },
         message="Non-system state config updated.",
     )
-
-
-def _run_async(coro: Any) -> Any:
-    return asyncio.run(coro)
-
-
-def get_configer_state_schema(
-    language: str = "zh",
-    section_name: str | None = None,
-) -> dict[str, Any]:
-    return _run_async(get_configer_state_schema_async(language=language, section_name=section_name))
-
-
-def get_configer_state_config(
-    section_name: str,
-    field_name: str | None = None,
-) -> dict[str, Any]:
-    return _run_async(get_configer_state_config_async(section_name=section_name, field_name=field_name))
-
-
-def update_configer_state_config(
-    section_name: str,
-    updates: str | dict[str, Any],
-) -> dict[str, Any]:
-    return _run_async(update_configer_state_config_async(section_name=section_name, updates=updates))

@@ -17,6 +17,35 @@
 - `system` 配置修改
 - 训练、评测、分析、爬取、数据构造本身
 
+## 首选动作
+
+当用户的意图明显是“读/改某个配置项”时，不要先在整个仓库里搜索字段名。
+
+优先顺序必须是：
+
+1. 直接使用本 skill 里列出的函数
+2. 如需确认字段约束，先调用 `get_configer_state_schema(section_name=...)`
+3. 如需确认当前值，调用 `get_configer_state_config(section_name=..., field_name=...)`
+4. 如需修改，直接调用 `update_configer_state_config(section_name, updates)`
+
+不要先执行这类全仓搜索：
+
+```bash
+rg -n "eval_task_type|judger|configer" -S .
+```
+
+原因：
+
+- 仓库较大，且包含 `ui/node_modules` 等目录
+- 全仓搜索很容易拖慢首轮响应，甚至让调用看起来像“卡住”
+- 对于明确的配置请求，这类搜索没有必要
+
+如果确实需要搜索，也要限制范围，只查必要文件，例如：
+
+```bash
+rg -n "eval_task_type" skills/configer loopai/skills/Configer api/app -S
+```
+
 ## 背景知识
 
 LoopAI 的配置分两层：
@@ -48,6 +77,12 @@ from loopai.skills.Configer import (
 ```
 
 一般优先用同步版本；只有在你当前上下文本身就是 async 时再用 async 版本。
+
+当前实现说明：
+
+- `get_configer_state_config(...)` / `update_configer_state_config(...)` 已改为直接走同步 `sqlite3` 读写
+- `*_async(...)` 版本目前只是为了兼容 async 调用方而保留的 `async def` 外壳，底层仍复用同一套同步配置读写逻辑
+- 因此不要再把这几个接口理解成“真正的异步 SQLite 驱动调用”
 
 ### 1. 获取 schema
 
@@ -158,6 +193,12 @@ PY
 - `python3 -u`：关闭 stdout 缓冲，尽快把输出刷出来
 - `print(..., flush=True)`：确保输出及时可见
 - `json.dumps(..., default=str)`：避免对象序列化失败
+
+补充说明：
+
+- 现在这组配置接口的底层实现是同步 `sqlite3`，正常情况下不会再因为 `aiosqlite` / `Tortoise` 链路而卡住
+- 这里仍然推荐保留 `timeout`，原因是 shell / sdk 子进程本身仍可能因为环境、锁竞争、解释器问题或调用链其他环节而挂起
+- 如果是在 async 路由或 async 函数里调用 `*_async(...)`，它可以正常 `await`，但底层依然是短时间同步 SQLite 读写；它不是高并发数据库接口
 
 ## 字段含义说明
 
@@ -329,7 +370,7 @@ PY
 排障顺序建议：
 
 1. 先用 `get_configer_state_config(...)` / `update_configer_state_config(...)`
-2. 如果 15-20 秒内没有返回，记录为“接口调用卡住 / 超时”
+2. 如果 15-20 秒内没有返回，优先判断是否是 shell 子进程、解释器环境、数据库锁或外层调用链问题
 3. 再只读检查 `.tables`、`.schema`、`SELECT ...`
 4. 向用户说明“接口链路异常”，不要把直接改库当成正常执行路径
 

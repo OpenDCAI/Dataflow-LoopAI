@@ -2,10 +2,10 @@ import os
 import json
 import uuid
 from fastapi import APIRouter
-from omegaconf import OmegaConf
 from tortoise.expressions import Q
 from ..models.body import response_body, TaskItem
 from ..models.db_models import TaskModel
+from ..services.task import build_initial_task_state, parse_task_state_overrides
 from ..utils.task.task import config_format
 
 router = APIRouter(tags=["task"])
@@ -20,14 +20,19 @@ async def create_task(taskItem: TaskItem):
     taskItem.task_id = task_id
     try:
         config = json.loads(taskItem.config)
-    except:
+    except Exception:
         return response_body(code=400, status='error', message='config格式错误')()
+    try:
+        state_overrides = parse_task_state_overrides(taskItem.state)
+        initial_state = await build_initial_task_state(task_id, state_overrides=state_overrides)
+    except Exception as exc:
+        return response_body(code=400, status='error', message=f'state格式错误: {exc}')()
     config = config_format(config, task_id)
     task = TaskModel(
         task_id=task_id,
         name=taskItem.name,
         config=json.dumps(config),
-        state=taskItem.state,
+        state=json.dumps(initial_state, ensure_ascii=False),
     )
     await task.save()
     return response_body(data={
