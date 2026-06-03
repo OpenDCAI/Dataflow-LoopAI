@@ -27,7 +27,7 @@ def _get_task_id_from_env() -> str | None:
     return None
 
 
-def _normalize_updates_payload(updates: str | dict[str, Any]) -> dict[str, Any]:
+def _normalize_section_updates_payload(updates: str | dict[str, Any]) -> dict[str, Any]:
     if isinstance(updates, str):
         payload = json.loads(updates)
     elif isinstance(updates, dict):
@@ -35,43 +35,52 @@ def _normalize_updates_payload(updates: str | dict[str, Any]) -> dict[str, Any]:
     else:
         raise TypeError("updates must be a JSON string or dict")
 
-    if "states" in payload:
-        payload = payload["states"]
-
     if not isinstance(payload, dict):
-        raise ValueError("updates payload must be a dict of state sections")
+        raise ValueError("updates payload must be a dict")
 
     return payload
 
 
-def _validate_updates_against_schema(
+def _validate_section_updates_against_schema(
+    section_name: str,
     updates: dict[str, Any],
     schema_config: dict[str, Any],
-) -> dict[str, dict[str, Any]]:
-    normalized: dict[str, dict[str, Any]] = {}
-    for section_name, section_updates in updates.items():
-        if section_name == "system":
-            raise ValueError("system section cannot be modified by Configer skill")
-        if section_name not in schema_config:
-            raise ValueError(f"unknown state section: {section_name}")
-        if not isinstance(section_updates, dict):
-            raise ValueError(f"section '{section_name}' must be a dict")
+) -> dict[str, Any]:
+    if section_name == "system":
+        raise ValueError("system section cannot be modified by Configer skill")
+    if section_name not in schema_config:
+        raise ValueError(f"unknown state section: {section_name}")
+    if not isinstance(updates, dict):
+        raise ValueError(f"section '{section_name}' updates must be a dict")
 
-        allowed_fields = set(schema_config[section_name].keys())
-        if section_name == "default":
-            blocked_fields = PROTECTED_DEFAULT_FIELDS
-        else:
-            blocked_fields = set()
+    allowed_fields = set(schema_config[section_name].keys())
+    if section_name == "default":
+        blocked_fields = PROTECTED_DEFAULT_FIELDS
+    else:
+        blocked_fields = set()
 
-        normalized_section: dict[str, Any] = {}
-        for field_name, field_value in section_updates.items():
-            if field_name in blocked_fields:
-                raise ValueError(f"field '{section_name}.{field_name}' cannot be modified by Configer skill")
-            if field_name not in allowed_fields:
-                raise ValueError(f"unknown config field: {section_name}.{field_name}")
-            normalized_section[field_name] = field_value
-        normalized[section_name] = normalized_section
-    return normalized
+    normalized_section: dict[str, Any] = {}
+    for field_name, field_value in updates.items():
+        if field_name in blocked_fields:
+            raise ValueError(f"field '{section_name}.{field_name}' cannot be modified by Configer skill")
+        if field_name not in allowed_fields:
+            raise ValueError(f"unknown config field: {section_name}.{field_name}")
+        normalized_section[field_name] = field_value
+    return normalized_section
+
+
+def _extract_field_config(
+    section_name: str,
+    section_config: Any,
+    field_name: str | None = None,
+) -> Any:
+    if field_name is None:
+        return section_config
+    if not isinstance(section_config, dict):
+        raise ValueError(f"section '{section_name}' does not support field lookup")
+    if field_name not in section_config:
+        raise ValueError(f"unknown config field: {section_name}.{field_name}")
+    return section_config[field_name]
 
 
 async def get_configer_state_schema_async(
@@ -102,7 +111,54 @@ async def get_configer_state_schema_async(
     )
 
 
-async def update_configer_state_config_async(updates: str | dict[str, Any]) -> dict[str, Any]:
+async def get_configer_state_config_async(
+    section_name: str,
+    field_name: str | None = None,
+) -> dict[str, Any]:
+    try:
+        from loopai.common.db_tool import (
+            get_default_states_config,
+            get_task_states_config,
+            sqlite_db_session,
+        )
+
+        db_path = _get_db_path_from_env()
+        task_id = _get_task_id_from_env()
+    except Exception as exc:
+        code = ErrorCode.CONFIG_ERROR if ErrorCode else "CONFIG_ERROR"
+        return build_error_payload(exc, code=code, recoverable=False, message="Invalid Configer read request.")
+
+    try:
+        async with sqlite_db_session(db_path):
+            if task_id:
+                current_states = await get_task_states_config(task_id, section_name=section_name)
+                scope = "task"
+            else:
+                current_states = await get_default_states_config(section_name=section_name)
+                scope = "default"
+
+            section_config = current_states["config"]
+            result_config = _extract_field_config(section_name, section_config, field_name)
+    except Exception as exc:
+        code = ErrorCode.CONFIG_ERROR if ErrorCode else "CONFIG_ERROR"
+        return build_error_payload(exc, code=code, recoverable=True, message="Failed to load non-system state config.")
+
+    return build_success_payload(
+        data={
+            "scope": scope,
+            "task_id": task_id,
+            "section_name": section_name,
+            "field_name": field_name,
+            "config": result_config,
+        },
+        message="Non-system state config loaded.",
+    )
+
+
+async def update_configer_state_config_async(
+    section_name: str,
+    updates: str | dict[str, Any],
+) -> dict[str, Any]:
     try:
         from loopai.common.db_tool import (
             get_default_states_config,
@@ -114,7 +170,7 @@ async def update_configer_state_config_async(updates: str | dict[str, Any]) -> d
 
         db_path = _get_db_path_from_env()
         task_id = _get_task_id_from_env()
-        parsed_updates = _normalize_updates_payload(updates)
+        parsed_updates = _normalize_section_updates_payload(updates)
     except Exception as exc:
         code = ErrorCode.CONFIG_ERROR if ErrorCode else "CONFIG_ERROR"
         return build_error_payload(exc, code=code, recoverable=False, message="Invalid Configer update request.")
@@ -128,20 +184,16 @@ async def update_configer_state_config_async(updates: str | dict[str, Any]) -> d
                 current_states = await get_default_states_config()
                 scope = "default"
 
-            validated_updates = _validate_updates_against_schema(parsed_updates, current_states["config"])
-
-            updated_sections: dict[str, Any] = {}
-            for section_name, section_updates in validated_updates.items():
-                if task_id:
-                    updated = await update_task_state_section_config(task_id, section_name, section_updates)
-                else:
-                    updated = await update_default_state_section_config(section_name, section_updates)
-                updated_sections[section_name] = updated["config"]
+            validated_updates = _validate_section_updates_against_schema(
+                section_name,
+                parsed_updates,
+                current_states["config"],
+            )
 
             if task_id:
-                latest_states = await get_task_states_config(task_id)
+                updated = await update_task_state_section_config(task_id, section_name, validated_updates)
             else:
-                latest_states = await get_default_states_config()
+                updated = await update_default_state_section_config(section_name, validated_updates)
     except Exception as exc:
         code = ErrorCode.CONFIG_ERROR if ErrorCode else "CONFIG_ERROR"
         return build_error_payload(exc, code=code, recoverable=True, message="Failed to update non-system state config.")
@@ -150,8 +202,8 @@ async def update_configer_state_config_async(updates: str | dict[str, Any]) -> d
         data={
             "scope": scope,
             "task_id": task_id,
-            "updated_sections": updated_sections,
-            "states": latest_states["config"],
+            "section_name": section_name,
+            "config": updated["config"],
         },
         message="Non-system state config updated.",
     )
@@ -168,5 +220,15 @@ def get_configer_state_schema(
     return _run_async(get_configer_state_schema_async(language=language, section_name=section_name))
 
 
-def update_configer_state_config(updates: str | dict[str, Any]) -> dict[str, Any]:
-    return _run_async(update_configer_state_config_async(updates))
+def get_configer_state_config(
+    section_name: str,
+    field_name: str | None = None,
+) -> dict[str, Any]:
+    return _run_async(get_configer_state_config_async(section_name=section_name, field_name=field_name))
+
+
+def update_configer_state_config(
+    section_name: str,
+    updates: str | dict[str, Any],
+) -> dict[str, Any]:
+    return _run_async(update_configer_state_config_async(section_name=section_name, updates=updates))

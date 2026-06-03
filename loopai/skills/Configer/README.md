@@ -23,6 +23,7 @@
 
 ```python
 from loopai.skills.Configer import (
+    get_configer_state_config,
     get_configer_state_schema,
     update_configer_state_config,
 )
@@ -54,34 +55,85 @@ result = get_configer_state_schema(section_name="default")
 
 如果传了 `section_name`，则只返回对应分组的 schema。
 
-## 更新配置
+## 读取实际配置
 
-支持两种入参形式：
+读取数据库中的实际配置值，需要 `DB_PATH`，并且会根据是否有 `task_id` / `TASK_ID` 自动读取任务配置或默认配置。
+
+读取整个 section：
 
 ```python
-update_configer_state_config({
-    "default": {
+get_configer_state_config(section_name="judger")
+```
+
+读取 section 下的单个字段：
+
+```python
+get_configer_state_config(section_name="judger", field_name="eval_temperature")
+```
+
+## 更新配置
+
+现在更新接口只针对单个 section：
+
+```python
+update_configer_state_config(
+    "default",
+    {
         "language": {"value": "en", "type": "str"}
-    },
-    "judger": {
-        "eval_temperature": 0.2
     }
-})
+)
 ```
 
 或者：
 
 ```python
-update_configer_state_config({
-    "states": {
-        "judger": {
-            "eval_batch_size": {"value": 8, "type": "int"}
-        }
+update_configer_state_config(
+    "judger",
+    {
+        "eval_batch_size": {"value": 8, "type": "int"}
     }
-})
+)
 ```
 
 也支持传 JSON 字符串。
+
+## Shell 调用建议
+
+如果是在 `python -c`、heredoc、codex-sdk 子进程里调用，要注意：
+
+- 函数 `return` 不会自动显示
+- 需要显式 `print(...)`
+- 建议配合 `timeout` 和 `python3 -u`
+
+示例：
+
+```bash
+timeout 20 python3 -u <<'PY'
+import json
+from loopai.skills.Configer import get_configer_state_config
+
+result = get_configer_state_config("judger", "eval_task_type")
+print(json.dumps(result, ensure_ascii=False, default=str), flush=True)
+PY
+```
+
+更新示例：
+
+```bash
+timeout 20 python3 -u <<'PY'
+import json
+from loopai.skills.Configer import update_configer_state_config
+
+result = update_configer_state_config("judger", {"eval_task_type": "code"})
+print(json.dumps(result, ensure_ascii=False, default=str), flush=True)
+PY
+```
+
+## 排障约束
+
+- 正常配置读写应优先使用 skill 接口，不要直接写 SQLite
+- 如果接口调用超时或报错，可以只读检查数据库结构和当前值用于排障
+- 排障时也不建议绕过 skill 直接修改 `starterconfig` / `taskmodel`
 
 ## 限制
 

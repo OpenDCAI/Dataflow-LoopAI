@@ -35,6 +35,32 @@ def _sse(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _sync_codex_home_config(system_config: dict[str, Any]) -> Path:
+    DEFAULT_CODEX_HOME.mkdir(parents=True, exist_ok=True)
+
+    config_path = DEFAULT_CODEX_HOME / "config.toml"
+    provider_name = "dashscope_http"
+    base_url = str(system_config.get("codex_base_url") or "").strip()
+    workspace = str(system_config.get("codex_workspace") or PROJECT_ROOT).strip() or str(PROJECT_ROOT)
+
+    config_lines = [
+        f'model_provider = "{provider_name}"',
+        "",
+        f"[model_providers.{provider_name}]",
+        'name = "DashScope HTTP"',
+        f'base_url = "{base_url}"',
+        'env_key = "DASHSCOPE_API_KEY"',
+        'wire_api = "responses"',
+        "supports_websockets = false",
+        "",
+        f'[projects."{workspace}"]',
+        'trust_level = "trusted"',
+        "",
+    ]
+    config_path.write_text("\n".join(config_lines), encoding="utf-8")
+    return DEFAULT_CODEX_HOME
+
+
 async def load_starter_system_config() -> dict[str, Any]:
     await check_config_from_db(str(PROJECT_ROOT))
     config_item = await StarterConfig.filter(Q(name="starter")).first()
@@ -207,13 +233,10 @@ class CodexStarterService:
             env_overrides=merged_env_overrides,
         )
         resolved_workspace = env.get("CODEX_WORKSPACE", str(PROJECT_ROOT))
-        if not DEFAULT_CODEX_HOME.exists():
-            yield _sse({
-                "type": "error",
-                "session_id": session_id,
-                "message": f"codex_home not found: {DEFAULT_CODEX_HOME}",
-            })
-            return
+        use_project_config = _to_bool(merged_system_config.get("codex_use_project_config"), False)
+        merged_system_config = dict(merged_system_config)
+        merged_system_config["codex_workspace"] = resolved_workspace
+        resolved_codex_home = _sync_codex_home_config(merged_system_config)
 
         self.session_store.update(
             session_id,
@@ -223,7 +246,7 @@ class CodexStarterService:
             last_error=None,
             final_result=None,
         )
-        env["CODEX_HOME"] = str(DEFAULT_CODEX_HOME)
+        env["CODEX_HOME"] = str(resolved_codex_home)
 
         yield _sse({
             "type": "starter.codex.init",
@@ -233,6 +256,7 @@ class CodexStarterService:
             "model": env.get("CODEX_MODEL"),
             "base_url": env.get("CODEX_BASE_URL"),
             "codex_home": env.get("CODEX_HOME"),
+            "use_project_config": use_project_config,
             "env_keys": sorted(merged_env_overrides.keys()),
         })
 
