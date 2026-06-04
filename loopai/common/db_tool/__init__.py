@@ -197,11 +197,11 @@ def _get_default_starter_row_sync(
     return row
 
 
-def _get_task_row_sync(db_path: str | os.PathLike[str], task_id: str) -> tuple[int, str, str, str]:
+def _get_task_row_sync(db_path: str | os.PathLike[str], task_id: str) -> tuple[int, str, str, str, str | None]:
     con = _sqlite_connect(db_path)
     try:
         row = con.execute(
-            "select id, task_id, name, config from taskmodel where task_id=?",
+            "select id, task_id, name, config, state from taskmodel where task_id=?",
             (task_id,),
         ).fetchone()
     finally:
@@ -264,7 +264,7 @@ def update_default_state_section_config_sync(
 
 
 def get_task_config_sync(db_path: str | os.PathLike[str], task_id: str) -> dict[str, Any]:
-    row_id, row_task_id, name, raw_config = _get_task_row_sync(db_path, task_id)
+    row_id, row_task_id, name, raw_config, _ = _get_task_row_sync(db_path, task_id)
     config_data = json.loads(raw_config or "{}")
     return {
         "id": row_id,
@@ -290,13 +290,15 @@ def get_task_states_config_sync(
     task_id: str,
     section_name: str | None = None,
 ) -> dict[str, Any]:
-    task_config = get_task_config_sync(db_path, task_id)
-    states_data = task_config["config"].get("default_states", {})
-    states_config = _build_state_config(states_data)
+    row_id, row_task_id, name, _, raw_state = _get_task_row_sync(db_path, task_id)
+    state_data = json.loads(raw_state or "{}") if raw_state else {}
+    if not isinstance(state_data, dict):
+        state_data = {}
+    states_config = _build_state_config(state_data)
     return {
-        "id": task_config["id"],
-        "task_id": task_config["task_id"],
-        "name": task_config["name"],
+        "id": row_id,
+        "task_id": row_task_id,
+        "name": name,
         "config": _extract_state_section(states_config, section_name) if section_name else states_config,
     }
 
@@ -315,16 +317,17 @@ def update_task_state_section_config_sync(
     section_name: str,
     updates: dict[str, Any],
 ) -> dict[str, Any]:
-    row_id, _, _, raw_config = _get_task_row_sync(db_path, task_id)
-    config_data = json.loads(raw_config or "{}")
-    default_states = config_data.setdefault("default_states", {})
-    _merge_state_section(default_states, section_name, updates)
+    row_id, _, _, _, raw_state = _get_task_row_sync(db_path, task_id)
+    state_data = json.loads(raw_state or "{}") if raw_state else {}
+    if not isinstance(state_data, dict):
+        state_data = {}
+    _merge_state_section(state_data, section_name, updates)
 
     con = _sqlite_connect(db_path)
     try:
         con.execute(
-            "update taskmodel set config=? where id=?",
-            (json.dumps(config_data, ensure_ascii=False), row_id),
+            "update taskmodel set state=? where id=?",
+            (json.dumps(state_data, ensure_ascii=False), row_id),
         )
         con.commit()
     finally:

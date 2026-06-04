@@ -148,7 +148,7 @@ def get_configer_state_config(
             "field_name": field_name,
             "config": result_config,
         },
-        message="Non-system state config loaded.",
+        message="State config loaded.",
     )
 
 
@@ -200,7 +200,7 @@ def update_configer_state_config(
             "section_name": section_name,
             "config": updated["config"],
         },
-        message="Non-system state config updated.",
+        message="State config updated.",
     )
 
 
