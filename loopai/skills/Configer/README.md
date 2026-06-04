@@ -8,6 +8,7 @@
 - 读取非 `system` 的字段说明和 schema 默认值
 - 根据传入 JSON 修改对应 `states` 字段
 - 自动根据环境变量决定修改任务配置还是默认用户配置
+- 显式按 `task_id` 读取或修改任务级 states 实际值
 
 ## 环境变量
 
@@ -25,7 +26,9 @@
 from loopai.skills.Configer import (
     get_configer_state_config,
     get_configer_state_schema,
+    get_configer_task_state_config,
     update_configer_state_config,
+    update_configer_task_state_config,
 )
 ```
 
@@ -71,6 +74,16 @@ get_configer_state_config(section_name="judger")
 get_configer_state_config(section_name="judger", field_name="eval_temperature")
 ```
 
+如果你必须显式指定某个任务，而不是依赖环境变量：
+
+```python
+get_configer_task_state_config(
+    section_name="judger",
+    field_name="eval_temperature",
+    task_id="your-task-id",
+)
+```
+
 ## 更新配置
 
 现在更新接口只针对单个 section：
@@ -97,6 +110,19 @@ update_configer_state_config(
 
 也支持传 JSON 字符串。
 
+如果你必须显式指定某个任务，而不是依赖环境变量：
+
+```python
+update_configer_task_state_config(
+    "judger",
+    {
+        "eval_batch_size": 8,
+        "eval_temperature": 0.2,
+    },
+    task_id="your-task-id",
+)
+```
+
 ## Shell 调用建议
 
 如果是在 `python -c`、heredoc、codex-sdk 子进程里调用，要注意：
@@ -110,9 +136,9 @@ update_configer_state_config(
 ```bash
 timeout 20 python3 -u <<'PY'
 import json
-from loopai.skills.Configer import get_configer_state_config
+from loopai.skills.Configer import get_configer_task_state_config
 
-result = get_configer_state_config("judger", "eval_task_type")
+result = get_configer_task_state_config("judger", "eval_task_type", task_id="your-task-id")
 print(json.dumps(result, ensure_ascii=False, default=str), flush=True)
 PY
 ```
@@ -122,9 +148,9 @@ PY
 ```bash
 timeout 20 python3 -u <<'PY'
 import json
-from loopai.skills.Configer import update_configer_state_config
+from loopai.skills.Configer import update_configer_task_state_config
 
-result = update_configer_state_config("judger", {"eval_task_type": "code"})
+result = update_configer_task_state_config("judger", {"eval_task_type": "code"}, task_id="your-task-id")
 print(json.dumps(result, ensure_ascii=False, default=str), flush=True)
 PY
 ```

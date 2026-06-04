@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from typing import Any
@@ -25,6 +24,13 @@ def _get_task_id_from_env() -> str | None:
         if value:
             return value
     return None
+
+
+def _require_task_id(task_id: str | None = None) -> str:
+    resolved_task_id = str(task_id).strip() if task_id is not None else (_get_task_id_from_env() or "").strip()
+    if not resolved_task_id:
+        raise ValueError("TASK_ID or task_id environment variable is required")
+    return resolved_task_id
 
 
 def _normalize_section_updates_payload(updates: str | dict[str, Any]) -> dict[str, Any]:
@@ -81,31 +87,6 @@ def _extract_field_config(
     if field_name not in section_config:
         raise ValueError(f"unknown config field: {section_name}.{field_name}")
     return section_config[field_name]
-
-
-async def get_configer_state_schema_async(
-    language: str = "zh",
-    section_name: str | None = None,
-) -> dict[str, Any]:
-    return get_configer_state_schema(language, section_name)
-
-
-async def get_configer_state_config_async(
-    section_name: str,
-    field_name: str | None = None,
-) -> dict[str, Any]:
-    return get_configer_state_config(section_name, field_name)
-
-
-async def update_configer_state_config_async(
-    section_name: str,
-    updates: str | dict[str, Any],
-) -> dict[str, Any]:
-    return update_configer_state_config(section_name, updates)
-
-
-def _run_async(coro: Any) -> Any:
-    return asyncio.run(coro)
 
 
 def get_configer_state_schema(
@@ -220,4 +201,76 @@ def update_configer_state_config(
             "config": updated["config"],
         },
         message="Non-system state config updated.",
+    )
+
+
+def get_configer_task_state_config(
+    section_name: str,
+    field_name: str | None = None,
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    try:
+        from loopai.common.db_tool import get_task_states_config_sync
+
+        db_path = _get_db_path_from_env()
+        resolved_task_id = _require_task_id(task_id)
+    except Exception as exc:
+        code = ErrorCode.CONFIG_ERROR if ErrorCode else "CONFIG_ERROR"
+        return build_error_payload(exc, code=code, recoverable=False, message="Invalid task-state read request.")
+
+    try:
+        current_states = get_task_states_config_sync(db_path, resolved_task_id, section_name=section_name)
+        section_config = current_states["config"]
+        result_config = _extract_field_config(section_name, section_config, field_name)
+    except Exception as exc:
+        code = ErrorCode.CONFIG_ERROR if ErrorCode else "CONFIG_ERROR"
+        return build_error_payload(exc, code=code, recoverable=True, message="Failed to load task state config.")
+
+    return build_success_payload(
+        data={
+            "scope": "task",
+            "task_id": resolved_task_id,
+            "section_name": section_name,
+            "field_name": field_name,
+            "config": result_config,
+        },
+        message="Task state config loaded.",
+    )
+
+
+def update_configer_task_state_config(
+    section_name: str,
+    updates: str | dict[str, Any],
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    try:
+        from loopai.common.db_tool import get_task_states_config_sync, update_task_state_section_config_sync
+
+        db_path = _get_db_path_from_env()
+        resolved_task_id = _require_task_id(task_id)
+        parsed_updates = _normalize_section_updates_payload(updates)
+    except Exception as exc:
+        code = ErrorCode.CONFIG_ERROR if ErrorCode else "CONFIG_ERROR"
+        return build_error_payload(exc, code=code, recoverable=False, message="Invalid task-state update request.")
+
+    try:
+        current_states = get_task_states_config_sync(db_path, resolved_task_id)
+        validated_updates = _validate_section_updates_against_schema(
+            section_name,
+            parsed_updates,
+            current_states["config"],
+        )
+        updated = update_task_state_section_config_sync(db_path, resolved_task_id, section_name, validated_updates)
+    except Exception as exc:
+        code = ErrorCode.CONFIG_ERROR if ErrorCode else "CONFIG_ERROR"
+        return build_error_payload(exc, code=code, recoverable=True, message="Failed to update task state config.")
+
+    return build_success_payload(
+        data={
+            "scope": "task",
+            "task_id": resolved_task_id,
+            "section_name": section_name,
+            "config": updated["config"],
+        },
+        message="Task state config updated.",
     )
