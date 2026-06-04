@@ -8,14 +8,14 @@
             </div>
             <div class="msg-content-block">
                 <div
-                    v-if="thisValue.type === 'human'"
+                    v-if="thisValue.type === 'user'"
                     class="msg-role-block"
                     :style="{ background: gradient }"
                 >
                     <img class="agent-logo" :src="img.user" draggable="false" alt="" />
                 </div>
                 <div
-                    v-if="thisValue.type === 'ai'"
+                    v-if="thisValue.type === 'assistant'"
                     class="msg-role-block"
                     :style="{ background: 'rgba(245, 245, 245, 1)' }"
                 >
@@ -82,7 +82,7 @@
             <div v-show="thisValue.type !== 'tool'" class="msg-control-block">
                 <div class="msg-control-right-block">
                     <fv-button
-                        v-show="thisValue.type === 'human' && false"
+                        v-show="thisValue.type === 'user' && false"
                         :theme="theme"
                         :background="
                             theme === 'dark' ? 'rgba(50, 58, 71, 1)' : 'rgba(255, 255, 255, 1)'
@@ -212,8 +212,8 @@ export default {
         ...mapState(useAppConfig, ['local']),
         ...mapState(useTheme, ['color', 'gradient']),
         getRoleName() {
-            if (this.thisValue.type === 'human') return this.local('You')
-            if (this.thisValue.type === 'ai') return this.local('AI')
+            if (this.thisValue.type === 'user') return this.local('You')
+            if (this.thisValue.type === 'assistant') return this.local('AI')
             return this.thisValue.type[0].toUpperCase() + this.thisValue.type.slice(1)
         },
         computedContent() {

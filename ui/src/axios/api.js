@@ -251,22 +251,22 @@ config.listDir.path=`/config/list_dir`
 export class starter {
  
   /**
-  * @summary Start the agent
-  * @param {String} [task_id] 
+  * @summary Submit codex prompt
+  * @param {UserModel.StarterCodexRequest} [startercodexrequest] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async startAgent(task_id,cancelSource,uploadProgress,downloadProgress){
+  static async starterCodexStream(startercodexrequest,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'post',
-        url:'/starter/agent/start',
-        data:{},
-        params:{task_id},
+        url:'/starter/codex/stream',
+        data:startercodexrequest,
+        params:{},
         headers:{
-          "Content-Type":""
+          "Content-Type":"application/json"
         },
         onUploadProgress:uploadProgress,
         onDownloadProgress:downloadProgress
@@ -302,68 +302,18 @@ export class starter {
   }
  
   /**
-  * @summary Send input to the agent
-  * @param {String} [text] 
+  * @summary Get codex session state
+  * @param {String} [pathsession_id] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async agentInput(text,cancelSource,uploadProgress,downloadProgress){
+  static async starterCodexSession(pathsession_id,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
-        method:'post',
-        url:'/starter/agent/input',
-        data:{},
-        params:{text},
-        headers:{
-          "Content-Type":""
-        },
-        onUploadProgress:uploadProgress,
-        onDownloadProgress:downloadProgress
-      }
-      // support wechat mini program
-      if (cancelSource!=undefined){
-        options.cancelToken = cancelSource.token
-      }
-      if (responseType != "json"){
-        options.responseType = responseType;
-      }
-      axios(options)
-      .then(res=>{
-        if (res.config.responseType=="blob"){
-          resolve(new Blob([res.data],{
-            type: res.headers["content-type"].split(";")[0]
-          }))
-        }else{
-          resolve(res.data);
-          return res.data
-        }
-      }).catch(err=>{
-        if (err.response){
-          if (err.response.data)
-            reject(err.response.data)
-          else
-            reject(err.response);
-        }else{
-          reject(err)
-        }
-      })
-    })
-  }
- 
-  /**
-  * @summary Stop the agent
-  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
-  * @param {Function} [uploadProgress] 上传回调函数
-  * @param {Function} [downloadProgress] 下载回调函数
-  */
-  static async stopAgent(cancelSource,uploadProgress,downloadProgress){
-    return await new Promise((resolve,reject)=>{
-      let responseType = "json";
-      let options = {
-        method:'post',
-        url:'/starter/agent/stop',
+        method:'get',
+        url:'/starter/codex/session/'+pathsession_id+'',
         data:{},
         params:{},
         headers:{
@@ -403,19 +353,122 @@ export class starter {
   }
  
   /**
-  * @summary Get the agent status
+  * @summary Stream codex session events
+  * @param {String} [pathsession_id] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async getAgentStatus(cancelSource,uploadProgress,downloadProgress){
+  static async starterCodexSessionStream(pathsession_id,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/starter/codex/session/'+pathsession_id+'/stream',
+        data:{},
+        params:{},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
+  * @summary Reset codex session history
+  * @param {String} [pathsession_id] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async starterCodexSessionReset(pathsession_id,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'post',
+        url:'/starter/codex/session/'+pathsession_id+'/reset',
+        data:{},
+        params:{},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
+  * @summary Get agent status by task_id
+  * @param {String} [task_id] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async getAgentStatus(task_id,cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
         url:'/starter/agent/status',
         data:{},
-        params:{},
+        params:{task_id},
         headers:{
           "Content-Type":""
         },
@@ -501,133 +554,41 @@ export class starter {
       })
     })
   }
- 
-  /**
-  * @summary Get the agent messages
-  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
-  * @param {Function} [uploadProgress] 上传回调函数
-  * @param {Function} [downloadProgress] 下载回调函数
-  */
-  static async getAgentMessages(cancelSource,uploadProgress,downloadProgress){
-    return await new Promise((resolve,reject)=>{
-      let responseType = "json";
-      let options = {
-        method:'get',
-        url:'/starter/agent/messages',
-        data:{},
-        params:{},
-        headers:{
-          "Content-Type":""
-        },
-        onUploadProgress:uploadProgress,
-        onDownloadProgress:downloadProgress
-      }
-      // support wechat mini program
-      if (cancelSource!=undefined){
-        options.cancelToken = cancelSource.token
-      }
-      if (responseType != "json"){
-        options.responseType = responseType;
-      }
-      axios(options)
-      .then(res=>{
-        if (res.config.responseType=="blob"){
-          resolve(new Blob([res.data],{
-            type: res.headers["content-type"].split(";")[0]
-          }))
-        }else{
-          resolve(res.data);
-          return res.data
-        }
-      }).catch(err=>{
-        if (err.response){
-          if (err.response.data)
-            reject(err.response.data)
-          else
-            reject(err.response);
-        }else{
-          reject(err)
-        }
-      })
-    })
-  }
- 
-  /**
-  * @summary Get the agent message stream
-  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
-  * @param {Function} [uploadProgress] 上传回调函数
-  * @param {Function} [downloadProgress] 下载回调函数
-  */
-  static async getAgentMessageStream(cancelSource,uploadProgress,downloadProgress){
-    return await new Promise((resolve,reject)=>{
-      let responseType = "json";
-      let options = {
-        method:'get',
-        url:'/starter/agent/message/stream',
-        data:{},
-        params:{},
-        headers:{
-          "Content-Type":""
-        },
-        onUploadProgress:uploadProgress,
-        onDownloadProgress:downloadProgress
-      }
-      // support wechat mini program
-      if (cancelSource!=undefined){
-        options.cancelToken = cancelSource.token
-      }
-      if (responseType != "json"){
-        options.responseType = responseType;
-      }
-      axios(options)
-      .then(res=>{
-        if (res.config.responseType=="blob"){
-          resolve(new Blob([res.data],{
-            type: res.headers["content-type"].split(";")[0]
-          }))
-        }else{
-          resolve(res.data);
-          return res.data
-        }
-      }).catch(err=>{
-        if (err.response){
-          if (err.response.data)
-            reject(err.response.data)
-          else
-            reject(err.response);
-        }else{
-          reject(err)
-        }
-      })
-    })
-  }
 }
 
 // class starter static method properties bind
 /**
-* @description startAgent url链接，包含baseURL
+* @description starterCodexStream url链接，包含baseURL
 */
-starter.startAgent.fullPath=`${axios.defaults.baseURL}/starter/agent/start`
+starter.starterCodexStream.fullPath=`${axios.defaults.baseURL}/starter/codex/stream`
 /**
-* @description startAgent url链接，不包含baseURL
+* @description starterCodexStream url链接，不包含baseURL
 */
-starter.startAgent.path=`/starter/agent/start`
+starter.starterCodexStream.path=`/starter/codex/stream`
 /**
-* @description agentInput url链接，包含baseURL
+* @description starterCodexSession url链接，包含baseURL
 */
-starter.agentInput.fullPath=`${axios.defaults.baseURL}/starter/agent/input`
+starter.starterCodexSession.fullPath=`${axios.defaults.baseURL}/starter/codex/session/{session_id}`
 /**
-* @description agentInput url链接，不包含baseURL
+* @description starterCodexSession url链接，不包含baseURL
 */
-starter.agentInput.path=`/starter/agent/input`
+starter.starterCodexSession.path=`/starter/codex/session/{session_id}`
 /**
-* @description stopAgent url链接，包含baseURL
+* @description starterCodexSessionStream url链接，包含baseURL
 */
-starter.stopAgent.fullPath=`${axios.defaults.baseURL}/starter/agent/stop`
+starter.starterCodexSessionStream.fullPath=`${axios.defaults.baseURL}/starter/codex/session/{session_id}/stream`
 /**
-* @description stopAgent url链接，不包含baseURL
+* @description starterCodexSessionStream url链接，不包含baseURL
 */
-starter.stopAgent.path=`/starter/agent/stop`
+starter.starterCodexSessionStream.path=`/starter/codex/session/{session_id}/stream`
+/**
+* @description starterCodexSessionReset url链接，包含baseURL
+*/
+starter.starterCodexSessionReset.fullPath=`${axios.defaults.baseURL}/starter/codex/session/{session_id}/reset`
+/**
+* @description starterCodexSessionReset url链接，不包含baseURL
+*/
+starter.starterCodexSessionReset.path=`/starter/codex/session/{session_id}/reset`
 /**
 * @description getAgentStatus url链接，包含baseURL
 */
@@ -644,22 +605,6 @@ starter.getHardwareUsage.fullPath=`${axios.defaults.baseURL}/starter/agent/hardw
 * @description getHardwareUsage url链接，不包含baseURL
 */
 starter.getHardwareUsage.path=`/starter/agent/hardware_usage`
-/**
-* @description getAgentMessages url链接，包含baseURL
-*/
-starter.getAgentMessages.fullPath=`${axios.defaults.baseURL}/starter/agent/messages`
-/**
-* @description getAgentMessages url链接，不包含baseURL
-*/
-starter.getAgentMessages.path=`/starter/agent/messages`
-/**
-* @description getAgentMessageStream url链接，包含baseURL
-*/
-starter.getAgentMessageStream.fullPath=`${axios.defaults.baseURL}/starter/agent/message/stream`
-/**
-* @description getAgentMessageStream url链接，不包含baseURL
-*/
-starter.getAgentMessageStream.path=`/starter/agent/message/stream`
 
 export class task {
  
@@ -2053,12 +1998,12 @@ export class common {
   * @param {Function} [uploadProgress] 上传回调函数
   * @param {Function} [downloadProgress] 下载回调函数
   */
-  static async root__get(cancelSource,uploadProgress,downloadProgress){
+  static async root_info_get(cancelSource,uploadProgress,downloadProgress){
     return await new Promise((resolve,reject)=>{
       let responseType = "json";
       let options = {
         method:'get',
-        url:'/',
+        url:'/info',
         data:{},
         params:{},
         headers:{
@@ -2150,13 +2095,13 @@ export class common {
 
 // class common static method properties bind
 /**
-* @description root__get url链接，包含baseURL
+* @description root_info_get url链接，包含baseURL
 */
-common.root__get.fullPath=`${axios.defaults.baseURL}/`
+common.root_info_get.fullPath=`${axios.defaults.baseURL}/info`
 /**
-* @description root__get url链接，不包含baseURL
+* @description root_info_get url链接，不包含baseURL
 */
-common.root__get.path=`/`
+common.root_info_get.path=`/info`
 /**
 * @description health_check_health_get url链接，包含baseURL
 */
