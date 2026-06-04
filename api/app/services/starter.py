@@ -191,10 +191,18 @@ def load_codex_thread_history(thread_id: str) -> dict[str, Any] | None:
     return None
 
 
-def _sync_codex_home_config(system_config: dict[str, Any]) -> Path:
-    DEFAULT_CODEX_HOME.mkdir(parents=True, exist_ok=True)
+def _resolved_codex_home(system_config: dict[str, Any]) -> Path:
+    configured = str(system_config.get("codex_home") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return DEFAULT_CODEX_HOME
 
-    config_path = DEFAULT_CODEX_HOME / "config.toml"
+
+def _sync_codex_home_config(system_config: dict[str, Any]) -> Path:
+    codex_home = _resolved_codex_home(system_config)
+    codex_home.mkdir(parents=True, exist_ok=True)
+
+    config_path = codex_home / "config.toml"
     provider_name = "dashscope_http"
     base_url = str(system_config.get("codex_base_url") or "").strip()
     workspace = str(system_config.get("codex_workspace") or PROJECT_ROOT).strip() or str(PROJECT_ROOT)
@@ -214,7 +222,7 @@ def _sync_codex_home_config(system_config: dict[str, Any]) -> Path:
         "",
     ]
     config_path.write_text("\n".join(config_lines), encoding="utf-8")
-    return DEFAULT_CODEX_HOME
+    return codex_home
 
 
 async def load_starter_system_config() -> dict[str, Any]:
@@ -617,6 +625,11 @@ class CodexStarterService:
         env = os.environ.copy()
         resolved_workspace = workspace or system_config.get("codex_workspace") or str(PROJECT_ROOT)
 
+        for key, value in system_config.items():
+            if value is None or isinstance(value, (dict, list)):
+                continue
+            env[str(key)] = str(value)
+
         env["CODEX_WORKSPACE"] = resolved_workspace
 
         model = system_config.get("codex_model")
@@ -624,6 +637,7 @@ class CodexStarterService:
         api_key = system_config.get("codex_api_key")
         timeout_ms = system_config.get("codex_run_timeout_ms", 300000)
         use_project_config = _to_bool(system_config.get("codex_use_project_config"), False)
+        codex_home = str(_resolved_codex_home(system_config))
 
         if model:
             env["CODEX_MODEL"] = str(model)
@@ -636,6 +650,7 @@ class CodexStarterService:
             env.setdefault("OPENAI_API_KEY", str(api_key))
             env.setdefault("DEEPSEEK_API_KEY", str(api_key))
             env.setdefault("DASHSCOPE_API_KEY", str(api_key))
+        env["CODEX_HOME"] = codex_home
         env["CODEX_RUN_TIMEOUT_MS"] = str(timeout_ms)
         if use_project_config:
             env["CODEX_USE_PROJECT_CONFIG"] = "1"
