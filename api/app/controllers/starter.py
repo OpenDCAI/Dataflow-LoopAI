@@ -9,7 +9,7 @@ from ..models.body import (
     StarterCodexRequest,
 )
 from ..models.db_models import StarterConfig, TaskModel
-from ..services.starter import CodexStarterService, codex_session_store, load_starter_system_config, load_codex_thread_history
+from ..services.starter import CodexStarterService, codex_session_store, load_starter_system_config
 from ..services.task import build_initial_task_state
 from ..utils.monitor.hw_stat import get_nvidia_gpu_usage, get_huawei_npu_usage, get_cpu_usage, get_memory_usage
 
@@ -40,26 +40,26 @@ async def starter_codex_stream(req: StarterCodexRequest):
 
 @router.get("/codex/session/{session_id}", operation_id="starterCodexSession", summary="Get codex session state")
 async def starter_codex_session(session_id: str):
+    system_config = await load_starter_system_config()
+    service = CodexStarterService(system_config=system_config, session_store=codex_session_store)
     session = codex_session_store.get(session_id)
     task = await TaskModel.get_or_none(task_id=session_id)
-    codex_history = None
-    persisted_thread_id = None
-    if task and task.ai_thread_id:
-        persisted_thread_id = task.ai_thread_id
-    elif session and session.get("codex_thread_id"):
-        persisted_thread_id = session.get("codex_thread_id")
-    if persisted_thread_id:
-        codex_history = load_codex_thread_history(str(persisted_thread_id))
     if session is None:
+        restored = await service.restore_session_snapshot(session_id)
+        if restored is not None:
+            payload = dict(restored)
+            payload["ai_thread_id"] = task.ai_thread_id if task else payload.get("codex_thread_id")
+            payload["conversation_source"] = "starter"
+            return response_body(message="Codex session restored", data=payload)()
         return response_body(
             message="Codex session not started",
             data={
                 "session_id": session_id,
                 "status": "not_started",
                 "ai_thread_id": task.ai_thread_id if task else None,
-                "conversation": (codex_history or {}).get("conversation", []),
-                "conversation_source": (codex_history or {}).get("source", "starter"),
-                "conversation_path": (codex_history or {}).get("path"),
+                "conversation": [],
+                "conversation_source": "starter",
+                "conversation_path": None,
                 "events": [],
                 "pending_prompts": [],
                 "active_prompt": None,
@@ -69,12 +69,8 @@ async def starter_codex_session(session_id: str):
         )()
     payload = dict(session)
     payload["ai_thread_id"] = task.ai_thread_id if task else payload.get("codex_thread_id")
-    if codex_history and codex_history.get("conversation"):
-        payload["conversation"] = codex_history["conversation"]
-        payload["conversation_source"] = codex_history.get("source", "codex")
-        payload["conversation_path"] = codex_history.get("path")
-    else:
-        payload["conversation_source"] = "starter"
+    payload["conversation_source"] = "starter"
+    payload["conversation_path"] = None
     return response_body(data=payload)()
 
 

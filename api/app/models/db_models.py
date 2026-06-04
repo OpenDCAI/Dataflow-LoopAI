@@ -25,6 +25,28 @@ class TaskModel(BaseModel):
     createdAt = fields.DatetimeField(auto_now_add=True)
     updatedAt = fields.DatetimeField(auto_now=True)
 
+
+class ThreadHistory(BaseModel):
+    """Codex thread 历史快照"""
+    id = fields.IntField(pk=True)
+    task_id = fields.CharField(max_length=255)
+    session_id = fields.CharField(max_length=255, null=True)
+    thread_id = fields.CharField(max_length=255, null=True)
+    prompt = fields.TextField(null=True)
+    workspace = fields.TextField(null=True)
+    status = fields.TextField(null=True)
+    env_overrides = fields.TextField(null=True)
+    inputs = fields.TextField(null=True)
+    pending_request = fields.TextField(null=True)
+    pending_prompts = fields.TextField(null=True)
+    active_prompt = fields.TextField(null=True)
+    conversation = fields.TextField(null=True)
+    events = fields.TextField(null=True)
+    final_result = fields.TextField(null=True)
+    last_error = fields.TextField(null=True)
+    createdAt = fields.DatetimeField(auto_now_add=True)
+    updatedAt = fields.DatetimeField(auto_now=True)
+
 class ResourceModel(BaseModel):
     """资源模型"""
     id = fields.IntField(pk=True)

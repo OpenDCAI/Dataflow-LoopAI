@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator
 
 from tortoise.expressions import Q
 
-from ..models.db_models import StarterConfig, TaskModel
+from ..models.db_models import StarterConfig, TaskModel, ThreadHistory
 from ..utils.config.config import check_config_from_db
 
 
@@ -40,6 +40,21 @@ def _sse(payload: dict[str, Any]) -> str:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _json_dumps(value: Any) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _json_loads(value: str | None, default: Any) -> Any:
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
 
 
 def _safe_json_loads(text: str) -> Any:
@@ -429,6 +444,100 @@ class CodexStarterService:
         self.system_config = system_config
         self.session_store = session_store or codex_session_store
 
+    async def load_persisted_thread_id(self, task_id: str | None) -> str | None:
+        task_id = (task_id or "").strip()
+        if not task_id:
+            return None
+        task = await TaskModel.get_or_none(task_id=task_id)
+        if task and task.ai_thread_id:
+            return str(task.ai_thread_id)
+        return None
+
+    async def _find_thread_history(self, task_id: str, thread_id: str | None = None) -> ThreadHistory | None:
+        task_id = (task_id or "").strip()
+        thread_id = (thread_id or "").strip()
+        if not task_id:
+            return None
+        if thread_id:
+            record = await ThreadHistory.filter(task_id=task_id, thread_id=thread_id).order_by("-updatedAt").first()
+            if record is not None:
+                return record
+        return await ThreadHistory.filter(task_id=task_id).order_by("-updatedAt").first()
+
+    def _serialize_session(self, session: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "prompt": session.get("prompt") or "",
+            "workspace": session.get("workspace"),
+            "status": session.get("status") or "created",
+            "env_overrides": _json_dumps(session.get("env_overrides") or {}),
+            "inputs": _json_dumps(session.get("inputs") or {}),
+            "pending_request": _json_dumps(session.get("pending_request")),
+            "pending_prompts": _json_dumps(session.get("pending_prompts") or []),
+            "last_error": _json_dumps(session.get("last_error")),
+            "final_result": _json_dumps(session.get("final_result")),
+            "active_prompt": _json_dumps(session.get("active_prompt")),
+            "conversation": _json_dumps(session.get("conversation") or []),
+            "events": _json_dumps(session.get("events") or []),
+        }
+
+    def _history_to_session(self, record: ThreadHistory) -> dict[str, Any]:
+        return {
+            "session_id": record.session_id or record.task_id,
+            "prompt": record.prompt or "",
+            "workspace": record.workspace,
+            "env_overrides": _json_loads(record.env_overrides, {}),
+            "status": record.status or "created",
+            "inputs": _json_loads(record.inputs, {}),
+            "pending_request": _json_loads(record.pending_request, None),
+            "pending_prompts": _json_loads(record.pending_prompts, []),
+            "last_error": _json_loads(record.last_error, None),
+            "final_result": _json_loads(record.final_result, None),
+            "codex_thread_id": record.thread_id,
+            "active_prompt": _json_loads(record.active_prompt, None),
+            "conversation": _json_loads(record.conversation, []),
+            "events": _json_loads(record.events, []),
+            "created_at": record.createdAt.isoformat() if record.createdAt else _utc_now(),
+            "updated_at": record.updatedAt.isoformat() if record.updatedAt else _utc_now(),
+        }
+
+    async def restore_session_snapshot(self, task_id: str) -> dict[str, Any] | None:
+        existing = self.session_store.get(task_id)
+        if existing is not None:
+            return existing
+        thread_id = await self.load_persisted_thread_id(task_id)
+        if not thread_id:
+            return None
+        record = await self._find_thread_history(task_id, thread_id)
+        if record is None:
+            return None
+        session = self._history_to_session(record)
+        session["session_id"] = task_id
+        self.session_store.sessions[task_id] = session
+        return session
+
+    async def persist_session_snapshot(self, session_id: str) -> ThreadHistory | None:
+        session = self.session_store.get(session_id)
+        if session is None:
+            return None
+
+        thread_id = str(session.get("codex_thread_id") or "").strip() or None
+        if thread_id:
+            record = await ThreadHistory.filter(task_id=session_id, thread_id=thread_id).order_by("-updatedAt").first()
+            if record is None:
+                record = await ThreadHistory.filter(task_id=session_id, thread_id__isnull=True).order_by("-updatedAt").first()
+        else:
+            record = await ThreadHistory.filter(task_id=session_id, thread_id__isnull=True).order_by("-updatedAt").first()
+        payload = {
+            "task_id": session_id,
+            "session_id": session_id,
+            "thread_id": thread_id,
+            **self._serialize_session(session),
+        }
+        if record is None:
+            return await ThreadHistory.create(**payload)
+        await ThreadHistory.filter(id=record.id).update(**payload)
+        return await ThreadHistory.get(id=record.id)
+
     async def sync_task_thread_id(self, task_id: str, thread_id: str | None) -> None:
         task_id = (task_id or "").strip()
         if not task_id:
@@ -442,6 +551,8 @@ class CodexStarterService:
         session_id: str | None = None,
         env_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if session_id:
+            await self.restore_session_snapshot(session_id)
         existing_session = self.session_store.get(session_id) if session_id else None
         if existing_session is not None and existing_session.get("status") in {"submitted", "running", "finishing"}:
             queued_item = self.session_store.queue_prompt(session_id, prompt)
@@ -454,6 +565,7 @@ class CodexStarterService:
                 "queued_item": queued_item,
             }
             self.session_store.record_event(session_id, payload)
+            await self.persist_session_snapshot(session_id)
             return payload
 
         session = self.session_store.get_or_create(
@@ -471,6 +583,10 @@ class CodexStarterService:
             status="submitted",
             last_error=None,
         )
+        persisted_thread_id = await self.load_persisted_thread_id(resolved_session_id)
+        if persisted_thread_id and not session.get("codex_thread_id"):
+            self.session_store.update(resolved_session_id, codex_thread_id=persisted_thread_id)
+        await self.persist_session_snapshot(resolved_session_id)
 
         async def run_in_background() -> None:
             async for _ in self.stream(
@@ -489,6 +605,7 @@ class CodexStarterService:
             "status": "submitted",
         }
         self.session_store.record_event(resolved_session_id, payload)
+        await self.persist_session_snapshot(resolved_session_id)
         return payload
 
     def _build_env(
@@ -549,6 +666,8 @@ class CodexStarterService:
             })
             return
 
+        if session_id:
+            await self.restore_session_snapshot(session_id)
         existing_session = self.session_store.get(session_id) if session_id else None
         if existing_session is not None and existing_session.get("status") in {"running", "finishing"}:
             queued_item = self.session_store.queue_prompt(session_id, prompt)
@@ -561,6 +680,7 @@ class CodexStarterService:
                 "queued_item": queued_item,
             }
             self.session_store.record_event(session_id, payload)
+            await self.persist_session_snapshot(session_id)
             yield _sse(payload)
             return
 
@@ -571,14 +691,20 @@ class CodexStarterService:
             env_overrides=env_overrides,
         )
         session_id = session["session_id"]
+        persisted_thread_id = await self.load_persisted_thread_id(session_id)
+        if persisted_thread_id and not session.get("codex_thread_id"):
+            self.session_store.update(session_id, codex_thread_id=persisted_thread_id)
+            session = self.session_store.get(session_id) or session
 
         active_prompt = self.session_store.start_prompt(session_id, prompt)
+        await self.persist_session_snapshot(session_id)
         merged_system_config = dict(self.system_config)
         merged_system_config.update(session.get("inputs", {}))
         merged_env_overrides = dict(session.get("env_overrides") or {})
         if env_overrides is not None:
             merged_env_overrides = dict(env_overrides)
             self.session_store.update(session_id, env_overrides=merged_env_overrides)
+            await self.persist_session_snapshot(session_id)
 
         if not CODEX_RUNNER_DIR.exists():
             yield _sse({
@@ -598,6 +724,7 @@ class CodexStarterService:
         merged_system_config = dict(merged_system_config)
         merged_system_config["codex_workspace"] = resolved_workspace
         resolved_codex_home = _sync_codex_home_config(merged_system_config)
+        resumed_thread_id = str(session.get("codex_thread_id") or "").strip()
 
         self.session_store.update(
             session_id,
@@ -608,6 +735,10 @@ class CodexStarterService:
             final_result=None,
         )
         env["CODEX_HOME"] = str(resolved_codex_home)
+        if resumed_thread_id:
+            env["CODEX_THREAD_ID"] = resumed_thread_id
+        else:
+            env.pop("CODEX_THREAD_ID", None)
 
         init_payload = {
             "type": "starter.codex.init",
@@ -618,9 +749,11 @@ class CodexStarterService:
             "base_url": env.get("CODEX_BASE_URL"),
             "codex_home": env.get("CODEX_HOME"),
             "use_project_config": use_project_config,
+            "resume_thread_id": resumed_thread_id or None,
             "env_keys": sorted(merged_env_overrides.keys()),
         }
         self.session_store.record_event(session_id, init_payload)
+        await self.persist_session_snapshot(session_id)
         yield _sse(init_payload)
 
         try:
@@ -644,6 +777,7 @@ class CodexStarterService:
                 if active_prompt:
                     self.session_store.set_message_state(session_id, active_prompt["message_id"], "failed")
                 self.session_store.record_event(session_id, error_payload)
+                await self.persist_session_snapshot(session_id)
                 yield _sse(error_payload)
                 return
 
@@ -699,6 +833,7 @@ class CodexStarterService:
                     payload["session_id"] = session_id
                     payload["_source"] = source
                     self.session_store.record_event(session_id, payload)
+                    await self.persist_session_snapshot(session_id)
                     await event_queue.put(payload)
 
             stdout_task = asyncio.create_task(consume_stream(proc.stdout, "stdout"))
@@ -735,6 +870,7 @@ class CodexStarterService:
                         final_result=final_result,
                     )
                     self.session_store.record_event(session_id, finishing_payload)
+                    await self.persist_session_snapshot(session_id)
                     yield _sse(finishing_payload)
 
                     try:
@@ -754,6 +890,7 @@ class CodexStarterService:
                             "returncode": returncode,
                         }
                         self.session_store.record_event(session_id, cleanup_payload)
+                        await self.persist_session_snapshot(session_id)
                         yield _sse(cleanup_payload)
                 else:
                     await finalize_task
@@ -782,6 +919,7 @@ class CodexStarterService:
                     "detail": error_payload,
                 }
                 self.session_store.record_event(session_id, final_error_payload)
+                await self.persist_session_snapshot(session_id)
                 yield _sse(final_error_payload)
                 return
 
@@ -807,6 +945,7 @@ class CodexStarterService:
             if cleanup_forced:
                 done_payload["cleanup_forced"] = True
             self.session_store.record_event(session_id, done_payload)
+            await self.persist_session_snapshot(session_id)
             yield _sse(done_payload)
         except Exception as exc:
             self.session_store.update(session_id, status="failed", last_error=str(exc), active_prompt=None)
@@ -818,4 +957,5 @@ class CodexStarterService:
                 "message": f"unexpected starter stream error: {exc}",
             }
             self.session_store.record_event(session_id, error_payload)
+            await self.persist_session_snapshot(session_id)
             yield _sse(error_payload)
