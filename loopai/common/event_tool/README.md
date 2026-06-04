@@ -11,7 +11,7 @@ from loopai.common.event_tool import StreamEvent, get_event_writer
 ## 目标
 
 - 保持 `writer(StreamEvent(...))` 这种调用习惯
-- 默认把事件持久化到 `./outputs/{context_id}/{agent_name}/{agent_name}.pkl`
+- 默认把事件持久化到 `./outputs/{context_id}/{agent_name}.pkl`
 - 文件里存的是 `StreamEvent` 对象数组
 - 每次调用 `writer(...)` 都会向数组末尾追加一个新事件
 
@@ -39,7 +39,7 @@ writer(StreamEvent(
 默认会写到：
 
 ```text
-./outputs/task_001/judger/judger.pkl
+./outputs/task_001/judger.pkl
 ```
 
 ## 数据结构

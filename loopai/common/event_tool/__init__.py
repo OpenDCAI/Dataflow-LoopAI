@@ -161,7 +161,7 @@ def get_event_writer(
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
     base_path = Path(log_file_path)
-    event_path = base_path / context_value / agent_name / f"{agent_name}.pkl"
+    event_path = base_path / context_value / f"{agent_name}.pkl"
     return PickleEventWriter(
         name=agent_name,
         context_id=context_value,
@@ -177,7 +177,7 @@ def load_stream_events(
 ) -> list[StreamEvent]:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
-    event_path = Path(log_file_path) / context_value / agent_name / f"{agent_name}.pkl"
+    event_path = Path(log_file_path) / context_value / f"{agent_name}.pkl"
     if not event_path.exists():
         return []
 
