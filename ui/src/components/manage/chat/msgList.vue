@@ -13,10 +13,20 @@
             :model-value="msg"
         />
         <response-block v-show="msgStreamModel.loading"></response-block>
+        <msg-block
+            v-show="msgStreamModel.status === 'failed'"
+            :model-value="{
+                type: 'assistant',
+                data: {
+                    content: local('##### Run Failed, Please Retry')
+                }
+            }"
+        />
     </div>
 </template>
 
 <script>
+import { useAppConfig } from '@/stores/appConfig'
 import { useLoopAI } from '@/stores/loopAI'
 
 import msgBlock from './msgBlock.vue'
@@ -52,6 +62,7 @@ export default {
         }
     },
     computed: {
+        ...mapState(useAppConfig, ['local']),
         ...mapState(useLoopAI, ['taskMessages', 'msgStreamModel', 'currentMsg'])
     },
     methods: {

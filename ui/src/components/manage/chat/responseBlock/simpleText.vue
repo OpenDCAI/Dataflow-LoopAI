@@ -1,7 +1,11 @@
 <template>
-    <span class="simple-text-block" :class="[{ 'text-shimmer': loading }]">
+    <span
+        class="simple-text-block"
+        :class="[{ 'text-shimmer': loading }]"
+        :title="thisValue.title + ' ' + thisValue.content"
+    >
         <p class="title">{{ thisValue.title }}</p>
-        <p class="content">{{ thisValue.content }}</p>
+        <p class="content" @click="copyTextContent(thisValue.content)">{{ thisValue.content }}</p>
     </span>
 </template>
 
@@ -26,6 +30,16 @@ export default {
         modelValue() {
             this.thisValue = this.modelValue
         }
+    },
+    methods: {
+        copyTextContent(text) {
+            if (typeof text === 'object') text = JSON.stringify(text)
+            navigator.clipboard.writeText(text).then(() => {
+                this.$barWarning(this.local('Copied'), {
+                    status: 'correct'
+                })
+            })
+        }
     }
 }
 </script>
@@ -33,6 +47,7 @@ export default {
 <style lang="scss">
 .simple-text-block {
     @include Vcenter;
+    @include nowrap;
 
     height: auto;
     gap: 5px;

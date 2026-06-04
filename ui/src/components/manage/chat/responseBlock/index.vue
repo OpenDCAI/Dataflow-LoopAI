@@ -1,16 +1,20 @@
 <template>
-    <div v-if="currentMsg.length > 0" class="response-block">
-        <p class="elapsed-time-block">{{ local('Processed') }}: {{ computedElapsedTimeSecond }}s</p>
-        <div v-for="(msg, index) in currentMsg" :key="index">
-            <component
-                v-if="!msgMapper(msg).default"
-                :is="getComponent(msg)"
-                :model-value="msgMapper(msg)"
-                :loading="index >= currentMsg.length - 1"
-            />
-            <p v-if="false">{{ msg }}</p>
+    <transition name="response-block-expand">
+        <div v-if="currentMsg.length > 0" class="response-block">
+            <p class="elapsed-time-block">
+                {{ local('Processed') }}: {{ computedElapsedTimeSecond.toFixed(0) }}s
+            </p>
+            <div v-for="(msg, index) in currentMsg" :key="index">
+                <component
+                    v-if="!msgMapper(msg).default"
+                    :is="getComponent(msg)"
+                    :model-value="msgMapper(msg)"
+                    :loading="index >= currentMsg.length - 1"
+                />
+                <p v-if="false">{{ msg }}</p>
+            </div>
         </div>
-    </div>
+    </transition>
 </template>
 
 <script>
@@ -70,7 +74,8 @@ export default {
                 const event = msg?.event || {}
                 if (['item.completed', 'item.started'].includes(msg?.event?.type)) {
                     if (event.item?.type === 'agent_message') return msgBlock
-                    if (['command_execution', 'file_change']) return simpleText
+                    if (['command_execution', 'file_change'].includes(event.item?.type))
+                        return simpleText
                 }
             }
             return simpleText
@@ -125,6 +130,11 @@ export default {
                             content: event.item?.changes?.[0]?.path
                         }
                 }
+                if (['error'].includes(event.type))
+                    return {
+                        title: '',
+                        content: event?.message
+                    }
             }
             if (['completed'].includes(msg.type)) {
                 return {
@@ -173,5 +183,28 @@ export default {
     .msg-block:last-child {
         margin-bottom: 0px;
     }
+}
+
+.response-block-expand-enter-active,
+.response-block-expand-leave-active {
+    overflow: hidden;
+    transition:
+        max-height 0.28s ease,
+        opacity 0.2s ease,
+        transform 0.28s ease;
+}
+
+.response-block-expand-enter-from,
+.response-block-expand-leave-to {
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-6px);
+}
+
+.response-block-expand-enter-to,
+.response-block-expand-leave-from {
+    max-height: 1200px;
+    opacity: 1;
+    transform: translateY(0);
 }
 </style>

@@ -103,7 +103,8 @@ export const useLoopAI = defineStore('useLoopAI', () => {
     const taskMessages = ref([])
     const msgStreamModel = ref({
         msgs: [],
-        loading: false
+        loading: false,
+        status: 'stale'
     })
     const msgEventSource = ref(null)
 
@@ -133,7 +134,11 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     taskMessages.value = (res.data?.conversation || []).map((item) =>
                         normalizeConversationMessage(item)
                     )
-                    msgStreamModel.value.loading = res?.data?.status !== 'completed'
+                    msgStreamModel.value.status = res?.data?.status || 'stale'
+                    msgStreamModel.value.loading = res?.data?.status === 'running'
+                    if (res?.data?.status === 'running' && !msgEventSource.value) {
+                        getMsgStream()
+                    }
                 }
             })
             .catch(() => {

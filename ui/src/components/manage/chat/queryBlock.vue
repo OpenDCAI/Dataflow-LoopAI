@@ -83,21 +83,15 @@ export default {
     computed: {
         ...mapState(useAppConfig, ['local', 'language']),
         ...mapState(useTheme, ['color', 'gradient']),
-        ...mapState(useLoopAI, ['taskStatus', 'msgStreamModel', 'currentTask']),
+        ...mapState(useLoopAI, ['msgStreamModel', 'currentTask']),
         placeholder() {
-            if (this.taskStatus.interrupt_value)
-                return this.taskStatus.interrupt_value + ' ' + this.local(`(Press Ctrl + Enter)`)
             return this.local(`Ask me anything (Press Ctrl + Enter)`)
         },
         holdon() {
             return !this.lock.submit
         },
         runningLLM() {
-            try {
-                return this.taskStatus.running_tasks.includes('llm_node')
-            } catch (e) {
-                return false
-            }
+            return this.msgStreamModel.loading
         }
     },
     mounted() {
