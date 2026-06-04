@@ -83,21 +83,15 @@ export default {
     computed: {
         ...mapState(useAppConfig, ['local', 'language']),
         ...mapState(useTheme, ['color', 'gradient']),
-        ...mapState(useLoopAI, ['taskStatus', 'msgStreamModel']),
+        ...mapState(useLoopAI, ['msgStreamModel', 'currentTask']),
         placeholder() {
-            if (this.taskStatus.interrupt_value)
-                return this.taskStatus.interrupt_value + ' ' + this.local(`(Press Ctrl + Enter)`)
             return this.local(`Ask me anything (Press Ctrl + Enter)`)
         },
         holdon() {
-            return !this.taskStatus.running || this.msgStreamModel.loading || !this.lock.submit
+            return !this.lock.submit
         },
         runningLLM() {
-            try {
-                return this.taskStatus.running_tasks.includes('llm_node')
-            } catch (e) {
-                return false
-            }
+            return this.msgStreamModel.loading
         }
     },
     mounted() {
@@ -123,26 +117,39 @@ export default {
             }
         },
         submitQuery() {
-            if (this.msgStreamModel.loading) return
-            if (!this.taskStatus.running) return
             if (!this.lock.submit) return
             let msg = this.$refs.editor.saveMarkdown()
             msg = msg.trim()
             if (msg === '') return
+            let session_id = this.currentTask?.task_id
+            if (!session_id) {
+                this.$barWarning(this.local('Please select a task first.'), {
+                    status: 'warning'
+                })
+                return
+            }
             this.lock.submit = false
-            this.$api.starter.agentInput(msg).then(async (res) => {
-                if (res.code === 200) {
-                    this.$refs.editor.editor().commands.setContent('')
-                    this.getStatus()
-                    this.getMsgStream()
+            this.$api.starter
+                .starterCodexStream({ prompt: msg, session_id })
+                .then(async (res) => {
+                    if (res.code === 200) {
+                        this.$refs.editor.editor().commands.setContent('')
+                        this.getStatus(session_id)
+                        this.getMsgStream()
+                        this.lock.submit = true
+                    } else {
+                        this.lock.submit = true
+                        this.$barWarning(res.message, {
+                            status: 'warning'
+                        })
+                    }
+                })
+                .catch((error) => {
                     this.lock.submit = true
-                } else {
-                    this.lock.submit = true
-                    this.$barWarning(res.message, {
-                        status: 'warning'
+                    this.$barWarning(error.message, {
+                        status: 'error'
                     })
-                }
-            })
+                })
         }
     }
 }

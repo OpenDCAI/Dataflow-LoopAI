@@ -165,6 +165,25 @@ export class ResourceItem {
     
     
 }
+export class StarterCodexRequest {
+  
+    /**
+     *
+     * @param {String} prompt 
+     */ 
+    constructor(prompt = undefined,workspace = undefined,session_id = undefined){
+        this.prompt = prompt
+        this.workspace = workspace
+        this.session_id = session_id
+    }
+       
+    /**
+     * 
+     * @type {String}
+     */
+    prompt=undefined
+    
+}
 export class SwanLabLogFolder {
   
     /**
@@ -221,12 +240,13 @@ export class TaskItem {
      *
 
      */ 
-    constructor(id = undefined,task_id = undefined,name = undefined,config = undefined,state = undefined,createdAt = undefined,updatedAt = undefined){
+    constructor(id = undefined,task_id = undefined,name = undefined,config = undefined,state = undefined,ai_thread_id = undefined,createdAt = undefined,updatedAt = undefined){
         this.id = id
         this.task_id = task_id
         this.name = name
         this.config = config
         this.state = state
+        this.ai_thread_id = ai_thread_id
         this.createdAt = createdAt
         this.updatedAt = updatedAt
     }
@@ -350,11 +370,14 @@ export class ValidationError {
      * @param {Array} loc 
      * @param {String} msg 
      * @param {String} type 
+     * @param {undefined} ctx 
      */ 
-    constructor(loc = undefined,msg = undefined,type = undefined){
+    constructor(loc = undefined,msg = undefined,type = undefined,input = undefined,ctx = undefined){
         this.loc = loc
         this.msg = msg
         this.type = type
+        this.input = input
+        this.ctx = ctx
     }
        
     /**
@@ -371,6 +394,11 @@ export class ValidationError {
      * 
      * @type {String}
      */
-    type=undefined
+    type=undefined   
+    /**
+     * 
+     * @type {undefined}
+     */
+    ctx=undefined
     
 }
