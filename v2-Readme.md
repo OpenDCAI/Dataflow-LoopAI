@@ -260,7 +260,57 @@ API 文档地址：
 http://localhost:8855/docs
 ```
 
-## 7. 推荐的最小安装顺序
+## 7. 新项目开发结构说明
+
+当前 `v2` 分支在开发结构上和早期版本有一个重要变化：
+
+1. 新的 Sub-Agent 不再放在 `loopai/agents` 下开发。
+2. 新的 Sub-Agent 能力实现统一放在 `loopai/skills` 下。
+3. 根目录的 `skills` 目录用于定义实际给系统消费的技能说明 Markdown。
+
+可以简单理解为：
+
+- `loopai/skills`：放 Python 侧的技能实现、工具代码、运行逻辑
+- `skills`：放技能定义文件，主要是实际使用的 `SKILL.md`
+
+### 7.1 代码目录约定
+
+当前仓库里还能看到历史遗留的 [loopai/agents](/home/lpc/repos/Dataflow-LoopAI/loopai/agents) 目录，但新功能开发不要再优先往这里放。
+
+新的开发约定是：
+
+- 在 [loopai/skills](/home/lpc/repos/Dataflow-LoopAI/loopai/skills) 下新增对应能力目录
+- 在根目录的 [skills](/home/lpc/repos/Dataflow-LoopAI/skills) 下补充对应的 `SKILL.md`
+
+例如当前仓库里已经能看到：
+
+- Python 实现目录：[loopai/skills/Configer](/home/lpc/repos/Dataflow-LoopAI/loopai/skills/Configer)
+- 技能说明文件：[skills/configer/SKILL.md](/home/lpc/repos/Dataflow-LoopAI/skills/configer/SKILL.md)
+
+### 7.2 开发时如何理解这两个目录
+
+开发一个新的 Sub-Agent / Skill 时，可以按下面方式理解：
+
+1. `loopai/skills/<SkillName>` 负责真正的实现代码
+2. `skills/<skill-name>/SKILL.md` 负责描述这个技能如何被调用、适合做什么、输入输出约束是什么
+
+也就是说：
+
+- 如果你是在写功能代码、工具函数、运行逻辑，应该放到 `loopai/skills`
+- 如果你是在定义技能说明、提示词约定、使用规则，应该放到根目录 `skills`
+
+### 7.3 对新开发的建议
+
+后续新增能力时，建议统一按下面结构组织：
+
+```text
+loopai/skills/<SkillName>/
+skills/<skill-name>/SKILL.md
+```
+
+这样可以避免把新的 Sub-Agent 继续堆到旧的 `loopai/agents` 目录里，保持当前 `v2` 分支的结构一致性。
+
+## 8. 推荐的最小安装顺序
 
 如果你只想快速跑起来，按下面顺序做即可：
 
@@ -307,13 +357,13 @@ cp examples/config/starter.yaml ./starter.yaml
 python api/start.py
 ```
 
-## 8. 常见问题
+## 9. 常见问题
 
-### 8.1 为什么不能直接执行 `python scripts/download_ui_release.py`？
+### 9.1 为什么不能直接执行 `python scripts/download_ui_release.py`？
 
 因为那是主线 `main` 分支 UI 的发布包流程，当前 `v2` 分支前端已经改动，必须本地构建 `ui/dist` 后再手动复制到 `api/dist`。
 
-### 8.2 `codex-runner` 已经 `yarn` 了，为什么还不能用？
+### 9.2 `codex-runner` 已经 `yarn` 了，为什么还不能用？
 
 因为当前链路除了 Node 依赖，还依赖本机可用的 `codex-cli` 和正确的 `codex_*` 配置。至少要确认：
 
@@ -321,6 +371,6 @@ python api/start.py
 - `starter.yaml` 里的 `codex_api_key`、`codex_model`、`codex_base_url` 已配置
 - `codex_workspace`、`codex_home` 路径有效
 
-### 8.3 Codex 参数能不能先不填？
+### 9.3 Codex 参数能不能先不填？
 
 可以先填占位值，把 UI 启起来后再到系统配置里修改；但如果你马上要在 V2 里调用 Codex 能力，就必须先配置成真实可用的值。
