@@ -8,14 +8,23 @@
 
 - 查看某个 agent / section 有哪些可配置字段
 - 询问某个配置项是什么意思、能填什么值
-- 读取数据库里某个 task 或默认配置的实际值
+- 读取数据库里某个 task 的实际 states 值
+- 读取全局默认 states 配置
 - 修改某个 task 下的 states 配置
-- 修改默认用户配置中的 states 配置
+- 修改全局默认 states 配置
 
 不要用它处理：
 
-- `system` 配置修改
+- 全局 `system` 配置读取或修改
 - 训练、评测、分析、爬取、数据构造本身
+
+如果用户提到的是全局配置，尤其是模型服务地址、API key、workspace、runner、codex provider、系统级路径等：
+
+- 立即停止使用本 skill 的 states 读写函数
+- 不要把请求错误地映射到某个 task 的 `state`
+- 先明确告诉用户：当前 skill 只处理全局默认 `states` 和任务 `state`
+- 如果用户点名的是 `system.*`，再额外说明：`system` 本身不允许通过本 skill 修改
+- 然后引导到全局配置对应的处理链路
 
 ## 首选动作
 
@@ -23,10 +32,16 @@
 
 优先顺序必须是：
 
-1. 直接使用本 skill 里列出的函数
-2. 如需确认字段约束，先调用 `get_configer_state_schema(section_name=...)`
-3. 如需确认当前值，调用 `get_configer_state_config(section_name=..., field_name=...)`
-4. 如需修改，直接调用 `update_configer_state_config(section_name, updates)`
+1. 先判断用户要改的是“全局配置”还是“任务 states”
+2. 如果是全局配置中的 `system`：不要调用本 skill 的任何 states 读写函数
+3. 如果是全局配置中的 `default_states`，或某个 task 的 `state`：直接使用本 skill 里列出的函数
+4. 如需确认字段约束，先调用 `get_configer_state_schema(section_name=...)`
+5. 如需确认当前值：
+   默认/自动作用域用 `get_configer_state_config(section_name=..., field_name=...)`
+   指定任务实际值用 `get_configer_task_state_config(section_name=..., field_name=..., task_id=...)`
+6. 如需修改：
+   默认/自动作用域用 `update_configer_state_config(section_name, updates)`
+   指定任务实际值用 `update_configer_task_state_config(section_name, updates, task_id=...)`
 
 不要先执行这类全仓搜索：
 
@@ -48,10 +63,16 @@ rg -n "eval_task_type" skills/configer loopai/skills/Configer api/app -S
 
 ## 背景知识
 
-LoopAI 的配置分两层：
+LoopAI 里和本 skill 相关的配置，分两层：
 
-1. 默认配置：`StarterConfig.config.default_states`
-2. 任务配置：`TaskModel.config.default_states`
+1. 全局默认 states：`StarterConfig.config.default_states`
+2. 任务运行态：`TaskModel.state`
+
+重要：
+
+- 全局 `system` 不属于这套 skill 的处理范围
+- 任务级 states 现在应理解为 `TaskModel.state`
+- 不要再把任务级 states 修改理解成改 `TaskModel.config.default_states`
 
 是否读取 / 修改任务级配置，由环境变量决定：
 
@@ -60,33 +81,32 @@ LoopAI 的配置分两层：
 
 规则：
 
-- 有 `task_id` / `TASK_ID`：读取或修改该任务的 `default_states`
+- 有 `task_id` / `TASK_ID`：读取或修改该任务的实际 `state`
 - 没有 `task_id` / `TASK_ID`：读取或修改全局默认的 `default_states`
+- 如果你必须显式指定某个任务，而不是依赖环境变量，使用 `get_configer_task_state_config(...)` / `update_configer_task_state_config(...)`
 
 ## 可调用函数
 
 ```python
 from loopai.skills.Configer import (
     get_configer_state_schema,
-    get_configer_state_schema_async,
     get_configer_state_config,
-    get_configer_state_config_async,
+    get_configer_task_state_config,
     update_configer_state_config,
-    update_configer_state_config_async,
+    update_configer_task_state_config,
 )
 ```
 
-一般优先用同步版本；只有在你当前上下文本身就是 async 时再用 async 版本。
-
 当前实现说明：
 
-- `get_configer_state_config(...)` / `update_configer_state_config(...)` 已改为直接走同步 `sqlite3` 读写
-- `*_async(...)` 版本目前只是为了兼容 async 调用方而保留的 `async def` 外壳，底层仍复用同一套同步配置读写逻辑
-- 因此不要再把这几个接口理解成“真正的异步 SQLite 驱动调用”
+- 所有接口现在都只保留同步版本
+- `get_configer_state_config(...)` / `update_configer_state_config(...)` 走同步 `sqlite3` 读写
+- `get_configer_task_state_config(...)` / `update_configer_task_state_config(...)` 专门处理任务级 `TaskModel.state` 实际值
+- 没有任何一个函数可以用来处理全局 `system`
 
 ### 1. 获取 schema
 
-获取全部非 `system` schema：
+获取全部可配置 states schema：
 
 ```python
 get_configer_state_schema()
@@ -104,6 +124,7 @@ get_configer_state_schema(section_name="default")
 
 - 该函数直接基于 `get_state_config_schema(...)`
 - 不读取 `task_id` 下的实际值
+- 不处理全局 `system`
 - 适合回答“这个字段是什么”“允许填什么”“schema 默认值是什么”
 
 ### 2. 获取数据库里的实际配置
@@ -124,9 +145,37 @@ get_configer_state_config(section_name="judger", field_name="eval_task_type")
 
 - 该函数读取数据库里的真实配置值
 - 需要 `DB_PATH`
-- 有 `task_id` / `TASK_ID` 时读取任务配置，否则读取默认配置
+- 有 `task_id` / `TASK_ID` 时读取任务实际 `state`，否则读取默认配置
 - 如果只传 `section_name`，返回整个 section
 - 如果再传 `field_name`，只返回该字段的配置对象
+
+### 2.1 显式读取某个 task 的实际配置
+
+读取某个 task 的整个 section：
+
+```python
+get_configer_task_state_config(
+    section_name="judger",
+    task_id="your-task-id",
+)
+```
+
+读取某个 task 的单个字段：
+
+```python
+get_configer_task_state_config(
+    section_name="judger",
+    field_name="eval_task_type",
+    task_id="your-task-id",
+)
+```
+
+说明：
+
+- 这组接口只读任务级实际值，也就是 `TaskModel.state`
+- `task_id` 优先用显式参数
+- 如果没传，则强制从环境变量 `task_id` / `TASK_ID` 获取
+- 如果两者都没有，会直接报错，不会回退到默认配置
 
 ### 3. 更新配置
 
@@ -155,6 +204,25 @@ update_configer_state_config(
 
 也支持传 JSON 字符串。
 
+### 3.1 显式更新某个 task 的实际配置
+
+```python
+update_configer_task_state_config(
+    "judger",
+    {
+        "eval_batch_size": 8,
+        "eval_temperature": 0.2
+    },
+    task_id="your-task-id",
+)
+```
+
+说明：
+
+- 这组接口只更新任务级实际值，也就是 `TaskModel.state`
+- 不会回退去改默认配置
+- 如果没有显式 `task_id`，则必须从环境变量 `task_id` / `TASK_ID` 中取到
+
 ## 执行稳定性要求
 
 当通过 codex-sdk / shell 子进程调用这些函数时，要特别注意下面几点：
@@ -168,9 +236,9 @@ update_configer_state_config(
 ```bash
 timeout 20 python3 -u <<'PY'
 import json
-from loopai.skills.Configer import get_configer_state_config
+from loopai.skills.Configer import get_configer_task_state_config
 
-result = get_configer_state_config("judger", "eval_task_type")
+result = get_configer_task_state_config("judger", "eval_task_type", task_id="your-task-id")
 print(json.dumps(result, ensure_ascii=False, default=str), flush=True)
 PY
 ```
@@ -180,9 +248,9 @@ PY
 ```bash
 timeout 20 python3 -u <<'PY'
 import json
-from loopai.skills.Configer import update_configer_state_config
+from loopai.skills.Configer import update_configer_task_state_config
 
-result = update_configer_state_config("judger", {"eval_task_type": "code"})
+result = update_configer_task_state_config("judger", {"eval_task_type": "code"}, task_id="your-task-id")
 print(json.dumps(result, ensure_ascii=False, default=str), flush=True)
 PY
 ```
@@ -198,7 +266,6 @@ PY
 
 - 现在这组配置接口的底层实现是同步 `sqlite3`，正常情况下不会再因为 `aiosqlite` / `Tortoise` 链路而卡住
 - 这里仍然推荐保留 `timeout`，原因是 shell / sdk 子进程本身仍可能因为环境、锁竞争、解释器问题或调用链其他环节而挂起
-- 如果是在 async 路由或 async 函数里调用 `*_async(...)`，它可以正常 `await`，但底层依然是短时间同步 SQLite 读写；它不是高并发数据库接口
 
 ## 字段含义说明
 
@@ -350,6 +417,11 @@ PY
 - `get_configer_state_config`
 - `update_configer_state_config`
 
+但前提是：
+
+- 用户请求不是全局 `system`
+- 用户请求目标确实属于全局 `default_states` 或任务 `state`
+
 不要直接：
 
 - 手写 `sqlite3 ... SELECT ...`
@@ -376,18 +448,23 @@ PY
 
 ## 约束
 
-- 不允许修改 `system`
+- 不允许修改全局 `system`
 - 不允许修改不存在的 section
 - 不允许修改不存在的字段
 - 不允许通过该 skill 修改 `default.task_id`
 
 ## 推荐工作流
 
-1. 先根据用户目标确定要看哪个 section
-2. 如果用户是在问“这个字段能填什么、默认是什么”，先调 `get_configer_state_schema(section_name=...)`
-3. 如果用户是在问“现在数据库里实际配成什么了”，调 `get_configer_state_config(section_name=..., field_name=...)`
-4. 如果用户要修改配置，把更新对象整理成“某个 section 下的字段 dict”
-5. 调 `update_configer_state_config(section_name, updates)`
-6. 如果 shell 调用，要显式 `print(json.dumps(...))`，并建议带 `timeout`
-7. 如果接口调用超时，先报告接口异常，再决定是否进入只读排障
-8. 按统一 success / error payload 回复用户，并明确 `scope`、`section_name`、`field_name`
+1. 先判断目标是全局配置还是任务 states
+2. 如果属于全局 `system`：停止，不要调用任何 states 接口，并明确告知“当前 skill 只支持全局 `default_states` 和任务 `state`”
+3. 如果属于全局 `default_states` 或任务 `state`，再确定要看哪个 section
+4. 如果用户是在问“这个字段能填什么、默认是什么”，先调 `get_configer_state_schema(section_name=...)`
+5. 如果用户是在问“现在数据库里实际配成什么了”：
+   默认/自动作用域调 `get_configer_state_config(section_name=..., field_name=...)`
+   指定 task 调 `get_configer_task_state_config(section_name=..., field_name=..., task_id=...)`
+6. 如果用户要修改配置，把更新对象整理成“某个 section 下的字段 dict”
+7. 修改默认/自动作用域用 `update_configer_state_config(section_name, updates)`
+8. 修改指定 task 的实际值用 `update_configer_task_state_config(section_name, updates, task_id=...)`
+9. 如果 shell 调用，要显式 `print(json.dumps(...))`，并建议带 `timeout`
+10. 如果接口调用超时，先报告接口异常，再决定是否进入只读排障
+11. 按统一 success / error payload 回复用户，并明确 `scope`、`section_name`、`field_name`

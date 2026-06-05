@@ -31,7 +31,8 @@ async def starter_codex_stream(req: StarterCodexRequest):
         workspace=req.workspace,
         session_id=req.session_id,
         env_overrides={
-            'DB_PATH': DB_PATH
+            'DB_PATH': DB_PATH,
+            'TASK_ID': req.session_id,
         },
     )
     message = "Codex prompt queued" if payload.get("type") == "queued" else "Codex prompt submitted"
