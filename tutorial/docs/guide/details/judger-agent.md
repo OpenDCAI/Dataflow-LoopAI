@@ -10,75 +10,76 @@
 
 ## 进入它之前通常要准备什么
 
-通用前置条件包括：
+通用前置字段包括：
+
 | 字段名 | 类型 | 说明 |
-| --- | :---: | --- |
-| `eval_task_type` | str | 评测任务类型。目前支持的任务类型有代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text)，配置时需从`code`、`text2sql`、`general_text`中选择，默认为`code` |
-| `eval_model_path` | str | 被评测的模型路径 |
-| `eval_temperature` | double | 模型温度参数 |
-| `eval_top_p` | double | 顶部概率质量采样的累积概率阈值 |
-| `eval_problem_path` | str | 格式为`jsonl`的问题集文件路径（相关字段要求请查阅"评测数据集相关字段"部分） |
-| `eval_vllm_tensor_parallel_size` | int | 张量并行大小，默认为1 |
-| `eval_vllm_gpu_memory_utilization` | double | GPU显存利用率。 |
-| `cuda_visible_devices` | str | 评测任务指定的GPU编号，比如`0,1`。该参数默认为`0` |
+| --- | --- | --- |
+| `eval_task_type` | `str` | 评测任务类型。目前支持 `code`、`text2sql`、`general_text`，默认值为 `code`。 |
+| `eval_model_path` | `str` | 被评测的模型路径。 |
+| `eval_temperature` | `double` | 模型温度参数。 |
+| `eval_top_p` | `double` | top-p 采样的累计概率阈值。 |
+| `eval_problem_path` | `str` | `jsonl` 格式的问题集文件路径。相关字段要求见下文“评测数据集字段”。 |
+| `eval_vllm_tensor_parallel_size` | `int` | 张量并行大小，默认值为 `1`。 |
+| `eval_vllm_gpu_memory_utilization` | `double` | GPU 显存利用率。 |
+| `cuda_visible_devices` | `str` | 评测任务指定的 GPU 编号，例如 `0,1`。默认值为 `0`。 |
 
-code任务前置条件：
+### `code` 任务前置字段
+
 | 字段名 | 类型 | 说明 |
-| --- | :---: | --- |
-| `eval_batch_size` | int | 生成样例批处理大小 |
-| `eval_case_num` | int | 问题集中每条问题生成样例的数量 |
+| --- | --- | --- |
+| `eval_batch_size` | `int` | 生成样例的批处理大小。 |
+| `eval_case_num` | `int` | 每条问题生成的样例数量。 |
 
+### `text2sql` 任务前置字段
 
-text2sql任务前置条件：
 | 字段名 | 类型 | 说明 |
-| --- | :---: | --- |
-| `eval_batch_size` | int | 生成样例批处理大小 |
-| `eval_case_num` | int | 问题集中每条问题生成样例的数量 |
-| `eval_text2sql_dir` | int | 数据库文件夹路径，如`path/to/your/database/` |
+| --- | --- | --- |
+| `eval_batch_size` | `int` | 生成样例的批处理大小。 |
+| `eval_case_num` | `int` | 每条问题生成的样例数量。 |
+| `eval_text2sql_dir` | `str` | 数据库文件夹路径，例如 `path/to/your/database/`。 |
 
+### `general_text` 任务前置字段
 
-general_text任务前置条件：
 | 字段名 | 类型 | 说明 |
-| --- | :---: | --- |
-| `bench_dataflow_eval_type` |  str   |  通用文本任务类型，例如 key2_qa / key1_text_score    |
-| `key_mapping` |  str  |  问题集的json格式的字段映射,若用户未设置则从问题集中自动识别，如  {"input_question_key": "question","input_target_key": "answer","input_pred_key": "generated_ans"} |
+| --- | --- | --- |
+| `bench_dataflow_eval_type` | `str` | 通用文本任务类型，例如 `key2_qa` 或 `key1_text_score`。 |
+| `key_mapping` | `str` | 问题集 JSON 字段映射。若未设置，系统会尝试自动识别。例如 `{"input_question_key":"question","input_target_key":"answer","input_pred_key":"generated_ans"}`。 |
 
------------------
-评测数据集相关字段:
+## 评测数据集字段
 
-- code任务：
+### `code` 任务
 
-    | 字段名 | <div style="width: 80pt">含义</div> | 说明 |
-    | --- | :---: | --- |
-    | task_id | 题目编号 | `问题集名/序号`或者`序号` |
-    | prompt | 问题提示词 | 函数定义+问题描述提示（以多行注释形式写在函数定义下），为了减少处理过程，需模型生成的结果为完整函数。如`def return1():\n    \"\"\"This function has no input parameters, and your task is to make it return the integer 1.\n    \"\"\"` |
-    | entry_point | 评测函数入口点 | 如`return1` |
-    | canonical_solution | 标准程序 | 如`def return1():\n    return 1`。需要完整的代码（包含函数定义部分） |
-    | test_list | 测试用例列表 | 如`["assert return1() == 1"]`。需要为测试用例列表，其中的函数名需要和`entry_point`一致 |
+| 字段名 | 含义 | 说明 |
+| --- | --- | --- |
+| `task_id` | 题目标号 | 格式可以是 `问题集名/序号` 或 `序号`。 |
+| `prompt` | 问题提示词 | 通常是函数定义加问题描述。为了减少后处理，模型生成结果应为完整函数。 |
+| `entry_point` | 评测入口函数 | 例如 `return1`。 |
+| `canonical_solution` | 标准程序 | 例如 `def return1():\n    return 1`，需要提供完整代码。 |
+| `test_list` | 测试用例列表 | 例如 `["assert return1() == 1"]`，其中函数名应与 `entry_point` 一致。 |
 
-- text2sql任务：
-    | 字段名 | <div style="width: 50pt">含义</div> | 说明 |
-    | --- | :---: | --- |
-    | task_id | 题目编号 | `问题集名/序号`或者`序号` |
-    | prompt | 问题提示词 |  |
-    | db_id | 数据库名称 | 如值为`dbName`，则`dbName.sqlite`数据库文件应在`{judger.eval_text2sql_dir}\dbName`目录中 |
-    | question | 问题内容 | 如`What is the highest eligible free rate for K-12 students in the schools in Alameda County?` |
-    | ground_truth | 标准答案 | 如`SELECT 'Free Meal Count (K-12)' / 'Enrollment (K-12)' FROM frpm WHERE 'County Name' = 'Alameda' ORDER BY (CAST('Free Meal Count (K-12)' AS REAL) / 'Enrollment (K-12)') DESC LIMIT 1` |
+### `text2sql` 任务
 
+| 字段名 | 含义 | 说明 |
+| --- | --- | --- |
+| `task_id` | 题目标号 | 格式可以是 `问题集名/序号` 或 `序号`。 |
+| `prompt` | 问题提示词 | 模型的输入提示。 |
+| `db_id` | 数据库名称 | 若值为 `dbName`，则 `dbName.sqlite` 应位于 `{judger.eval_text2sql_dir}/dbName` 目录下。 |
+| `question` | 问题内容 | 例如自然语言查询问题。 |
+| `ground_truth` | 标准答案 | 对应问题的标准 SQL。 |
 
 ## 它的输入和输出可以怎么理解
 
-输入通常是：
+输入通常包括：
 
 - 模型信息
 - 评测任务定义
-- 数据集与配置
+- 数据集与评测配置
 
-输出通常是：
+输出通常包括：
 
-- 样例输出：`code`和`text2sql`任务输出路径为`judger.output_case_path`；`general_text`任务输出路径为`judger.output_pred_path`。
-- 评测结果：输出路径为`judger.output_result_path`
-- 上述输出路径都是可供 Analyzer 继续使用的结果路径
+- 样例输出：`code` 和 `text2sql` 任务输出到 `judger.output_case_path`；`general_text` 任务输出到 `judger.output_pred_path`
+- 评测结果：输出到 `judger.output_result_path`
+- 上述输出路径都可以继续提供给 `Analyzer` 使用
 
 ## 在闭环中的位置
 
@@ -86,7 +87,7 @@ Judger 通常是闭环里真正开始执行的第一层。没有这一步，后�
 
 ## 使用时最该关注什么
 
-- 模型服务是否真的可用
+- 模型服务是否可用
 - 评测任务是否与目标场景匹配
 - 结果路径是否成功生成
-- 输出样例是否能支持后续问题分析
+- 输出样例是否足以支撑后续问题分析

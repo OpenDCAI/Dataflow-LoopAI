@@ -23,9 +23,9 @@ Constructor Agent 采用多阶段顺序执行架构：
 - **调试能力：** 支持 debug 日志落盘
 
 **输出：**
-- `constructor_category`: 任务类别（PT/SFT）
-- `constructor_model_path/base_url/api_key`: 模型配置
-- `constructor_default_mapping_format`: 默认映射格式
+- `constructor.category`: 任务类别（PT/SFT）
+- `constructor.model_path` / `constructor.base_url` / `constructor.api_key`: 模型配置
+- `constructor.default_mapping_format`: 默认映射格式
 
 ### 2. 网络搜索节点 (Web Search Node)
 
@@ -52,9 +52,9 @@ Constructor Agent 采用多阶段顺序执行架构：
   - 识别网页数据源
 
 **输出：**
-- `constructor_subtasks`: 下载任务列表（用于判断是否进入后处理）
-- `constructor_postprocess_results`: 后处理结果统计
-- `constructor_intermediate_data_path`: 中间数据路径
+- `constructor.subtasks`: 下载任务列表（用于判断是否进入后处理）
+- `constructor.postprocess_results`: 后处理结果统计
+- `constructor.intermediate_data_path`: 中间数据路径
 
 ### 3. 下载节点 (Download Node)
 
@@ -80,8 +80,8 @@ Constructor Agent 采用多阶段顺序执行架构：
 **智能决策：** 使用 LLM 自动选择最佳下载方法
 
 **输出：**
-- `constructor_intermediate_data_path`: 中间数据路径
-- `constructor_cleaning_results`: 清洗结果
+- `constructor.intermediate_data_path`: 中间数据路径
+- `constructor.cleaning_results`: 清洗结果
 
 ### 4. 后处理节点 (Post-process Node)
 
@@ -100,8 +100,8 @@ Constructor Agent 采用多阶段顺序执行架构：
 - **中间数据保存：** 保存转换后的中间格式数据
 
 **输出：**
-- `constructor_intermediate_data_path`: 中间数据文件路径
-- `constructor_postprocess_results`: 后处理结果统计
+- `constructor.intermediate_data_path`: 中间数据文件路径
+- `constructor.postprocess_results`: 后处理结果统计
 
 ### 5. 格式映射子图 (Mapping Subgraph)
 
@@ -125,8 +125,8 @@ Constructor Agent 采用多阶段顺序执行架构：
 - 更多格式可扩展
 
 **输出：**
-- `constructor_confirmed_format`: 确认的目标格式
-- `constructor_final_data_path`: 最终数据文件路径
+- `constructor.confirmed_format`: 确认的目标格式
+- `constructor.mapping_results`: 映射结果详情，通常包含最终数据文件路径
 
 ## 📝 使用方法
 
@@ -149,13 +149,15 @@ constructor = ConstructorAgent(
 constructor_state = {
     # 必需字段
     'automated_query': '获取用于训练中文对话模型的数据集',
-    
-    # 可选字段
-    'constructor_category': 'SFT',  # 或 'PT'
-    'constructor_model_path': 'qwen2.5-7b-instruct',
-    'constructor_base_url': 'http://localhost:8000/v1',
-    'constructor_api_key': 'your-api-key',
-    'constructor_default_mapping_format': 'alpaca',
+
+    # Constructor 配置
+    'constructor': {
+        'category': 'SFT',  # 或 'PT'
+        'model_path': 'qwen2.5-7b-instruct',
+        'base_url': 'http://localhost:8000/v1',
+        'api_key': 'your-api-key',
+        'default_mapping_format': 'alpaca',
+    },
     'output_dir': './output/constructor'
 }
 
@@ -171,19 +173,21 @@ result = graph.invoke(constructor_state, config=config)
 # Constructor 配置
 constructor_state = {
     'automated_query': '获取数学推理数据集',
-    'constructor_category': 'SFT',
-    'constructor_model_path': 'qwen2.5-7b-instruct',
-    'constructor_base_url': 'http://localhost:8000/v1',
-    'constructor_api_key': 'your-api-key',
-    'constructor_llm_timeout': 120,
-    'constructor_max_retries': 3,
-    'constructor_max_concurrent_mapping': 10,
-    'constructor_default_mapping_format': 'alpaca',  # 跳过用户交互，直接使用 Alpaca 格式
+    'constructor': {
+        'category': 'SFT',
+        'model_path': 'qwen2.5-7b-instruct',
+        'base_url': 'http://localhost:8000/v1',
+        'api_key': 'your-api-key',
+        'llm_timeout': 120,
+        'max_retries': 3,
+        'max_concurrent_mapping': 10,
+        'default_mapping_format': 'alpaca',  # 跳过用户交互，直接使用 Alpaca 格式
+    },
 }
 
 # 可选调试配置
-constructor_state.update({
-    'constructor_debug': True,
+constructor_state['constructor'].update({
+    'debug': True,
 })
 ```
 
@@ -194,49 +198,57 @@ constructor_state.update({
 | 字段名 | 类型 | 必需 | 默认值 | 说明 |
 |-------|------|-----|--------|-----|
 | `automated_query` | str | ✅ | - | 用户查询或任务描述 |
-| `constructor_category` | str | ❌ | 自动检测 | 任务类别：PT 或 SFT |
-| `constructor_model_path` | str | ✅ | - | LLM 模型名称 |
-| `constructor_base_url` | str | ✅ | - | LLM API 基础 URL |
-| `constructor_api_key` | str | ✅ | - | LLM API 密钥 |
-| `constructor_temperature` | float | ❌ | 0.7 | LLM 温度参数 |
-| `constructor_llm_timeout` | float | ❌ | 120.0 | LLM 超时时间（秒） |
-| `constructor_max_retries` | int | ❌ | 3 | 最大重试次数 |
-| `constructor_max_concurrent_mapping` | int | ❌ | 10 | 最大并发映射数 |
-| `constructor_max_samples_before_cleaning` | int | ❌ | 20000 | 进入 basic 前、全部 JSONL 的全局采样预算，按文件数均分（0 不限制） |
-| `constructor_default_mapping_format` | str | ❌ | alpaca | 默认映射格式（空则用户交互） |
-| `constructor_debug` | bool | ❌ | False | 是否启用调试模式 |
+| `constructor.category` | str | ❌ | 自动检测 | 任务类别：PT 或 SFT |
+| `constructor.model_path` | str | ✅ | - | LLM 模型名称；为空时可从 Obtainer/Analyzer 配置继承 |
+| `constructor.base_url` | str | ✅ | - | LLM API 基础 URL |
+| `constructor.api_key` | str | ✅ | - | LLM API 密钥 |
+| `constructor.temperature` | float | ❌ | 0.7 | LLM 温度参数 |
+| `constructor.top_p` | float | ❌ | 0.95 | LLM top-p 参数 |
+| `constructor.max_completion_tokens` | int | ❌ | 4096 | LLM 最大输出 token 数 |
+| `constructor.download_dir` | str | 按需 | - | 待处理下载数据目录 |
+| `constructor.intermediate_data_path` | str | 按需 | - | 清洗和映射的输入数据路径 |
+| `constructor.llm_timeout` | float | ❌ | 300.0 | LLM 超时时间（秒） |
+| `constructor.max_retries` | int | ❌ | 3 | 最大重试次数 |
+| `constructor.max_concurrent_mapping` | int | ❌ | 10 | 最大并发映射数 |
+| `constructor.max_samples_before_cleaning` | int | ❌ | 20000 | 进入 basic 前、全部 JSONL 的全局采样预算，按文件数均分（0 不限制） |
+| `constructor.cleaning_random_seed` | int | ❌ | None | 清洗前采样和 benchmark 抽取的随机种子 |
+| `constructor.postprocess_version` | str | ❌ | agent_v2 | 后处理版本：`legacy` 或 `agent_v2` |
+| `constructor.default_mapping_format` | str | ❌ | alpaca | 默认映射格式（非空则自动映射） |
+| `constructor.benchmark_source_dir` | str | ❌ | 空 | Benchmark 源目录 |
+| `constructor.benchmark_pool_path` | str | ❌ | outputs/benchmark_load/benchmark_pool.jsonl | Benchmark 采样池路径 |
+| `constructor.benchmark_pool_size` | int | ❌ | 500 | Benchmark 采样池大小 |
+| `constructor.debug` | bool | ❌ | False | 是否启用调试模式 |
 | `output_dir` | str | ❌ | ./output | 输出目录 |
 
 ### 输出字段
 
 | 字段名 | 类型 | 说明 |
 |-------|------|-----|
-| `constructor_category` | str | 检测到的任务类别 |
-| `constructor_subtasks` | list | 下载任务列表 |
-| `constructor_intermediate_data_path` | str | 中间数据文件路径 |
-| `constructor_postprocess_results` | dict | 后处理结果统计 |
-| `constructor_cleaning_results` | dict | 数据清洗结果 |
-| `constructor_confirmed_format` | str | 确认的目标格式 |
-| `constructor_mapping_results` | dict | 映射结果详情 |
-| `constructor_final_data_path` | str | 最终数据文件路径（见 mapping 结果） |
+| `constructor.category` | str | 检测到的任务类别 |
+| `constructor.subtasks` | list | 下载任务列表 |
+| `constructor.intermediate_data_path` | str | 中间数据文件路径 |
+| `constructor.postprocess_results` | dict | 后处理结果统计 |
+| `constructor.cleaning_results` | dict | 数据清洗结果 |
+| `constructor.confirmed_format` | dict | 确认的目标格式 |
+| `constructor.mapping_results` | dict | 映射结果详情，通常包含最终数据文件路径 |
 
 ## 🛠️ 关键模块
 
 ### postprocess_node
 
 - 位置：`loopai/agents/Constructor/nodes/postprocess_node.py`
-- 作用：把下载结果转换成中间标准格式，写入 `constructor_postprocess_results` 和 `constructor_intermediate_data_path`。
+- 作用：把下载结果转换成中间标准格式，写入 `constructor.postprocess_results` 和 `constructor.intermediate_data_path`。
 
 ### CleaningSubgraph
 
 - 位置：`loopai/agents/Constructor/nodes/filter_node.py`
 - 流程：`max_samples_before_cleaning` 在全部待处理 JSONL 间**均分**配额并采样 →（`category=SFT` 时）按 benchmark + `user_query` 将行改写为 ShareGPT → `basic_data_flitter`（SFT 同时接受 `messages` 与 `conversations`）→ LLM 规划**仅领域工具** → 顺序执行 `text2sql` / `code_generate` / `normal_data` →（可选）benchmark 去重。
-- 作用：更新 `constructor_cleaning_results`、`constructor_intermediate_data_path` 及运行态字段（如 `cleaning_sampling_plan`、`cleaning_presampled`）。
+- 作用：更新 `constructor.cleaning_results`、`constructor.intermediate_data_path` 及运行态字段（如 `cleaning_sampling_plan`、`cleaning_presampled`）。
 
 ### MappingSubgraph
 
 - 位置：`loopai/agents/Constructor/mapping/mapping_subgraph.py`
-- 作用：处理格式确认与映射，输出 `constructor_mapping_results`。
+- 作用：处理格式确认与映射，输出 `constructor.mapping_results`。
 
 ## 🚨 故障排除
 
@@ -279,7 +291,9 @@ constructor_state.update({
 启用调试模式：
 ```python
 constructor_state = {
-    'constructor_debug': True,
+    'constructor': {
+        'debug': True,
+    },
     # ... 其他配置
 }
 ```
@@ -386,4 +400,3 @@ constructor_state = {
 ---
 
 💡 **提示：** 查看 `examples/scripts/` 下的脚本了解完整使用示例。
-
