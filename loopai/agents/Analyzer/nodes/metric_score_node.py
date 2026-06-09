@@ -5,11 +5,10 @@ import time
 from pathlib import Path
 from typing import Dict, Any, List
 
-from langgraph.config import get_stream_writer
-
 from loopai.schema.events import StreamEvent
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
+from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
 
 from ..eval_metrics.metrics.runner import MetricRunner
 
@@ -66,7 +65,7 @@ def metric_score_node(state: LoopAIState):
     3. 调用 MetricRunner 计算指标
     4. 将结果写回 state['analyzer']
     """
-    writer = get_stream_writer()
+    writer = get_safe_stream_writer()
 
     judger_cfg = state.get("judger", {}) or {}
     analyzer_cfg = state.get("analyzer", {}) or {}
