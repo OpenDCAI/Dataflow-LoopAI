@@ -16,7 +16,7 @@
         <task-nav
             v-model="show.taskNav"
             class="lp-task-container"
-            v-model:task="currentTask"
+            v-model:task="currentTaskModel"
         ></task-nav>
         <div class="lp-flow-container">
             <mainFlow
@@ -57,55 +57,18 @@
                     </template>
                     <template v-slot:right-space>
                         <div class="command-bar-right-space">
-                            <fv-button
-                                theme="dark"
-                                background="linear-gradient(
-                                    90deg,
-                                    rgba(129, 208, 246, 1),
-                                    rgba(146, 156, 218, 1)
-                                )"
-                                foreground="rgba(255, 255, 255, 1)"
-                                border-color="rgba(255, 255, 255, 0.3)"
-                                border-radius="30"
-                                :disabled="
-                                    ((!currentTask || !currentTask.task_id) && !isRunning) ||
-                                    !lock.runBtn
-                                "
-                                :reveal-background-color="[
-                                    'rgba(255, 255, 255, 0.5)',
-                                    'rgba(103, 105, 251, 0.6)'
-                                ]"
-                                @click="handleExecute"
-                            >
-                                <fv-progress-ring
-                                    v-if="!lock.loading || !lock.runBtn"
-                                    loading="true"
-                                    :r="10"
-                                    :border-width="2"
-                                    background="rgba(200, 200, 200, 1)"
-                                    :color="'white'"
-                                    style="margin-right: 5px"
-                                ></fv-progress-ring>
-                                <i
-                                    v-else
-                                    class="ms-Icon"
-                                    :class="[`ms-Icon--${isRunning ? 'CheckboxFill' : 'Play'}`]"
-                                    style="margin-right: 5px"
-                                ></i>
-                                <p>{{ isRunning ? local('Stop') : local('Run') }}</p>
-                            </fv-button>
                             <i
                                 class="ms-Icon ms-Icon--FullCircleMask status-coin"
                                 :class="[
-                                    { ready: taskStatus.running && !taskStatus.waiting_llm },
-                                    { running: taskStatus.running && taskStatus.waiting_llm }
+                                    { ready: !msgStreamModel.loading },
+                                    { running: msgStreamModel.loading }
                                 ]"
                                 style="margin-left: 5px"
                             ></i>
                         </div>
                     </template>
                 </fv-command-bar>
-                <current-task-block v-model="currentTask"></current-task-block>
+                <current-task-block v-model="currentTaskModel"></current-task-block>
             </div>
             <div class="chat-query-block" :class="[{ 'full-screen': show.fullScreen }]">
                 <query-block v-model:full-screen-editor="show.fullScreen"></query-block>
@@ -157,7 +120,6 @@ export default {
         return {
             flowId: 'lp-main-flow',
             value: null,
-            currentTask: null,
             options: [
                 {
                     name: () => this.local('Resources'),
@@ -230,7 +192,8 @@ export default {
                         graphClsPrefix: 'ObtainerAgent',
                         include_nodes: ['obtain_node'],
                         icon: 'GiftboxOpen',
-                        nodeInfo: 'Obtainer Agent for obtaining the data from external datasets and run the data synthesis.',
+                        nodeInfo:
+                            'Obtainer Agent for obtaining the data from external datasets and run the data synthesis.',
                         iconColor: 'rgba(90, 45, 133, 1)',
                         reverseHandle: true,
                         borderColor: 'rgba(90, 45, 133, 0.8)'
@@ -300,7 +263,8 @@ export default {
                         graphClsPrefix: 'AnalyzerAgent',
                         include_nodes: ['analyze_node'],
                         icon: 'AreaChart',
-                        nodeInfo: 'Analyzer Agent for analyzing the model performance from the results of Judger.',
+                        nodeInfo:
+                            'Analyzer Agent for analyzing the model performance from the results of Judger.',
                         iconColor: 'rgba(98, 84, 191, 1)',
                         background:
                             'linear-gradient(130deg, rgba(150, 167, 222, 0.8), rgba(252, 252, 252, 0.8))',
@@ -419,36 +383,42 @@ export default {
                 fullScreen: false
             },
             lock: {
-                loading: true,
-                runBtn: true
+                loading: true
             }
         }
     },
     watch: {
         'taskStatus.running'(val) {
-            if (val) this.getStatus()
-            this.lock.runBtn = true
+            if (val) this.getStatus(this.currentTask?.task_id)
         },
-        'currentTask.task_id'(val, oldVal) {
-            if (oldVal !== null && val !== oldVal) this.stop()
+        currentTask(val, oldVal) {
+            if (val) this.getStatus(val.task_id)
         }
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
         ...mapState(useTheme, ['color', 'gradient']),
-        ...mapState(useLoopAI, ['taskStatus', 'taskMessages', 'msgStreamModel']),
+        ...mapState(useLoopAI, ['currentTask', 'taskStatus', 'taskMessages', 'msgStreamModel']),
         isRunning() {
-            return this.taskStatus.running
+            return this.msgStreamModel.loading
+        },
+        currentTaskModel: {
+            get() {
+                return this.currentTask
+            },
+            set(val) {
+                this.setCurrentTask(val)
+            }
         }
     },
     mounted() {
         this.setViewport()
-        this.getStatus()
+        this.getStatus(this.currentTask?.task_id)
         this.healthCheckInit()
         this.getStateSchema()
     },
     methods: {
-        ...mapActions(useLoopAI, ['getStatus', 'getMsgStream', 'getStateSchema']),
+        ...mapActions(useLoopAI, ['getStatus', 'getStateSchema', 'setCurrentTask']),
         setViewport() {
             const flow = useVueFlow(this.flowId)
             flow.setViewport({
@@ -460,7 +430,7 @@ export default {
         healthCheckInit() {
             clearInterval(this.timer.healthCheck)
             this.timer.healthCheck = setInterval(async () => {
-                await this.getStatus()
+                await this.getStatus(this.currentTask?.task_id)
                 this.recoverTask()
             }, 5000)
         },
@@ -496,11 +466,6 @@ export default {
             } catch (e) {}
         },
         handleSaveClick() {},
-        handleExecute() {
-            this.lock.runBtn = false
-            if (this.isRunning) this.stop()
-            else this.execute()
-        },
         stop() {
             this.$api.starter.stopAgent().then((res) => {
                 if (res.code === 200) {
@@ -509,31 +474,6 @@ export default {
                     })
                 }
             })
-        },
-        execute() {
-            if (!this.currentTask || !this.currentTask.task_id) return
-            if (!this.lock.loading) return
-            this.lock.loading = false
-            this.$api.starter
-                .startAgent(this.currentTask.task_id)
-                .then(async (res) => {
-                    if (res.code === 200) {
-                        await this.getStatus()
-                        this.healthCheckInit()
-                        this.lock.loading = true
-                    } else {
-                        this.lock.loading = true
-                        this.$barWarning(res.message, {
-                            status: 'warning'
-                        })
-                    }
-                })
-                .catch((error) => {
-                    this.lock.loading = true
-                    this.$barWarning(error.message, {
-                        status: 'error'
-                    })
-                })
         },
         showDetailNode(props) {
             this.detailNodeProps = props

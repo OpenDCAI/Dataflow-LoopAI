@@ -2,10 +2,10 @@ import os
 import json
 import uuid
 from fastapi import APIRouter
-from omegaconf import OmegaConf
 from tortoise.expressions import Q
 from ..models.body import response_body, TaskItem
 from ..models.db_models import TaskModel
+from ..services.task import build_initial_task_state, parse_task_state_overrides
 from ..utils.task.task import config_format
 
 router = APIRouter(tags=["task"])
@@ -20,14 +20,19 @@ async def create_task(taskItem: TaskItem):
     taskItem.task_id = task_id
     try:
         config = json.loads(taskItem.config)
-    except:
+    except Exception:
         return response_body(code=400, status='error', message='config格式错误')()
+    try:
+        state_overrides = parse_task_state_overrides(taskItem.state)
+        initial_state = await build_initial_task_state(task_id, state_overrides=state_overrides)
+    except Exception as exc:
+        return response_body(code=400, status='error', message=f'state格式错误: {exc}')()
     config = config_format(config, task_id)
     task = TaskModel(
         task_id=task_id,
         name=taskItem.name,
         config=json.dumps(config),
-        state=taskItem.state,
+        state=json.dumps(initial_state, ensure_ascii=False),
     )
     await task.save()
     return response_body(data={
@@ -36,6 +41,7 @@ async def create_task(taskItem: TaskItem):
         'name': task.name,
         'config': task.config,
         'state': task.state,
+        'ai_thread_id': task.ai_thread_id,
         'createdAt': task.createdAt,
         'updatedAt': task.updatedAt,
     })()
@@ -52,6 +58,7 @@ async def get_task(task_id: str):
         'name': task.name,
         'config': task.config,
         'state': task.state,
+        'ai_thread_id': task.ai_thread_id,
         'createdAt': task.createdAt,
         'updatedAt': task.updatedAt,
     })()
@@ -75,6 +82,7 @@ async def get_tasks(search: str = None, offset: int = 0, limit: int = 50):
         "id": t.id,
         "task_id": t.task_id,
         "name": t.name,
+        "ai_thread_id": t.ai_thread_id,
         "createdAt": t.createdAt,
         "updatedAt": t.updatedAt,
     } for t in tasks])()
@@ -100,6 +108,7 @@ async def update_task(taskItem: TaskItem):
         'name': task.name,
         'config': task.config,
         'state': task.state,
+        'ai_thread_id': task.ai_thread_id,
         'createdAt': task.createdAt,
         'updatedAt': task.updatedAt,
     })()

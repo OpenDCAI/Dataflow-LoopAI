@@ -4,11 +4,11 @@ const AsyncLoad = tool.AsyncLoad;
 
 export default {
     path: "/m",
-    component: () => AsyncLoad(() => import("@/views/manage/index.vue")),
+    component: AsyncLoad(() => import("@/views/manage/index.vue")),
     children: [
         {
             path: '',
-            component: () => AsyncLoad(() => import("@/views/manage/dataflow/index.vue"))
+            component: AsyncLoad(() => import("@/views/manage/dataflow/index.vue"))
         },
         {
             path: 'config',

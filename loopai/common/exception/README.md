@@ -2,6 +2,12 @@
 
 用于给子 Agent、worker、独立脚本提供统一的 JSON 成功/异常返回格式。
 
+推荐通过子模块直接导入：
+
+```python
+from loopai.common.exception import emit_success, emit_error, ErrorCode
+```
+
 ## 目标
 
 - 运行成功时输出统一的 success JSON

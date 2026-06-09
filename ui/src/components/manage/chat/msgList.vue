@@ -12,23 +12,31 @@
             :key="index"
             :model-value="msg"
         />
+        <response-block v-show="msgStreamModel.loading"></response-block>
         <msg-block
-            v-if="msgStreamModel.msg"
-            :model-value="msgStreamModel.msg[0]"
-            :loadingMsg="true"
+            v-show="msgStreamModel.status === 'failed'"
+            :model-value="{
+                type: 'assistant',
+                data: {
+                    content: local('##### Run Failed, Please Retry')
+                }
+            }"
         />
     </div>
 </template>
 
 <script>
+import { useAppConfig } from '@/stores/appConfig'
 import { useLoopAI } from '@/stores/loopAI'
 
 import msgBlock from './msgBlock.vue'
+import responseBlock from './responseBlock/index.vue'
 import { mapState } from 'pinia'
 
 export default {
     components: {
-        msgBlock
+        msgBlock,
+        responseBlock
     },
     props: {},
     data() {
@@ -37,24 +45,25 @@ export default {
         }
     },
     watch: {
-        'msgStreamModel.msg'() {
-            this.$nextTick(() => {
-                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
-            })
-        },
         'msgStreamModel.loading'() {
-            this.$.list.$nextTick(() => {
+            this.$nextTick(() => {
                 this.$refs.list.scrollTop = this.$refs.list.scrollHeight
             })
         },
         'taskMessages.length'() {
             this.$nextTick(() => {
-                this.$.list.scrollTop = this.$.list.scrollHeight
+                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
+            })
+        },
+        currentMsg() {
+            this.$nextTick(() => {
+                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
             })
         }
     },
     computed: {
-        ...mapState(useLoopAI, ['taskMessages', 'msgStreamModel'])
+        ...mapState(useAppConfig, ['local']),
+        ...mapState(useLoopAI, ['taskMessages', 'msgStreamModel', 'currentMsg'])
     },
     methods: {
         showMe(msg) {
@@ -100,7 +109,7 @@ export default {
     right: 0px;
     width: min(450px, 90%);
     height: 100%;
-    padding: 95px 15px;
+    padding: 95px 15px 255px 15px;
     overflow: auto;
     transition: width 0.3s;
     z-index: 1;
