@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from tortoise.contrib.fastapi import register_tortoise
@@ -94,6 +94,10 @@ async def root():
 
 @app.get("/", include_in_schema=False)
 async def frontend_root():
+    return _frontend_index_response()
+
+
+def _frontend_index_response():
     index_path = DIST_DIR / "index.html"
     if index_path.is_file():
         return FileResponse(index_path)
@@ -118,6 +122,11 @@ async def health_check():
             "runs": os.path.exists(RUNS_DIR)
         }
     }
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def frontend_fallback(full_path: str):
+    return _frontend_index_response()
 
 
 if __name__ == "__main__":

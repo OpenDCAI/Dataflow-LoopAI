@@ -12,11 +12,11 @@ export default {
         },
         {
             path: 'config',
-            component: () => AsyncLoad(() => import("@/views/manage/config/index.vue"))
+            component: AsyncLoad(() => import("@/views/manage/config/index.vue"))
         },
         {
             path: 'obtainer-lake',
-            component: () => AsyncLoad(() => import("@/views/manage/obtainerLake/index.vue"))
+            component: AsyncLoad(() => import("@/views/manage/obtainerLake/index.vue"))
         }
     ]
 };

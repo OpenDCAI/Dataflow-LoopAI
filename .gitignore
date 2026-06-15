@@ -24,6 +24,9 @@ CLAUDE.md
 .superpowers/
 ui/.pnp.*
 ui/.yarn/
+codex-runner/.yarn
+codex-runner/.yarn/
+codex-runner/dist/
 *.log
 docs/superpowers
 *_api_key.*
