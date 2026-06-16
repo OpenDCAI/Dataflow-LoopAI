@@ -31,3 +31,4 @@ codex-runner/dist/
 docs/superpowers
 *_api_key.*
 codex_home/
+.loopai
