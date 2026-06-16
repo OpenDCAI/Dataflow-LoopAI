@@ -1,85 +1,111 @@
-# Analyzer
+# Analyzer Skill
 
 ## Purpose
-Analyze existing evaluation outputs and generate metric summaries, reports, and recommendations without rewriting Analyzer agent logic.
+Analyzer Skill is the Codex/Agent-facing capability for running LoopAI Analyzer independently. It analyzes evaluation outputs, writes Analyzer reports, supports checkpoint resume, and can compare current results with a historical baseline.
+
+## Python Implementation
+The Python skill layer lives in:
+
+`loopai/skills/Analyzer`
+
+Core Analyzer business nodes remain in:
+
+`loopai/agents/Analyzer`
+
+Do not move or rewrite `eval_model.py`, `analyze_result.py`, or `draw_conclusion.py` for normal skill usage. The agent-side standalone files are compatibility wrappers.
 
 ## Runtime Entry
-`from loopai.skills.Analyzer import run`
-
-The wrapper calls Analyzer standalone execution:
-
 ```python
-run(
+from loopai.skills.Analyzer import run
+
+result = run(
     state=state,
-    thread_id="analyzer-demo",
-    checkpoint_path="outputs/analyzer_checkpoints.sqlite",
     resume=False,
     from_node=None,
     baseline_result_path=None,
 )
 ```
 
-Standalone CLI:
+Direct runner:
 
+```python
+from loopai.skills.Analyzer.runner import run_analyzer_standalone
+```
+
+Legacy import remains valid:
+
+```python
+from loopai.agents.Analyzer.standalone import run_analyzer_standalone
+```
+
+## CLI
 ```bash
-python examples/scripts/run_analyzer_standalone.py \
-  --config-path /tmp/analyzer_full_demo.json \
-  --thread-id analyzer-demo \
-  --checkpoint-path outputs/analyzer_checkpoints.sqlite \
-  --baseline-result-path /path/to/previous.jsonl \
-  --print-result
+python examples/scripts/run_analyzer_standalone.py   --config-path /tmp/analyzer_full_demo.json   --baseline-result-path /tmp/analyzer_demo_baseline.jsonl   --print-result
 ```
 
-Resume:
+Supported options:
 
-```bash
-python examples/scripts/run_analyzer_standalone.py \
-  --config-path /tmp/analyzer_full_demo.json \
-  --thread-id analyzer-demo \
-  --checkpoint-path outputs/analyzer_checkpoints.sqlite \
-  --resume \
-  --print-result
-```
+- `--config-path`
+- `--resume`
+- `--from-node`
+- `--checkpoint-path`
+- `--baseline-result-path`
+- `--print-result`
+- `--list-nodes`
 
-Force a resume step:
+## Environment Variables
+Runtime configuration should come from environment/system runtime where possible:
 
-```bash
-python examples/scripts/run_analyzer_standalone.py \
-  --config-path /tmp/analyzer_full_demo.json \
-  --thread-id analyzer-demo \
-  --checkpoint-path outputs/analyzer_checkpoints.sqlite \
-  --resume \
-  --from-node draw_conclusion \
-  --print-result
-```
+- `ANALYZER_API_KEY`
+- `ANALYZER_MODEL`
+- `ANALYZER_BASE_URL`
+- `TASK_ID`
+- `DB_PATH`
+- `ANALYZER_CHECKPOINT_PATH`
 
-## Required State
-`task_id`, `output_dir`, and `analyzer` config. Existing Analyzer state fields remain unchanged.
+Config JSON should not store API keys. If legacy config contains `analyze_api_key`, it is only a fallback and print-result must redact it.
 
-Optional historical comparison config:
+## Priority
+General runtime priority:
 
-```json
-{
-  "analyzer": {
-    "eval_result_path": "current.jsonl",
-    "baseline_result_path": "previous.jsonl"
-  }
-}
-```
+`kwargs > env > state["analyzer"] > default`
 
-When `baseline_result_path` is present, Analyzer appends a `Historical Comparison` section to report outputs.
+API key priority is env-first by design:
 
-## StreamEvent
-Use Analyzer's existing StreamEvent emissions and state fields. This skill does not add or replace shared event infrastructure.
+`ANALYZER_API_KEY > legacy state["analyzer"]["analyze_api_key"]`
 
-## Checkpoint
-Standalone Analyzer uses `checkpoint_path` to save SQLite checkpoints. Each step saves `current` before execution and `last_completed` after success.
+Thread id priority:
+
+`CLI --thread-id > TASK_ID env > state/default`
+
+Checkpoint path priority:
+
+`CLI --checkpoint-path > ANALYZER_CHECKPOINT_PATH env > outputs/analyzer_checkpoints.sqlite`
+
+## Checkpoint And Resume
+Standalone Analyzer uses a function-level pipeline:
+
+`eval_model -> analyze_result -> draw_conclusion -> finish`
+
+The runner stores:
+
+- `state["current"]`
+- `state["last_completed"]`
+
+`--resume` continues from the checkpoint step and does not rerun completed steps. `--from-node` forces a specific Analyzer step.
 
 ## Historical Comparison
-Analyzer compares current and baseline jsonl files when `baseline_result_path` is set. It reports pass-rate change, score gap change when available, error distribution changes, improved cases, and regressed cases. Missing or unreadable baseline files produce a warning instead of failing the main Analyzer flow.
+Set `baseline_result_path` to enable Historical Comparison. Current results come from `analyzer.eval_result_path`; baseline results come from `baseline_result_path`.
+
+Analyzer preserves the `historical_comparison` field and appends a `Historical Comparison` section to report/final_report outputs when available. Missing or unreadable baseline files produce a warning instead of failing the main flow.
+
+## Stream Runtime
+Analyzer standalone must not require LangGraph runtime. Analyzer stream writer access uses a safe fallback: outside LangGraph it emits nothing and continues running.
 
 ## Success Response
-Return the Analyzer runner result/state directly.
+Return the Analyzer final state/result directly.
 
 ## Error Response
-Let the Analyzer runner surface existing errors unchanged.
+Runtime configuration errors should be clear. If Analyzer needs an LLM key and no key is available, raise:
+
+`missing required env: ANALYZER_API_KEY`

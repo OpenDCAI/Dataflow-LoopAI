@@ -7,12 +7,10 @@ import os
 import sys
 from typing import Any, Dict
 
-
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-_DEFAULT_CHECKPOINT_PATH = "outputs/analyzer_checkpoints.sqlite"
 _ANALYZER_NODE_NAMES = (
     "eval_model",
     "analyze_result",
@@ -39,7 +37,13 @@ def _redact_keys(value: Any) -> Any:
         redacted = {}
         for key, child in value.items():
             key_name = str(key).lower()
-            if key_name == "api_key" or key_name.endswith("_api_key") or key_name == "token" or key_name.endswith("_key"):
+            if (
+                key_name == "api_key"
+                or key_name.endswith("_api_key")
+                or key_name == "token"
+                or key_name.endswith("_token")
+                or key_name.endswith("_key")
+            ):
                 redacted[key] = "***REDACTED***"
             else:
                 redacted[key] = _redact_keys(child)
@@ -51,7 +55,7 @@ def _redact_keys(value: Any) -> Any:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run AnalyzerAgent directly with LangGraph checkpoint resume support."
+        description="Run Analyzer directly with standalone checkpoint resume support."
     )
     parser.add_argument(
         "--config-path",
@@ -60,39 +64,23 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--thread-id",
-        default="analyzer-default",
-        help="LangGraph checkpoint thread_id.",
+        default=None,
+        help="Analyzer checkpoint thread id. Priority: CLI > TASK_ID env > state/default.",
     )
     parser.add_argument(
         "--checkpoint-path",
-        default=_DEFAULT_CHECKPOINT_PATH,
-        help="SQLite checkpoint file path for standalone Analyzer resume.",
+        default=None,
+        help="SQLite checkpoint path. Priority: CLI > ANALYZER_CHECKPOINT_PATH env > outputs/analyzer_checkpoints.sqlite.",
     )
     parser.add_argument(
         "--baseline-result-path",
         default=None,
         help="Optional previous jsonl result path for Historical Comparison.",
     )
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume with the same thread_id from the latest checkpoint.",
-    )
-    parser.add_argument(
-        "--from-node",
-        default=None,
-        help="Force standalone Analyzer to resume from a specific step.",
-    )
-    parser.add_argument(
-        "--list-nodes",
-        action="store_true",
-        help="List standalone Analyzer resume steps and exit.",
-    )
-    parser.add_argument(
-        "--print-result",
-        action="store_true",
-        help="Print the final state/result as JSON.",
-    )
+    parser.add_argument("--resume", action="store_true", help="Resume from the latest checkpoint.")
+    parser.add_argument("--from-node", default=None, help="Force Analyzer to resume from a specific step.")
+    parser.add_argument("--list-nodes", action="store_true", help="List standalone Analyzer steps and exit.")
+    parser.add_argument("--print-result", action="store_true", help="Print final state/result as JSON.")
     return parser.parse_args()
 
 
@@ -103,10 +91,10 @@ def main() -> None:
             print(node_name)
         return
 
-    if not args.config_path:
-        raise SystemExit("--config-path is required unless --list-nodes is used.")
+    if not args.config_path and not args.resume:
+        raise SystemExit("--config-path is required unless --list-nodes or --resume is used.")
 
-    from loopai.agents.Analyzer import run_analyzer_standalone
+    from loopai.skills.Analyzer.runner import run_analyzer_standalone
 
     state = None if args.resume else _load_state(args.config_path)
     if state is not None and args.baseline_result_path:
