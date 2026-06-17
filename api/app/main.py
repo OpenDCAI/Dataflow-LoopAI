@@ -6,8 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from .utils.starter.starter import starter_process
-
 from .controllers.config import router as config_router
 from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
@@ -31,11 +29,7 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield  # 在 yield 前的代码会在应用 启动时执行，在 yield 后的代码会在应用 关闭时执行。
-    for p in starter_process:
-        print(f"terminate process {p.pid}")
-        if p.is_alive():
-            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+    yield  # 在 yield 前的代码会在应用 启动时执行，在 yield 后的代码会在应用 关闭时执行。        print(f"terminate process {p.pid}")
 
 # 创建FastAPI应用
 app = FastAPI(

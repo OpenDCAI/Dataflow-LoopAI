@@ -16,8 +16,8 @@ from loopai.logger import get_logger
 from loopai.agents.Analyzer.utils.openai_compat_llm import OpenAICompatChat
 logger = get_logger()
 from types import SimpleNamespace  
-from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
+from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
 # ===== PromptLoader 单例 & 模板缓存 =====
 _PROMPT_LOADER: PromptLoader | None = None
 _TEMPLATE_CACHE: dict[tuple[str, str], str] = {}
@@ -734,7 +734,7 @@ def eval_model_node(state: LoopAIState):
     task_type = cfg.get("analyze_task_type", "code")  # "code" 或 "text2sql"
     if task_type not in ("code", "text2sql"):
         return run_general_text_fallback_eval(state)
-    writer = get_stream_writer()
+    writer = get_safe_stream_writer()
     if writer:
        writer(StreamEvent(
         current="AnalyzerAgent.eval_model_node",

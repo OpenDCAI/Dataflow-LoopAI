@@ -11,8 +11,12 @@ from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
 from loopai.common.prompts.prompt_loader import PromptLoader
-from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
+from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.agents.Analyzer.history_compare import (
+    build_historical_comparison,
+    render_historical_comparison_text,
+)
 logger = get_logger()
 from collections import defaultdict
 from typing import List, Dict, Any
@@ -486,6 +490,9 @@ def make_human_text(final_json: dict, background: str = None) -> str:
             lines.append(f"常见标签 Top：{tags_str}。")
 
     lines.append("整体来看，建议优先修复最常见错误并优化边界测试。")
+    comparison = final_json.get("historical_comparison")
+    if comparison:
+        lines.append(render_historical_comparison_text(comparison))
     return "\n".join(lines)
 def make_obtainer_human_text(obtainer_stats: dict, llm_text: str = "") -> str:
     """
@@ -531,7 +538,7 @@ def draw_conclusion_node(state: LoopAIState):
     """
     绘制结论，生成 summary / final_report，并可选生成背景介绍与改进建议
     """
-    writer = get_stream_writer()
+    writer = get_safe_stream_writer()
 
     def _emit(message, *, progress=None, data=None):
         if writer:
@@ -622,6 +629,13 @@ def draw_conclusion_node(state: LoopAIState):
 
     obtainer_stats = build_obtainer_stats(summary, oj_records, final_json)
     final_json["obtainer_stats"] = obtainer_stats
+
+    baseline_result_path = _analyzer(state).get("baseline_result_path")
+    if baseline_result_path:
+        current_result_path = _analyzer(state).get("eval_result_path") or summary.get("results_file")
+        comparison = build_historical_comparison(current_result_path, baseline_result_path)
+        final_json["historical_comparison"] = comparison
+        state.setdefault("analyzer", {})["historical_comparison"] = comparison
 
     # ===== 写入 JSON 报告 =====
     final_json_path = os.path.join(outdir, f"final_report_{run_ts}.json")
