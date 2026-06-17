@@ -150,20 +150,3 @@ http://127.0.0.1:15721/v1
 
 如果仍然配置成 `https://api.deepseek.com`，Codex SDK 会直接请求 DeepSeek 的 Chat Completions 服务，通常不能按 Responses API 正常工作。
 
-### GitHub/系统盘空间不足
-
-启动脚本默认把 Rust 构建目录放到：
-
-```text
-/data/xuebinrui/cargo-target/loopai-codex-chat-router
-```
-
-不会把大量构建产物写到系统盘。
-
-### DeepSeek 报 tool_calls 相关错误
-
-Rust router 已包含 `cc-switch` 的 history 恢复逻辑，会在 Codex 后续轮次只发送 `function_call_output` 时，自动补回上一轮 assistant tool call，避免 DeepSeek 报：
-
-```text
-An assistant message with 'tool_calls' must be followed by tool messages
-```
