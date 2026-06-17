@@ -25,6 +25,8 @@ setup(
         "playwright>=1.40.0",
         "tenacity>=8.2.0",
         "requests>=2.31.0",
+        "transformers>=4.30.0",
+        "pyarrow>=20.0.0",
         "mcp>=0.1.0",
         "aiosqlite>=0.21.0",
         "fastapi",
@@ -57,5 +59,10 @@ setup(
         "open-dataflow==1.0.10",
         "vllm>=0.4.0"
     ],
+    entry_points={
+        "console_scripts": [
+            "obtainercli=loopai.obtainercli.cli:main",
+        ],
+    },
     python_requires=">=3.12",
 )

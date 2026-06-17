@@ -774,6 +774,7 @@ class CodexStarterService:
         try:
             try:
                 proc = await asyncio.create_subprocess_exec(
+                    "corepack",
                     "yarn",
                     "dev",
                     prompt,
