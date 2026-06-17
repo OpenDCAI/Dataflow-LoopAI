@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 from typing import Dict, Any, List
 
-from langgraph.config import get_stream_writer
-
 from loopai.schema.events import StreamEvent
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
+from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
 from ..eval_metrics.metrics.dispatcher import metric_dispatcher
 
 logger = get_logger()
@@ -112,7 +111,7 @@ def metric_recommend_node(state: LoopAIState):
     2. 如果没命中，再按 eval_type fallback
     3. 将 metric_plan 写回 state
     """
-    writer = get_stream_writer()
+    writer = get_safe_stream_writer()
 
     judger_cfg = state.get("judger", {}) or {}
     analyzer_cfg = state.get("analyzer", {}) or {}

@@ -1,4 +1,5 @@
 __pycache__/
+.venv/
 api_key.txt
 data/
 output/

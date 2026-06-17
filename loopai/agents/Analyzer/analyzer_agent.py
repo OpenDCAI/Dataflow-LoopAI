@@ -125,7 +125,7 @@ class AnalyzerAgent(BaseAgent):
             return state
         return finish_node
 
-    def init_graph(self, **kwargs):
+    def init_graph(self, entry_point: Optional[str] = None, **kwargs):
         builder = StateGraph(LoopAIState)
 
         builder.add_node("check_required_fields", self.get_check_required_fields_node())
@@ -151,7 +151,7 @@ class AnalyzerAgent(BaseAgent):
         builder.add_edge("metric_score", "analyze_metric_report")
         builder.add_edge("analyze_metric_report", "finish")
 
-        builder.set_entry_point("check_required_fields")
+        builder.set_entry_point(entry_point or "check_required_fields")
         builder.set_finish_point("finish")
 
         self.graph = builder.compile(
