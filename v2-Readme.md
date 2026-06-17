@@ -187,6 +187,18 @@ yarn dev "hello"
 
 如果能正常返回事件流或最终响应，说明 `codex-runner` 已基本可用。
 
+如果使用 DeepSeek 这类 Chat Completions 兼容服务，需要先启动 Rust 本地代理：
+
+```bash
+./scripts/start_codex_deepseek_proxy.sh
+```
+
+然后把 `CODEX_BASE_URL` 配成本地代理 URL：
+
+```bash
+CODEX_BASE_URL=http://127.0.0.1:15721/v1
+```
+
 ## 5. 配置 starter.yaml
 
 所有运行模式都需要仓库根目录下存在 `starter.yaml`。
