@@ -30,7 +30,7 @@ export DEEPSEEK_MODEL="deepseek-chat"
 export DEEPSEEK_BASE_URL="https://api.deepseek.com"
 ```
 
-优先推荐使用 `CODEX_API_KEY`。
+优先推荐使用 `CODEX_API_KEY` 和 `CODEX_UPSTREAM_BASE_URL`。这些变量只给 Rust 代理使用；Codex 侧只需要配置代理的本地 URL。
 
 ## 2. 启动本地代理
 
@@ -51,6 +51,12 @@ http://127.0.0.1:15721/v1
 ```bash
 export CODEX_LOCAL_PROXY_PORT=15722
 ./scripts/start_codex_deepseek_proxy.sh
+```
+
+启动后得到的新 base URL 是：
+
+```text
+http://127.0.0.1:15721/v1
 ```
 
 ## 3. 测试代理是否正常
@@ -85,7 +91,7 @@ curl -sS -N http://127.0.0.1:15721/v1/responses \
 cd /home/xuebinrui/code/loopai/Dataflow-LoopAI/codex-runner
 
 export CODEX_API_KEY="你的 DeepSeek API Key"
-export CODEX_BASE_URL="https://api.deepseek.com"
+export CODEX_BASE_URL="http://127.0.0.1:15721/v1"
 export CODEX_MODEL="deepseek-chat"
 export CODEX_WORKSPACE="/home/xuebinrui/code/loopai/Dataflow-LoopAI"
 export CODEX_HOME="/home/xuebinrui/code/loopai/Dataflow-LoopAI/codex_home"
@@ -93,17 +99,13 @@ export CODEX_HOME="/home/xuebinrui/code/loopai/Dataflow-LoopAI/codex_home"
 corepack yarn dev "你好，简单介绍一下当前项目"
 ```
 
-`codex-runner` 会自动检测 Rust 本地代理：
+这里 `codex-runner` 不做 DeepSeek 特判，也不自动启动或探测代理。它只把 `CODEX_BASE_URL` 透传给 Codex SDK，所以 DeepSeek 场景必须把 `CODEX_BASE_URL` 配成本地代理 URL：
 
-- 如果 `http://127.0.0.1:15721/health` 可用，就使用 Rust router。
-- 如果 Rust router 没启动，就回退到 TypeScript fallback 代理。
-- 本地路由启用时会禁用 WebSocket，使用 HTTP/SSE，避免 DeepSeek 不支持 WebSocket 导致重连错误。
-
-如果你明确不想使用 Rust router，可以设置：
-
-```bash
-export CODEX_USE_RUST_CHAT_ROUTER=0
+```text
+http://127.0.0.1:15721/v1
 ```
+
+如果你使用的是原生 Responses API 服务，不需要启动 Rust router，直接把 `CODEX_BASE_URL` 配成该服务自己的 URL 即可。
 
 ## 5. 在 LoopAI 后端中使用
 
@@ -112,6 +114,8 @@ export CODEX_USE_RUST_CHAT_ROUTER=0
 ```yaml
 system:
   codex_api_key: "你的 DeepSeek API Key"
+  codex_base_url: "http://127.0.0.1:15721/v1"
+  codex_model: "deepseek-chat"
 ```
 
 然后启动本地代理：
@@ -120,11 +124,11 @@ system:
 ./scripts/start_codex_deepseek_proxy.sh
 ```
 
-再启动 LoopAI 后端。后端通过 `codex-runner` 调用 Codex SDK 时，会自动走本地路由。
+再启动 LoopAI 后端。后端通过 `codex-runner` 调用 Codex SDK 时，会直接访问 `codex_base_url`，也就是本地 Rust 代理。
 
 ## 6. 常见问题
 
-### 代理启动后 Codex SDK 还是没有走 Rust router
+### Codex SDK 没有走 Rust router
 
 检查 health：
 
@@ -138,26 +142,11 @@ curl -sS http://127.0.0.1:15721/health
 export CODEX_LOCAL_PROXY_PORT=你的端口
 ```
 
-或直接指定：
-
-```bash
-export CODEX_CHAT_ROUTER_BASE_URL="http://127.0.0.1:15721/v1"
-```
-
-### GitHub/系统盘空间不足
-
-启动脚本默认把 Rust 构建目录放到：
+然后确认 Codex 或 `codex-runner` 的 base URL 已经配置成本地代理 URL：
 
 ```text
-/data/xuebinrui/cargo-target/loopai-codex-chat-router
+http://127.0.0.1:15721/v1
 ```
 
-不会把大量构建产物写到系统盘。
+如果仍然配置成 `https://api.deepseek.com`，Codex SDK 会直接请求 DeepSeek 的 Chat Completions 服务，通常不能按 Responses API 正常工作。
 
-### DeepSeek 报 tool_calls 相关错误
-
-Rust router 已包含 `cc-switch` 的 history 恢复逻辑，会在 Codex 后续轮次只发送 `function_call_output` 时，自动补回上一轮 assistant tool call，避免 DeepSeek 报：
-
-```text
-An assistant message with 'tool_calls' must be followed by tool messages
-```
