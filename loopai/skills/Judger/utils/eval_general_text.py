@@ -19,6 +19,7 @@ from one_eval.toolkits.dataflow_eval_tool import DataFlowEvalTool
 from one_eval.core.state import ModelConfig
 from loopai.agents.Judger.utils.oj.const import field_mapping
 from loopai.common.event_tool import StreamEvent
+from loopai.common.exception import emit_error, ErrorCode
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -250,14 +251,24 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     # 校验必填字段
     eval_result_path = cfg.get("eval_problem_path")
     if not eval_result_path:
-        raise ValueError("缺少评测输入路径：请提供 judger.eval_problem_path")
+        emit_error(
+            ValueError("缺少评测输入路径：请提供 judger.eval_problem_path"),
+            code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            message="Missing judger.eval_problem_path for general_text evaluation.",
+        )
     if not os.path.exists(eval_result_path):
-        raise FileNotFoundError(f"评测输入路径不存在：{eval_result_path}")
+        emit_error(
+            FileNotFoundError(f"评测输入路径不存在：{eval_result_path}"),
+            code=ErrorCode.NOT_FOUND, recoverable=True,
+            message=f"Problem file not found: {eval_result_path}",
+        )
 
     eval_type = cfg.get("bench_dataflow_eval_type")
     if not eval_type:
-        raise ValueError(
-            "通用文本评测缺少 eval_type。请在 judger.bench_dataflow_eval_type 中提供"
+        emit_error(
+            ValueError("通用文本评测缺少 eval_type。请在 judger.bench_dataflow_eval_type 中提供"),
+            code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            message="Missing judger.bench_dataflow_eval_type for general_text evaluation.",
         )
 
     logger.info(f"[Judger/general_text] model={cfg.get('eval_model_path')} "
@@ -315,9 +326,17 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         data={"bench_name": bench_name, "eval_type": eval_type}))
 
     if not bench.dataset_cache:
-        raise ValueError(f"[{bench_name}] 缺少 dataset_cache")
+        emit_error(
+            ValueError(f"[{bench_name}] 缺少 dataset_cache"),
+            code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            message=f"Bench '{bench_name}' is missing dataset_cache.",
+        )
     if not bench.bench_dataflow_eval_type:
-        raise ValueError(f"[{bench_name}] 缺少 eval_type")
+        emit_error(
+            ValueError(f"[{bench_name}] 缺少 eval_type"),
+            code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            message=f"Bench '{bench_name}' is missing bench_dataflow_eval_type.",
+        )
 
     # 子进程执行 DataFlowEvalTool
     bench.eval_status = "running"
@@ -360,13 +379,17 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
             try:
                 payload = result_queue.get_nowait()
             except pyqueue.Empty:
-                raise RuntimeError(
-                    f"[{bench_name}] run_eval 子进程未返回结果, exitcode={proc.exitcode}"
+                emit_error(
+                    RuntimeError(f"[{bench_name}] run_eval 子进程未返回结果"),
+                    code=ErrorCode.EXTERNAL_SERVICE_ERROR, recoverable=True,
+                    message=f"DataFlowEvalTool subprocess (pid={proc.pid}) exited without returning a result.",
                 )
         if not payload.get("ok"):
-            raise RuntimeError(
-                f"{payload.get('error', 'run_eval failed')}\n"
-                f"{payload.get('traceback', '')}"
+            emit_error(
+                RuntimeError(f"{payload.get('error', 'run_eval failed')}\n"
+                             f"{payload.get('traceback', '')}"),
+                code=ErrorCode.EXTERNAL_SERVICE_ERROR, recoverable=True,
+                message=f"DataFlowEvalTool subprocess evaluation failed.",
             )
 
         result = payload["result"]

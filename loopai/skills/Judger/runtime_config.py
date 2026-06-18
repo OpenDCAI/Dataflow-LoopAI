@@ -202,7 +202,8 @@ def resolve_judger_runtime_config(
 
     # --- write resolved values back into state ---
     if is_state_dict:
-        if task_id and not state.get("task_id"):
+        # CLI/env 传入的 task_id 优先级高于 YAML 默认值，始终覆盖
+        if task_id:
             state["task_id"] = task_id
         if output_dir:
             state["output_dir"] = output_dir

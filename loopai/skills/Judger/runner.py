@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from loopai.common.event_tool import StreamEvent, get_event_writer
+from loopai.common.exception import emit_error, ErrorCode
 from loopai.logger import get_logger
 
 logger = get_logger()
+
 
 # ---------------------------------------------------------------------------
 # Judger pipeline constants / 流水线步骤常量
@@ -164,7 +166,11 @@ def _start_index(step_name: str, steps: tuple) -> int:
     norm = normalize_judger_step(step_name)
     if norm not in steps:
         available = ", ".join(steps)
-        raise ValueError(f"Unknown Judger step: {step_name}. Available: {available}")
+        emit_error(
+            ValueError(f"Unknown Judger step: {step_name}. Available: {available}"),
+            code=ErrorCode.INVALID_INPUT, recoverable=True,
+            message=f"Step '{step_name}' is not valid for the current pipeline.",
+        )
     return steps.index(norm)
 
 
@@ -215,7 +221,7 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     from loopai.schema.states import get_missing_fields
 
     judger = state.get("judger", {})
-    task_type = judger.get("eval_task_type", "code")
+    task_type = judger.get("eval_task_type","")
 
     writer(StreamEvent(
         current="judger", progress=0.0, message="开始校验配置参数"))
@@ -260,9 +266,11 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         missing.setdefault("judger", []).append("eval_problem_path")
 
     if missing:
-        raise ValueError(
-            f"Missing required fields: "
-            f"{json.dumps({'missing_fields': missing}, ensure_ascii=False)}"
+        emit_error(
+            ValueError(f"Missing required fields: "
+                       f"{json.dumps({'missing_fields': missing}, ensure_ascii=False)}"),
+            code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            message="Judger configuration is incomplete.",
         )
 
     # 5. JSONL 字段校验
@@ -277,13 +285,21 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
             required = ["task_id", "prompt", "entry_point", "canonical_solution", "test_list"]
         ok, details = check_jsonl_fields(problem_path, required)
         if not ok:
-            raise ValueError(f"JSONL field validation failed: {json.dumps(details, ensure_ascii=False, indent=2)}")
+            emit_error(
+                ValueError(f"JSONL field validation failed: {json.dumps(details, ensure_ascii=False, indent=2)}"),
+                code=ErrorCode.INVALID_INPUT, recoverable=True,
+                message=f"Problem file {problem_path} has invalid fields for task type {task_type}.",
+            )
     elif task_type == "text2sql":
         from loopai.agents.Judger.utils.oj.data import check_jsonl_fields
         required = ["task_id", "prompt", "db_id", "question", "ground_truth"]
         ok, details = check_jsonl_fields(problem_path, required)
         if not ok:
-            raise ValueError(f"JSONL field validation failed: {json.dumps(details, ensure_ascii=False, indent=2)}")
+            emit_error(
+                ValueError(f"JSONL field validation failed: {json.dumps(details, ensure_ascii=False, indent=2)}"),
+                code=ErrorCode.INVALID_INPUT, recoverable=True,
+                message=f"Problem file {problem_path} has invalid fields for task type {task_type}.",
+            )
 
     # 6. 重置输出路径
     state["judger"]["output_result_path"] = ""
@@ -323,7 +339,11 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     model_path = judger.get("eval_model_path")
 
     if not model_path:
-        raise ValueError("eval_model_path is required for local vLLM startup")
+        emit_error(
+            ValueError("eval_model_path is required for local vLLM startup"),
+            code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            message="Missing eval_model_path for vLLM startup.",
+        )
 
     cuda_devices = judger.get("cuda_visible_devices", "0")
     env_configs = json.dumps({
@@ -345,26 +365,18 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 def _step_format_data(state: Dict[str, Any], writer) -> Dict[str, Any]:
     """可选的数据格式转换步骤（human-eval、mbpp 等）。"""
-    from loopai.agents.Judger.utils.oj.format import data_format
-
     judger = state.get("judger", {})
     format_type = judger.get("eval_format_type")
 
     if format_type and format_type != "":
-        problem_path = judger.get("eval_problem_path", "")
-        task_id = state.get("task_id")
-        output_dir = Path(state.get("output_dir", "."))
-        file_stem = Path(problem_path).stem
-        target = output_dir / str(task_id) / "judger" / f"{file_stem}_format.jsonl"
-
+        from loopai.skills.Judger.utils.format import run_format_data
         writer(StreamEvent(
             current="judger", progress=0.0,
             message=f"正在进行数据格式转换 [{format_type}]"))
-        data_format(state)
-        state["judger"]["eval_problem_path"] = str(target)
+        run_format_data(state, writer)
         writer(StreamEvent(
             current="judger", progress=1.0, message="数据格式转换完成",
-            data={"target": str(target)}))
+            data={"target": state["judger"]["eval_problem_path"]}))
     else:
         writer(StreamEvent(
             current="judger", progress=1.0,
@@ -376,6 +388,8 @@ def _step_format_data(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     """样本生成步骤：调用 vLLM 批量生成 code/text2sql 样本。"""
+    from loopai.skills.Judger.utils.generate import run_generate_code, run_generate_text2sql
+
     task_type = state.get("judger", {}).get("eval_task_type", "code")
     batch_size = state.get("judger", {}).get("eval_batch_size", 10)
     case_num = state.get("judger", {}).get("eval_case_num", 10)
@@ -386,13 +400,15 @@ def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         data={"batch_size": batch_size, "case_num": case_num}))
 
     if task_type == "code":
-        from loopai.agents.Judger.utils.oj.generate import generate_sample_code
-        result_path = generate_sample_code(state)
+        result_path = run_generate_code(state, writer)
     elif task_type == "text2sql":
-        from loopai.agents.Judger.utils.oj.generate import generate_sample_text2sql
-        result_path = generate_sample_text2sql(state)
+        result_path = run_generate_text2sql(state, writer)
     else:
-        raise ValueError(f"Unsupported task type for generate step: {task_type}")
+        emit_error(
+            ValueError(f"Unsupported task type for generate step: {task_type}"),
+            code=ErrorCode.INVALID_INPUT, recoverable=True,
+            message=f"Task type '{task_type}' is not supported for sample generation.",
+        )
 
     state["judger"]["output_case_path"] = result_path
     writer(StreamEvent(
@@ -403,6 +419,8 @@ def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     """样本评测步骤：执行代码/执行 SQL，计算 pass@k。"""
+    from loopai.skills.Judger.utils.evaluate import run_evaluate_code, run_evaluate_text2sql
+
     task_type = state.get("judger", {}).get("eval_task_type", "code")
 
     writer(StreamEvent(
@@ -410,13 +428,15 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         message=f"开始评测样本 [task_type={task_type}]"))
 
     if task_type == "code":
-        from loopai.agents.Judger.utils.oj.evaluate import evaluate_sample_code
-        result = evaluate_sample_code(state)
+        result = run_evaluate_code(state, writer)
     elif task_type == "text2sql":
-        from loopai.agents.Judger.utils.oj.evaluate import evaluate_sample_text2sql
-        result = evaluate_sample_text2sql(state)
+        result = run_evaluate_text2sql(state, writer)
     else:
-        raise ValueError(f"Unsupported task type for evaluate step: {task_type}")
+        emit_error(
+            ValueError(f"Unsupported task type for evaluate step: {task_type}"),
+            code=ErrorCode.INVALID_INPUT, recoverable=True,
+            message=f"Task type '{task_type}' is not supported for evaluation.",
+        )
 
     state["judger"]["output_result_path"] = result.get("result_path", "")
     writer(StreamEvent(
@@ -452,7 +472,11 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
         return dispatch[step](state, writer)
     if step == "finish":
         return state
-    raise ValueError(f"Unknown executable Judger step: {step_name}")
+    emit_error(
+        ValueError(f"Unknown executable Judger step: {step_name}"),
+        code=ErrorCode.INVALID_INPUT, recoverable=True,
+        message=f"Step '{step_name}' is not a recognized Judger pipeline step.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -497,7 +521,11 @@ def run_judger_pipeline(
         state = load_judger_checkpoint(thread_id, checkpoint_path)
         resolve_judger_runtime_config(state, thread_id=thread_id, **kwargs)
     elif state is None:
-        raise ValueError("state is required when resume is False.")
+        emit_error(
+            ValueError("state is required when resume is False."),
+            code=ErrorCode.INVALID_INPUT, recoverable=True,
+            message="No state provided and resume is disabled.",
+        )
     else:
         state = dict(state) if state is not None else {}
         state.setdefault("judger", {})

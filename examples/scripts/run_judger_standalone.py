@@ -300,24 +300,6 @@ def main():
         if args.print_result:
             _print_result(result)
 
-        # 最终结果输出到 stdout（Codex 消费）
-        judger = result.get("judger", {})
-        payload = {
-            "ok": True,
-            "status": "completed",
-            "message": "Judger pipeline completed.",
-            "data": {
-                "task_type": judger.get("eval_task_type"),
-                "output_result_path": judger.get("output_result_path"),
-                "output_case_path": judger.get("output_case_path"),
-                "output_problem_path": judger.get("output_problem_path"),
-                "output_pred_path": judger.get("output_pred_path"),
-                "bench": judger.get("bench"),
-            },
-            "error": None,
-        }
-        print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
-
         if args.print_events:
             task_id = result.get("task_id") or thread_id
             output_dir = result.get("output_dir") or args.output_dir or "./outputs"
@@ -331,24 +313,36 @@ def main():
                     file=sys.stderr,
                 )
 
-    except Exception as exc:
-        import traceback
+        # 最终结果用标准 payload 输出到 stdout（Codex 消费）
+        from loopai.common.exception import emit_success
 
-        payload = {
-            "ok": False,
-            "status": "failed",
-            "message": "Judger pipeline failed.",
-            "data": None,
-            "error": {
-                "type": type(exc).__name__,
-                "code": "JUDGER_ERROR",
-                "detail": str(exc),
-                "traceback": traceback.format_exc(),
-                "recoverable": True,
+        judger = result.get("judger", {})
+        emit_success(
+            data={
+                "task_type": judger.get("eval_task_type"),
+                "output_result_path": judger.get("output_result_path"),
+                "output_case_path": judger.get("output_case_path"),
+                "output_problem_path": judger.get("output_problem_path"),
+                "output_pred_path": judger.get("output_pred_path"),
+                "bench": judger.get("bench"),
             },
-        }
-        print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
-        sys.exit(1)
+            message="Judger pipeline completed.",
+        )
+
+    except Exception as exc:
+        from loopai.common.exception import emit_error, ErrorCode
+
+        # 根据异常类型分派 ErrorCode
+        if isinstance(exc, ValueError):
+            code = ErrorCode.CONFIG_ERROR
+        elif isinstance(exc, FileNotFoundError):
+            code = ErrorCode.NOT_FOUND
+        elif isinstance(exc, RuntimeError):
+            code = ErrorCode.EXTERNAL_SERVICE_ERROR
+        else:
+            code = ErrorCode.UNHANDLED_EXCEPTION
+
+        emit_error(exc, code=code, recoverable=True, message="Judger pipeline failed.")
 
 
 if __name__ == "__main__":
