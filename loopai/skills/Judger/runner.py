@@ -485,7 +485,7 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 def run_judger_pipeline(
     state: Optional[Dict[str, Any]],
-    thread_id: str = "judger-default",
+    thread_id: Optional[str] = None,
     checkpoint_path: Optional[str] = None,
     resume: bool = False,
     from_step: Optional[str] = None,
@@ -530,6 +530,15 @@ def run_judger_pipeline(
         state = dict(state) if state is not None else {}
         state.setdefault("judger", {})
         resolve_judger_runtime_config(state, thread_id=thread_id, **kwargs)
+
+    # thread_id 优先用显式传参，回退到 state["task_id"]（runtime_config 解析结果）
+    thread_id = thread_id or state.get("task_id") or ""
+    if not thread_id:
+        emit_error(
+            ValueError("task_id is required but was not provided."),
+            code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            message="Please provide --task-id or set TASK_ID env var.",
+        )
 
     output_dir = state.get("output_dir", "./outputs")
 

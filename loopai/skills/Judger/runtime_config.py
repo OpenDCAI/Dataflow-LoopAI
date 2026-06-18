@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
-_DEFAULT_THREAD_ID = "judger-default"
 _DEFAULT_OUTPUT_DIR = "./outputs"
 
 # JudgerState schema defaults (mirror loopai/schema/states.py JudgerState)
@@ -161,7 +160,7 @@ def resolve_judger_runtime_config(
         kwargs.get("task_id"),
         os.getenv("TASK_ID"),
         state.get("task_id") if is_state_dict else None,
-        _DEFAULT_THREAD_ID,
+        # 不设兜底值：task_id 缺失时 _step_validate 会报 CONFIG_ERROR
     )
     output_dir = _first_non_empty(
         kwargs.get("output_dir"),
@@ -229,7 +228,7 @@ def resolve_judger_runtime_config(
             state["DB_PATH"] = db_path
 
     return {
-        "thread_id": str(task_id or _DEFAULT_THREAD_ID),
+        "thread_id": str(task_id) if task_id else "",
         "output_dir": str(output_dir or _DEFAULT_OUTPUT_DIR),
         "db_path": db_path,
         "model_path": model_path,
