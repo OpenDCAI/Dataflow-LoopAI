@@ -119,11 +119,19 @@ cp examples/config/starter.yaml ./starter.yaml
 根据模型服务、输出路径、数据路径和训练环境修改 `starter.yaml`。当前启动脚本仍会校验 `default_states.trainer` 下的 Trainer/LLaMA Factory 字段，因为训练能力仍可在 LoopAI 图中被调度：
 
 ```yaml
+codex_sandbox_mode: "danger-full-access"
+
 default_states:
   trainer:
     llamafactory_dir: "/path/to/LLaMA-Factory"
     llamafactory_env_path: "/path/to/env/bin"
 ```
+
+如果你希望通过 `starter_codex_stream` 拉起的 Codex 会话继续启动需要宿主机 GPU 的 Judger/vLLM，建议显式设置：
+
+- `codex_sandbox_mode: "danger-full-access"`
+
+这样后端在启动 `codex-runner` 时会把该模式传给 Codex SDK，避免命令执行继续落在默认受限沙盒里。
 
 启动后端：
 
