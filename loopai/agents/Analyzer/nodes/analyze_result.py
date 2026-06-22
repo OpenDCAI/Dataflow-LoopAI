@@ -10,7 +10,7 @@ from loopai.common.prompts.prompt_loader import PromptLoader
 from langchain_openai import ChatOpenAI
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
-from loopai.agents.Analyzer.history_compare import (
+from loopai.skills.Analyzer.history_compare import (
     build_historical_comparison,
     render_historical_comparison_text,
 )

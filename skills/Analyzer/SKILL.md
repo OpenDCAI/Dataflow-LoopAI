@@ -101,10 +101,16 @@ Set `baseline_result_path` to enable Historical Comparison. Current results come
 Analyzer preserves the `historical_comparison` field and appends a `Historical Comparison` section to report/final_report outputs when available. Missing or unreadable baseline files produce a warning instead of failing the main flow.
 
 ## Stream Runtime
-Analyzer standalone uses the global event tool:
+Analyzer standalone follows the same base event writer style as Judger:
 
 ```python
 from loopai.common.event_tool import StreamEvent, get_event_writer
+```
+
+Analyzer-specific stdout/state-message/redaction helpers live in:
+
+```text
+loopai/skills/Analyzer/event_tool.py
 ```
 
 Events are written to:
@@ -113,11 +119,11 @@ Events are written to:
 <output_dir>/<TASK_ID or thread_id>/analyzer.pkl
 ```
 
-The writer also supports `--stream-stdout` / `LOOPAI_STREAM_STDOUT=1` for JSONL stdout output and appends events to `state["messages"]`.
+The Analyzer skill writer supports `--stream-stdout` for JSONL stdout output and appends events to `state["messages"]`.
 
 Analyzer node-level `StreamEvent` calls are still compatible with LangGraph runtime. In standalone/Codex mode they are routed through the Analyzer skill writer via safe fallback, so missing LangGraph runtime does not crash execution.
 
-Event payloads are JSON serializable and redact sensitive keys such as `api_key`, `analyze_api_key`, `token`, and `*_key`.
+Analyzer event payloads are JSON serializable and redact sensitive keys such as `api_key`, `analyze_api_key`, `token`, and `*_key`.
 
 ## Success Response
 Return the Analyzer final state/result directly.

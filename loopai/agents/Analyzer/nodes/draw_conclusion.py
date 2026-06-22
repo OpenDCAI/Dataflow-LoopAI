@@ -13,7 +13,7 @@ from loopai.logger import get_logger
 from loopai.common.prompts.prompt_loader import PromptLoader
 from loopai.schema.events import StreamEvent
 from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
-from loopai.agents.Analyzer.history_compare import (
+from loopai.skills.Analyzer.history_compare import (
     build_historical_comparison,
     render_historical_comparison_text,
 )

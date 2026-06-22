@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
-from loopai.common.event_tool import StreamEvent
+from .event_tool import StreamEvent
 
 
 ANALYZER_PIPELINE_STEPS = (
@@ -190,7 +190,7 @@ def run_analyzer_pipeline(
 
     if writer:
         writer(StreamEvent(
-            current="analyzer",
+            current="analyzer.pipeline",
             progress=0.0,
             message="Analyzer pipeline started",
             data={
@@ -203,7 +203,7 @@ def run_analyzer_pipeline(
     if from_node is None and _is_finished(state):
         if writer:
             writer(StreamEvent(
-                current="analyzer",
+                current="analyzer.pipeline",
                 progress=1.0,
                 message="Analyzer pipeline already finished",
             ))
@@ -215,7 +215,7 @@ def run_analyzer_pipeline(
 
         if writer:
             writer(StreamEvent(
-                current="analyzer",
+                current=f"analyzer.{step_name}",
                 progress=0.0,
                 message=f"步骤开始: {step_name}",
             ))
@@ -225,7 +225,7 @@ def run_analyzer_pipeline(
             save_analyzer_checkpoint(state, thread_id, checkpoint_path)
             if writer:
                 writer(StreamEvent(
-                    current="analyzer",
+                    current="analyzer.finish",
                     progress=1.0,
                     message="流水线完成",
                 ))
@@ -237,7 +237,7 @@ def run_analyzer_pipeline(
 
         if writer:
             writer(StreamEvent(
-                current="analyzer",
+                current=f"analyzer.{step_name}",
                 progress=1.0,
                 message=f"步骤完成: {step_name}",
             ))
