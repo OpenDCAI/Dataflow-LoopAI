@@ -18,9 +18,15 @@ from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState
 from loopai.schema.states import RuntimeContext, get_missing_fields
-from loopai.schema.events import StreamEvent
-from loopai.agents import BaseAgent
+from loopai.common.exception import ErrorCode
+from loopai.agents.BaseAgent import BaseAgent
 from .nodes import data_check_node, config_generation_node, training_execution_node
+from .utils.stream_events import (
+    build_trainer_error_payload,
+    build_trainer_success_payload,
+    emit_trainer_event,
+    record_trainer_result,
+)
 
 from loopai.logger import get_logger
 
@@ -59,31 +65,63 @@ class TrainerAgent(BaseAgent):
         """数据检查节点包装器"""
         writer = get_stream_writer()
         # 开始数据检查
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=0.0,
-                message="开始数据格式检查",
-                data={"dataset_path": state.get('trainer', {}).get('train_input_dataset_path')}
-            ).json())
+        emit_trainer_event(
+            writer,
+            state,
+            "data_check",
+            "running",
+            progress=0.0,
+            message="开始数据格式检查",
+            data={"dataset_path": state.get('trainer', {}).get('train_input_dataset_path')},
+        )
         
         logger.info("执行数据检查节点")
-        result_state = data_check_node(state)
+        try:
+            result_state = data_check_node(state)
+        except Exception as exc:
+            error_payload = build_trainer_error_payload(
+                exc,
+                message="Trainer data check failed.",
+            )
+            record_trainer_result(state, error_payload)
+            emit_trainer_event(
+                writer,
+                state,
+                "data_check",
+                "failed",
+                progress=1.0,
+                message="数据检查异常",
+                error=error_payload["error"],
+            )
+            raise
         
         # 完成数据检查
-        if writer:
-            check_passed = result_state.get('trainer', {}).get('trainer_data_check_passed', False)
-            writer(StreamEvent(
-                current=state['current'],
-                progress=1.0,
-                message=f"数据检查{'通过' if check_passed else '失败'}",
-                data={
-                    "passed": check_passed,
-                    "total_samples": result_state.get('trainer', {}).get('trainer_data_check_result', {}).get('total_samples'),
-                    "errors_count": len(result_state.get('trainer', {}).get('trainer_data_check_result', {}).get('errors', [])),
-                    "warnings_count": len(result_state.get('trainer', {}).get('trainer_data_check_result', {}).get('warnings', []))
-                }
-            ).json())
+        check_passed = result_state.get('trainer', {}).get('trainer_data_check_passed', False)
+        check_error = None
+        if not check_passed:
+            error_payload = build_trainer_error_payload(
+                RuntimeError(result_state.get('trainer', {}).get('trainer_data_check_error') or "data check failed"),
+                code=ErrorCode.INVALID_INPUT,
+                recoverable=True,
+                message="Trainer data check failed.",
+            )
+            record_trainer_result(result_state, error_payload)
+            check_error = error_payload["error"]
+        emit_trainer_event(
+            writer,
+            result_state,
+            "data_check",
+            "completed" if check_passed else "failed",
+            progress=1.0,
+            message=f"数据检查{'通过' if check_passed else '失败'}",
+            data={
+                "passed": check_passed,
+                "total_samples": result_state.get('trainer', {}).get('trainer_data_check_result', {}).get('total_samples'),
+                "errors_count": len(result_state.get('trainer', {}).get('trainer_data_check_result', {}).get('errors', [])),
+                "warnings_count": len(result_state.get('trainer', {}).get('trainer_data_check_result', {}).get('warnings', []))
+            },
+            error=check_error,
+        )
         
         return result_state
     
@@ -94,37 +132,70 @@ class TrainerAgent(BaseAgent):
         writer = get_stream_writer()
         
         # 开始配置生成
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=0.0,
-                message="开始生成训练配置",
-                data={
-                    "model_name": state.get('trainer', {}).get('train_input_model_name'),
-                    "task_description": state.get('trainer', {}).get('train_input_task_description')
-                }
-            ).json())
+        emit_trainer_event(
+            writer,
+            state,
+            "config_generation",
+            "running",
+            progress=0.0,
+            message="开始生成训练配置",
+            data={
+                "model_name": state.get('trainer', {}).get('train_input_model_name'),
+                "task_description": state.get('trainer', {}).get('train_input_task_description')
+            },
+        )
         
         logger.info("执行配置生成节点")
-        result_state = config_generation_node(state)
+        try:
+            result_state = config_generation_node(state)
+        except Exception as exc:
+            error_payload = build_trainer_error_payload(
+                exc,
+                code=ErrorCode.CONFIG_ERROR,
+                message="Trainer config generation failed.",
+            )
+            record_trainer_result(state, error_payload)
+            emit_trainer_event(
+                writer,
+                state,
+                "config_generation",
+                "failed",
+                progress=1.0,
+                message="配置生成异常",
+                error=error_payload["error"],
+            )
+            raise
         
         # 完成配置生成
-        if writer:
-            success = result_state.get('trainer', {}).get('trainer_config_generation_success', False)
-            config = result_state.get('trainer', {}).get('train_config', {})
-            writer(StreamEvent(
-                current=state['current'],
-                progress=1.0,
-                message=f"配置生成{'成功' if success else '失败'}",
-                data={
-                    "success": success,
-                    "model_name": config.get('model_name'),
-                    "finetuning_type": config.get('finetuning_type'),
-                    "learning_rate": config.get('learning_rate'),
-                    "num_train_epochs": config.get('num_train_epochs'),
-                    "config_path": result_state.get('trainer', {}).get('train_output_config_path')
-                }
-            ).json())
+        success = result_state.get('trainer', {}).get('trainer_config_generation_success', False)
+        config = result_state.get('trainer', {}).get('train_config', {})
+        config_error = None
+        if not success:
+            error_payload = build_trainer_error_payload(
+                RuntimeError(result_state.get('trainer', {}).get('trainer_config_generation_error') or "config generation failed"),
+                code=ErrorCode.CONFIG_ERROR,
+                recoverable=True,
+                message="Trainer config generation failed.",
+            )
+            record_trainer_result(result_state, error_payload)
+            config_error = error_payload["error"]
+        emit_trainer_event(
+            writer,
+            result_state,
+            "config_generation",
+            "completed" if success else "failed",
+            progress=1.0,
+            message=f"配置生成{'成功' if success else '失败'}",
+            data={
+                "success": success,
+                "model_name": config.get('model_name'),
+                "finetuning_type": config.get('finetuning_type'),
+                "learning_rate": config.get('learning_rate'),
+                "num_train_epochs": config.get('num_train_epochs'),
+                "config_path": result_state.get('trainer', {}).get('train_output_config_path')
+            },
+            error=config_error,
+        )
         
         return result_state
     
@@ -135,34 +206,72 @@ class TrainerAgent(BaseAgent):
         writer = get_stream_writer()
         
         # 开始训练执行
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=0.0,
-                message="开始提交训练任务",
-                data={
-                    "config_path": state.get('trainer', {}).get('train_output_config_path')
-                }
-            ).json())
+        emit_trainer_event(
+            writer,
+            state,
+            "training_execution",
+            "running",
+            progress=0.0,
+            message="开始提交训练任务",
+            data={
+                "config_path": state.get('trainer', {}).get('train_output_config_path')
+            },
+        )
         
         logger.info("执行训练节点")
-        result_state = training_execution_node(state, writer)
+        try:
+            result_state = training_execution_node(state, writer)
+        except Exception as exc:
+            error_payload = build_trainer_error_payload(
+                exc,
+                message="Trainer training execution failed.",
+            )
+            record_trainer_result(state, error_payload)
+            emit_trainer_event(
+                writer,
+                state,
+                "training_execution",
+                "failed",
+                progress=1.0,
+                message="训练执行异常",
+                error=error_payload["error"],
+            )
+            raise
         
         # 完成训练执行
-        if writer:
-            success = result_state.get('trainer', {}).get('trainer_training_success', False)
-            writer(StreamEvent(
-                current=state['current'],
-                progress=1.0,
-                message=f"训练任务{'成功完成' if success else '执行失败'}",
-                data={
-                    "success": success,
-                    "task_id": result_state.get('trainer', {}).get('trainer_training_task_id'),
-                    "execution_time": result_state.get('trainer', {}).get('trainer_training_execution_time'),
-                    "final_status": result_state.get('trainer', {}).get('trainer_training_final_status'),
-                    "report_path": result_state.get('trainer', {}).get('train_output_training_report_path')
-                }
-            ).json())
+        success = result_state.get('trainer', {}).get('trainer_training_success', False)
+        training_error = None
+        result_data = {
+            "success": success,
+            "task_id": result_state.get('trainer', {}).get('trainer_training_task_id'),
+            "execution_time": result_state.get('trainer', {}).get('trainer_training_execution_time'),
+            "final_status": result_state.get('trainer', {}).get('trainer_training_final_status'),
+            "report_path": result_state.get('trainer', {}).get('train_output_training_report_path')
+        }
+        if not success:
+            error_payload = build_trainer_error_payload(
+                RuntimeError(result_state.get('trainer', {}).get('train_output_training_error') or "training execution failed"),
+                recoverable=True,
+                message="Trainer training execution failed.",
+            )
+            record_trainer_result(result_state, error_payload)
+            training_error = error_payload["error"]
+        else:
+            success_payload = build_trainer_success_payload(
+                data=result_data,
+                message="Trainer training execution completed.",
+            )
+            record_trainer_result(result_state, success_payload)
+        emit_trainer_event(
+            writer,
+            result_state,
+            "training_execution",
+            "completed" if success else "failed",
+            progress=1.0,
+            message=f"训练任务{'成功完成' if success else '执行失败'}",
+            data=result_data,
+            error=training_error,
+        )
         
         return result_state
     
@@ -313,13 +422,15 @@ class TrainerAgent(BaseAgent):
             writer = get_stream_writer()
             
             # 进度：开始检查必需字段
-            if writer:
-                writer(StreamEvent(
-                    current=state['current'],
-                    progress=0.0,
-                    message="正在检查训练所需的配置字段...",
-                    data={"stage": "field_validation"}
-                ).json())
+            emit_trainer_event(
+                writer,
+                state,
+                "field_validation",
+                "running",
+                progress=0.0,
+                message="正在检查训练所需的配置字段...",
+                data={"stage": "field_validation"},
+            )
             # 如果 obtainer/constructor 有映射输出，自动填充训练数据集路径
             if not state.get('trainer', {}).get('train_input_dataset_path'):
                 obtainer_output = state.get('obtainer', {}).get('mapping_results', {}) if state.get('obtainer', {}).get('mapping_results') else {}
@@ -350,17 +461,27 @@ class TrainerAgent(BaseAgent):
                     
             if missing_fields:
                 # 进度：发现缺失字段
-                if writer:
-                    writer(StreamEvent(
-                        current=state['current'],
-                        progress=0.5,
-                        message=f"发现缺失字段，将转至配置补全: {', '.join(missing_fields)}",
-                        data={
-                            "missing_fields": missing_fields,
-                            "total_required": len(required_fields),
-                            "missing_count": len(missing_fields)
-                        }
-                    ).json())
+                error_payload = build_trainer_error_payload(
+                    ValueError(f"missing required trainer fields: {', '.join(missing_fields)}"),
+                    code=ErrorCode.CONFIG_ERROR,
+                    recoverable=True,
+                    message="Trainer required fields are missing.",
+                )
+                state.setdefault('trainer', {})['trainer_last_error'] = error_payload["error"]
+                emit_trainer_event(
+                    writer,
+                    state,
+                    "field_validation",
+                    "blocked",
+                    progress=0.5,
+                    message=f"发现缺失字段，将转至配置补全: {', '.join(missing_fields)}",
+                    data={
+                        "missing_fields": missing_fields,
+                        "total_required": len(required_fields),
+                        "missing_count": len(missing_fields)
+                    },
+                    error=error_payload["error"],
+                )
                 
                 state['exception'] = 'ConfigerError'
                 state['next_to'] = 'config_node'
@@ -377,14 +498,17 @@ class TrainerAgent(BaseAgent):
                 )
             else:
                 # 进度：所有字段检查通过
-                if writer:
-                    writer(StreamEvent(
-                        current=state['current'],
-                        progress=1.0,
-                        message="所有必需字段检查通过，开始训练流程",
-                        data={
-                            "all_fields_present": True,
-                            "total_required": len(required_fields)
-                        }
-                    ).json())
+                emit_trainer_event(
+                    writer,
+                    state,
+                    "field_validation",
+                    "completed",
+                    progress=1.0,
+                    message="所有必需字段检查通过，开始训练流程",
+                    data={
+                        "all_fields_present": True,
+                        "total_required": len(required_fields)
+                    },
+                )
+                return state
         return check_required_fields
