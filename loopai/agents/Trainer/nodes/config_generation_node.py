@@ -55,7 +55,9 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
         # 获取可选参数
         model_name = state.get('trainer', {}).get('train_input_model_name', 'qwen2.5-7b-instruct')
         template_path = state.get('trainer', {}).get('train_input_config_template_path')
-        training_output_dir = state.get('trainer', {}).get('output_dir', './output/training')
+        training_output_dir = os.path.abspath(
+            state.get('trainer', {}).get('output_dir') or './output/training'
+        )
         use_swanlab = state.get('trainer', {}).get('train_input_use_swanlab', True)
         swanlab_project = state.get('trainer', {}).get('train_input_swanlab_project', 'llamafactory_training')
         
@@ -76,9 +78,30 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
                 use_swanlab=use_swanlab,
                 swanlab_project=swanlab_project
             )
+            config["output_dir"] = os.path.abspath(str(config.get("output_dir") or training_output_dir))
+
+            deepspeed_path = config.get("deepspeed")
+            if deepspeed_path and not os.path.exists(str(deepspeed_path)):
+                llamafactory_dir = (
+                    state.get('trainer', {}).get('llamafactory_dir')
+                    or state.get('system', {}).get('llamafactory_dir')
+                    or ''
+                )
+                candidate = os.path.join(
+                    llamafactory_dir,
+                    "examples",
+                    "deepspeed",
+                    os.path.basename(str(deepspeed_path)),
+                )
+                if llamafactory_dir and os.path.exists(candidate):
+                    config["deepspeed"] = os.path.abspath(candidate)
+                    logger.info(f"已修正 deepspeed 配置路径: {config['deepspeed']}")
+                else:
+                    config.pop("deepspeed", None)
+                    logger.warning(f"deepspeed 配置不存在，已移除: {deepspeed_path}")
             
             # 确保输出目录存在
-            output_dir = state.get('trainer', {}).get('output_dir', './output/trainer')
+            output_dir = os.path.abspath(state.get('trainer', {}).get('output_dir') or './output/trainer')
             os.makedirs(output_dir, exist_ok=True)
             # 保存配置文件为YAML格式
             config_output_path = state.get('trainer', {}).get('train_output_config_path')

@@ -32,8 +32,8 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
     import uuid
     task_id = str(uuid.uuid4())
     state['trainer']['trainer_task_id'] = task_id
-    global_task_id = state.get('task_id')
-    global_output_dir = state.get('output_dir')
+    global_task_id = state.get('task_id') or 'default'
+    global_output_dir = os.path.abspath(state.get('output_dir') or './outputs')
     trainer_task_id = state.get('trainer', {}).get('trainer_task_id')
     training_output_dir = os.path.join(global_output_dir, global_task_id, 'trainer', trainer_task_id)
     state['trainer']['output_dir'] = training_output_dir
