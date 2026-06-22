@@ -1,10 +1,10 @@
 import os
 import asyncio
-from langgraph.config import get_stream_writer
 from loopai.schema.states import LoopAIState
 from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
 from ..utils import CrawlOrchestrator
+from ._event_utils import get_webcrawler_event_writer
 
 logger = get_logger()
 
@@ -14,7 +14,7 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
     """
     logger.info("WebCrawlerAgent: Executing crawl task")
     
-    writer = get_stream_writer()
+    writer = get_webcrawler_event_writer(state)
     
     # 输出爬取开始事件
     writer(StreamEvent(

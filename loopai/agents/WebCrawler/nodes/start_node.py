@@ -1,8 +1,8 @@
 import os
-from langgraph.config import get_stream_writer
 from loopai.schema.states import LoopAIState
 from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
+from ._event_utils import get_webcrawler_event_writer
 
 logger = get_logger()
 
@@ -41,7 +41,7 @@ def start_node(state: LoopAIState) -> LoopAIState:
     logger.info(f"[DEBUG] webcrawler 配置: {list(webcrawler.keys()) if webcrawler else '(空)'}")
     logger.info(f"[DEBUG] deepseek_api_key 是否存在: {'deepseek_api_key' in webcrawler}")
     
-    writer = get_stream_writer()
+    writer = get_webcrawler_event_writer(state)
     # 输出开始事件
     writer(StreamEvent(
         current=state['current'],

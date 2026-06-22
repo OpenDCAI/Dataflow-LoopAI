@@ -1,8 +1,8 @@
-from langgraph.config import get_stream_writer
 from loopai.schema.states import LoopAIState
 from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
 from langchain_core.messages import AIMessage
+from ._event_utils import get_webcrawler_event_writer
 
 logger = get_logger()
 
@@ -13,7 +13,7 @@ def end_node(state: LoopAIState) -> LoopAIState:
     """
     logger.info("WebCrawlerAgent: Task completed, returning to parent graph")
     
-    writer = get_stream_writer()
+    writer = get_webcrawler_event_writer(state)
     
     # 获取 webcrawler 配置
     webcrawler = state.get("webcrawler", {}) or {}

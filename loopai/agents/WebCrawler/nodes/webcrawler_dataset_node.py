@@ -4,9 +4,6 @@ import os
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from datetime import datetime, timezone
-
-from langgraph.config import get_stream_writer
-
 from loopai.agents.Constructor.mapping.script_mapping_node import script_mapping_node
 from loopai.agents.WebCrawler.utils.dataset_generator import (
     generate_sft_records,
@@ -19,6 +16,7 @@ from loopai.logger import get_logger
 from loopai.common.prompts import PromptLoader
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+from ._event_utils import get_webcrawler_event_writer
 
 logger = get_logger()
 
@@ -33,7 +31,7 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
     5. Saves structured data as JSONL in intermediate format
     """
     logger.info("=== WebCrawler Dataset Node: Starting ===")
-    writer = get_stream_writer()
+    writer = get_webcrawler_event_writer(state)
     writer(StreamEvent(
         current=state['current'],
         message="开始执行数据集构建任务",
