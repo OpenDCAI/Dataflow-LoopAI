@@ -62,7 +62,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "obtainercli=loopai.obtainercli.cli:main",
+            "loopai-obtainercli=loopai.skills.ObtainerCLI.cli:main",
         ],
     },
     python_requires=">=3.12",

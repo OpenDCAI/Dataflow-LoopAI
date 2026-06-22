@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .config import read_lake_config_for_lake
 from .errors import ObtainerCliError
+from .events import emit_obtainer_event, get_obtainer_event_writer
 from .index import index_embeddings
 from .ingest import ingest_path
 from .lake_init import init_lake
@@ -20,8 +21,85 @@ def _print_json(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
+def _command_node(args: argparse.Namespace) -> str:
+    parts = [str(getattr(args, "command", "") or "command")]
+    for name in ("lake_command", "ingest_command", "tag_command", "index_command"):
+        value = getattr(args, name, "")
+        if value:
+            parts.append(str(value))
+    return ".".join(parts)
+
+
+def _command_event_data(args: argparse.Namespace) -> dict:
+    safe_keys = (
+        "command",
+        "lake_command",
+        "ingest_command",
+        "tag_command",
+        "index_command",
+        "root",
+        "link",
+        "lake",
+        "input",
+        "output",
+        "dataset",
+        "stage",
+        "domain",
+        "task_type",
+        "processing_level",
+        "source_kind",
+        "tags",
+        "post_index",
+        "provider",
+        "model",
+        "backend",
+        "text_field",
+        "n",
+        "seed",
+        "strategy",
+        "balance_by",
+    )
+    return {key: getattr(args, key) for key in safe_keys if hasattr(args, key)}
+
+
+def _extract_event_args(argv: list[str] | None) -> tuple[list[str] | None, dict[str, object]]:
+    if argv is None:
+        return None, {}
+    remaining: list[str] = []
+    overrides: dict[str, object] = {}
+    index = 0
+    while index < len(argv):
+        item = argv[index]
+        if item == "--no-events":
+            overrides["no_events"] = True
+            index += 1
+            continue
+        if item == "--task-id" and index + 1 < len(argv):
+            overrides["task_id"] = argv[index + 1]
+            index += 2
+            continue
+        if item.startswith("--task-id="):
+            overrides["task_id"] = item.split("=", 1)[1]
+            index += 1
+            continue
+        if item == "--output-dir" and index + 1 < len(argv):
+            overrides["output_dir"] = argv[index + 1]
+            index += 2
+            continue
+        if item.startswith("--output-dir="):
+            overrides["output_dir"] = item.split("=", 1)[1]
+            index += 1
+            continue
+        remaining.append(item)
+        index += 1
+    return remaining, overrides
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="obtainercli")
+    parser = argparse.ArgumentParser(prog="loopai-obtainercli")
+    parser.add_argument("--task-id", default=os.getenv("TASK_ID", ""))
+    parser.add_argument("--output-dir", default=os.getenv("OUTPUT_DIR", "./outputs"))
+    parser.add_argument("--no-events", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 
     lake = sub.add_parser("lake")
@@ -104,7 +182,24 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    parse_argv, event_overrides = _extract_event_args(argv)
+    args = parser.parse_args(parse_argv)
+    for key, value in event_overrides.items():
+        setattr(args, key, value)
+    node = _command_node(args)
+    writer = get_obtainer_event_writer(
+        task_id=args.task_id,
+        output_dir=args.output_dir,
+        enabled=not args.no_events,
+    )
+    emit_obtainer_event(
+        writer,
+        node=node,
+        status="started",
+        progress=0.0,
+        message=f"ObtainerCLI command started: {node}",
+        data=_command_event_data(args),
+    )
     try:
         if args.command == "lake" and args.lake_command == "init":
             result = init_lake(
@@ -122,6 +217,14 @@ def run(argv: list[str] | None = None) -> int:
         elif args.command == "lake" and args.lake_command == "status":
             result = lake_status(lake=args.lake)
         elif args.command == "ingest" and args.ingest_command == "path":
+            emit_obtainer_event(
+                writer,
+                node=node,
+                status="running",
+                progress=0.2,
+                message="Ingesting records into the lake",
+                data=_command_event_data(args),
+            )
             result = ingest_path(
                 lake=args.lake,
                 input_path=args.input,
@@ -141,6 +244,19 @@ def run(argv: list[str] | None = None) -> int:
             )
             if should_index:
                 provider = args.embedding_provider or config.get("embedding_provider", "local-hash")
+                emit_obtainer_event(
+                    writer,
+                    node=node,
+                    status="running",
+                    progress=0.7,
+                    message="Indexing embeddings after ingest",
+                    data={
+                        "dataset": args.dataset,
+                        "provider": provider,
+                        "model": args.embedding_model,
+                        "backend": args.embedding_backend,
+                    },
+                )
                 try:
                     index_result = index_embeddings(
                         lake=args.lake,
@@ -201,9 +317,30 @@ def run(argv: list[str] | None = None) -> int:
         else:
             parser.error("Unsupported command")
             return 2
+        emit_obtainer_event(
+            writer,
+            node=node,
+            status="completed",
+            progress=1.0,
+            message=f"ObtainerCLI command completed: {node}",
+            data=result,
+        )
         _print_json(result)
         return 0
     except ObtainerCliError as exc:
+        emit_obtainer_event(
+            writer,
+            node=node,
+            status="failed",
+            progress=1.0,
+            message=exc.message,
+            error={
+                "type": type(exc).__name__,
+                "code": exc.error_code,
+                "detail": exc.message,
+                "hint": exc.hint,
+            },
+        )
         _print_json(
             {
                 "ok": False,
@@ -214,6 +351,18 @@ def run(argv: list[str] | None = None) -> int:
         )
         return exc.exit_code
     except Exception as exc:
+        emit_obtainer_event(
+            writer,
+            node=node,
+            status="failed",
+            progress=1.0,
+            message=str(exc),
+            error={
+                "type": type(exc).__name__,
+                "code": "UNEXPECTED_ERROR",
+                "detail": str(exc),
+            },
+        )
         _print_json({"ok": False, "error_code": "UNEXPECTED_ERROR", "message": str(exc), "hint": ""})
         return 1
 

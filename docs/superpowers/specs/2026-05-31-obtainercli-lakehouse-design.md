@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-把现有 `ObtainerAgent` 从 LangGraph 状态图重构为可由 CLI 驱动的数据湖工具链 `obtainercli`。新实现不再把“搜索/下载/后处理/状态流转”绑在图节点里，而是把核心能力拆成可测试、可复用、可由 Codex 自动调用的命令：
+把现有 `ObtainerAgent` 从 LangGraph 状态图重构为可由 CLI 驱动的数据湖工具链 `loopai-obtainercli`。新实现不再把“搜索/下载/后处理/状态流转”绑在图节点里，而是把核心能力拆成可测试、可复用、可由 Codex 自动调用的命令：
 
 1. 初始化标准化数据湖。
 2. 将数据稳定、可审计、幂等地写入数据湖。
@@ -217,7 +217,7 @@ synthetic_high_quality       # 经过多样性、去重和质量过滤后的高�
 ### 初始化
 
 ```bash
-obtainercli lake init \
+loopai-obtainercli lake init \
   --root /data/loopai/lakes/dataflow-loopai \
   --catalog sql \
   --warehouse file:///data/loopai/lakes/dataflow-loopai/warehouse \
@@ -240,7 +240,7 @@ obtainercli lake init \
 本地文件入湖：
 
 ```bash
-obtainercli ingest path \
+loopai-obtainercli ingest path \
   --lake .loopai/lake.yaml \
   --input data/raw/my_data.jsonl \
   --dataset code_sft_seed \
@@ -257,9 +257,9 @@ obtainercli ingest path \
 下载型入湖：
 
 ```bash
-obtainercli ingest hf --lake .loopai/lake.yaml --repo tatsu-lab/alpaca --dataset alpaca --task-type SFT --json
-obtainercli ingest kaggle --lake .loopai/lake.yaml --dataset-ref owner/name --dataset kaggle_name --json
-obtainercli ingest web --lake .loopai/lake.yaml --url https://example.com/data --dataset web_seed --json
+loopai-obtainercli ingest hf --lake .loopai/lake.yaml --repo tatsu-lab/alpaca --dataset alpaca --task-type SFT --json
+loopai-obtainercli ingest kaggle --lake .loopai/lake.yaml --dataset-ref owner/name --dataset kaggle_name --json
+loopai-obtainercli ingest web --lake .loopai/lake.yaml --url https://example.com/data --dataset web_seed --json
 ```
 
 入湖流程：
@@ -293,9 +293,9 @@ obtainercli ingest web --lake .loopai/lake.yaml --url https://example.com/data -
 ### 标签维护
 
 ```bash
-obtainercli tag add --lake .loopai/lake.yaml --record-id <id> --tag quality=high --source human --json
-obtainercli tag bulk-add --lake .loopai/lake.yaml --input tags.jsonl --json
-obtainercli tag list --lake .loopai/lake.yaml --dataset code_sft_seed --json
+loopai-obtainercli tag add --lake .loopai/lake.yaml --record-id <id> --tag quality=high --source human --json
+loopai-obtainercli tag bulk-add --lake .loopai/lake.yaml --input tags.jsonl --json
+loopai-obtainercli tag list --lake .loopai/lake.yaml --dataset code_sft_seed --json
 ```
 
 ### 向量索引
@@ -303,7 +303,7 @@ obtainercli tag list --lake .loopai/lake.yaml --dataset code_sft_seed --json
 显式创建 embedding 索引：
 
 ```bash
-obtainercli index embed \
+loopai-obtainercli index embed \
   --lake .loopai/lake.yaml \
   --dataset code_sft_seed \
   --text-field text \
@@ -315,7 +315,7 @@ obtainercli index embed \
 入湖后自动触发派生索引：
 
 ```bash
-obtainercli ingest path \
+loopai-obtainercli ingest path \
   --lake .loopai/lake.yaml \
   --input data/raw/my_data.jsonl \
   --dataset code_sft_seed \
@@ -335,7 +335,7 @@ obtainercli ingest path \
 ### 出湖采样
 
 ```bash
-obtainercli sample \
+loopai-obtainercli sample \
   --lake .loopai/lake.yaml \
   --include-tag domain=code \
   --include-tag task=sft \
@@ -353,7 +353,7 @@ obtainercli sample \
 垂域与处理程度导出示例：
 
 ```bash
-obtainercli sample \
+loopai-obtainercli sample \
   --lake .loopai/lake.yaml \
   --domain code \
   --processing-level postprocessed_high_quality \
@@ -398,7 +398,7 @@ value: 支持 exact match；第二版再加 glob/range
 建议新增包：
 
 ```text
-loopai/obtainercli/
+loopai/skills/ObtainerCLI/
   __init__.py
   cli.py
   config.py
@@ -431,7 +431,7 @@ loopai/obtainercli/
 
 - `HuggingFaceManager`、`KaggleManager`、`WebTools` 可以作为 adapter 底层能力复用。
 - `DataConvertor` 中能复用的文件发现和格式转换逻辑要拆成无 LangGraph 依赖的纯函数。
-- `ObtainerAgent`、`nodes/*` 不作为新 CLI 的运行时依赖；后续如果 WebUI 仍需 Obtainer，可让 WebUI 调 CLI 或调用 `loopai.obtainercli` 服务函数。
+- `ObtainerAgent`、`nodes/*` 不作为新 CLI 的运行时依赖；后续如果 WebUI 仍需 Obtainer，可让 WebUI 调 CLI 或调用 `loopai.skills.ObtainerCLI` 服务函数。
 
 ## 8. 依赖建议
 
@@ -511,9 +511,9 @@ JSON 输出统一格式：
 
 第一版必须满足：
 
-- `obtainercli lake init` 可在空目录稳定创建可用数据湖。
-- `obtainercli ingest path` 可把 JSONL 写入 `records` 和 `record_tags`，重复执行不产生重复记录。
-- `obtainercli sample` 可按标签组合导出 deterministic JSONL。
+- `loopai-obtainercli lake init` 可在空目录稳定创建可用数据湖。
+- `loopai-obtainercli ingest path` 可把 JSONL 写入 `records` 和 `record_tags`，重复执行不产生重复记录。
+- `loopai-obtainercli sample` 可按标签组合导出 deterministic JSONL。
 - 所有 CLI 命令支持 `--json`，Codex 可以只看 JSON 判断下一步。
 - 单测覆盖 tag expression、幂等 ID、分层采样、quarantine、exit code。
 - 集成测试覆盖 init -> ingest -> sample -> audit report。
@@ -531,7 +531,7 @@ JSON 输出统一格式：
 - Apache Iceberg 使用 snapshot、manifest list、table metadata 管理大规模表版本、分区演进和扫描计划。
 - Apache Parquet 是开放的列式数据文件格式，适合高效存储和检索。
 - Delta Lake 文档也验证了 lakehouse 的关键能力：ACID、可扩展元数据、batch/stream 统一、schema enforcement、time travel。
-- PyIceberg 提供 Python-native catalog、create table、append、scan 能力，适合作为 `obtainercli` 第一版的数据湖后端。
+- PyIceberg 提供 Python-native catalog、create table、append、scan 能力，适合作为 `loopai-obtainercli` 第一版的数据湖后端。
 
 ## 13. 待确认问题
 

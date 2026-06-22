@@ -12,14 +12,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.modules.setdefault("colorlog", types.SimpleNamespace(ColoredFormatter=logging.Formatter))
 
-from loopai.obtainercli.index import index_embeddings
-from loopai.obtainercli.ingest import ingest_path
-from loopai.obtainercli.config import write_lake_config
-from loopai.obtainercli.lake_status import lake_status
-from loopai.obtainercli.tags import list_tags
-from loopai.obtainercli.lake_init import init_lake
-from loopai.obtainercli.sample import sample_records
-from loopai.obtainercli.tables import append_rows, read_table
+from loopai.skills.ObtainerCLI.index import index_embeddings
+from loopai.skills.ObtainerCLI.ingest import ingest_path
+from loopai.skills.ObtainerCLI.config import write_lake_config
+from loopai.skills.ObtainerCLI.lake_status import lake_status
+from loopai.skills.ObtainerCLI.tags import list_tags
+from loopai.skills.ObtainerCLI.lake_init import init_lake
+from loopai.skills.ObtainerCLI.sample import sample_records
+from loopai.skills.ObtainerCLI.tables import append_rows, read_table
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -476,7 +476,7 @@ def test_cli_ingest_auto_embeds_with_openai_compatible_config(tmp_path: Path) ->
             ],
         )
 
-        from loopai.obtainercli.cli import run
+        from loopai.skills.ObtainerCLI.cli import run
 
         exit_code = run(
             [
@@ -526,7 +526,7 @@ def test_cli_ingest_auto_embeds_when_lake_root_is_passed(tmp_path: Path) -> None
         input_path = tmp_path / "input" / "records.jsonl"
         _write_jsonl(input_path, [{"text": "root config embedding", "source_uri": "file://root.txt"}])
 
-        from loopai.obtainercli.cli import run
+        from loopai.skills.ObtainerCLI.cli import run
 
         exit_code = run(
             [
@@ -569,3 +569,37 @@ def test_init_lake_writes_auto_embedding_defaults(tmp_path: Path) -> None:
     assert "embedding_provider: openai-compatible" in text
     assert "embedding_model: BAAI/bge-small-zh-v1.5" in text
     assert "embedding_base_url: http://127.0.0.1:8000/v1" in text
+
+
+def test_cli_persists_stream_events(tmp_path: Path) -> None:
+    from loopai.skills.ObtainerCLI import load_events
+    from loopai.skills.ObtainerCLI.cli import run
+
+    lake_root = tmp_path / "lake"
+    link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    output_dir = tmp_path / "outputs"
+
+    exit_code = run(
+        [
+            "lake",
+            "init",
+            "--root",
+            str(lake_root),
+            "--link",
+            str(link_path),
+            "--if-not-exists",
+            "--task-id",
+            "obtainer-task",
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    event_path = output_dir / "obtainer-task" / "obtainercli.pkl"
+    assert event_path.exists()
+    events = load_events("obtainer-task", output_dir=str(output_dir))
+    assert [event["status"] for event in events] == ["started", "completed"]
+    assert {event["current"] for event in events} == {"obtainercli"}
+    assert events[-1]["node"] == "lake.init"
+    assert events[-1]["progress"] == 1.0

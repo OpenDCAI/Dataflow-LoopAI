@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.modules.setdefault("colorlog", types.SimpleNamespace(ColoredFormatter=logging.Formatter))
 
-from loopai.obtainercli.embedding_server import create_app
+from loopai.skills.ObtainerCLI.embedding_server import create_app
 
 
 class _FakeEmbedder:

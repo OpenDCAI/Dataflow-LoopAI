@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a first usable `obtainercli` in a parallel package without deleting or replacing the existing LangGraph Obtainer.
+**Goal:** Build a first usable `loopai-obtainercli` in a parallel package without deleting or replacing the existing LangGraph Obtainer.
 
-**Architecture:** Add `loopai/obtainercli/` as a standalone local lakehouse CLI. The first version uses a file-backed catalog with JSONL tables and an Iceberg-ready table boundary so the command contract, schemas, idempotency, locking, tagging, lineage, quality findings, and sampling behavior can be tested before swapping the storage backend to PyIceberg. The repo keeps only `.loopai/lake.yaml` as a pointer to an external lake root.
+**Architecture:** Add `loopai/skills/ObtainerCLI/` as a standalone local lakehouse CLI. The first version uses a file-backed catalog with JSONL tables and an Iceberg-ready table boundary so the command contract, schemas, idempotency, locking, tagging, lineage, quality findings, and sampling behavior can be tested before swapping the storage backend to PyIceberg. The repo keeps only `.loopai/lake.yaml` as a pointer to an external lake root.
 
 **Tech Stack:** Python standard library, `argparse`, JSONL table files, pytest tests. No LangGraph dependency in the new package.
 
@@ -12,18 +12,18 @@
 
 ### File Structure
 
-- Create `loopai/obtainercli/__init__.py`: package marker and version.
-- Create `loopai/obtainercli/__main__.py`: enables `python -m loopai.obtainercli`.
-- Create `loopai/obtainercli/cli.py`: argparse command surface and JSON output.
-- Create `loopai/obtainercli/config.py`: lake root resolution, pointer config read/write.
-- Create `loopai/obtainercli/errors.py`: typed CLI errors and exit codes.
-- Create `loopai/obtainercli/lock.py`: local single-writer commit lock.
-- Create `loopai/obtainercli/tables.py`: JSONL table append/read helpers.
-- Create `loopai/obtainercli/models.py`: canonical record, IDs, tag parsing.
-- Create `loopai/obtainercli/lake_init.py`: `lake init`.
-- Create `loopai/obtainercli/ingest.py`: `ingest path`.
-- Create `loopai/obtainercli/sample.py`: tag/core-column sampling and export.
-- Modify `setup.py`: add `obtainercli` console entry point.
+- Create `loopai/skills/ObtainerCLI/__init__.py`: package marker and version.
+- Create `loopai/skills/ObtainerCLI/__main__.py`: enables `python -m loopai.skills.ObtainerCLI`.
+- Create `loopai/skills/ObtainerCLI/cli.py`: argparse command surface and JSON output.
+- Create `loopai/skills/ObtainerCLI/config.py`: lake root resolution, pointer config read/write.
+- Create `loopai/skills/ObtainerCLI/errors.py`: typed CLI errors and exit codes.
+- Create `loopai/skills/ObtainerCLI/lock.py`: local single-writer commit lock.
+- Create `loopai/skills/ObtainerCLI/tables.py`: JSONL table append/read helpers.
+- Create `loopai/skills/ObtainerCLI/models.py`: canonical record, IDs, tag parsing.
+- Create `loopai/skills/ObtainerCLI/lake_init.py`: `lake init`.
+- Create `loopai/skills/ObtainerCLI/ingest.py`: `ingest path`.
+- Create `loopai/skills/ObtainerCLI/sample.py`: tag/core-column sampling and export.
+- Modify `setup.py`: add `loopai-obtainercli` console entry point.
 - Create `tests/test_obtainercli_lake.py`: integration-style CLI/core tests.
 
 ### Task 1: Baseline Tests
@@ -39,16 +39,16 @@ Test lake init, pointer config, idempotent ingest, tags, dedup semantics, and al
 
 Run: `pytest -q tests/test_obtainercli_lake.py`
 
-Expected: import failure for `loopai.obtainercli`.
+Expected: import failure for `loopai.skills.ObtainerCLI`.
 
 - [ ] **Step 3: Commit after green implementation**
 
-Commit message: `feat: add obtainercli local lake core`
+Commit message: `feat: add loopai-obtainercli local lake core`
 
 ### Task 2: Local Lake Core
 
 **Files:**
-- Create: all `loopai/obtainercli/*.py` files listed above
+- Create: all `loopai/skills/ObtainerCLI/*.py` files listed above
 - Modify: `setup.py`
 - Test: `tests/test_obtainercli_lake.py`
 
@@ -64,7 +64,7 @@ Expected: all tests pass.
 
 - [ ] **Step 3: Commit**
 
-Commit message: `feat: add obtainercli local lake core`
+Commit message: `feat: add loopai-obtainercli local lake core`
 
 ### Task 3: Existing Sampling Regression
 
@@ -79,7 +79,7 @@ Expected: all tests pass.
 
 - [ ] **Step 2: Commit only if changes are needed**
 
-Commit message if needed: `test: cover obtainercli sampling regressions`
+Commit message if needed: `test: cover loopai-obtainercli sampling regressions`
 
 ### Task 4: Final Verification
 

@@ -17,9 +17,9 @@ http://127.0.0.1:15721/v1
 ```bash
 cd /home/xuebinrui/code/loopai/Dataflow-LoopAI
 
-export CODEX_API_KEY="你的 DeepSeek API Key"
-export CODEX_MODEL="deepseek-chat"
-export CODEX_UPSTREAM_BASE_URL="https://api.deepseek.com"
+export LOOPAI_CODEX_PROXY_UPSTREAM_API_KEY="你的 DeepSeek API Key"
+export LOOPAI_CODEX_PROXY_MODEL="deepseek-chat"
+export LOOPAI_CODEX_PROXY_UPSTREAM_BASE_URL="https://api.deepseek.com"
 ```
 
 也可以使用 DeepSeek 命名的环境变量：
@@ -30,7 +30,7 @@ export DEEPSEEK_MODEL="deepseek-chat"
 export DEEPSEEK_BASE_URL="https://api.deepseek.com"
 ```
 
-优先推荐使用 `CODEX_API_KEY` 和 `CODEX_UPSTREAM_BASE_URL`。这些变量只给 Rust 代理使用；Codex 侧只需要配置代理的本地 URL。
+优先推荐使用 `LOOPAI_CODEX_PROXY_UPSTREAM_API_KEY` 和 `LOOPAI_CODEX_PROXY_UPSTREAM_BASE_URL`。这些变量只给 Rust 代理使用，不和 `codex-runner` 的 `CODEX_*` 变量共用；Codex 侧只需要把自己的 base URL 指向代理。
 
 ## 2. 启动本地代理
 
@@ -49,7 +49,7 @@ http://127.0.0.1:15721/v1
 如果想换端口：
 
 ```bash
-export CODEX_LOCAL_PROXY_PORT=15722
+export LOOPAI_CODEX_PROXY_PORT=15722
 ./scripts/start_codex_deepseek_proxy.sh
 ```
 
@@ -90,7 +90,7 @@ curl -sS -N http://127.0.0.1:15721/v1/responses \
 ```bash
 cd /home/xuebinrui/code/loopai/Dataflow-LoopAI/codex-runner
 
-export CODEX_API_KEY="你的 DeepSeek API Key"
+export CODEX_API_KEY="loopai-local-proxy"
 export CODEX_BASE_URL="http://127.0.0.1:15721/v1"
 export CODEX_MODEL="deepseek-chat"
 export CODEX_WORKSPACE="/home/xuebinrui/code/loopai/Dataflow-LoopAI"
@@ -107,13 +107,15 @@ http://127.0.0.1:15721/v1
 
 如果你使用的是原生 Responses API 服务，不需要启动 Rust router，直接把 `CODEX_BASE_URL` 配成该服务自己的 URL 即可。
 
+注意：`LOOPAI_CODEX_PROXY_*` 只配置代理进程访问上游模型；`CODEX_*` 只配置 `codex-runner` 访问 Responses API 服务。当前本地代理不校验 runner 发来的 `CODEX_API_KEY`，推荐固定写 `loopai-local-proxy`，不要把代理的上游 key 依赖在 runner 的 `CODEX_API_KEY` 上。
+
 ## 5. 在 LoopAI 后端中使用
 
 如果通过 LoopAI Web 后端调用 Codex，需要确保 `starter.yaml` 里有：
 
 ```yaml
 system:
-  codex_api_key: "你的 DeepSeek API Key"
+  codex_api_key: "loopai-local-proxy"
   codex_base_url: "http://127.0.0.1:15721/v1"
   codex_model: "deepseek-chat"
 ```
@@ -139,7 +141,7 @@ curl -sS http://127.0.0.1:15721/health
 如果端口改过，需要同步设置：
 
 ```bash
-export CODEX_LOCAL_PROXY_PORT=你的端口
+export LOOPAI_CODEX_PROXY_PORT=你的端口
 ```
 
 然后确认 Codex 或 `codex-runner` 的 base URL 已经配置成本地代理 URL：
@@ -149,4 +151,3 @@ http://127.0.0.1:15721/v1
 ```
 
 如果仍然配置成 `https://api.deepseek.com`，Codex SDK 会直接请求 DeepSeek 的 Chat Completions 服务，通常不能按 Responses API 正常工作。
-

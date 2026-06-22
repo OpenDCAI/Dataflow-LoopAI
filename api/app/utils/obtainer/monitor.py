@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from loopai.obtainercli.config import read_lake_config_for_lake, resolve_lake_root
-from loopai.obtainercli.tables import TABLES, table_path
+from loopai.skills.ObtainerCLI.config import read_lake_config_for_lake, resolve_lake_root
+from loopai.skills.ObtainerCLI.tables import TABLES, read_table, table_path
 
 
 def _utc_now() -> str:
@@ -21,6 +21,14 @@ def _modified_at(path: Path) -> str:
     if not path.exists():
         return ""
     return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+
+
+def _path_size(path: Path) -> int:
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
 
 
 def _short_text(value: Any, limit: int = 180) -> str:
@@ -35,33 +43,16 @@ def _read_table_safe(lake_root: Path, table: str) -> tuple[list[dict], dict]:
     warnings: list[dict] = []
     rows: list[dict] = []
     if path.exists():
-        with path.open("r", encoding="utf-8") as f:
-            for lineno, line in enumerate(f, 1):
-                if not line.strip():
-                    continue
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    warnings.append(
-                        {
-                            "code": "JSONL_PARSE_ERROR",
-                            "table": table,
-                            "line": lineno,
-                            "message": str(exc),
-                        }
-                    )
-                    continue
-                if isinstance(data, dict):
-                    rows.append(data)
-                else:
-                    warnings.append(
-                        {
-                            "code": "JSONL_ROW_NOT_OBJECT",
-                            "table": table,
-                            "line": lineno,
-                            "message": "JSONL row is not an object",
-                        }
-                    )
+        try:
+            rows = read_table(lake_root, table)
+        except Exception as exc:
+            warnings.append(
+                {
+                    "code": "TABLE_READ_ERROR",
+                    "table": table,
+                    "message": str(exc),
+                }
+            )
     else:
         warnings.append(
             {
@@ -75,7 +66,7 @@ def _read_table_safe(lake_root: Path, table: str) -> tuple[list[dict], dict]:
         "path": str(path),
         "exists": path.exists(),
         "count": len(rows),
-        "size_bytes": path.stat().st_size if path.exists() else 0,
+        "size_bytes": _path_size(path),
         "modified_at": _modified_at(path),
         "warnings": warnings,
     }

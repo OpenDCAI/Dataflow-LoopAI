@@ -2,7 +2,7 @@
 
 ## 默认行为
 
-`obtainercli lake init` 默认写入以下配置：
+`loopai-obtainercli lake init` 默认写入以下配置：
 
 ```yaml
 auto_embed: true
@@ -13,7 +13,7 @@ embedding_backend: local-jsonl
 embedding_text_field: text
 ```
 
-因此 `obtainercli ingest path` 在写入新 records 后，会自动调用
+因此 `loopai-obtainercli ingest path` 在写入新 records 后，会自动调用
 `/v1/embeddings` 并把向量写入 `embeddings` 表。传入 `--lake <lake_root>`
 或 `--lake .loopai/lake.yaml` 都会读取同一份 lake 配置。
 
@@ -79,8 +79,8 @@ PY
 ## 入湖自动 embedding 验证
 
 ```bash
-obtainercli lake init --root /tmp/obtainercli_lake --if-not-exists --json
-obtainercli ingest path \
+loopai-obtainercli lake init --root /tmp/obtainercli_lake --if-not-exists --json
+loopai-obtainercli ingest path \
   --lake /tmp/obtainercli_lake \
   --input /path/to/records.jsonl \
   --dataset demo \

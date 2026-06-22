@@ -11,10 +11,10 @@ sys.modules.setdefault(
     types.SimpleNamespace(ColoredFormatter=logging.Formatter),
 )
 
-from loopai.obtainercli.index import index_embeddings
-from loopai.obtainercli.ingest import ingest_path
-from loopai.obtainercli.lake_init import init_lake
-from loopai.obtainercli.tables import append_rows
+from loopai.skills.ObtainerCLI.index import index_embeddings
+from loopai.skills.ObtainerCLI.ingest import ingest_path
+from loopai.skills.ObtainerCLI.lake_init import init_lake
+from loopai.skills.ObtainerCLI.tables import append_rows
 
 from api.app.utils.obtainer.monitor import build_lake_monitor, probe_embedding_health
 
