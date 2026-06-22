@@ -6,8 +6,37 @@
 import os
 import sys
 import json
+import shutil
 import subprocess
 from omegaconf import OmegaConf
+
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+CODEX_HOME_DIR = os.path.join(PROJECT_ROOT, "codex_home")
+CODEX_HOME_EXAMPLE_DIR = os.path.join(PROJECT_ROOT, "examples", "codex_home_example")
+
+
+def reset_codex_home():
+    """Reset ./codex_home from examples/codex_home_example before API startup."""
+    if not os.path.isdir(CODEX_HOME_EXAMPLE_DIR):
+        raise FileNotFoundError(f"codex_home example directory not found: {CODEX_HOME_EXAMPLE_DIR}")
+
+    os.makedirs(CODEX_HOME_DIR, exist_ok=True)
+    for entry_name in os.listdir(CODEX_HOME_DIR):
+        entry_path = os.path.join(CODEX_HOME_DIR, entry_name)
+        if os.path.isdir(entry_path) and not os.path.islink(entry_path):
+            shutil.rmtree(entry_path)
+        else:
+            os.unlink(entry_path)
+
+    for entry_name in os.listdir(CODEX_HOME_EXAMPLE_DIR):
+        source_path = os.path.join(CODEX_HOME_EXAMPLE_DIR, entry_name)
+        target_path = os.path.join(CODEX_HOME_DIR, entry_name)
+        if os.path.isdir(source_path) and not os.path.islink(source_path):
+            shutil.copytree(source_path, target_path)
+        else:
+            shutil.copy2(source_path, target_path)
 
 def main():
     """主函数"""
@@ -61,6 +90,13 @@ def main():
     current_dir = os.getcwd()
     print(f"📂 Current directory: {current_dir}")
     print(f"📂 Switching to LLaMA Factory directory: {llamafactory_dir}")
+
+    try:
+        reset_codex_home()
+        print(f"✅ Reset codex_home from example: {CODEX_HOME_EXAMPLE_DIR}")
+    except Exception as e:
+        print(f"❌ Failed to reset codex_home: {e}")
+        return 1
     
     # 启动服务
     print("🚀 Starting LLaMA Factory Training Service...")
