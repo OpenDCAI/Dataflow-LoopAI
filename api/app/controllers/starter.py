@@ -9,7 +9,13 @@ from ..models.body import (
     StarterCodexRequest,
 )
 from ..models.db_models import StarterConfig, TaskModel
-from ..services.starter import CodexStarterService, codex_session_store, load_starter_system_config
+from ..services.starter import (
+    CodexStarterService,
+    build_custom_info,
+    codex_session_store,
+    load_starter_system_config,
+    parse_task_state,
+)
 from ..services.task import build_initial_task_state
 from ..utils.monitor.hw_stat import get_nvidia_gpu_usage, get_huawei_npu_usage, get_cpu_usage, get_memory_usage
 
@@ -17,6 +23,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(os.path.dirname(CURRENT_DIR))
 LoopAI_DIR = os.path.dirname(BASE_DIR)
 DB_PATH = os.path.join(BASE_DIR, "db", "db.sqlite3")
+DEFAULT_OUTPUTS_DIR = os.path.join(LoopAI_DIR, "outputs")
 
 router = APIRouter(tags=["starter"])
 
@@ -187,14 +194,12 @@ async def get_agent_status(task_id: str):
     if not task:
         return response_body(code=404, status='error', message='任务项不存在')()
 
-    try:
-        state = json.loads(task.state) if task.state else None
-    except Exception:
-        state = None
+    state = parse_task_state(task.state)
 
     if not isinstance(state, dict):
         state = await build_initial_task_state(task_id)
 
+    custom_info = build_custom_info(task_id, state, DEFAULT_OUTPUTS_DIR, LoopAI_DIR)
     state["task_id"] = task_id
     state.setdefault("messages", [])
 
@@ -206,7 +211,7 @@ async def get_agent_status(task_id: str):
         "running_tasks": [],
         "interrupt_value": None,
         "state": state,
-        "custom_info": None,
+        "custom_info": custom_info,
         "updated_custom_info": None,
         "stream_message": None,
     })()
