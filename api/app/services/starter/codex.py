@@ -10,12 +10,13 @@ from typing import Any, AsyncIterator
 
 from tortoise.expressions import Q
 
-from ..models.db_models import StarterConfig, TaskModel, ThreadHistory
-from ..utils.config.config import check_config_from_db
+from ...models.db_models import StarterConfig, TaskModel, ThreadHistory
+from ...utils.config.config import check_config_from_db
 
 
 CURRENT_DIR = Path(__file__).resolve().parent
-APP_DIR = CURRENT_DIR.parent
+SERVICES_DIR = CURRENT_DIR.parent
+APP_DIR = SERVICES_DIR.parent
 API_DIR = APP_DIR.parent
 PROJECT_ROOT = API_DIR.parent
 CODEX_RUNNER_DIR = PROJECT_ROOT / "codex-runner"
@@ -655,8 +656,6 @@ class CodexStarterService:
             env["CODEX_BASE_URL"] = str(base_url)
         if api_key:
             env["CODEX_API_KEY"] = str(api_key)
-            # Keep provider-specific aliases in sync during the migration period.
-            # codex-sdk may still resolve auth from CODEX_HOME provider config.
             env.setdefault("OPENAI_API_KEY", str(api_key))
             env.setdefault("DEEPSEEK_API_KEY", str(api_key))
             env.setdefault("DASHSCOPE_API_KEY", str(api_key))
