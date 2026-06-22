@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import pickle
-import json
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,30 +49,6 @@ def _normalize_value(value: Any) -> Any:
         return _normalize_value(vars(value))
 
     return str(value)
-
-
-def _is_sensitive_key(key: Any) -> bool:
-    key_name = str(key).lower()
-    return (
-        key_name == "api_key"
-        or key_name.endswith("_api_key")
-        or key_name == "token"
-        or key_name.endswith("_token")
-        or key_name.endswith("_key")
-    )
-
-
-def _redact_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            str(key): "***REDACTED***" if _is_sensitive_key(key) else _redact_value(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_value(item) for item in value]
-    if isinstance(value, tuple):
-        return [_redact_value(item) for item in value]
-    return value
 
 
 @dataclass
@@ -126,51 +101,66 @@ def _coerce_stream_event(payload: StreamEvent | dict[str, Any]) -> StreamEvent:
         event = payload
     elif isinstance(payload, dict):
         event = StreamEvent(**payload)
-    elif hasattr(payload, "json") and callable(payload.json):
-        event = StreamEvent(**payload.json())
     else:
         raise TypeError("writer(...) only accepts StreamEvent or dict payload")
 
     if event.time is None:
         event.time = _utc_now_iso()
-    event.data = _redact_value(_normalize_value(event.data))
+    event.data = _normalize_value(event.data)
     return event
 
 
-def append_stream_message(state: dict[str, Any], event: StreamEvent | dict[str, Any]) -> dict[str, Any]:
-    stream_event = _coerce_stream_event(event)
-    state.setdefault("messages", [])
-    state["messages"].append(asdict(stream_event))
-    return state
+def _normalize_stream_event_item(item: Any) -> StreamEvent | None:
+    if isinstance(item, StreamEvent):
+        return item
+    if isinstance(item, dict):
+        try:
+            return StreamEvent(**item)
+        except TypeError:
+            return None
+    return None
+
+
+def _normalize_event_groups(payload: Any) -> dict[str, list[StreamEvent]]:
+    if isinstance(payload, dict):
+        normalized_groups: dict[str, list[StreamEvent]] = {}
+        for current_key, items in payload.items():
+            if not isinstance(items, list):
+                continue
+            group_key = str(current_key)
+            normalized_items: list[StreamEvent] = []
+            for item in items:
+                event = _normalize_stream_event_item(item)
+                if event is not None:
+                    normalized_items.append(event)
+            if normalized_items:
+                normalized_groups[group_key] = normalized_items
+        return normalized_groups
+
+    if isinstance(payload, list):
+        normalized_groups: dict[str, list[StreamEvent]] = {}
+        for item in payload:
+            event = _normalize_stream_event_item(item)
+            if event is None:
+                continue
+            normalized_groups.setdefault(event.current, []).append(event)
+        return normalized_groups
+
+    return {}
 
 
 class PickleEventWriter:
-    def __init__(
-        self,
-        name: str,
-        context_id: str,
-        event_path: Path,
-        run_id: str | None = None,
-        *,
-        stdout: bool = False,
-        state: dict[str, Any] | None = None,
-    ):
+    def __init__(self, name: str, context_id: str, event_path: Path, run_id: str | None = None):
         self.name = name
         self.context_id = context_id
         self.event_path = event_path
         self.run_id = run_id
-        self.stdout = stdout
-        self.state = state
 
     def __call__(self, payload: StreamEvent | dict[str, Any]) -> StreamEvent:
         event = _coerce_stream_event(payload)
         if event.run_id is None:
             event.run_id = self.run_id
         self._append_event(event)
-        if self.state is not None:
-            append_stream_message(self.state, event)
-        if self.stdout:
-            print(json.dumps(asdict(event), ensure_ascii=False), flush=True)
         return event
 
     def _append_event(self, event: StreamEvent) -> None:
@@ -183,16 +173,14 @@ class PickleEventWriter:
                 try:
                     events = pickle.load(file_obj)
                 except EOFError:
-                    events = []
+                    events = {}
 
-                if not isinstance(events, list):
-                    events = []
-
-                events.append(event)
+                event_groups = _normalize_event_groups(events)
+                event_groups.setdefault(event.current, []).append(event)
 
                 file_obj.seek(0)
                 file_obj.truncate()
-                pickle.dump(events, file_obj)
+                pickle.dump(event_groups, file_obj)
                 file_obj.flush()
                 os.fsync(file_obj.fileno())
             finally:
@@ -206,22 +194,16 @@ def get_event_writer(
     log_file_path: str = "./outputs",
     *,
     run_id: str | None = None,
-    stdout: bool | None = None,
-    state: dict[str, Any] | None = None,
 ) -> PickleEventWriter:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
     base_path = Path(log_file_path)
     event_path = base_path / context_value / f"{agent_name}.pkl"
-    if stdout is None:
-        stdout = os.getenv("LOOPAI_STREAM_STDOUT", "").lower() in {"1", "true", "yes", "on"}
     return PickleEventWriter(
         name=agent_name,
         context_id=context_value,
         event_path=event_path,
         run_id=run_id,
-        stdout=stdout,
-        state=state,
     )
 
 
@@ -230,25 +212,29 @@ def load_stream_events(
     context_id: str,
     log_file_path: str = "./outputs",
 ) -> list[StreamEvent]:
+    grouped_events = load_stream_event_groups(name, context_id, log_file_path)
+    flattened_events: list[StreamEvent] = []
+    for events in grouped_events.values():
+        flattened_events.extend(events)
+    flattened_events.sort(key=lambda item: item.time or "")
+    return flattened_events
+
+
+def load_stream_event_groups(
+    name: str,
+    context_id: str,
+    log_file_path: str = "./outputs",
+) -> dict[str, list[StreamEvent]]:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
     event_path = Path(log_file_path) / context_value / f"{agent_name}.pkl"
     if not event_path.exists():
-        return []
+        return {}
 
     with event_path.open("rb") as file_obj:
         events = pickle.load(file_obj)
 
-    if not isinstance(events, list):
-        return []
-
-    normalized_events: list[StreamEvent] = []
-    for item in events:
-        if isinstance(item, StreamEvent):
-            normalized_events.append(item)
-        elif isinstance(item, dict):
-            normalized_events.append(StreamEvent(**item))
-    return normalized_events
+    return _normalize_event_groups(events)
 
 
 def dump_stream_events_json(
@@ -260,9 +246,9 @@ def dump_stream_events_json(
 
 
 __all__ = [
-    "append_stream_message",
     "PickleEventWriter",
     "StreamEvent",
+    "load_stream_event_groups",
     "dump_stream_events_json",
     "get_event_writer",
     "load_stream_events",

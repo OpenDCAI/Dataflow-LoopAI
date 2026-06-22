@@ -1,6 +1,7 @@
 import { Codex, type ThreadEvent, type ThreadItem } from "@openai/codex-sdk";
 
 type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+const MAX_COMMAND_OUTPUT_CHARS = Number(process.env.CODEX_EVENT_MAX_OUTPUT_CHARS ?? "12000");
 
 const prompt = process.argv.slice(2).join(" ");
 const timeoutMs = Number(process.env.CODEX_RUN_TIMEOUT_MS ?? "300000");
@@ -53,6 +54,30 @@ function writeStderr(payload: unknown): void {
 
 function writeStdout(payload: unknown): void {
     process.stdout.write(`${JSON.stringify(payload)}\n`);
+}
+
+function truncateText(value: string, maxChars: number): string {
+    if (value.length <= maxChars) {
+        return value;
+    }
+    return `${value.slice(0, maxChars)}\n... [truncated ${value.length - maxChars} chars]`;
+}
+
+function sanitizeEvent(event: ThreadEvent): ThreadEvent {
+    if (
+        (event.type === "item.started" || event.type === "item.updated" || event.type === "item.completed")
+        && event.item.type === "command_execution"
+        && typeof event.item.aggregated_output === "string"
+    ) {
+        return {
+            ...event,
+            item: {
+                ...event.item,
+                aggregated_output: truncateText(event.item.aggregated_output, MAX_COMMAND_OUTPUT_CHARS)
+            }
+        };
+    }
+    return event;
 }
 
 function resolveSandboxMode(value: string | undefined): SandboxMode {
@@ -124,25 +149,26 @@ async function main() {
     const streamErrors: string[] = [];
 
     for await (const event of events) {
+        const safeEvent = sanitizeEvent(event);
         writeStdout({
             type: "event",
-            event
+            event: safeEvent
         });
 
-        if (event.type === "item.started" || event.type === "item.updated" || event.type === "item.completed") {
-            items.set(event.item.id, event.item);
+        if (safeEvent.type === "item.started" || safeEvent.type === "item.updated" || safeEvent.type === "item.completed") {
+            items.set(safeEvent.item.id, safeEvent.item);
 
-            if (event.item.type === "agent_message") {
-                finalResponse = event.item.text;
+            if (safeEvent.item.type === "agent_message") {
+                finalResponse = safeEvent.item.text;
             }
-        } else if (event.type === "turn.completed") {
-            usage = event.usage;
-        } else if (event.type === "turn.failed") {
-            throw new Error(event.error.message);
-        } else if (event.type === "error") {
+        } else if (safeEvent.type === "turn.completed") {
+            usage = safeEvent.usage;
+        } else if (safeEvent.type === "turn.failed") {
+            throw new Error(safeEvent.error.message);
+        } else if (safeEvent.type === "error") {
             // The CLI may surface recoverable reconnect notices as `error` events
             // before it falls back to another transport, so keep streaming here.
-            streamErrors.push(event.message);
+            streamErrors.push(safeEvent.message);
         }
     }
 

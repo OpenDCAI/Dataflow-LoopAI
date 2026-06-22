@@ -25,6 +25,7 @@ PROCESS_EXIT_GRACE_SECONDS = 3
 FALLBACK_CODEX_HOME = Path.home() / ".codex"
 DEFAULT_CODEX_SANDBOX_MODE = "danger-full-access"
 ALLOWED_CODEX_SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
+CODEX_RUNNER_STREAM_LIMIT = 1024 * 1024
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -793,6 +794,7 @@ class CodexStarterService:
                     env=env,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    limit=CODEX_RUNNER_STREAM_LIMIT,
                 )
             except OSError as exc:
                 self.session_store.update(session_id, status="failed", last_error=str(exc))
