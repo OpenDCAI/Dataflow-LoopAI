@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from loopai.common.event_tool import load_stream_events
+from loopai.common.event_tool import load_stream_event_groups
 
 
 STREAM_EVENT_AGENT_NAMES = (
@@ -63,25 +63,19 @@ def build_custom_info(
     project_root_dir: str | Path,
 ) -> dict[str, dict[str, Any]]:
     custom_info: dict[str, dict[str, Any]] = {}
-    latest_times: dict[str, str] = {}
     output_dir = resolve_output_dir(state, default_output_dir, project_root_dir)
 
     for agent_name in STREAM_EVENT_AGENT_NAMES:
         try:
-            events = load_stream_events(agent_name, task_id, log_file_path=output_dir)
+            event_groups = load_stream_event_groups(agent_name, task_id, log_file_path=output_dir)
         except Exception:
             continue
 
-        for event in events:
-            payload = serialize_stream_event(event)
-            current_key = payload.get("current")
-            if not current_key:
+        for current_key, events in event_groups.items():
+            if not events:
                 continue
-
-            event_time = payload.get("time") or ""
-            previous_time = latest_times.get(current_key, "")
-            if current_key not in custom_info or event_time >= previous_time:
-                custom_info[current_key] = payload
-                latest_times[current_key] = event_time
+            payload = serialize_stream_event(events[-1])
+            if payload.get("current"):
+                custom_info[f"{agent_name}.{current_key}"] = payload
 
     return custom_info
