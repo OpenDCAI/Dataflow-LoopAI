@@ -1602,6 +1602,26 @@ class TrainerState(BaseModel):
         description="SwanLab 日志路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
+    trainer_event_log_path: str = Field(
+        default="",
+        title="Trainer 事件日志路径",
+        description="Trainer 实时事件流持久化文件路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    trainer_result: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Trainer 标准返回结果",
+        description="Trainer 成功或失败的标准返回结构，包含 ok/status/message/data/error",
+        json_schema_extra={"ui_type": "textarea",
+                           "language": "json", "ui_group": "训练模型"}
+    )
+    trainer_last_error: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Trainer 最近错误",
+        description="Trainer 最近一次结构化错误信息",
+        json_schema_extra={"ui_type": "textarea",
+                           "language": "json", "ui_group": "训练模型"}
+    )
     train_config: str = Field(
         default="",
         title="训练配置",

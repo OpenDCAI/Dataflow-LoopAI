@@ -35,6 +35,21 @@ DEFAULT_ERROR_MESSAGES: dict[ErrorCode, str] = {
 }
 
 
+def _normalize_error_code(code: str | ErrorCode) -> str | ErrorCode:
+    if isinstance(code, ErrorCode):
+        return code
+    try:
+        return ErrorCode(str(code))
+    except ValueError:
+        return str(code)
+
+
+def _format_exception_traceback(exc: BaseException) -> str:
+    if exc.__traceback__ is None:
+        return ""
+    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -55,7 +70,7 @@ def build_error_payload(
     recoverable: bool = True,
     message: str | None = None,
 ) -> dict[str, Any]:
-    normalized_code = ErrorCode(code) if code in ErrorCode._value2member_map_ else str(code)
+    normalized_code = _normalize_error_code(code)
     default_message = DEFAULT_ERROR_MESSAGES.get(
         normalized_code,
         "Sub-agent crashed with an unhandled exception.",
@@ -69,7 +84,7 @@ def build_error_payload(
             "type": type(exc).__name__,
             "code": str(normalized_code),
             "detail": str(exc),
-            "traceback": traceback.format_exc(),
+            "traceback": _format_exception_traceback(exc),
             "recoverable": recoverable,
             "time": utc_now_iso(),
         },

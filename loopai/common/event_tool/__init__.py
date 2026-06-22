@@ -65,6 +65,10 @@ class StreamEvent:
     data: Optional[Any] = None
     time: Optional[str] = None
     run_id: Optional[str] = None
+    node: Optional[str] = None
+    status: Optional[str] = None
+    context_id: Optional[str] = None
+    error: Optional[Any] = None
 
     def __init__(
         self,
@@ -76,6 +80,10 @@ class StreamEvent:
         data: Optional[Any] = None,
         time: Optional[str] = None,
         run_id: Optional[str] = None,
+        node: Optional[str] = None,
+        status: Optional[str] = None,
+        context_id: Optional[str] = None,
+        error: Optional[Any] = None,
     ):
         self.current = current
         self.progress = progress
@@ -85,11 +93,19 @@ class StreamEvent:
         self.data = data
         self.time = time
         self.run_id = run_id
+        self.node = node
+        self.status = status
+        self.context_id = context_id
+        self.error = error
 
     def json(self) -> dict[str, Any]:
         """
         Convert dataclass fields to JSON representation.
         """
+        if self.time is None:
+            self.time = _utc_now_iso()
+        self.data = _normalize_value(self.data)
+        self.error = _normalize_value(self.error)
         results = {}
         for f in fields(self):
             results[f.name] = getattr(self, f.name)
@@ -107,6 +123,7 @@ def _coerce_stream_event(payload: StreamEvent | dict[str, Any]) -> StreamEvent:
     if event.time is None:
         event.time = _utc_now_iso()
     event.data = _normalize_value(event.data)
+    event.error = _normalize_value(event.error)
     return event
 
 
@@ -160,6 +177,8 @@ class PickleEventWriter:
         event = _coerce_stream_event(payload)
         if event.run_id is None:
             event.run_id = self.run_id
+        if event.context_id is None:
+            event.context_id = self.context_id
         self._append_event(event)
         return event
 
@@ -242,7 +261,7 @@ def dump_stream_events_json(
     context_id: str,
     log_file_path: str = "./outputs",
 ) -> list[dict[str, Any]]:
-    return [asdict(item) for item in load_stream_events(name, context_id, log_file_path)]
+    return [item.json() for item in load_stream_events(name, context_id, log_file_path)]
 
 
 __all__ = [

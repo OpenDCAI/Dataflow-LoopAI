@@ -10,12 +10,13 @@ import shutil
 from pathlib import Path
 from langgraph.config import get_stream_writer
 from loopai.schema.states import LoopAIState
-from loopai.schema.events import StreamEvent
+from loopai.common.exception import ErrorCode
 from loopai.agents.Trainer.utils.task_manager import TaskManager
 from loopai.agents.Trainer.utils.task_status import TaskStatus
 from loopai.agents.Trainer.utils.task_tools import read_log_file
 from loopai.agents.Trainer.utils.insert_dataset import insert_dataset_to_llamafactory
 from loopai.agents.Trainer.utils.training_log_parser import parse_task_training_progress, TrainingLogParser
+from loopai.agents.Trainer.utils.stream_events import build_trainer_error, emit_trainer_event
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -38,7 +39,7 @@ def _get_task_manager(state: dict) -> TaskManager:
     system_config = state.get('system', {})
 
     # 获取输出目录
-    output_dir = trainer_state.get('output_dir', './output/trainer')
+    output_dir = os.path.abspath(trainer_state.get('output_dir') or './output/trainer')
     configs_dir = os.path.join(output_dir, "configs")
     logs_dir = os.path.join(output_dir, "logs")
     runs_dir = os.path.join(output_dir, "runs")
@@ -93,6 +94,8 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         framework = state.get('trainer', {}).get('train_framework')
 
         config_path = state.get('trainer', {}).get('train_output_config_path')
+        if config_path:
+            config_path = os.path.abspath(config_path)
         if not config_path or not os.path.exists(config_path):
             raise ValueError(f"配置文件不存在: {config_path}")
 
@@ -101,7 +104,8 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         trainer_task_id = state.get('trainer', {}).get('trainer_task_id')
         dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
         llamafactory_dir = state.get('trainer', {}).get('llamafactory_dir')
-        output_dir = state.get('trainer', {}).get('output_dir', './output/trainer')
+        output_dir = os.path.abspath(state.get('trainer', {}).get('output_dir') or './output/trainer')
+        state.setdefault('trainer', {})['output_dir'] = output_dir
 
         logger.info(f"配置文件: {config_path}")
         logger.info(f"任务描述: {task_description}")
@@ -110,13 +114,15 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         logger.info(f"LlamaFactory目录: {llamafactory_dir}")
 
         # 进度：准备数据集注册
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=0.0,
-                message="正在检查并注册数据集到LlamaFactory...",
-                data={"dataset_path": dataset_path, "llamafactory_dir": llamafactory_dir}
-            ).json())
+        emit_trainer_event(
+            writer,
+            state,
+            "training_execution",
+            "running",
+            progress=0.0,
+            message="正在检查并注册数据集到LlamaFactory...",
+            data={"dataset_path": dataset_path, "llamafactory_dir": llamafactory_dir},
+        )
 
         # 插入数据集到 LlamaFactory dataset_info.json
         if framework == 'llamafactory' and dataset_path and llamafactory_dir:
@@ -127,25 +133,35 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 logger.info(f"✅ 数据集 '{dataset_name}' 已成功注册到LlamaFactory")
                 state.setdefault('trainer', {})['dataset_name'] = dataset_name
 
-                if writer:
-                    writer(StreamEvent(
-                        current=state['current'],
-                        progress=0.0,
-                        message=f"数据集 '{dataset_name}' 已成功注册到LlamaFactory",
-                        data={"dataset_name": dataset_name, "registered": True}
-                    ).json())
+                emit_trainer_event(
+                    writer,
+                    state,
+                    "training_execution",
+                    "running",
+                    progress=0.0,
+                    message=f"数据集 '{dataset_name}' 已成功注册到LlamaFactory",
+                    data={"dataset_name": dataset_name, "registered": True},
+                )
             else:
                 error_msg = f"数据集注册失败: {error}"
                 logger.error(error_msg)
                 state.setdefault('trainer', {})['train_output_training_error'] = error_msg
 
-                if writer:
-                    writer(StreamEvent(
-                        current=state['current'],
-                        progress=1.0,
-                        message=f"数据集注册失败: {error}",
-                        data={"error": error, "registered": False}
-                    ).json())
+                emit_trainer_event(
+                    writer,
+                    state,
+                    "training_execution",
+                    "failed",
+                    progress=1.0,
+                    message=f"数据集注册失败: {error}",
+                    data={"registered": False},
+                    error=build_trainer_error(
+                        RuntimeError(error_msg),
+                        code=ErrorCode.INVALID_INPUT,
+                        recoverable=True,
+                        message="Trainer dataset registration failed.",
+                    ),
+                )
 
                 return state
         elif framework == 'llamafactory':
@@ -154,26 +170,30 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             logger.info(f"当前框架 '{framework}' 无需数据集注册，跳过此步骤")
 
         # 进度：初始化本地任务管理器
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=0.0,
-                message="正在初始化本地训练任务管理器...",
-                data={"config_path": config_path}
-            ).json())
+        emit_trainer_event(
+            writer,
+            state,
+            "training_execution",
+            "running",
+            progress=0.0,
+            message="正在初始化本地训练任务管理器...",
+            data={"config_path": config_path},
+        )
 
         # 创建本地 TaskManager（不再需要远程 api 服务）
         task_manager = _get_task_manager(state)
         logger.info("✅ 本地任务管理器初始化成功")
 
         # 进度：准备提交任务
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=0.0,
-                message="任务管理器就绪，准备提交训练任务...",
-                data={"manager_status": "ready"}
-            ).json())
+        emit_trainer_event(
+            writer,
+            state,
+            "training_execution",
+            "running",
+            progress=0.0,
+            message="任务管理器就绪，准备提交训练任务...",
+            data={"manager_status": "ready"},
+        )
 
         # 拷贝配置文件到任务管理器的 configs 目录
         task_id = trainer_task_id
@@ -183,6 +203,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             config_copy_path = os.path.join(task_manager.configs_dir, f"{task_id}.sh")
         else:
             config_copy_path = os.path.join(task_manager.configs_dir, f"{task_id}.yaml")
+        config_copy_path = os.path.abspath(config_copy_path)
         shutil.copy(config_path, config_copy_path)
 
         # 创建并启动训练任务
@@ -203,13 +224,15 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         logger.info(f"✅ 训练任务启动成功，任务ID: {task_id}")
 
         # 进度：任务提交成功
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=0.0,
-                message=f"训练任务提交成功，任务ID: {task_id}, 训练框架: {framework}",
-                data={"task_id": task_id, "start_time": start_time}
-            ).json())
+        emit_trainer_event(
+            writer,
+            state,
+            "training_execution",
+            "running",
+            progress=0.0,
+            message=f"训练任务提交成功，任务ID: {task_id}, 训练框架: {framework}",
+            data={"task_id": task_id, "start_time": start_time},
+        )
 
         log_parser = TrainingLogParser()  # 创建日志解析器实例
 
@@ -274,16 +297,18 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                     "status": task_status,
                     "elapsed_time": int(elapsed_time),
                     "estimated_progress": f"{int(progress_val * 100)}%"
-                }
+            }
 
             # 实时进度报告
-            if writer:
-                writer(StreamEvent(
-                    current=state['current'],
-                    progress=progress_val,
-                    message=progress_message,
-                    data=progress_data
-                ).json())
+            emit_trainer_event(
+                writer,
+                state,
+                "training_execution",
+                "running",
+                progress=progress_val,
+                message=progress_message,
+                data=progress_data,
+            )
 
             # 检查任务是否完成
             if task_status in ["completed", "failed", "cancelled"]:
@@ -312,17 +337,19 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             }
 
         # 进度：训练完成，开始获取日志
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=1.0,
-                message="训练完成，正在获取训练日志...",
-                data={
-                    "training_time": int(training_time),
-                    "final_status": final_status_dict.get('status') if final_status_dict else 'unknown',
-                    "success": final_status_dict.get('status') == 'completed' if final_status_dict else False
-                }
-            ).json())
+        emit_trainer_event(
+            writer,
+            state,
+            "training_execution",
+            "running",
+            progress=1.0,
+            message="训练完成，正在获取训练日志...",
+            data={
+                "training_time": int(training_time),
+                "final_status": final_status_dict.get('status') if final_status_dict else 'unknown',
+                "success": final_status_dict.get('status') == 'completed' if final_status_dict else False
+            },
+        )
 
         # 直接从本地读取训练日志（无需 HTTP 请求）
         logger.info("📄 获取训练日志...")
@@ -354,17 +381,19 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             state.setdefault('trainer', {})['train_output_training_log_path'] = training_log_path
 
         # 进度：生成训练报告
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=1.0,
-                message="正在生成训练报告...",
-                data={
-                    "log_retrieved": log_success,
-                    "log_lines": log_total_lines,
-                    "swanlab_path": state.get('trainer', {}).get('train_output_swanlab_log_path'),
-                }
-            ).json())
+        emit_trainer_event(
+            writer,
+            state,
+            "training_execution",
+            "running",
+            progress=1.0,
+            message="正在生成训练报告...",
+            data={
+                "log_retrieved": log_success,
+                "log_lines": log_total_lines,
+                "swanlab_path": state.get('trainer', {}).get('train_output_swanlab_log_path'),
+            },
+        )
 
         # 生成训练报告
         report = _generate_training_report(
@@ -434,22 +463,24 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             state.setdefault('trainer', {})['training_step_losses'] = step_losses
 
             # 进度：训练成功完成
-            if writer:
-                writer(StreamEvent(
-                    current=state['current'],
-                    progress=1.0,
-                    message=f"训练任务成功完成！用时 {training_time:.1f} 秒",
-                    data={
-                        "success": True,
-                        "task_id": task_id,
-                        "training_time": training_time,
-                        "report_path": report_path,
-                        "log_path": state.get('trainer', {}).get('train_output_training_log_path'),
-                        "train_output_swanlab_log_path": state.get('trainer', {}).get('train_output_swanlab_log_path'),
-                        "training_checkpoints": checkpoints,
-                        "training_step_losses_count": len(step_losses)
-                    }
-                ).json())
+            emit_trainer_event(
+                writer,
+                state,
+                "training_execution",
+                "completed",
+                progress=1.0,
+                message=f"训练任务成功完成！用时 {training_time:.1f} 秒",
+                data={
+                    "success": True,
+                    "task_id": task_id,
+                    "training_time": training_time,
+                    "report_path": report_path,
+                    "log_path": state.get('trainer', {}).get('train_output_training_log_path'),
+                    "train_output_swanlab_log_path": state.get('trainer', {}).get('train_output_swanlab_log_path'),
+                    "training_checkpoints": checkpoints,
+                    "training_step_losses_count": len(step_losses)
+                },
+            )
 
         else:
             final_status_str = final_status_dict.get('status', 'unknown') if final_status_dict else 'unknown'
@@ -462,18 +493,24 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
             state.setdefault('trainer', {})['train_output_training_error'] = error_msg or f"训练未成功完成，最终状态: {final_status_str}"
 
             # 进度：训练失败
-            if writer:
-                writer(StreamEvent(
-                    current=state['current'],
-                    progress=1.0,
-                    message=f"训练任务执行失败: {final_status_str}",
-                    data={
-                        "success": False,
-                        "final_status": final_status_str,
-                        "error": error_msg,
-                        "training_time": training_time
-                    }
-                ).json())
+            emit_trainer_event(
+                writer,
+                state,
+                "training_execution",
+                "failed",
+                progress=1.0,
+                message=f"训练任务执行失败: {final_status_str}",
+                data={
+                    "success": False,
+                    "final_status": final_status_str,
+                    "training_time": training_time
+                },
+                error=build_trainer_error(
+                    RuntimeError(error_msg or f"training finished with status: {final_status_str}"),
+                    recoverable=True,
+                    message="Trainer training execution failed.",
+                ),
+            )
 
         logger.info(f"训练报告已保存到: {report_path}")
 
@@ -483,17 +520,22 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         state.setdefault('trainer', {})['train_output_training_error'] = str(e)
 
         # 进度：执行异常
-        if writer:
-            writer(StreamEvent(
-                current=state['current'],
-                progress=1.0,
-                message=f"训练执行异常: {str(e)}",
-                data={
-                    "success": False,
-                    "error_type": "execution_exception",
-                    "error_message": str(e)
-                }
-            ).json())
+        emit_trainer_event(
+            writer,
+            state,
+            "training_execution",
+            "failed",
+            progress=1.0,
+            message=f"训练执行异常: {str(e)}",
+            data={
+                "success": False,
+                "error_type": "execution_exception",
+            },
+            error=build_trainer_error(
+                e,
+                message="Trainer training execution failed.",
+            ),
+        )
 
     logger.info("训练节点执行完成")
     return state
