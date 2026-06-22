@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from loopai.common.event_tool import StreamEvent, get_event_writer
+
 from .pipeline_runner import (
     ANALYZER_PIPELINE_STEPS,
     load_analyzer_checkpoint,
@@ -63,6 +65,17 @@ def run_analyzer_standalone(
         if start_node is None:
             start_node = _resume_step_from_state(state)
 
+    if state is None:
+        raise ValueError("state is required when resume is false.")
+
+    output_dir = state.get("output_dir") or (state.get("analyzer") or {}).get("output_dir") or "./outputs"
+    writer = get_event_writer(
+        name="analyzer",
+        context_id=runtime["thread_id"],
+        log_file_path=output_dir,
+        stdout=kwargs.get("stream_stdout"),
+        state=state,
+    )
     return run_analyzer_pipeline(
         state=state,
         thread_id=runtime["thread_id"],
@@ -70,4 +83,5 @@ def run_analyzer_standalone(
         resume=False,
         from_node=start_node,
         baseline_result_path=baseline_result_path,
+        writer=writer,
     )

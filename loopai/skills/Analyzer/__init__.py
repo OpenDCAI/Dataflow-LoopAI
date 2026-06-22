@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 def run(
@@ -11,6 +11,11 @@ def run(
     baseline_result_path: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
+    """Run Analyzer standalone (Codex / CLI entry point).
+
+    事件会在流水线执行期间实时写入
+    ``<output_dir>/<task_id>/analyzer.pkl``。
+    """
     from loopai.skills.Analyzer.runner import run_analyzer_standalone
 
     return run_analyzer_standalone(
@@ -23,4 +28,22 @@ def run(
     )
 
 
-__all__ = ["run"]
+def load_events(
+    task_id: str,
+    output_dir: str = "./outputs",
+) -> List[Dict[str, Any]]:
+    """读取指定任务的 analyzer 事件列表。
+
+    事件在流水线执行期间实时写入 pickle 文件（``analyzer.pkl``），
+    执行完成后可调用此函数获取完整事件列表，用于前端展示或日志分析。
+    """
+    from loopai.common.event_tool import dump_stream_events_json
+
+    return dump_stream_events_json(
+        name="analyzer",
+        context_id=task_id,
+        log_file_path=output_dir,
+    )
+
+
+__all__ = ["run", "load_events"]
