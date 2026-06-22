@@ -1,5 +1,7 @@
 import { Codex, type ThreadEvent, type ThreadItem } from "@openai/codex-sdk";
 
+type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
+
 const prompt = process.argv.slice(2).join(" ");
 const timeoutMs = Number(process.env.CODEX_RUN_TIMEOUT_MS ?? "300000");
 const workspace = process.env.CODEX_WORKSPACE;
@@ -7,9 +9,9 @@ const model = process.env.CODEX_MODEL ?? process.env.DEEPSEEK_MODEL;
 const baseUrl = process.env.CODEX_BASE_URL ?? process.env.DEEPSEEK_BASE_URL;
 const apiKey = process.env.CODEX_API_KEY ?? process.env.DEEPSEEK_API_KEY;
 const codexHome = process.env.CODEX_HOME;
+const sandboxMode = resolveSandboxMode(process.env.CODEX_SANDBOX_MODE);
 const threadId = process.env.CODEX_THREAD_ID?.trim() || "";
 const useProjectConfig = process.env.CODEX_USE_PROJECT_CONFIG === "1";
-
 if (!prompt) {
     console.error("Usage: yarn dev \"your prompt\"");
     process.exit(1);
@@ -53,6 +55,17 @@ function writeStdout(payload: unknown): void {
     process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
 
+function resolveSandboxMode(value: string | undefined): SandboxMode {
+    switch (value) {
+        case "read-only":
+        case "workspace-write":
+        case "danger-full-access":
+            return value;
+        default:
+            return "danger-full-access";
+    }
+}
+
 async function main() {
     writeStderr({
         type: "runner.started",
@@ -64,6 +77,7 @@ async function main() {
         baseUrl,
         apiKeySource: apiKey ? "env" : "default",
         codexHome,
+        sandboxMode,
         threadId: threadId || null,
         useProjectConfig
     });
@@ -88,6 +102,7 @@ async function main() {
         workingDirectory?: string;
         skipGitRepoCheck?: boolean;
         model?: string;
+        sandboxMode?: SandboxMode;
     } = {};
 
     if (workspace) {
@@ -97,6 +112,7 @@ async function main() {
     if (model) {
         threadOptions.model = model;
     }
+    threadOptions.sandboxMode = sandboxMode;
 
     const thread = threadId
         ? codex.resumeThread(threadId, threadOptions)

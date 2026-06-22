@@ -4,12 +4,16 @@ import json
 import time
 from pathlib import Path
 from typing import List, Dict, Any
-from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
+from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
 from loopai.common.prompts.prompt_loader import PromptLoader
 from langchain_openai import ChatOpenAI
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
+from loopai.agents.Analyzer.history_compare import (
+    build_historical_comparison,
+    render_historical_comparison_text,
+)
 
 logger = get_logger()
 def _analyzer(state: LoopAIState) -> dict:
@@ -157,7 +161,7 @@ def analyze_result_node(state: LoopAIState):
     """
     if state.get("analyzer", {}).get("analyze_task_type") == "text":
         return state
-    writer = get_stream_writer()
+    writer = get_safe_stream_writer()
 
     def _emit(message, *, progress=None, data=None):
         if writer:
@@ -253,6 +257,14 @@ def analyze_result_node(state: LoopAIState):
         "rule_brief": rb,
         "llm_review": response
     }
+    baseline_result_path = _analyzer(state).get("baseline_result_path")
+    current_result_path = _analyzer(state).get("eval_result_path") or result_path
+    if baseline_result_path:
+        comparison = build_historical_comparison(current_result_path, baseline_result_path)
+        out["historical_comparison"] = comparison
+        response = response + "\n" + render_historical_comparison_text(comparison)
+        analyzer = _analyzer(state)
+        analyzer["historical_comparison"] = comparison
 
     ts = time.strftime("%Y%m%d_%H%M%S")
     analyzer = _analyzer(state)

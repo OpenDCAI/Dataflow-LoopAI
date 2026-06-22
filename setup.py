@@ -6,6 +6,7 @@ setup(
     packages=find_packages(),
     install_requires=[
         "langgraph>=0.6.7",
+        "langgraph-checkpoint-sqlite>=3.0.0",
         "colorlog>=6.10.0",
         "rich>=13.0.0",
         "langchain>=0.3.27",
@@ -25,6 +26,8 @@ setup(
         "playwright>=1.40.0",
         "tenacity>=8.2.0",
         "requests>=2.31.0",
+        "transformers>=4.30.0",
+        "pyarrow>=20.0.0",
         "mcp>=0.1.0",
         "aiosqlite>=0.21.0",
         "fastapi",
@@ -57,5 +60,10 @@ setup(
         "open-dataflow==1.0.10",
         "vllm>=0.4.0"
     ],
+    entry_points={
+        "console_scripts": [
+            "obtainercli=loopai.obtainercli.cli:main",
+        ],
+    },
     python_requires=">=3.12",
 )

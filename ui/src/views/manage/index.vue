@@ -41,6 +41,7 @@ import logo from '@/assets/logo/logo.svg'
 import loopai from '@/assets/logo/LoopAI_logo.svg'
 import dataflow from '@/assets/nav/dataflow.svg'
 import serving from '@/assets/nav/serving.svg'
+import database from '@/assets/resources/database.svg'
 
 export default {
     data() {
@@ -73,6 +74,13 @@ export default {
                     route: '/m/config'
                 },
                 {
+                    key: 2,
+                    name: () => this.local('Obtainer Lake'),
+                    icon: 'Database',
+                    img: database,
+                    route: '/m/obtainer-lake'
+                },
+                {
                     key: -1,
                     name: () => this.local('Home'),
                     icon: 'Home',
@@ -81,7 +89,8 @@ export default {
             ],
             img: {
                 logo: logo,
-                loopai: loopai
+                loopai: loopai,
+                database: database
             }
         }
     },

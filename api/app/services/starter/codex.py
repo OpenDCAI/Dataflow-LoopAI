@@ -10,18 +10,21 @@ from typing import Any, AsyncIterator
 
 from tortoise.expressions import Q
 
-from ..models.db_models import StarterConfig, TaskModel, ThreadHistory
-from ..utils.config.config import check_config_from_db
+from ...models.db_models import StarterConfig, TaskModel, ThreadHistory
+from ...utils.config.config import check_config_from_db
 
 
 CURRENT_DIR = Path(__file__).resolve().parent
-APP_DIR = CURRENT_DIR.parent
+SERVICES_DIR = CURRENT_DIR.parent
+APP_DIR = SERVICES_DIR.parent
 API_DIR = APP_DIR.parent
 PROJECT_ROOT = API_DIR.parent
 CODEX_RUNNER_DIR = PROJECT_ROOT / "codex-runner"
 DEFAULT_CODEX_HOME = PROJECT_ROOT / "codex_home"
 PROCESS_EXIT_GRACE_SECONDS = 3
 FALLBACK_CODEX_HOME = Path.home() / ".codex"
+DEFAULT_CODEX_SANDBOX_MODE = "danger-full-access"
+ALLOWED_CODEX_SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -223,6 +226,13 @@ def _sync_codex_home_config(system_config: dict[str, Any]) -> Path:
     ]
     config_path.write_text("\n".join(config_lines), encoding="utf-8")
     return codex_home
+
+
+def _resolved_codex_sandbox_mode(system_config: dict[str, Any]) -> str:
+    configured = str(system_config.get("codex_sandbox_mode") or "").strip()
+    if configured in ALLOWED_CODEX_SANDBOX_MODES:
+        return configured
+    return DEFAULT_CODEX_SANDBOX_MODE
 
 
 async def load_starter_system_config() -> dict[str, Any]:
@@ -638,6 +648,7 @@ class CodexStarterService:
         timeout_ms = system_config.get("codex_run_timeout_ms", 300000)
         use_project_config = _to_bool(system_config.get("codex_use_project_config"), False)
         codex_home = str(_resolved_codex_home(system_config))
+        sandbox_mode = _resolved_codex_sandbox_mode(system_config)
 
         if model:
             env["CODEX_MODEL"] = str(model)
@@ -645,12 +656,11 @@ class CodexStarterService:
             env["CODEX_BASE_URL"] = str(base_url)
         if api_key:
             env["CODEX_API_KEY"] = str(api_key)
-            # Keep provider-specific aliases in sync during the migration period.
-            # codex-sdk may still resolve auth from CODEX_HOME provider config.
             env.setdefault("OPENAI_API_KEY", str(api_key))
             env.setdefault("DEEPSEEK_API_KEY", str(api_key))
             env.setdefault("DASHSCOPE_API_KEY", str(api_key))
         env["CODEX_HOME"] = codex_home
+        env["CODEX_SANDBOX_MODE"] = sandbox_mode
         env["CODEX_RUN_TIMEOUT_MS"] = str(timeout_ms)
         if use_project_config:
             env["CODEX_USE_PROJECT_CONFIG"] = "1"
@@ -763,6 +773,7 @@ class CodexStarterService:
             "model": env.get("CODEX_MODEL"),
             "base_url": env.get("CODEX_BASE_URL"),
             "codex_home": env.get("CODEX_HOME"),
+            "sandbox_mode": env.get("CODEX_SANDBOX_MODE"),
             "use_project_config": use_project_config,
             "resume_thread_id": resumed_thread_id or None,
             "env_keys": sorted(merged_env_overrides.keys()),
@@ -774,6 +785,7 @@ class CodexStarterService:
         try:
             try:
                 proc = await asyncio.create_subprocess_exec(
+                    "corepack",
                     "yarn",
                     "dev",
                     prompt,

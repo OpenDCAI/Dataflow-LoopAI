@@ -1,4 +1,5 @@
 __pycache__/
+.venv/
 api_key.txt
 data/
 output/
@@ -21,6 +22,14 @@ app_config.json
 starter.yaml
 CLAUDE.md
 .codex
+.superpowers/
+ui/.pnp.*
+ui/.yarn/
+codex-runner/.yarn
+codex-runner/.yarn/
+codex-runner/dist/
 *.log
+docs/superpowers
 *_api_key.*
 codex_home/
+.loopai

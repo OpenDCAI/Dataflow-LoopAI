@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from tortoise.contrib.fastapi import register_tortoise
@@ -6,13 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from .utils.starter.starter import starter_process
-
 from .controllers.config import router as config_router
 from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
 from .controllers.train import router as train_router
 from .controllers.resource import router as resource_router
+from .controllers.obtainer import router as obtainer_router
 
 import os
 import signal
@@ -30,11 +29,7 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield  # 在 yield 前的代码会在应用 启动时执行，在 yield 后的代码会在应用 关闭时执行。
-    for p in starter_process:
-        print(f"terminate process {p.pid}")
-        if p.is_alive():
-            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+    yield  # 在 yield 前的代码会在应用 启动时执行，在 yield 后的代码会在应用 关闭时执行。        print(f"terminate process {p.pid}")
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -65,6 +60,7 @@ app.include_router(starter_router, prefix="/starter", tags=["starter"])
 app.include_router(task_router, prefix="/task", tags=["task"])
 app.include_router(train_router, prefix="/train", tags=["train"])
 app.include_router(resource_router, prefix="/resource", tags=["resource"])
+app.include_router(obtainer_router, prefix="/obtainer", tags=["obtainer"])
 
 app.mount(
     "/assets",
@@ -92,6 +88,10 @@ async def root():
 
 @app.get("/", include_in_schema=False)
 async def frontend_root():
+    return _frontend_index_response()
+
+
+def _frontend_index_response():
     index_path = DIST_DIR / "index.html"
     if index_path.is_file():
         return FileResponse(index_path)
@@ -116,6 +116,11 @@ async def health_check():
             "runs": os.path.exists(RUNS_DIR)
         }
     }
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def frontend_fallback(full_path: str):
+    return _frontend_index_response()
 
 
 if __name__ == "__main__":

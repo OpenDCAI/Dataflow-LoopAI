@@ -54,6 +54,7 @@ async def run_codex_task(
             env["DASHSCOPE_API_KEY"] = dashscope_api_key
 
     proc = await asyncio.create_subprocess_exec(
+        "corepack",
         "yarn",
         "dev",
         prompt,

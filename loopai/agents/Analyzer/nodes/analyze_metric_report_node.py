@@ -5,8 +5,8 @@ import time
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
-from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
+from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
 from loopai.common.prompts.prompt_loader import PromptLoader
 from langchain_openai import ChatOpenAI
 from loopai.schema.states import LoopAIState
@@ -44,10 +44,7 @@ def _safe_get_writer():
     安全获取 langgraph 的 stream writer。
     当节点在 graph 外被单独测试时，避免因缺少 runnable context 报错。
     """
-    try:
-        return get_stream_writer()
-    except RuntimeError:
-        return None
+    return get_safe_stream_writer()
 
 
 def init_model(state: LoopAIState) -> ChatOpenAI:
