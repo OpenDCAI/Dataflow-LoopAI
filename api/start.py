@@ -5,7 +5,6 @@
 
 import os
 import sys
-import json
 import shutil
 import subprocess
 from omegaconf import OmegaConf
@@ -89,7 +88,7 @@ def main():
     # 保存当前工作目录
     current_dir = os.getcwd()
     print(f"📂 Current directory: {current_dir}")
-    print(f"📂 Switching to LLaMA Factory directory: {llamafactory_dir}")
+    print(f"📂 LLaMA Factory directory: {llamafactory_dir}")
 
     try:
         reset_codex_home()
@@ -99,20 +98,11 @@ def main():
         return 1
     
     # 启动服务
-    print("🚀 Starting LLaMA Factory Training Service...")
+    print("🚀 Starting LoopAI Service...")
     print(f"📖 API Documentation: http://localhost:{api_port}/docs")
     print(f"💡 Health Check: http://localhost:{api_port}/health")
     
     try:
-        # 切换到LLaMA Factory目录
-        os.chdir(llamafactory_dir)
-        print(f"✅ Changed working directory to: {os.getcwd()}")        # 启动uvicorn服务器
-        # cmd = [
-        #     "uvicorn", 
-        #     "app.main:app",
-        #     "--host", "0.0.0.0", 
-        #     "--port", "8000"
-        # ]
         cmd = [
             sys.executable,
             "-m", "uvicorn",
@@ -133,7 +123,7 @@ def main():
         # 使用subprocess启动服务
         process = subprocess.Popen(
             cmd, 
-            cwd=llamafactory_dir,  # 在LLaMA Factory目录中运行
+            cwd=current_dir,
             env=env
         )
         
