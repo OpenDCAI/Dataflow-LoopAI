@@ -4,7 +4,9 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
+
+from .event_tool import StreamEvent
 
 
 ANALYZER_PIPELINE_STEPS = (
@@ -136,17 +138,26 @@ def _is_finished(state: Dict[str, Any]) -> bool:
     )
 
 
-def _run_step(step_name: str, state: Dict[str, Any]) -> Dict[str, Any]:
-    if step_name == "eval_model":
-        from loopai.agents.Analyzer.nodes.eval_model import eval_model_node
-        return eval_model_node(state)
-    if step_name == "analyze_result":
-        from loopai.agents.Analyzer.nodes.analyze_result import analyze_result_node
-        return analyze_result_node(state)
-    if step_name == "draw_conclusion":
-        from loopai.agents.Analyzer.nodes.draw_conclusion import draw_conclusion_node
-        return draw_conclusion_node(state)
-    raise ValueError(f"Unknown executable Analyzer step: {step_name}")
+def _run_step(step_name: str, state: Dict[str, Any], writer: Optional[Callable] = None) -> Dict[str, Any]:
+    from loopai.agents.Analyzer.utils.stream import (
+        reset_analyzer_stream_writer,
+        set_analyzer_stream_writer,
+    )
+
+    token = set_analyzer_stream_writer(writer)
+    try:
+        if step_name == "eval_model":
+            from loopai.agents.Analyzer.nodes.eval_model import eval_model_node
+            return eval_model_node(state)
+        if step_name == "analyze_result":
+            from loopai.agents.Analyzer.nodes.analyze_result import analyze_result_node
+            return analyze_result_node(state)
+        if step_name == "draw_conclusion":
+            from loopai.agents.Analyzer.nodes.draw_conclusion import draw_conclusion_node
+            return draw_conclusion_node(state)
+        raise ValueError(f"Unknown executable Analyzer step: {step_name}")
+    finally:
+        reset_analyzer_stream_writer(token)
 
 
 def run_analyzer_pipeline(
@@ -156,6 +167,7 @@ def run_analyzer_pipeline(
     resume: bool = False,
     from_node: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
+    writer: Optional[Callable] = None,
 ) -> Dict[str, Any]:
     if resume:
         state = load_analyzer_checkpoint(thread_id, checkpoint_path)
@@ -176,20 +188,58 @@ def run_analyzer_pipeline(
         start_step = ANALYZER_PIPELINE_STEPS[0]
     start_at = _start_index(start_step)
 
+    if writer:
+        writer(StreamEvent(
+            current="analyzer.pipeline",
+            progress=0.0,
+            message="Analyzer pipeline started",
+            data={
+                "task_id": thread_id,
+                "resume": resume,
+                "analyze_task_type": (state.get("analyzer") or {}).get("analyze_task_type"),
+            },
+        ))
+
     if from_node is None and _is_finished(state):
+        if writer:
+            writer(StreamEvent(
+                current="analyzer.pipeline",
+                progress=1.0,
+                message="Analyzer pipeline already finished",
+            ))
         return state
 
     for step_name in ANALYZER_PIPELINE_STEPS[start_at:]:
         state["current"] = step_name
         save_analyzer_checkpoint(state, thread_id, checkpoint_path)
 
+        if writer:
+            writer(StreamEvent(
+                current=f"analyzer.{step_name}",
+                progress=0.0,
+                message=f"步骤开始: {step_name}",
+            ))
+
         if step_name == "finish":
             state["last_completed"] = "finish"
             save_analyzer_checkpoint(state, thread_id, checkpoint_path)
+            if writer:
+                writer(StreamEvent(
+                    current="analyzer.finish",
+                    progress=1.0,
+                    message="流水线完成",
+                ))
             return state
 
-        state = _run_step(step_name, state)
+        state = _run_step(step_name, state, writer=writer)
         state["last_completed"] = step_name
         save_analyzer_checkpoint(state, thread_id, checkpoint_path)
+
+        if writer:
+            writer(StreamEvent(
+                current=f"analyzer.{step_name}",
+                progress=1.0,
+                message=f"步骤完成: {step_name}",
+            ))
 
     return state

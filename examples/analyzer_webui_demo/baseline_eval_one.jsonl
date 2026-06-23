@@ -1,0 +1,1 @@
+{"task_id":"HumanEval/demo_add","sample_id":"demo-add-001","entry_point":"add","passed":true,"problem_prompt":"Write a function add(a, b) that returns the sum of a and b.","completion":"def add(a, b):\n    return a + b\n","test_code":"assert candidate(2, 3) == 5","stdout":"","stderr":"","pred_score":1,"manual_label":1,"errors":[]}

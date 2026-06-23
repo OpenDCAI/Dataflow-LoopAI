@@ -81,6 +81,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--from-node", default=None, help="Force Analyzer to resume from a specific step.")
     parser.add_argument("--list-nodes", action="store_true", help="List standalone Analyzer steps and exit.")
     parser.add_argument("--print-result", action="store_true", help="Print final state/result as JSON.")
+    parser.add_argument("--stream-stdout", action="store_true", help="Print StreamEvent JSON lines to stdout.")
     return parser.parse_args()
 
 
@@ -107,6 +108,7 @@ def main() -> None:
         from_node=args.from_node,
         checkpoint_path=args.checkpoint_path,
         baseline_result_path=args.baseline_result_path,
+        stream_stdout=args.stream_stdout,
     )
 
     if args.print_result:

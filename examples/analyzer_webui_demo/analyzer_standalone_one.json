@@ -1,0 +1,19 @@
+{
+  "task_id": "analyzer-webui-one",
+  "output_dir": "./outputs/analyzer_webui_demo",
+  "eval": {},
+  "judger": {
+    "output_result_path": "./examples/analyzer_webui_demo/current_eval_one.jsonl"
+  },
+  "analyzer": {
+    "eval_result_path": "./examples/analyzer_webui_demo/current_eval_one.jsonl",
+    "baseline_result_path": "./examples/analyzer_webui_demo/baseline_eval_one.jsonl",
+    "analyze_task_type": "code",
+    "analyze_batch_size": 1,
+    "analyze_sampling_top_k": 1,
+    "quick_brief": false,
+    "output_suggestion": false,
+    "analyze_temperature": 0,
+    "analyze_top_p": 0.95
+  }
+}

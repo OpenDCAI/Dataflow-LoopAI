@@ -14,6 +14,9 @@ from loopai.common.event_tool import StreamEvent, get_event_writer
 - 默认把事件持久化到 `./outputs/{context_id}/{agent_name}.pkl`
 - 文件里存的是 `StreamEvent` 对象数组
 - 每次调用 `writer(...)` 都会向数组末尾追加一个新事件
+- 自动脱敏 `api_key` / `*_api_key` / `token` / `*_key`
+- 可选输出 JSONL 到 stdout，方便 CLI/Codex/前端流式接入
+- 支持通过 `append_stream_message(state, event)` 写入 `state["messages"]`
 
 ## 快速开始
 
@@ -73,6 +76,8 @@ get_event_writer(
     log_file_path: str = "./outputs",
     *,
     run_id: str | None = None,
+    stdout: bool | None = None,
+    state: dict | None = None,
 )
 ```
 
@@ -83,6 +88,15 @@ writer(StreamEvent(...))
 writer(StreamEvent(...).json())
 ```
 
+如果 `stdout=True`，writer 会额外向 stdout 打印一行 JSON；如果
+`stdout=None`，可通过环境变量打开：
+
+```bash
+export LOOPAI_STREAM_STDOUT=1
+```
+
+如果传入 `state=state`，writer 会把事件追加到 `state["messages"]`。
+
 ## 读取事件
 
 ```python
@@ -92,8 +106,20 @@ events = load_stream_events(name="judger", context_id="task_001")
 payload = dump_stream_events_json(name="judger", context_id="task_001")
 ```
 
+## 追加到 state
+
+```python
+from loopai.common.event_tool import StreamEvent, append_stream_message
+
+append_stream_message(
+    state,
+    StreamEvent(current="analyzer", progress=0.2, message="running"),
+)
+```
+
 ## 说明
 
 - 持久化文件使用 pickle，不适合直接给前端读取
 - 更适合后端轮询、SSE 转发、或执行完成后统一回放
 - 为了降低并发写坏文件的风险，写入时带了文件锁
+- stdout 输出是 JSON serializable 的 dict，适合被上层 SSE/前端转发

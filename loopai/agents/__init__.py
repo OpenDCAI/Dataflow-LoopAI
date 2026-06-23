@@ -1,3 +1,5 @@
+from .BaseAgent.base_agent import BaseAgent
+
 __all__ = [
     "BaseAgent",
     "StarterAgent",
@@ -11,7 +13,6 @@ __all__ = [
 
 def __getattr__(name):
     if name == "BaseAgent":
-        from .BaseAgent import BaseAgent
         return BaseAgent
     if name == "StarterAgent":
         from .Starter.starter_agent import StarterAgent
