@@ -1,6 +1,6 @@
 # ObtainerCLI 使用文档
 
-本文档对应 v2 分支当前的 `loopai.obtainercli` 第一版实现。它的目标是把 Obtainer 的数据入湖、索引和出湖流程做成可被 CLI/Codex 稳定调用的接口。
+本文档对应 v2 分支当前的 `loopai.skills.ObtainerCLI` 第一版实现。它的目标是把 Obtainer 的数据入湖、索引和出湖流程做成可被 CLI/Codex 稳定调用的接口。
 
 当前默认实现是 **local-parquet catalog**：表数据以 Parquet part 文件写在 lake root 下。旧的 `local-jsonl` catalog 仍保留为兼容路径，已有 JSONL lake 不会被强制迁移。
 
@@ -15,29 +15,57 @@ conda activate loopaiv2
 确认 CLI 可用：
 
 ```bash
-obtainercli --help
-python -m loopai.obtainercli --help
+loopai-obtainercli --help
+python -m loopai.skills.ObtainerCLI --help
 ```
 
 当前主命令：
 
 ```text
-obtainercli lake init
-obtainercli lake status
-obtainercli ingest path
-obtainercli index embed
-obtainercli tag list
-obtainercli sample
+loopai-obtainercli lake init
+loopai-obtainercli lake status
+loopai-obtainercli ingest path
+loopai-obtainercli index embed
+loopai-obtainercli tag list
+loopai-obtainercli sample
 ```
 
 所有命令都会输出 JSON，便于 Codex 或其他自动化进程解析。
+
+### StreamEvent 持久化
+
+如果需要让前端或 agent 读取进度事件，给命令传入 `--task-id`，或设置环境变量 `TASK_ID`：
+
+```bash
+loopai-obtainercli lake status \
+  --lake .loopai/lake.yaml \
+  --task-id data_task_001 \
+  --output-dir ./outputs \
+  --json
+```
+
+事件会写入：
+
+```text
+./outputs/data_task_001/obtainercli.pkl
+```
+
+Python 读取方式：
+
+```python
+from loopai.skills.ObtainerCLI import load_events
+
+events = load_events(task_id="data_task_001", output_dir="./outputs")
+```
+
+事件字段遵循 `loopai.common.event_tool.StreamEvent`，其中 `current` 固定为 `obtainercli`，`node` 为 `lake.status`、`lake.init`、`ingest.path`、`index.embed` 或 `sample` 等命令路径，`status` 为 `started`、`running`、`completed` 或 `failed`。如需关闭事件写入，可传 `--no-events`。
 
 ## 2. 数据湖初始化
 
 建议把大数据湖 root 放在 repo 外部，只在 repo 内保留 `.loopai/lake.yaml` 指针，避免 TB 级数据拖垮 IDE/Codex 文件索引。
 
 ```bash
-obtainercli lake init \
+loopai-obtainercli lake init \
   --root /mnt/paper2any/xbr/loopai0531/lakes/loopai-v2 \
   --link .loopai/lake.yaml \
   --if-not-exists
@@ -46,7 +74,7 @@ obtainercli lake init \
 默认会开启自动 embedding：
 
 ```bash
-obtainercli lake init \
+loopai-obtainercli lake init \
   --root /mnt/paper2any/xbr/loopai0531/lakes/loopai-v2 \
   --link .loopai/lake.yaml \
   --embedding-provider openai-compatible \
@@ -59,7 +87,7 @@ obtainercli lake init \
 如果暂时不希望入湖后自动 embedding：
 
 ```bash
-obtainercli lake init \
+loopai-obtainercli lake init \
   --root /mnt/paper2any/xbr/loopai0531/lakes/loopai-v2 \
   --link .loopai/lake.yaml \
   --no-auto-embed \
@@ -185,7 +213,7 @@ lake-root/
 基础入湖：
 
 ```bash
-obtainercli ingest path \
+loopai-obtainercli ingest path \
   --lake .loopai/lake.yaml \
   --input data/code_seed.jsonl \
   --dataset code_seed \
@@ -236,7 +264,7 @@ ingest_runs
 建议每次入湖都传稳定的 `--idempotency-key`：
 
 ```bash
-obtainercli ingest path \
+loopai-obtainercli ingest path \
   --lake .loopai/lake.yaml \
   --input data/code_seed.jsonl \
   --dataset code_seed \
@@ -282,7 +310,7 @@ embedding_text_field: text
 单次入湖禁用自动索引：
 
 ```bash
-obtainercli ingest path \
+loopai-obtainercli ingest path \
   --lake .loopai/lake.yaml \
   --input data/code_seed.jsonl \
   --dataset code_seed \
@@ -292,7 +320,7 @@ obtainercli ingest path \
 强制指定本次 embedding 参数：
 
 ```bash
-obtainercli ingest path \
+loopai-obtainercli ingest path \
   --lake .loopai/lake.yaml \
   --input data/code_seed.jsonl \
   --dataset code_seed \
@@ -377,7 +405,7 @@ export OBTAINERCLI_VLLM_CMD="python -m vllm.entrypoints.openai.api_server"
 即使初始化时关闭了自动 embedding，也可以手动索引：
 
 ```bash
-obtainercli index embed \
+loopai-obtainercli index embed \
   --lake .loopai/lake.yaml \
   --dataset code_seed \
   --provider openai-compatible \
@@ -390,7 +418,7 @@ obtainercli index embed \
 如果只是测试流程，不想依赖真实模型，可以用 deterministic hash embedding：
 
 ```bash
-obtainercli index embed \
+loopai-obtainercli index embed \
   --lake .loopai/lake.yaml \
   --dataset code_seed \
   --provider local-hash \
@@ -406,13 +434,13 @@ obtainercli index embed \
 查看各表行数和路径：
 
 ```bash
-obtainercli lake status --lake .loopai/lake.yaml
+loopai-obtainercli lake status --lake .loopai/lake.yaml
 ```
 
 查看标签分布：
 
 ```bash
-obtainercli tag list --lake .loopai/lake.yaml
+loopai-obtainercli tag list --lake .loopai/lake.yaml
 ```
 
 标签来自两部分：
@@ -425,7 +453,7 @@ obtainercli tag list --lake .loopai/lake.yaml
 按核心维度出湖：
 
 ```bash
-obtainercli sample \
+loopai-obtainercli sample \
   --lake .loopai/lake.yaml \
   --output exports/code_pretrain.jsonl \
   --domain code \
@@ -439,7 +467,7 @@ obtainercli sample \
 按标签过滤：
 
 ```bash
-obtainercli sample \
+loopai-obtainercli sample \
   --lake .loopai/lake.yaml \
   --output exports/python_high_quality.jsonl \
   --domain code \
@@ -454,7 +482,7 @@ obtainercli sample \
 候选不足但允许导出较小集合：
 
 ```bash
-obtainercli sample \
+loopai-obtainercli sample \
   --lake .loopai/lake.yaml \
   --output exports/small.jsonl \
   --domain code \
@@ -479,7 +507,7 @@ obtainercli sample \
 分层采样：
 
 ```bash
-obtainercli sample \
+loopai-obtainercli sample \
   --lake .loopai/lake.yaml \
   --output exports/balanced_by_domain.jsonl \
   --domain code \
@@ -533,7 +561,7 @@ task_type
 ### 13.1 原始网页入湖
 
 ```bash
-obtainercli ingest path \
+loopai-obtainercli ingest path \
   --lake .loopai/lake.yaml \
   --input data/raw_web.jsonl \
   --dataset raw_web_20260602 \
@@ -549,7 +577,7 @@ obtainercli ingest path \
 ### 13.2 抽取正文后的网页入湖
 
 ```bash
-obtainercli ingest path \
+loopai-obtainercli ingest path \
   --lake .loopai/lake.yaml \
   --input data/extracted_text.jsonl \
   --dataset extracted_web_20260602 \
@@ -565,7 +593,7 @@ obtainercli ingest path \
 ### 13.3 预训练数据入湖
 
 ```bash
-obtainercli ingest path \
+loopai-obtainercli ingest path \
   --lake .loopai/lake.yaml \
   --input data/pretrain_ready_code.jsonl \
   --dataset code_pretrain_ready_v1 \
@@ -581,7 +609,7 @@ obtainercli ingest path \
 ### 13.4 高质量后处理数据入湖
 
 ```bash
-obtainercli ingest path \
+loopai-obtainercli ingest path \
   --lake .loopai/lake.yaml \
   --input data/code_hq.jsonl \
   --dataset code_hq_v1 \
@@ -597,7 +625,7 @@ obtainercli ingest path \
 ### 13.5 导出垂域数据
 
 ```bash
-obtainercli sample \
+loopai-obtainercli sample \
   --lake .loopai/lake.yaml \
   --output exports/code_hq_sft.jsonl \
   --domain code \

@@ -11,7 +11,7 @@ import uvicorn
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from loopai.obtainercli.embedding_server import TransformersEmbedder, create_app
+from loopai.skills.ObtainerCLI.embedding_server import TransformersEmbedder, create_app
 
 
 DEFAULT_MODEL_DIR = "/mnt/paper2any/xbr/loopai0531/models/BAAI/bge-small-zh-v1.5"

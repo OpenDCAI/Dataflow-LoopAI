@@ -30,23 +30,21 @@ use tracing::{info, warn};
 
 #[derive(Debug, Parser)]
 struct Args {
-    #[arg(long, env = "CODEX_LOCAL_PROXY_HOST", default_value = "127.0.0.1")]
+    #[arg(long, env = "LOOPAI_CODEX_PROXY_HOST", default_value = "127.0.0.1")]
     host: String,
-    #[arg(long, env = "CODEX_LOCAL_PROXY_PORT", default_value_t = 15721)]
+    #[arg(long, env = "LOOPAI_CODEX_PROXY_PORT", default_value_t = 15721)]
     port: u16,
     #[arg(
         long,
-        env = "CODEX_UPSTREAM_BASE_URL",
+        env = "LOOPAI_CODEX_PROXY_UPSTREAM_BASE_URL",
         default_value = "https://api.deepseek.com"
     )]
     upstream_base_url: String,
-    #[arg(long, env = "CODEX_UPSTREAM_API_KEY")]
+    #[arg(long, env = "LOOPAI_CODEX_PROXY_UPSTREAM_API_KEY")]
     upstream_api_key: Option<String>,
-    #[arg(long, env = "CODEX_API_KEY")]
-    codex_api_key: Option<String>,
     #[arg(long, env = "DEEPSEEK_API_KEY")]
     deepseek_api_key: Option<String>,
-    #[arg(long, env = "CODEX_MODEL", default_value = "deepseek-chat")]
+    #[arg(long, env = "LOOPAI_CODEX_PROXY_MODEL", default_value = "deepseek-chat")]
     model: String,
 }
 
@@ -71,10 +69,11 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let api_key = args
         .upstream_api_key
-        .or(args.codex_api_key)
         .or(args.deepseek_api_key)
         .ok_or_else(|| {
-            anyhow::anyhow!("Missing CODEX_UPSTREAM_API_KEY, CODEX_API_KEY, or DEEPSEEK_API_KEY")
+            anyhow::anyhow!(
+                "Missing LOOPAI_CODEX_PROXY_UPSTREAM_API_KEY or DEEPSEEK_API_KEY"
+            )
         })?;
 
     let state = AppState {

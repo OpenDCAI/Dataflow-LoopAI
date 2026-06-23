@@ -606,6 +606,7 @@ export default {
         width: 100%;
         max-width: 1500px;
         height: 100%;
+        min-height: 0;
         display: flex;
         flex-direction: column;
     }
@@ -662,6 +663,7 @@ export default {
         position: relative;
         width: 100%;
         height: 100%;
+        min-height: 0;
         padding: 104px 18px 18px;
         overflow: overlay;
     }
@@ -845,6 +847,9 @@ export default {
 }
 
 .monitor-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
     min-height: 230px;
     padding: 12px;
     overflow: hidden;
@@ -855,6 +860,7 @@ export default {
         height: 30px;
         gap: 12px;
         margin-bottom: 8px;
+        flex-shrink: 0;
 
         p {
             @include nowrap;
@@ -871,13 +877,19 @@ export default {
             color: rgba(94, 100, 112, 1);
         }
     }
+
+    :deep(.ol-chart-shell) {
+        flex: 1;
+        min-height: 0;
+    }
 }
 
 .embedding-block {
     display: grid;
-    grid-template-columns: 1fr;
-    height: calc(100% - 38px);
-    min-height: 184px;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 8px;
+    flex: 1;
+    min-height: 0;
 
     .embedding-meta {
         display: grid;
@@ -905,8 +917,14 @@ export default {
     min-height: 280px;
 
     .table-health {
+        @include narrow-scroll-bar;
+
         display: grid;
+        align-content: start;
         gap: 6px;
+        flex: 1;
+        min-height: 0;
+        overflow: overlay;
     }
 
     .table-row {
@@ -960,8 +978,8 @@ export default {
         @include narrow-scroll-bar;
 
         width: 100%;
-        height: calc(100% - 38px);
-        min-height: 220px;
+        flex: 1;
+        min-height: 0;
         padding: 10px;
         border-radius: 6px;
         background: rgba(32, 35, 42, 1);
@@ -1004,6 +1022,9 @@ export default {
         @include narrow-scroll-bar;
 
         width: 100%;
+        flex: 1;
+        min-height: 0;
+        max-height: 420px;
         overflow: overlay;
 
         table {
