@@ -22,6 +22,7 @@ app_config.json
 starter.yaml
 CLAUDE.md
 .codex
+.cache_codex/
 .superpowers/
 ui/.pnp.*
 ui/.yarn/
