@@ -10,7 +10,7 @@ supports_websockets = false
 [projects.".."]
 trust_level = "trusted"
 
-[mcp_servers.loopai_configer]
+[mcp_servers.loopai_mcp]
 command = "python3"
 args = ["-m", "loopai.mcp.server"]
 cwd = ".."
@@ -27,6 +27,6 @@ enabled_tools = [
   "configer_update_task",
 ]
 
-[mcp_servers.loopai_configer.env]
+[mcp_servers.loopai_mcp.env]
 PYTHONPATH = "./"
 DB_PATH = "./api/db/db.sqlite3"

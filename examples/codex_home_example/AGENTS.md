@@ -77,13 +77,13 @@
 
 - `skills/configer/SKILL.md`
 
-如果运行时已经加载了 `loopai_configer` MCP server，也优先用下面这些 MCP tools 做实际读写，因为这样 Codex 的 `PreToolUse` hooks 可以在写配置前拦截：
+如果运行时已经加载了 `loopai_mcp` MCP server，也优先用下面这些 MCP tools 做实际读写，因为这样 Codex 的 `PreToolUse` hooks 可以在写配置前拦截：
 
-- `mcp__loopai_configer__config_get_schema`
-- `mcp__loopai_configer__config_get`
-- `mcp__loopai_configer__config_get_task`
-- `mcp__loopai_configer__config_update`
-- `mcp__loopai_configer__config_update_task`
+- `mcp__loopai_mcp__config_get_schema`
+- `mcp__loopai_mcp__config_get`
+- `mcp__loopai_mcp__config_get_task`
+- `mcp__loopai_mcp__config_update`
+- `mcp__loopai_mcp__config_update_task`
 
 注意：
 

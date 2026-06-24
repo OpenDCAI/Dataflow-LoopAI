@@ -38,9 +38,9 @@
 - `DB_PATH` 指向实际 SQLite 数据库
 - 任务级配置时设置 `task_id` 或 `TASK_ID`
 - `config.toml` 中的 project trust 路径与你的本地仓库路径一致
-- `config.toml` 中的 `mcp_servers.loopai_configer` 路径与你的本地仓库路径一致
+- `config.toml` 中的 `mcp_servers.loopai_mcp` 路径与你的本地仓库路径一致
 
 当前示例已经在 [config.toml](/home/lpc/repos/Dataflow-LoopAI/examples/codex_home_example/config.toml) 里添加：
 
-- `loopai_configer` stdio MCP server
-- `mcp__loopai_configer__config_update(_task)` 的 `PreToolUse` hook 示例
+- `loopai_mcp` stdio MCP server
+- `mcp__loopai_mcp__config_update(_task)` 的 `PreToolUse` hook 示例

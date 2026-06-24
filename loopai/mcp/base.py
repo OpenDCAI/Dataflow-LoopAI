@@ -3,4 +3,4 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 
-mcp = FastMCP("loopai-configer")
+mcp = FastMCP("loopai-mcp")

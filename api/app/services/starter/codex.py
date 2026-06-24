@@ -282,9 +282,9 @@ def _sync_codex_home_config(
 
     mcp_servers = template.setdefault("mcp_servers", {})
     if isinstance(mcp_servers, dict):
-        loopai_configer = mcp_servers.get("loopai_configer")
-        if isinstance(loopai_configer, dict):
-            mcp_env = loopai_configer.setdefault("env", {})
+        loopai_mcp = mcp_servers.get("loopai_mcp")
+        if isinstance(loopai_mcp, dict):
+            mcp_env = loopai_mcp.setdefault("env", {})
             if isinstance(mcp_env, dict):
                 for key, value in (env_overrides or {}).items():
                     key = str(key)
