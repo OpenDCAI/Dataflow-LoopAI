@@ -315,6 +315,13 @@ def main():
         from loopai.common.exception import emit_success
 
         judger = result.get("judger", {})
+        bench = judger.get("bench") or {}
+
+        # 统一指标：code/text2sql → pass_at_k，general_text → stats
+        metrics = judger.get("metrics") or {}
+        if not metrics:
+            metrics = (bench.get("meta") or {}).get("eval_result") or {}
+
         emit_success(
             data={
                 "task_type": judger.get("eval_task_type"),
@@ -322,7 +329,8 @@ def main():
                 "output_case_path": judger.get("output_case_path"),
                 "output_problem_path": judger.get("output_problem_path"),
                 "output_pred_path": judger.get("output_pred_path"),
-                "bench": judger.get("bench"),
+                "bench": bench,
+                "metrics": metrics,
             },
             message="Judger pipeline completed.",
         )

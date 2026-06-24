@@ -301,7 +301,7 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     state["judger"]["output_problem_path"] = ""
 
     writer(StreamEvent(
-        current="judger", progress=1.0, message="配置校验通过",
+        current=state.get("current"), progress=1.0, message="配置校验通过",
         data={"task_type": task_type, "problem_path": problem_path}))
     return state
 
@@ -311,10 +311,10 @@ def _step_kill_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     from loopai.agents.Judger.utils.oj.vllm_killer import kill_vllm_openai_api_server
     from loopai.agents.Judger.utils.oj.vllm_starter import DEFAULT_VLLM_PORT
 
-    writer(StreamEvent(current="judger", progress=0.0, message="正在关闭本地 vLLM 服务"))
+    writer(StreamEvent(current=state.get("current"), progress=0.0, message="正在关闭本地 vLLM 服务"))
     kill_vllm_openai_api_server(DEFAULT_VLLM_PORT)
     state["judger"]["eval_base_url"] = None
-    writer(StreamEvent(current="judger", progress=1.0, message="vLLM 服务已关闭"))
+    writer(StreamEvent(current=state.get("current"), progress=1.0, message="vLLM 服务已关闭"))
     return state
 
 
@@ -389,7 +389,7 @@ def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     case_num = state.get("judger", {}).get("eval_case_num", 10)
 
     writer(StreamEvent(
-        current="judger", progress=0.0,
+        current=state.get("current"), progress=0.0,
         message=f"开始生成样本 [task_type={task_type}]",
         data={"batch_size": batch_size, "case_num": case_num}))
 
@@ -406,7 +406,7 @@ def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     state["judger"]["output_case_path"] = result_path
     writer(StreamEvent(
-        current="judger", progress=1.0, message="样本生成完成",
+        current=state.get("current"), progress=1.0, message="样本生成完成",
         data={"output_case_path": result_path}))
     return state
 
@@ -434,11 +434,12 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     state["judger"]["output_result_path"] = result.get("result_path", "")
     pass_at_k = result.get("pass_at_k", {})
+    state["judger"]["metrics"] = pass_at_k
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="评测完成",
         data={
             "output_result_path": state["judger"]["output_result_path"],
-            "pass_at_k": pass_at_k,
+            "metrics": pass_at_k,
         }))
     return state
 
@@ -582,20 +583,20 @@ def run_judger_pipeline(
         return state
 
     # 按序执行各步骤
-    state["current"] = "judger"  # agent 身份标识，全程不变
     for i, step_name in enumerate(steps[start_at:], start_at):
+        state["current"] = f"judger.{step_name}"
         logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} starting...")
         _save_task_progress(state, thread_id)
 
         writer(StreamEvent(
-            current="judger", progress=0.0,
+            current=state["current"], progress=0.0,
             message=f"步骤开始: {step_name}"))
 
         if step_name == "finish":
             state["last_completed"] = "finish"
             _save_task_progress(state, thread_id)
             writer(StreamEvent(
-                current="judger", progress=1.0, message="流水线完成"))
+                current=state["current"], progress=1.0, message="流水线完成"))
             logger.info(f"[Judger] pipeline finished")
             return state
 
@@ -605,7 +606,7 @@ def run_judger_pipeline(
 
         logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} done")
         writer(StreamEvent(
-            current="judger", progress=1.0,
+            current=state["current"], progress=1.0,
             message=f"步骤完成: {step_name}"))
 
     return state

@@ -25,6 +25,69 @@ Judger Skill 用于在无 LangGraph（独立模式）下运行 LoopAI 评测流�
 - 训练、数据爬取、数据构造（走对应的 Agent/Skill）
 - 全局 `system` 配置修改（走 Configer）
 
+## Prerequisites / Input Contract
+
+执行 Judger 的最小必要输入集合。缺少必填项会在 `validate` 步骤报 `CONFIG_ERROR`。
+
+### 运行环境
+
+| 条件 | 说明 |
+|---|---|
+| `DB_PATH` 环境变量 | 指向 Configer SQLite 数据库（如 `api/db/db.sqlite3`） |
+| `TASK_ID` 环境变量 / `--task-id` | 任务唯一标识，用于读写 state 和定位输出目录 |
+| GPU | 需至少一张支持 CUDA 的 GPU（vLLM 本地推理） |
+| Port 8911 可用 | vLLM 本地服务端口 |
+
+### 必填配置字段
+
+以下字段必须在 **state["judger"]**（DB / YAML）或**环境变量**中提供其一：
+
+| 字段 | 环境变量 | 说明 | 示例 |
+|---|---|---|---|
+| `eval_model_path` | `JUDGER_MODEL_PATH` | 本地模型路径（目录） | `/data/models/Qwen2.5-7B-Instruct` |
+| `eval_problem_path` | `JUDGER_PROBLEM_PATH` | 问题文件路径（JSONL） | `/data/benchmarks/human_eval.jsonl` |
+| `eval_task_type` | `JUDGER_TASK_TYPE` | 任务类型 | `code` / `text2sql` / `general_text` |
+
+### 按任务类型的额外必填字段
+
+| 任务类型 | 额外必填字段 | 说明 |
+|---|---|---|
+| `text2sql` | `eval_text2sql_dir` | SQLite 数据库目录路径 |
+| `general_text` | `bench_dataflow_eval_type` | 评测类型（如 `key2_qa`） |
+
+### 可选配置字段（带默认值）
+
+| 字段 | 默认值 | 说明 |
+|---|---|---|
+| `eval_temperature` | `0` | 生成温度 |
+| `eval_top_p` | `0.95` | nucleus sampling |
+| `eval_batch_size` | `10` | vLLM 推理批大小 |
+| `eval_case_num` | `10` | 每个问题的采样数 |
+| `eval_vllm_tensor_parallel_size` | `2` | 张量并行数 |
+| `eval_vllm_gpu_memory_utilization` | `0.9` | GPU 显存利用率 |
+| `cuda_visible_devices` | `"0"` | 可见 GPU 编号 |
+| `output_dir` | `"./outputs"` | 输出根目录 |
+| `bench_name` | `"general_text_eval"` | general_text 基准名 |
+| `key_mapping` | `{}` | general_text 字段映射（可自动推断） |
+
+### 调用方输入契约
+
+调用方（Codex / CLI / Python API）须保证以下之一成立，否则流水线无法启动：
+
+1. **Configer 模式（推荐）**：task 已在 DB 中有 `state.judger` 配置（Codex 预写），设置 `DB_PATH` + `TASK_ID` 即可
+2. **YAML 模式**：提供 `--config-path starter.yaml`，YAML 中 `default_states.judger` 包含必填字段
+3. **环境变量模式**：所有必填字段通过 `JUDGER_*` 环境变量传入
+
+优先级：`kwargs > 环境变量 > state["judger"]（DB/YAML）> schema 默认值`
+
+### 输入验证
+
+`validate` 步骤自动检查：
+- 必填字段是否缺失
+- `eval_problem_path` 文件是否存在
+- JSONL 字段结构是否匹配 task_type（code 检查 `prompt`/`test` 等，text2sql 检查 `db_id`/`question` 等）
+- `task_id` 是否为空
+
 ## Python Implementation
 
 ```
@@ -203,14 +266,144 @@ validate → eval_general_text → finish
 | `start_vllm`        | 启动本地 vLLM 服务                    | `base_url`                                            |
 | `format_data`       | 数据格式转换（human-eval / mbpp），可选    | `target`                                              |
 | `generate`          | vLLM 批量生成 code/text2sql 样本      | `output_case_path`                                    |
-| `evaluate`          | 执行代码/执行 SQL，计算 pass@k           | `output_result_path`, `**pass_at_k**`                 |
+| `evaluate`          | 执行代码/执行 SQL，计算 pass@k           | `output_result_path`, `**metrics**`                   |
 | `kill_vllm_cleanup` | 评测后关闭 vLLM                      | —                                                     |
-| `eval_general_text` | One-Eval DataFlowEvalTool 子进程评测 | `output_result_path`, `output_pred_path`, `**stats**` |
+| `eval_general_text` | One-Eval DataFlowEvalTool 子进程评测 | `output_result_path`, `output_pred_path`, `**metrics**` |
 | `finish`            | 流水线完成                           | —                                                     |
 
 
-> `**pass_at_k**` 格式：`{"pass@1": 0.85, "pass@10": 0.95, "pass@100": 1.0}`
-> `**stats**` 格式（general_text）：`{"accuracy": 0.94, "score": 0.88, "total_samples": 100, ...}`
+## Output Metrics
+
+Judger 在不同任务类型下产出的评测指标，均写入事件流（`judger.pkl`）和输出文件。
+
+### code / text2sql — pass@k
+
+由 Judger 直接计算（`evaluate.py` → `_calculate_pass_at_k`），不需要 One-Eval。
+
+| 指标 | 说明 | 计算方式 |
+|---|---|---|
+| `pass@1` | 1 次采样通过率 | `estimate_pass_at_k(n, c, 1)` |
+| `pass@10` | 10 次采样通过率（需 `eval_case_num ≥ 10`） | `estimate_pass_at_k(n, c, 10)` |
+| `pass@100` | 100 次采样通过率（需 `eval_case_num ≥ 100`） | `estimate_pass_at_k(n, c, 100)` |
+
+- 输出位置：事件流 `data.metrics` + `outputs/<task_id>/judger/log.txt`
+- k 值列表：`[1, 10, 100]`，仅当 `total_samples ≥ k` 时对应 k 才会出现在结果中
+
+**事件示例：**
+
+```json
+{
+  "current": "judger.evaluate",
+  "progress": 1.0,
+  "message": "评测完成",
+  "data": {
+    "output_result_path": "outputs/.../result.jsonl",
+    "metrics": {
+      "pass@1": 0.3125
+    }
+  }
+}
+```
+
+### general_text — One-Eval stats
+
+由 One-Eval `DataFlowEvalTool` 计算并返回 `stats` 字典。具体包含哪些指标取决于 `bench_dataflow_eval_type`。
+
+**所有 eval_type 通用的 stat 键：**
+
+| 键 | 类型 | 说明 |
+|---|---|---|
+| `accuracy` | `float` | 综合准确率（0~1） |
+| `score` | `float` | 综合得分（通常 = accuracy） |
+| `total_samples` | `int` | 总样本数 |
+| `valid_samples` | `int` | 有效样本数 |
+
+**按 eval_type 的专属指标：**
+
+| `bench_dataflow_eval_type` | 典型产出指标 |
+|---|---|
+| `key1_text_score` | `bleu`, `rouge`, `chrf`, `ter`, `token_f1`, `exact_match`, `containment_match` |
+| `key2_qa` | `exact_match`, `containment_match`, `numerical_match`, `token_f1` |
+| `key2_q_ma` | `exact_match`, `token_f1` |
+| `key3_q_choices_a` | `choice_accuracy`, `exact_match` |
+| `key3_q_choices_as` | `exact_match`, `token_f1` |
+| `key3_q_a_rejected` | 对比评测指标（pairwise comparison） |
+
+**One-Eval 支持的完整指标集：**
+
+| 指标名 | 类别 | 说明 |
+|---|---|---|
+| `pass_at_k` | code | 代码 pass@k（One-Eval 版本） |
+| `code_similarity` | code | 代码相似度 |
+| `soft_code_execution` | code | 软代码执行评测 |
+| `exact_match` | general | 精确匹配 |
+| `containment_match` | general | 包含匹配 |
+| `strict_match` | general | 严格匹配 |
+| `numerical_match` | general | 数值匹配 |
+| `choice_accuracy` | general | 选择题准确率 |
+| `bleu` | text_gen | BLEU 机器翻译评测 |
+| `rouge` | text_gen | ROUGE 摘要评测 |
+| `chrf` | text_gen | 字符级 n-gram F-score |
+| `ter` | text_gen | 翻译错误率 |
+| `token_f1` | text_gen | Token 级 F1 |
+| `math_verify` | math | 数学表达式验证 |
+| `symbolic_match` | symbolic | 符号匹配 |
+| `spearman` | classification | Spearman 排名相关系数 |
+| `pearson` | classification | Pearson 相关系数 |
+| `mcc` | classification | Matthews 相关系数 |
+| `auc_roc` | classification | AUC-ROC |
+| `gini_index` | classification | Gini 系数 |
+
+> **注意**：上表为 One-Eval 的完整能力。实际 stats 中出现的指标由 One-Eval 根据 task_type 和数据特征自动选择。不是所有指标都会同时出现。
+
+**事件示例：**
+
+```json
+{
+  "current": "judger.eval_general_text",
+  "progress": 1.0,
+  "message": "通用文本评测完成",
+  "data": {
+    "output_result_path": "outputs/.../text_eval_summary_20240625_120000.json",
+    "output_pred_path": "outputs/.../text_eval_scored_20240625_120000.json",
+    "metrics": {
+      "accuracy": 0.94,
+      "score": 0.94,
+      "total_samples": 100,
+      "valid_samples": 95,
+      "token_f1": 0.89
+    }
+  }
+}
+```
+
+### 指标产出总结
+
+| 指标类型 | code/text2sql | general_text | 输出位置 |
+|---|---|---|---|
+| `pass_at_k` | ✅ | — | stdout (metrics) + 事件流 + log.txt |
+| `accuracy` | — | ✅ | stdout (metrics) + 事件流 + summary JSON |
+| `score` | — | ✅ | stdout (metrics) + 事件流 + summary JSON |
+| `token_f1` | — | ✅ | stdout (metrics) + 事件流 + summary JSON |
+| `exact_match` | — | ✅ | stdout (metrics) + 事件流 + summary JSON |
+| `bleu` / `rouge` / `chrf` | — | ✅ (text_score) | stdout (metrics) + 事件流 + summary JSON |
+| `spearman` (ranking) | — | ✅ (classification) | stdout (metrics) + 事件流 + summary JSON |
+| `reward_score` | — | ❌ (One-Eval 不直接产出) | — |
+
+### 如何读取指标
+
+```python
+from loopai.skills.Judger import load_events
+
+events = load_events(task_id="my_task")
+for e in events:
+    data = e.get("data") or {}
+
+    # 统一指标：code/text2sql → pass@k，general_text → accuracy/score/f1 等
+    if "metrics" in data:
+        for k, v in data["metrics"].items():
+            print(f"{k}: {v:.4f}")
+```
 
 ## Environment Variables
 
@@ -253,7 +446,7 @@ outputs/<task_id>/
 
 - **stdout** — 最终结果 JSON payload（`emit_success` / `emit_error`，Codex 消费）
 - **stderr** — `--print-result` / `--print-events` 的输出
-- **judger.pkl** — 所有进度事件，含步骤完成时的 `pass_at_k` 和 `stats`
+- **judger.pkl** — 所有进度事件，含步骤完成时的 `metrics`（pass@k 或 stats）
 - **log.txt** — 评测日志（`outputs/<task_id>/judger/log.txt`），含 pass@k 数值
 
 ## State & Resume（Configer）
@@ -322,7 +515,7 @@ evaluate 步骤完成时（code/text2sql）：
 ```json
 {
     "output_result_path": "outputs/.../result.jsonl",
-    "pass_at_k": {
+    "metrics": {
         "pass@1": 0.85,
         "pass@10": 0.95,
         "pass@100": 1.0
@@ -336,7 +529,7 @@ eval_general_text 步骤完成时：
 {
     "output_result_path": "outputs/.../summary.json",
     "output_pred_path": "outputs/.../step2.jsonl",
-    "stats": {
+    "metrics": {
         "accuracy": 0.94,
         "score": 0.88,
         "total_samples": 100,
@@ -353,10 +546,9 @@ from loopai.skills.Judger import load_events
 events = load_events(task_id="my_task")
 for e in events:
     data = e.get("data") or {}
-    if "pass_at_k" in data:
-        print(f"pass@1={data['pass_at_k'].get('pass@1'):.4f}")
-    if "stats" in data:
-        print(f"accuracy={data['stats'].get('accuracy'):.4f}")
+    if "metrics" in data:
+        for k, v in data["metrics"].items():
+            print(f"{k}: {v:.4f}")
 ```
 
 ## Error Handling
@@ -393,6 +585,8 @@ for e in events:
 
 ### 成功响应格式
 
+**code/text2sql：**
+
 ```json
 {
     "ok": true,
@@ -404,10 +598,38 @@ for e in events:
         "output_case_path": "/path/to/sample.jsonl",
         "output_problem_path": "/path/to/problem.jsonl",
         "output_pred_path": "",
+        "bench": "",
+        "metrics": {
+            "pass@1": 0.3125
+        }
+    },
+    "error": null
+}
+```
+
+**general_text：**
+
+```json
+{
+    "ok": true,
+    "status": "completed",
+    "message": "Judger pipeline completed.",
+    "data": {
+        "task_type": "general_text",
+        "output_result_path": "/path/to/summary.json",
+        "output_case_path": "",
+        "output_problem_path": "/path/to/cache.jsonl",
+        "output_pred_path": "/path/to/scored.jsonl",
         "bench": {
             "bench_name": "gsm8k",
             "eval_status": "success",
             "meta": {"eval_result": {"accuracy": 0.94}}
+        },
+        "metrics": {
+            "accuracy": 0.94,
+            "score": 0.94,
+            "total_samples": 100,
+            "valid_samples": 95
         }
     },
     "error": null

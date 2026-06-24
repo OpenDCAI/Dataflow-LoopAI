@@ -477,7 +477,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         data={
             "output_result_path": summary_json_path,
             "output_pred_path": step2_file_path,
-            "stats": stats,
+            "metrics": stats,
         }))
 
     return state
