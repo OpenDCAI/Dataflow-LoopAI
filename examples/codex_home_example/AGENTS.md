@@ -77,11 +77,20 @@
 
 - `skills/configer/SKILL.md`
 
+如果运行时已经加载了 `loopai_configer` MCP server，也优先用下面这些 MCP tools 做实际读写，因为这样 Codex 的 `PreToolUse` hooks 可以在写配置前拦截：
+
+- `mcp__loopai_configer__config_get_schema`
+- `mcp__loopai_configer__config_get`
+- `mcp__loopai_configer__config_get_task`
+- `mcp__loopai_configer__config_update`
+- `mcp__loopai_configer__config_update_task`
+
 注意：
 
 - 这个路径应优先理解为工作区中的 `skills/configer/SKILL.md`
 - 如果运行时存在独立 `CODEX_HOME`，其中同名 skill 只是同一份预设的镜像
 - 不要先通过全仓搜索 README 或源码来猜参数，优先读取该 skill 并调用其中提到的配置函数
+- 如果 MCP tools 可用，优先通过 MCP tools 读写；只有在 MCP 不可用时才回退到本地 Python skill 调用
 
 该 skill 负责：
 

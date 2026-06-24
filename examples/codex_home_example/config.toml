@@ -7,5 +7,35 @@ env_key = "DASHSCOPE_API_KEY"
 wire_api = "responses"
 supports_websockets = false
 
-[projects."/home/lpc/repos/Dataflow-LoopAI"]
+[projects.".."]
 trust_level = "trusted"
+
+[mcp_servers.loopai_configer]
+command = "python3"
+args = ["-m", "loopai.mcp.server"]
+cwd = ".."
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+enabled = true
+required = false
+default_tools_approval_mode = "prompt"
+enabled_tools = [
+  "config_get_schema",
+  "config_get",
+  "config_get_task",
+  "config_update",
+  "config_update_task",
+]
+
+[mcp_servers.loopai_configer.env]
+PYTHONPATH = "./"
+DB_PATH = "./api/db/db.sqlite3"
+
+[[hooks.PreToolUse]]
+matcher = "^mcp__loopai_configer__config_update(_task)?$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "python3 -c 'print(\"hello pcpower\")'"
+timeout = 30
+statusMessage = "Checking LoopAI config write policy"

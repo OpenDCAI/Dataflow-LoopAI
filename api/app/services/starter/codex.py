@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+import tomlkit
+
 from tortoise.expressions import Q
 
 from ...models.db_models import StarterConfig, TaskModel, ThreadHistory
@@ -21,11 +23,22 @@ API_DIR = APP_DIR.parent
 PROJECT_ROOT = API_DIR.parent
 CODEX_RUNNER_DIR = PROJECT_ROOT / "codex-runner"
 DEFAULT_CODEX_HOME = PROJECT_ROOT / "codex_home"
+EXAMPLE_CODEX_HOME = PROJECT_ROOT / "examples" / "codex_home_example"
 PROCESS_EXIT_GRACE_SECONDS = 3
 FALLBACK_CODEX_HOME = Path.home() / ".codex"
 DEFAULT_CODEX_SANDBOX_MODE = "danger-full-access"
 ALLOWED_CODEX_SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
 CODEX_RUNNER_STREAM_LIMIT = 1024 * 1024
+CODEX_CONFIG_ROOT_OVERRIDES = [
+    ("codex_model_provider", "model_provider"),
+]
+CODEX_PROVIDER_OVERRIDES = [
+    ("codex_base_url", "base_url"),
+    ("codex_api_key_env_key", "env_key"),
+    ("codex_provider_name", "name"),
+    ("codex_wire_api", "wire_api"),
+    ("codex_supports_websockets", "supports_websockets"),
+]
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -202,30 +215,69 @@ def _resolved_codex_home(system_config: dict[str, Any]) -> Path:
     return DEFAULT_CODEX_HOME
 
 
+def _apply_config_overrides(
+    source: dict[str, Any],
+    target: dict[str, Any],
+    override_keys: list[tuple[str, str]],
+) -> None:
+    for source_key, target_key in override_keys:
+        if source_key not in source:
+            continue
+        value = source.get(source_key)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
+        if source_key == "codex_supports_websockets":
+            value = _to_bool(value)
+        target[target_key] = value
+
+
 def _sync_codex_home_config(system_config: dict[str, Any]) -> Path:
     codex_home = _resolved_codex_home(system_config)
     codex_home.mkdir(parents=True, exist_ok=True)
 
     config_path = codex_home / "config.toml"
-    provider_name = "dashscope_http"
-    base_url = str(system_config.get("codex_base_url") or "").strip()
     workspace = str(system_config.get("codex_workspace") or PROJECT_ROOT).strip() or str(PROJECT_ROOT)
+    example_config_path = EXAMPLE_CODEX_HOME / "config.toml"
+    if example_config_path.exists():
+        parsed = tomlkit.parse(example_config_path.read_text(encoding="utf-8"))
+        template = parsed if isinstance(parsed, dict) else {}
+    else:
+        template = {}
+    _apply_config_overrides(system_config, template, CODEX_CONFIG_ROOT_OVERRIDES)
+    provider_name = str(template.get("model_provider") or "dashscope_http").strip()
+    template["model_provider"] = provider_name
 
-    config_lines = [
-        f'model_provider = "{provider_name}"',
-        "",
-        f"[model_providers.{provider_name}]",
-        'name = "DashScope HTTP"',
-        f'base_url = "{base_url}"',
-        'env_key = "DASHSCOPE_API_KEY"',
-        'wire_api = "responses"',
-        "supports_websockets = false",
-        "",
-        f'[projects."{workspace}"]',
-        'trust_level = "trusted"',
-        "",
-    ]
-    config_path.write_text("\n".join(config_lines), encoding="utf-8")
+    model_providers = template.setdefault("model_providers", {})
+    provider_config = model_providers.setdefault(provider_name, {})
+    if not isinstance(provider_config, dict):
+        provider_config = {}
+        model_providers[provider_name] = provider_config
+
+    _apply_config_overrides(system_config, provider_config, CODEX_PROVIDER_OVERRIDES)
+    if system_config.get("codex_api_key") and not provider_config.get("env_key"):
+        provider_config["env_key"] = "CODEX_API_KEY"
+
+    projects = template.get("projects")
+    project_config: dict[str, Any] | None = None
+    if isinstance(projects, dict):
+        current_project = projects.get(workspace)
+        if isinstance(current_project, dict):
+            project_config = dict(current_project)
+        else:
+            for value in projects.values():
+                if isinstance(value, dict):
+                    project_config = dict(value)
+                    break
+    if project_config is None:
+        project_config = {"trust_level": "trusted"}
+    project_config.setdefault("trust_level", "trusted")
+    template["projects"] = {workspace: project_config}
+
+    config_path.write_text(tomlkit.dumps(template), encoding="utf-8")
     return codex_home
 
 
