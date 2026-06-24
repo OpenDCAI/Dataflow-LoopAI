@@ -38,6 +38,11 @@ import json
 import os
 import sys
 from pathlib import Path
+
+# 确保项目根目录在 sys.path 中，无需 PYTHONPATH
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 from typing import Any, Dict, Optional
 
 
@@ -215,12 +220,6 @@ def main():
         help="Force start from a specific pipeline step",
     )
     parser.add_argument(
-        "--checkpoint-path",
-        type=str,
-        default=None,
-        help="SQLite checkpoint file path",
-    )
-    parser.add_argument(
         "--task-id",
         type=str,
         default=None,
@@ -285,7 +284,7 @@ def main():
                     state[key] = config[key]
         task_id_from_config = state.get("task_id")
 
-    thread_id = args.task_id or task_id_from_config or os.getenv("TASK_ID") or "judger-default"
+    thread_id = args.task_id or os.getenv("TASK_ID") or task_id_from_config
 
     try:
         result = run(
@@ -293,7 +292,6 @@ def main():
             thread_id=thread_id,
             resume=args.resume,
             from_step=args.from_step,
-            checkpoint_path=args.checkpoint_path,
             **kwargs,
         )
 

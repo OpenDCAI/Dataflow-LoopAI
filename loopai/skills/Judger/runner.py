@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -64,38 +63,8 @@ _GENERAL_TEXT_STEPS = (
     "finish",
 )
 
-# Checkpoint 表的建表 DDL（SQLite）
-_CHECKPOINT_TABLE_DDL = """
-CREATE TABLE IF NOT EXISTS judger_checkpoints (
-    thread_id TEXT PRIMARY KEY,
-    state_json TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-)
-"""
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint helpers
-# ---------------------------------------------------------------------------
-
-def _json_safe(value: Any) -> Any:
-    """递归转换值为 JSON 可序列化形式。"""
-    try:
-        json.dumps(value, ensure_ascii=False)
-        return value
-    except TypeError:
-        if isinstance(value, dict):
-            return {str(key): _json_safe(child) for key, child in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [_json_safe(item) for item in value]
-        return str(value)
-
-
 def normalize_judger_step(step_name: Optional[str]) -> Optional[str]:
-    """将步骤名标准化为流水线中定义的标准名称。
-
-    支持：标准名称、别名、包含别名的字符串、模糊匹配。
-    """
+    """将步骤名标准化为流水线中定义的标准名称。"""
     if not step_name:
         return None
     step_name = str(step_name)
@@ -112,53 +81,78 @@ def normalize_judger_step(step_name: Optional[str]) -> Optional[str]:
     return step_name
 
 
-def _connect(checkpoint_path: str):
-    """创建到 SQLite checkpoint 数据库的连接，并自动建表。"""
-    import sqlite3
-
-    d = os.path.dirname(checkpoint_path)
-    if d:
-        os.makedirs(d, exist_ok=True)
-    conn = sqlite3.connect(checkpoint_path)
-    conn.execute(_CHECKPOINT_TABLE_DDL)
-    conn.commit()
-    return conn
+def _unwrap_configer(config: Dict[str, Any]) -> Dict[str, Any]:
+    """把 Configer {key: {value: ..., type: ...}} 格式转为 {key: value}。"""
+    out: Dict[str, Any] = {}
+    for key, entry in (config or {}).items():
+        if isinstance(entry, dict) and "value" in entry:
+            out[key] = entry["value"]
+        else:
+            out[key] = entry
+    return out
 
 
-def save_judger_checkpoint(
-    state: Dict[str, Any], thread_id: str, checkpoint_path: str
-) -> None:
-    """将当前 state 保存到 checkpoint（SQLite UPSERT）。"""
-    payload = json.dumps(_json_safe(state), ensure_ascii=False)
-    updated_at = datetime.now(timezone.utc).isoformat()
-    with _connect(checkpoint_path) as conn:
-        conn.execute(
-            """INSERT INTO judger_checkpoints(thread_id, state_json, updated_at)
-               VALUES (?, ?, ?)
-               ON CONFLICT(thread_id) DO UPDATE SET
-                   state_json = excluded.state_json,
-                   updated_at = excluded.updated_at""",
-            (thread_id, payload, updated_at),
-        )
-        conn.commit()
+def _load_task_state(task_id: str) -> Dict[str, Any]:
+    """从 Configer（TaskModel.state）+ 事件流 读取 judger 运行态配置。
+
+    优先从 DB 读，回退到事件流推断 last_completed。
+    """
+    from loopai.skills.Configer import get_configer_task_state_config
+    from loopai.common.event_tool import load_stream_events
+
+    judger: Dict[str, Any] = {}
+    defaults: Dict[str, Any] = {}
+
+    # 1. 尝试从 DB 读取
+    cfg = get_configer_task_state_config(section_name="judger", task_id=task_id)
+    if cfg and cfg.get("data"):
+        judger = _unwrap_configer(cfg["data"].get("config", {}))
+
+    cfg = get_configer_task_state_config(section_name="default", task_id=task_id)
+    if cfg and cfg.get("data"):
+        defaults = _unwrap_configer(cfg["data"].get("config", {}))
+
+    last_completed = judger.pop("_last_completed", "")
+    current = judger.pop("_current", "judger")
+
+    # 2. 如果 DB 里没有进度，从事件流推断最后完成的步骤
+    if not last_completed:
+        try:
+            events = load_stream_events(name="judger", context_id=task_id)
+            for evt in reversed(events):
+                msg = getattr(evt, "message", "") or evt.get("message", "")
+                if "步骤完成:" in msg:
+                    last_completed = msg.split("步骤完成:")[-1].strip()
+                    break
+                elif msg == "流水线完成":
+                    last_completed = "finish"
+                    break
+        except Exception:
+            pass
+
+    return {
+        "judger": judger,
+        "task_id": defaults.get("task_id", task_id),
+        "output_dir": defaults.get("output_dir", "./outputs"),
+        "last_completed": last_completed,
+        "current": current,
+    }
 
 
-def load_judger_checkpoint(thread_id: str, checkpoint_path: str) -> Dict[str, Any]:
-    """从 checkpoint 加载之前保存的 state。"""
-    if not os.path.exists(checkpoint_path):
-        raise RuntimeError(
-            f"No checkpoint found for thread_id={thread_id} in {checkpoint_path}"
-        )
-    with _connect(checkpoint_path) as conn:
-        row = conn.execute(
-            "SELECT state_json FROM judger_checkpoints WHERE thread_id = ? LIMIT 1",
-            (thread_id,),
-        ).fetchone()
-    if row is None:
-        raise RuntimeError(
-            f"No checkpoint found for thread_id={thread_id} in {checkpoint_path}"
-        )
-    return json.loads(row[0])
+def _save_task_progress(state: Dict[str, Any], task_id: str) -> None:
+    """将流水线进度写回 Configer（TaskModel.state）。"""
+    from loopai.skills.Configer import update_configer_task_state_config
+
+    judger = state.get("judger", {})
+    updates = {
+        "_last_completed": state.get("last_completed", ""),
+        "_current": state.get("current"),
+    }
+    for k in ("output_result_path", "output_case_path", "output_problem_path",
+              "output_pred_path", "bench"):
+        if k in judger and judger[k]:
+            updates[k] = judger[k]
+    update_configer_task_state_config("judger", updates, task_id=task_id)
 
 
 def _start_index(step_name: str, steps: tuple) -> int:
@@ -224,7 +218,7 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     task_type = judger.get("eval_task_type","")
 
     writer(StreamEvent(
-        current="judger", progress=0.0, message="开始校验配置参数"))
+        current=state.get("current"), progress=0.0, message="开始校验配置参数"))
 
     # 1. 检查通用必填字段
     required_fields = {
@@ -353,12 +347,12 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     })
 
     writer(StreamEvent(
-        current="judger", progress=0.0, message="正在启动本地 vLLM 服务",
+        current=state.get("current"), progress=0.0, message="正在启动本地 vLLM 服务",
         data={"model_path": model_path, "tensor_parallel_size": tensor_parallel_size}))
     start_vllm_openai_api_server(env_configs, tensor_parallel_size, gpu_memory_utilization, model_path)
     state["judger"]["eval_base_url"] = f"http://localhost:{DEFAULT_VLLM_PORT}/v1"
     writer(StreamEvent(
-        current="judger", progress=1.0, message="vLLM 服务已启动",
+        current=state.get("current"), progress=1.0, message="vLLM 服务已启动",
         data={"base_url": state["judger"]["eval_base_url"]}))
     return state
 
@@ -371,15 +365,15 @@ def _step_format_data(state: Dict[str, Any], writer) -> Dict[str, Any]:
     if format_type and format_type != "":
         from loopai.skills.Judger.utils.format import run_format_data
         writer(StreamEvent(
-            current="judger", progress=0.0,
+            current=state.get("current"), progress=0.0,
             message=f"正在进行数据格式转换 [{format_type}]"))
         run_format_data(state, writer)
         writer(StreamEvent(
-            current="judger", progress=1.0, message="数据格式转换完成",
+            current=state.get("current"), progress=1.0, message="数据格式转换完成",
             data={"target": state["judger"]["eval_problem_path"]}))
     else:
         writer(StreamEvent(
-            current="judger", progress=1.0,
+            current=state.get("current"), progress=1.0,
             message="未设置 format_type，跳过数据格式化"))
 
     state["judger"]["output_problem_path"] = state["judger"]["eval_problem_path"]
@@ -424,7 +418,7 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     task_type = state.get("judger", {}).get("eval_task_type", "code")
 
     writer(StreamEvent(
-        current="judger", progress=0.0,
+        current=state.get("current"), progress=0.0,
         message=f"开始评测样本 [task_type={task_type}]"))
 
     if task_type == "code":
@@ -439,9 +433,13 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         )
 
     state["judger"]["output_result_path"] = result.get("result_path", "")
+    pass_at_k = result.get("pass_at_k", {})
     writer(StreamEvent(
-        current="judger", progress=1.0, message="评测完成",
-        data={"output_result_path": state["judger"]["output_result_path"]}))
+        current=state.get("current"), progress=1.0, message="评测完成",
+        data={
+            "output_result_path": state["judger"]["output_result_path"],
+            "pass_at_k": pass_at_k,
+        }))
     return state
 
 
@@ -486,7 +484,6 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
 def run_judger_pipeline(
     state: Optional[Dict[str, Any]],
     thread_id: Optional[str] = None,
-    checkpoint_path: Optional[str] = None,
     resume: bool = False,
     from_step: Optional[str] = None,
     **kwargs: Any,
@@ -501,7 +498,6 @@ def run_judger_pipeline(
     Args:
         state: 包含 ``state["judger"]`` 配置的状态字典。
         thread_id: checkpoint 和事件的上下文 ID（= task_id）。
-        checkpoint_path: SQLite checkpoint 文件路径。
         resume: 从 checkpoint 恢复执行。
         from_step: 强制从指定步骤开始。
         **kwargs: 运行时覆盖参数。
@@ -511,28 +507,30 @@ def run_judger_pipeline(
     """
     from .runtime_config import resolve_judger_runtime_config
 
-    if checkpoint_path is None:
-        checkpoint_path = os.getenv(
-            "JUDGER_CHECKPOINT_PATH", "outputs/judger_checkpoints.sqlite"
-        )
-
     # 加载或初始化 state
     if resume:
-        state = load_judger_checkpoint(thread_id, checkpoint_path)
-        resolve_judger_runtime_config(state, thread_id=thread_id, **kwargs)
-    elif state is None:
-        emit_error(
-            ValueError("state is required when resume is False."),
-            code=ErrorCode.INVALID_INPUT, recoverable=True,
-            message="No state provided and resume is disabled.",
-        )
+        state = _load_task_state(thread_id)
+    elif state is not None:
+        state = dict(state)
     else:
-        state = dict(state) if state is not None else {}
-        state.setdefault("judger", {})
-        resolve_judger_runtime_config(state, thread_id=thread_id, **kwargs)
+        state = _load_task_state(thread_id)
+        if not state.get("judger"):
+            # 任务无 state → 回退到全局默认配置
+            from loopai.skills.Configer import get_configer_state_config
+            cfg = get_configer_state_config(section_name="judger")
+            if cfg and cfg.get("data"):
+                state["judger"] = _unwrap_configer(cfg["data"].get("config", {}))
+            cfg = get_configer_state_config(section_name="default")
+            if cfg and cfg.get("data"):
+                defaults = _unwrap_configer(cfg["data"].get("config", {}))
+                state["task_id"] = defaults.get("task_id", thread_id)
+                state["output_dir"] = defaults.get("output_dir", "./outputs")
 
-    # thread_id 优先用显式传参，回退到 state["task_id"]（runtime_config 解析结果）
-    thread_id = thread_id or state.get("task_id") or ""
+    state.setdefault("judger", {})
+    resolve_judger_runtime_config(state, thread_id=thread_id, **kwargs)
+
+    # thread_id 优先用 env/kwargs 解析后的 state["task_id"]，回退到显式传参
+    thread_id = state.get("task_id") or thread_id or ""
     if not thread_id:
         emit_error(
             ValueError("task_id is required but was not provided."),
@@ -587,7 +585,7 @@ def run_judger_pipeline(
     state["current"] = "judger"  # agent 身份标识，全程不变
     for i, step_name in enumerate(steps[start_at:], start_at):
         logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} starting...")
-        save_judger_checkpoint(state, thread_id, checkpoint_path)
+        _save_task_progress(state, thread_id)
 
         writer(StreamEvent(
             current="judger", progress=0.0,
@@ -595,7 +593,7 @@ def run_judger_pipeline(
 
         if step_name == "finish":
             state["last_completed"] = "finish"
-            save_judger_checkpoint(state, thread_id, checkpoint_path)
+            _save_task_progress(state, thread_id)
             writer(StreamEvent(
                 current="judger", progress=1.0, message="流水线完成"))
             logger.info(f"[Judger] pipeline finished")
@@ -603,7 +601,7 @@ def run_judger_pipeline(
 
         state = _run_step(step_name, state, writer)
         state["last_completed"] = step_name
-        save_judger_checkpoint(state, thread_id, checkpoint_path)
+        _save_task_progress(state, thread_id)
 
         logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} done")
         writer(StreamEvent(
