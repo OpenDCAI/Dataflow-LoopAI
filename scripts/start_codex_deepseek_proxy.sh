@@ -3,15 +3,22 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROUTER_DIR="${ROOT_DIR}/codex-chat-router"
+CACHE_DIR="${ROOT_DIR}/.cache_codex"
+
+mkdir -p \
+    "${CACHE_DIR}/cargo" \
+    "${CACHE_DIR}/rustup" \
+    "${CACHE_DIR}/target" \
+    "${CACHE_DIR}/tmp"
 
 export LOOPAI_CODEX_PROXY_UPSTREAM_BASE_URL="${LOOPAI_CODEX_PROXY_UPSTREAM_BASE_URL:-${DEEPSEEK_BASE_URL:-https://api.deepseek.com}}"
 export LOOPAI_CODEX_PROXY_MODEL="${LOOPAI_CODEX_PROXY_MODEL:-${DEEPSEEK_MODEL:-deepseek-chat}}"
 export LOOPAI_CODEX_PROXY_HOST="${LOOPAI_CODEX_PROXY_HOST:-127.0.0.1}"
 export LOOPAI_CODEX_PROXY_PORT="${LOOPAI_CODEX_PROXY_PORT:-15721}"
-export CARGO_HOME="${CARGO_HOME:-/home/xuebinrui/.cargo}"
-export RUSTUP_HOME="${RUSTUP_HOME:-/home/xuebinrui/.rustup}"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/data/xuebinrui/cargo-target/loopai-codex-chat-router}"
-export TMPDIR="${TMPDIR:-/data/xuebinrui/tmp}"
+export CARGO_HOME="${CARGO_HOME:-${CACHE_DIR}/cargo}"
+export RUSTUP_HOME="${RUSTUP_HOME:-${CACHE_DIR}/rustup}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${CACHE_DIR}/target/codex-chat-router}"
+export TMPDIR="${TMPDIR:-${CACHE_DIR}/tmp}"
 export PATH="${CARGO_HOME}/bin:${PATH}"
 
 if [[ -z "${LOOPAI_CODEX_PROXY_UPSTREAM_API_KEY:-${DEEPSEEK_API_KEY:-}}" ]]; then
