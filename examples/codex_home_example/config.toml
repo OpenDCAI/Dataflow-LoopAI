@@ -30,21 +30,3 @@ enabled_tools = [
 [mcp_servers.loopai_configer.env]
 PYTHONPATH = "./"
 DB_PATH = "./api/db/db.sqlite3"
-
-[[hooks.PreToolUse]]
-matcher = "^mcp__loopai_[a-z0-9_]+__.*$"
-
-[[hooks.PreToolUse.hooks]]
-type = "command"
-command = "bash -lc 'cd \"$CODEX_WORKSPACE\" && python3 -m loopai.mcp.hooks.update_task_runtime pre'"
-timeout = 30
-statusMessage = "Updating LoopAI runtime status to running"
-
-[[hooks.PostToolUse]]
-matcher = "^mcp__loopai_[a-z0-9_]+__.*$"
-
-[[hooks.PostToolUse.hooks]]
-type = "command"
-command = "bash -lc 'cd \"$CODEX_WORKSPACE\" && python3 -m loopai.mcp.hooks.update_task_runtime post'"
-timeout = 30
-statusMessage = "Updating LoopAI runtime status after tool execution"

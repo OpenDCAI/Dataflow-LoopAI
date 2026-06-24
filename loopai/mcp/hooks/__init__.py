@@ -1,1 +1,0 @@
-"""LoopAI MCP hook helpers."""
