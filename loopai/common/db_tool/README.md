@@ -186,9 +186,9 @@ if __name__ == "__main__":
 
 ## Runtime 状态管理
 
-### `create_task_runtime(task_id, node_name, version, status)`
+### `create_task_runtime(task_id, node_name, status)`
 
-创建一条新的任务运行时状态记录。
+创建一条新的任务运行时状态记录，`version` 会在内部自动生成。
 
 ### `update_task_runtime(task_id, node_name, version, status)`
 

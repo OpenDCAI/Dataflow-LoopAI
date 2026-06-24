@@ -60,12 +60,17 @@ class StreamEvent:
     message: Optional[str] = None
     data: Optional[Any] = None
     time: Optional[str] = None
-    run_id: Optional[str] = None
+    version_id: Optional[str] = None
+    node: Optional[str] = None
+    status: Optional[str] = None
+    context_id: Optional[str] = None
+    error: Optional[Any] = None
 ```
 
 - 前 6 个字段兼容原有常用写法
 - `time` 会在写入时自动补上
-- `run_id` 可选，适合同一个 task 多次运行时做区分
+- `version_id` 为空时会在首次写入时自动生成，并同步到 task runtime
+- `node` 会由 writer 的 `name` 自动填充，`status` 会统一写成 `running`
 
 ## API
 
@@ -75,9 +80,7 @@ get_event_writer(
     context_id: str,
     log_file_path: str = "./outputs",
     *,
-    run_id: str | None = None,
-    stdout: bool | None = None,
-    state: dict | None = None,
+    version_id: str | None = None,
 )
 ```
 

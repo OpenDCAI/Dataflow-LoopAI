@@ -109,6 +109,33 @@ def upsert_task_runtime_sync(
     return create_task_runtime_sync(db_path, task_id, node_name, version, status)
 
 
+def sync_task_runtime_sync(
+    db_path: str | os.PathLike[str],
+    task_id: str,
+    node_name: str,
+    version: str | None,
+    status: str,
+) -> dict[str, Any]:
+    normalized_version = (version or "").strip()
+    if normalized_version:
+        runtime = update_task_runtime_sync(
+            db_path=db_path,
+            task_id=task_id,
+            node_name=node_name,
+            version=normalized_version,
+            status=status,
+        )
+        if runtime is not None:
+            return runtime
+    return create_task_runtime_sync(
+        db_path=db_path,
+        task_id=task_id,
+        node_name=node_name,
+        version=normalized_version,
+        status=status,
+    )
+
+
 def get_latest_task_runtime_sync(
     db_path: str | os.PathLike[str],
     task_id: str,
@@ -208,6 +235,15 @@ async def upsert_task_runtime(
     status: str,
 ) -> dict[str, Any]:
     return upsert_task_runtime_sync(require_db_path(), task_id, node_name, version, status)
+
+
+async def sync_task_runtime(
+    task_id: str,
+    node_name: str,
+    version: str | None,
+    status: str,
+) -> dict[str, Any]:
+    return sync_task_runtime_sync(require_db_path(), task_id, node_name, version, status)
 
 
 async def get_latest_task_runtime(

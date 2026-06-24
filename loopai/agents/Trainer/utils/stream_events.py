@@ -86,7 +86,6 @@ def _persist_trainer_event(state: dict[str, Any], event: StreamEvent) -> None:
             name=TRAINER_CURRENT,
             context_id=context_id,
             log_file_path=output_dir,
-            run_id=event.run_id,
         )
         writer(event)
         state.setdefault("trainer", {})["trainer_event_log_path"] = str(writer.event_path)
