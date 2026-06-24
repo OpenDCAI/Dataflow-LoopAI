@@ -42,6 +42,16 @@ class TaskItem(BaseModel):
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
 
+
+class TaskRuntimeItem(BaseModel):
+    id: Optional[int] = None
+    task_id: str
+    node_name: str
+    version: str
+    status: str
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+
 class ResourceItem(BaseModel):
     id: Optional[int] = None
     name: Optional[str] = None

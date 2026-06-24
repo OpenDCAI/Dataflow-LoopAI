@@ -20,11 +20,11 @@ enabled = true
 required = false
 default_tools_approval_mode = "prompt"
 enabled_tools = [
-  "config_get_schema",
-  "config_get",
-  "config_get_task",
-  "config_update",
-  "config_update_task",
+  "configer_get_schema",
+  "configer_get",
+  "configer_get_task",
+  "configer_update",
+  "configer_update_task",
 ]
 
 [mcp_servers.loopai_configer.env]
@@ -32,10 +32,19 @@ PYTHONPATH = "./"
 DB_PATH = "./api/db/db.sqlite3"
 
 [[hooks.PreToolUse]]
-matcher = "^mcp__loopai_configer__config_update(_task)?$"
+matcher = "^mcp__loopai_[a-z0-9_]+__.*$"
 
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = "python3 -c 'print(\"hello pcpower\")'"
+command = "bash -lc 'cd \"$CODEX_WORKSPACE\" && python3 -m loopai.mcp.hooks.update_task_runtime pre'"
 timeout = 30
-statusMessage = "Checking LoopAI config write policy"
+statusMessage = "Updating LoopAI runtime status to running"
+
+[[hooks.PostToolUse]]
+matcher = "^mcp__loopai_[a-z0-9_]+__.*$"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "bash -lc 'cd \"$CODEX_WORKSPACE\" && python3 -m loopai.mcp.hooks.update_task_runtime post'"
+timeout = 30
+statusMessage = "Updating LoopAI runtime status after tool execution"

@@ -118,7 +118,7 @@ def get_configer_state_config(
     field_name: str | None = None,
 ) -> dict[str, Any]:
     try:
-        from loopai.common.db_tool import get_default_states_config_sync, get_task_states_config_sync
+        from loopai.common.db_tool.task import get_default_states_config_sync, get_task_states_config_sync
 
         db_path = _get_db_path_from_env()
         task_id = _get_task_id_from_env()
@@ -157,7 +157,7 @@ def update_configer_state_config(
     updates: str | dict[str, Any],
 ) -> dict[str, Any]:
     try:
-        from loopai.common.db_tool import (
+        from loopai.common.db_tool.task import (
             get_default_states_config_sync,
             get_task_states_config_sync,
             update_default_state_section_config_sync,
@@ -210,7 +210,7 @@ def get_configer_task_state_config(
     task_id: str | None = None,
 ) -> dict[str, Any]:
     try:
-        from loopai.common.db_tool import get_task_states_config_sync
+        from loopai.common.db_tool.task import get_task_states_config_sync
 
         db_path = _get_db_path_from_env()
         resolved_task_id = _require_task_id(task_id)
@@ -244,7 +244,7 @@ def update_configer_task_state_config(
     task_id: str | None = None,
 ) -> dict[str, Any]:
     try:
-        from loopai.common.db_tool import get_task_states_config_sync, update_task_state_section_config_sync
+        from loopai.common.db_tool.task import get_task_states_config_sync, update_task_state_section_config_sync
 
         db_path = _get_db_path_from_env()
         resolved_task_id = _require_task_id(task_id)

@@ -235,7 +235,10 @@ def _apply_config_overrides(
         target[target_key] = value
 
 
-def _sync_codex_home_config(system_config: dict[str, Any]) -> Path:
+def _sync_codex_home_config(
+    system_config: dict[str, Any],
+    env_overrides: dict[str, Any] | None = None,
+) -> Path:
     codex_home = _resolved_codex_home(system_config)
     codex_home.mkdir(parents=True, exist_ok=True)
 
@@ -276,6 +279,19 @@ def _sync_codex_home_config(system_config: dict[str, Any]) -> Path:
         project_config = {"trust_level": "trusted"}
     project_config.setdefault("trust_level", "trusted")
     template["projects"] = {workspace: project_config}
+
+    mcp_servers = template.setdefault("mcp_servers", {})
+    if isinstance(mcp_servers, dict):
+        loopai_configer = mcp_servers.get("loopai_configer")
+        if isinstance(loopai_configer, dict):
+            mcp_env = loopai_configer.setdefault("env", {})
+            if isinstance(mcp_env, dict):
+                for key, value in (env_overrides or {}).items():
+                    key = str(key)
+                    if value is None:
+                        mcp_env.pop(key, None)
+                    else:
+                        mcp_env[key] = str(value)
 
     config_path.write_text(tomlkit.dumps(template), encoding="utf-8")
     return codex_home
@@ -694,6 +710,11 @@ class CodexStarterService:
             env[str(key)] = str(value)
 
         env["CODEX_WORKSPACE"] = resolved_workspace
+        existing_pythonpath = str(env.get("PYTHONPATH") or "").strip()
+        pythonpath_parts = [resolved_workspace]
+        if existing_pythonpath:
+            pythonpath_parts.append(existing_pythonpath)
+        env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
 
         model = system_config.get("codex_model")
         base_url = system_config.get("codex_base_url")
@@ -801,7 +822,10 @@ class CodexStarterService:
         use_project_config = _to_bool(merged_system_config.get("codex_use_project_config"), False)
         merged_system_config = dict(merged_system_config)
         merged_system_config["codex_workspace"] = resolved_workspace
-        resolved_codex_home = _sync_codex_home_config(merged_system_config)
+        resolved_codex_home = _sync_codex_home_config(
+            merged_system_config,
+            env_overrides=merged_env_overrides,
+        )
         resumed_thread_id = str(session.get("codex_thread_id") or "").strip()
 
         self.session_store.update(
