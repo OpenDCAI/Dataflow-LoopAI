@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from .controllers.config import router as config_router
+from .controllers.response_proxy import router as response_proxy_router
 from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
 from .controllers.train import router as train_router
@@ -56,6 +57,7 @@ register_tortoise(
 )
 
 app.include_router(config_router, prefix="/config", tags=["config"])
+app.include_router(response_proxy_router, prefix="/responseProxy", tags=["responseProxy"])
 app.include_router(starter_router, prefix="/starter", tags=["starter"])
 app.include_router(task_router, prefix="/task", tags=["task"])
 app.include_router(train_router, prefix="/train", tags=["train"])
