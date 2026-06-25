@@ -54,13 +54,16 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _try_call_stream_writer_status(stream_writer: Any, method_name: str) -> None:
+def _try_call_stream_writer_status(stream_writer: Any, method_name: str, payload: dict[str, Any] | None = None) -> None:
     if stream_writer is None:
         return
     try:
         method = getattr(stream_writer, method_name, None)
         if callable(method):
-            method()
+            try:
+                method(payload)
+            except TypeError:
+                method()
     except Exception:
         pass
 
@@ -106,10 +109,17 @@ def emit_success(
     data: Any = None,
     message: str = "Sub-agent completed.",
     stream_writer: Any = None,
-) -> None:
-    _try_call_stream_writer_status(stream_writer, "set_completed")
-    print(json.dumps(build_success_payload(data=data, message=message), ensure_ascii=False))
-    sys.exit(0)
+    *,
+    exit_process: bool = True,
+    print_payload: bool = True,
+) -> dict[str, Any]:
+    payload = build_success_payload(data=data, message=message)
+    _try_call_stream_writer_status(stream_writer, "set_completed", payload)
+    if print_payload:
+        print(json.dumps(payload, ensure_ascii=False))
+    if exit_process:
+        sys.exit(0)
+    return payload
 
 
 def emit_error(
@@ -118,20 +128,22 @@ def emit_error(
     recoverable: bool = True,
     message: str | None = None,
     stream_writer: Any = None,
-) -> None:
-    _try_call_stream_writer_status(stream_writer, "set_failed")
-    print(
-        json.dumps(
-            build_error_payload(
-                exc=exc,
-                code=code,
-                recoverable=recoverable,
-                message=message,
-            ),
-            ensure_ascii=False,
-        )
+    *,
+    exit_process: bool = True,
+    print_payload: bool = True,
+) -> dict[str, Any]:
+    payload = build_error_payload(
+        exc=exc,
+        code=code,
+        recoverable=recoverable,
+        message=message,
     )
-    sys.exit(1)
+    _try_call_stream_writer_status(stream_writer, "set_failed", payload)
+    if print_payload:
+        print(json.dumps(payload, ensure_ascii=False))
+    if exit_process:
+        sys.exit(1)
+    return payload
 
 
 def run_with_exception_guard(

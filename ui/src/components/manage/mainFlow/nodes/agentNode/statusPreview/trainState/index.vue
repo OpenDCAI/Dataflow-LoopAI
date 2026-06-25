@@ -95,10 +95,10 @@ export default {
         },
         getTrainState() {
             try {
-                let task_id = this.state.task_id
-                let output_dir = this.state.output_dir
-                let trainer_task_id =
-                    this.custom_info['TrainerAgent.training_execution_node_wrapper'].data.task_id
+                let task_id = this.state?.task_id
+                let output_dir = this.state?.output_dir
+                let trainer_task_id = this.getTrainerTaskId()
+                if (!task_id || !output_dir || !trainer_task_id) return
                 this.$api.task
                     .getTrainStatus(output_dir, task_id, trainer_task_id)
                     .then((res) => {
@@ -111,6 +111,22 @@ export default {
                         console.log(err)
                     })
             } catch (err) {}
+        },
+        getTrainerTaskId() {
+            const customInfo = this.custom_info || {}
+            const trainerEvents = [
+                customInfo['TrainerAgent.training_execution_node_wrapper'],
+                customInfo['trainer.trainer'],
+                ...Object.entries(customInfo)
+                    .filter(([key]) => key.startsWith('trainer.'))
+                    .map(([, value]) => value)
+            ]
+
+            for (const event of trainerEvents) {
+                const taskId = event?.data?.task_id || event?.data?.trainer_task_id || event?.task_id
+                if (taskId) return taskId
+            }
+            return null
         },
         processState() {
             let metrics = this.oriStateObj.metrics || []

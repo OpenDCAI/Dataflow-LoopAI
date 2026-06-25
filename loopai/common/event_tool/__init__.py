@@ -189,10 +189,9 @@ class PickleEventWriter:
         if self.version_id is None:
             self.version_id = event.version_id or str(uuid.uuid4())
         event.version_id = self.version_id
-        event.status = "running"
+        event.status = event.status or "running"
         self._sync_runtime(status=event.status)
         self._append_event(event)
-        self.set_running()
         return event
 
     def set_running(self):
@@ -200,15 +199,52 @@ class PickleEventWriter:
             self.version_id = str(uuid.uuid4())
         self._sync_runtime(status="running")
     
-    def set_failed(self):
+    def set_failed(self, payload: dict[str, Any] | None = None):
         if self.version_id is None:
             self.version_id = str(uuid.uuid4())
+        payload = payload or {}
         self._sync_runtime(status="failed")
+        return self._append_status_event(
+            status="failed",
+            message=payload.get("message", "Sub-agent failed."),
+            data=payload.get("data"),
+            error=payload.get("error", payload),
+        )
     
-    def set_completed(self):
+    def set_completed(self, payload: dict[str, Any] | None = None):
         if self.version_id is None:
             self.version_id = str(uuid.uuid4())
+        payload = payload or {}
         self._sync_runtime(status="completed")
+        return self._append_status_event(
+            status="completed",
+            message=payload.get("message", "Sub-agent completed."),
+            data=payload.get("data", payload),
+            error=None,
+        )
+
+    def _append_status_event(
+        self,
+        *,
+        status: str,
+        message: str,
+        data: Any = None,
+        error: Any = None,
+    ) -> StreamEvent:
+        event = StreamEvent(
+            current=self.name,
+            progress=1.0,
+            message=message,
+            data=data,
+            version_id=self.version_id,
+            node=self.name,
+            status=status,
+            context_id=self.context_id,
+            error=error,
+        )
+        event = _coerce_stream_event(event)
+        self._append_event(event)
+        return event
 
     def _sync_runtime(self, *, status: str) -> None:
         try:

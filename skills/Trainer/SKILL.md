@@ -83,9 +83,26 @@ Priority:
 kwargs > environment variables > state["trainer"] > state["system"] > defaults
 ```
 
+When `TASK_ID` is set, Trainer Skill loads the task-scoped `trainer` section through Configer before running:
+
+```python
+from loopai.skills.Configer import get_configer_task_state_config
+
+cfg = get_configer_task_state_config("trainer", task_id=TASK_ID)
+```
+
+`DB_PATH` must also be set for task-scoped loading. After the run completes or fails, Trainer Skill writes structured Trainer result fields back through Configer:
+
+```python
+from loopai.skills.Configer import update_configer_task_state_config
+
+update_configer_task_state_config("trainer", updates, task_id=TASK_ID)
+```
+
 Useful environment variables:
 
 - `TASK_ID`
+- `DB_PATH`
 - `OUTPUT_DIR`
 - `TRAIN_FRAMEWORK`
 - `TRAIN_DATASET_PATH`
@@ -127,6 +144,20 @@ from loopai.skills.Trainer import load_events
 
 events = load_events(task_id="trainer_task_001", output_dir="./outputs")
 ```
+
+## MCP Tools
+
+Trainer is exposed through the unified `loopai_mcp` server:
+
+- `trainer_run`
+- `trainer_load_events`
+
+In Codex these appear as:
+
+- `mcp__loopai_mcp__trainer_run`
+- `mcp__loopai_mcp__trainer_load_events`
+
+Prefer calling `configer_get_task(section_name="trainer", task_id=...)` before `trainer_run` when you need to inspect or confirm task config.
 
 ## Errors
 

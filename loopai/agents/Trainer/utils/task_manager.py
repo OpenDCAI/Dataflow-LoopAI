@@ -16,6 +16,7 @@ from typing import Dict, Optional, List
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import json
+import yaml
 
 from loopai.logger import get_logger
 from .task_status import TaskStatus
@@ -23,6 +24,19 @@ from .task_tools import ensure_directory_exists, get_current_timestamp
 from .realtime_log_parser import RealTimeLogParser
 
 logger = get_logger()
+
+
+def _config_uses_deepspeed(config_path: str) -> bool:
+    """Return True when the LLaMA-Factory YAML enables a DeepSpeed config."""
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+    except Exception as exc:
+        logger.warning(f"读取训练配置以检查 deepspeed 失败: {exc}")
+        return False
+
+    deepspeed = config.get("deepspeed") if isinstance(config, dict) else None
+    return bool(deepspeed)
 
 
 class TaskManager:
@@ -217,6 +231,9 @@ class TaskManager:
             logger.warning("未指定 llamafactory 环境路径，使用系统 PATH 中的 llamafactory-cli")
 
         env["PYTHONNOUSERSITE"] = "True"
+        if _config_uses_deepspeed(config_path):
+            env["FORCE_TORCHRUN"] = "1"
+            logger.info("检测到 deepspeed 配置，已设置 FORCE_TORCHRUN=1")
 
         # 根据环境路径构建命令
         if env_root and bin_path:
