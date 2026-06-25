@@ -61,7 +61,7 @@ def run_generate_code(state: Dict[str, Any], writer) -> str:
     total_samples = total_tasks * num_samples_per_task
 
     writer(StreamEvent(
-        current="judger", progress=0.0,
+        current=state.get("current", "judger"), progress=0.0,
         message=f"{task_type}任务样本合成开始",
         data={"total_tasks": total_tasks, "num_samples_per_task": num_samples_per_task,
               "total_samples": total_samples}))
@@ -88,7 +88,7 @@ def run_generate_code(state: Dict[str, Any], writer) -> str:
                 cnt += 1
                 pbar.update(1)
             writer(StreamEvent(
-                current="judger",
+                current=state.get("current", "judger"),
                 progress=round(cnt / total_samples, 1),
                 message=f"{task_type}任务样本合成进度",
                 data={"progress_detail": f"{cnt}/{total_samples}"}))
@@ -97,7 +97,7 @@ def run_generate_code(state: Dict[str, Any], writer) -> str:
     logger.info(f"===== 生成完成 ===== 样本数：{len(samples)}  路径：{test_case_path}")
 
     writer(StreamEvent(
-        current="judger", progress=1.0, message=f"{task_type}任务样本合成完成",
+        current=state.get("current", "judger"), progress=1.0, message=f"{task_type}任务样本合成完成",
         data={"sample_num": len(samples), "sample_save_path": test_case_path}))
     return test_case_path
 
@@ -133,7 +133,7 @@ def run_generate_text2sql(state: Dict[str, Any], writer) -> str:
     total_samples = total_tasks * num_samples_per_task
 
     writer(StreamEvent(
-        current="judger", progress=0.0,
+        current=state.get("current", "judger"), progress=0.0,
         message=f"{task_type}任务样本合成开始",
         data={"total_tasks": total_tasks, "num_samples_per_task": num_samples_per_task,
               "total_samples": total_samples}))
@@ -167,7 +167,7 @@ def run_generate_text2sql(state: Dict[str, Any], writer) -> str:
                 cnt += 1
                 pbar.update(1)
             writer(StreamEvent(
-                current="judger",
+                current=state.get("current", "judger"),
                 progress=round(cnt / total_samples, 1),
                 message=f"{task_type}任务样本合成进度",
                 data={"progress_detail": f"{cnt}/{total_samples}"}))
@@ -176,6 +176,6 @@ def run_generate_text2sql(state: Dict[str, Any], writer) -> str:
     logger.info(f"===== 生成完成 ===== 样本数：{len(samples)}  路径：{test_case_path}")
 
     writer(StreamEvent(
-        current="judger", progress=1.0, message=f"{task_type}任务样本合成完成",
+        current=state.get("current", "judger"), progress=1.0, message=f"{task_type}任务样本合成完成",
         data={"sample_num": len(samples), "sample_save_path": test_case_path}))
     return test_case_path

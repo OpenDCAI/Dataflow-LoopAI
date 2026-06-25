@@ -117,15 +117,27 @@ def _load_task_state(task_id: str) -> Dict[str, Any]:
 
     # 2. 如果 DB 里没有进度，从事件流推断最后完成的步骤
     if not last_completed:
+        _COMPLETION_MSG_TO_STEP = {
+            "配置校验通过": "validate",
+            "vLLM 服务已关闭": None,  #  由 current 区分 kill_vllm/kill_vllm_cleanup
+            "vLLM 服务已启动": "start_vllm",
+            "数据格式转换完成": "format_data",
+            "样本生成完成": "generate",
+            "评测完成": "evaluate",
+            "通用文本评测完成": "eval_general_text",
+            "流水线完成": "finish",
+        }
         try:
             events = load_stream_events(name="judger", context_id=task_id)
             for evt in reversed(events):
                 msg = getattr(evt, "message", "") or evt.get("message", "")
-                if "步骤完成:" in msg:
-                    last_completed = msg.split("步骤完成:")[-1].strip()
+                step = _COMPLETION_MSG_TO_STEP.get(msg)
+                if step is not None:
+                    last_completed = step
                     break
-                elif msg == "流水线完成":
-                    last_completed = "finish"
+                if msg == "vLLM 服务已关闭":
+                    cur = getattr(evt, "current", "") or evt.get("current", "")
+                    last_completed = normalize_judger_step(cur) or "kill_vllm"
                     break
         except Exception:
             pass
@@ -144,10 +156,7 @@ def _save_task_progress(state: Dict[str, Any], task_id: str) -> None:
     from loopai.skills.Configer import update_configer_task_state_config
 
     judger = state.get("judger", {})
-    updates = {
-        "_last_completed": state.get("last_completed", ""),
-        "_current": state.get("current"),
-    }
+    updates: Dict[str, Any] = {}
     for k in ("output_result_path", "output_case_path", "output_problem_path",
               "output_pred_path", "bench"):
         if k in judger and judger[k]:
@@ -439,7 +448,7 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         current=state.get("current"), progress=1.0, message="评测完成",
         data={
             "output_result_path": state["judger"]["output_result_path"],
-            "metrics": pass_at_k,
+            "metrics": json.dumps(pass_at_k, ensure_ascii=False) if pass_at_k else "",
         }))
     return state
 
@@ -605,8 +614,5 @@ def run_judger_pipeline(
         _save_task_progress(state, thread_id)
 
         logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} done")
-        writer(StreamEvent(
-            current=state["current"], progress=1.0,
-            message=f"步骤完成: {step_name}"))
 
     return state

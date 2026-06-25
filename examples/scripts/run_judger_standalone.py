@@ -321,6 +321,7 @@ def main():
         metrics = judger.get("metrics") or {}
         if not metrics:
             metrics = (bench.get("meta") or {}).get("eval_result") or {}
+        metrics_str = json.dumps(metrics, ensure_ascii=False) if metrics else ""
 
         emit_success(
             data={
@@ -330,7 +331,7 @@ def main():
                 "output_problem_path": judger.get("output_problem_path"),
                 "output_pred_path": judger.get("output_pred_path"),
                 "bench": bench,
-                "metrics": metrics,
+                "metrics": metrics_str,
             },
             message="Judger pipeline completed.",
         )

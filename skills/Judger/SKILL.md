@@ -10,6 +10,26 @@ Judger Skill 用于在无 LangGraph（独立模式）下运行 LoopAI 评测流�
 
 评测结果写入文件系统，进度事件持久化到 pickle，state 通过 Configer 读写 TaskModel.state。
 
+## How to Invoke（强制）
+
+**Codex 必须通过以下两种方式之一调用 Judger，禁止使用其他路径：**
+
+| 方式 | 入口 | 适用场景 |
+|---|---|---|
+| **MCP tool（推荐）** | `mcp__loopai_mcp__judger_run` | Codex 编排，自动管理 lifecycle |
+| **CLI 子进程** | `python examples/scripts/run_judger_standalone.py` | 手动调试、脚本 |
+
+**禁止使用的路径：**
+- ❌ `loopai.agents.Judger.JudgerAgent` — 旧 LangGraph 实现，不会产生 `judger.pkl` 事件流，state 不写入 Configer，Codex 无法读取评测指标
+- ❌ 直接 `import loopai.agents.Judger` — 同上
+
+**正确调用后的产物（用于判断是否走了正确路径）：**
+- `outputs/<task_id>/judger.pkl` — 事件流（含 `metrics`）
+- `outputs/<task_id>/judger/` — 评测结果文件
+- Configer `state.judger` — 流水线进度和产出路径
+
+如果没有 `judger.pkl`，说明没有走正确路径。
+
 ## When to Use
 
 当 Codex 或用户要执行以下操作时使用本 skill：
