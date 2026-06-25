@@ -16,22 +16,17 @@ CODEX_HOME_DIR = os.path.join(PROJECT_ROOT, "codex_home")
 CODEX_HOME_EXAMPLE_DIR = os.path.join(PROJECT_ROOT, "examples", "codex_home_example")
 
 
-def reset_codex_home():
-    """Reset ./codex_home from examples/codex_home_example before API startup."""
+def ensure_codex_home():
+    """Ensure ./codex_home contains the example seed files without deleting runtime state."""
     if not os.path.isdir(CODEX_HOME_EXAMPLE_DIR):
         raise FileNotFoundError(f"codex_home example directory not found: {CODEX_HOME_EXAMPLE_DIR}")
 
     os.makedirs(CODEX_HOME_DIR, exist_ok=True)
-    for entry_name in os.listdir(CODEX_HOME_DIR):
-        entry_path = os.path.join(CODEX_HOME_DIR, entry_name)
-        if os.path.isdir(entry_path) and not os.path.islink(entry_path):
-            shutil.rmtree(entry_path)
-        else:
-            os.unlink(entry_path)
-
     for entry_name in os.listdir(CODEX_HOME_EXAMPLE_DIR):
         source_path = os.path.join(CODEX_HOME_EXAMPLE_DIR, entry_name)
         target_path = os.path.join(CODEX_HOME_DIR, entry_name)
+        if os.path.exists(target_path):
+            continue
         if os.path.isdir(source_path) and not os.path.islink(source_path):
             shutil.copytree(source_path, target_path)
         else:
@@ -91,10 +86,10 @@ def main():
     print(f"📂 LLaMA Factory directory: {llamafactory_dir}")
 
     try:
-        reset_codex_home()
-        print(f"✅ Reset codex_home from example: {CODEX_HOME_EXAMPLE_DIR}")
+        ensure_codex_home()
+        print(f"✅ Ensured codex_home seed files from example: {CODEX_HOME_EXAMPLE_DIR}")
     except Exception as e:
-        print(f"❌ Failed to reset codex_home: {e}")
+        print(f"❌ Failed to prepare codex_home: {e}")
         return 1
     
     # 启动服务
