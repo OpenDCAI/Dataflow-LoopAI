@@ -184,6 +184,28 @@ const defaultData = {
     groupBackground: 'rgba(246, 246, 246, 0.8)',
     enableDelete: false
 }
+
+const trainerDeprecatedStateKeys = new Set([
+    'train_config_output_path',
+    'data_check_passed',
+    'data_check_result',
+    'data_check_report_path',
+    'data_check_error',
+    'config_generation_success',
+    'config_explanation_path',
+    'config_generation_error',
+    'training_success',
+    'training_execution_time',
+    'training_task_id',
+    'training_final_status',
+    'training_log_path',
+    'training_report_path',
+    'training_error',
+    'current_training_status',
+    'update_model_path',
+    'swanlab_url'
+])
+
 const thisData = computed(() => {
     return {
         ...defaultData,
@@ -201,6 +223,7 @@ const loopAIStateFiltered = computed(() => {
     if (!state) return filter_list
     if (!state[thisData.value.stateKey]) return filter_list
     for (let key in state[thisData.value.stateKey]) {
+        if (thisData.value.stateKey === 'trainer' && trainerDeprecatedStateKeys.has(key)) continue
         let val = state[thisData.value.stateKey][key]
         if (val === null) val = null
         if (val === undefined) val = null

@@ -40,6 +40,8 @@ def format_value(item: dict[str, Any]) -> dict[str, Any]:
     item["value"] = value
     if type_name == "bool":
         item["value"] = bool(item["value"])
+    elif type_name in {"dict", "list", "json", "object", "array"}:
+        return item
     else:
         if type(item["value"]) in {int, float}:
             return item
