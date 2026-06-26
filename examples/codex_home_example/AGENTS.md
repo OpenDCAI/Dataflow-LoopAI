@@ -79,11 +79,11 @@
 
 如果运行时已经加载了 `loopai_mcp` MCP server，也优先用下面这些 MCP tools 做实际读写，因为这样 Codex 的 `PreToolUse` hooks 可以在写配置前拦截：
 
-- `mcp__loopai_mcp__config_get_schema`
-- `mcp__loopai_mcp__config_get`
-- `mcp__loopai_mcp__config_get_task`
-- `mcp__loopai_mcp__config_update`
-- `mcp__loopai_mcp__config_update_task`
+- `mcp__loopai_mcp__configer_get_schema`
+- `mcp__loopai_mcp__configer_get`
+- `mcp__loopai_mcp__configer_get_task`
+- `mcp__loopai_mcp__configer_update`
+- `mcp__loopai_mcp__configer_update_task`
 
 注意：
 
@@ -148,7 +148,7 @@ LoopAI 子任务、worker、工具函数统一遵循以下返回结构。
 - 只要 `ok` 为 `false`，就视为执行失败
 - `message` 用于面向用户说明
 - `error.detail` 用于展示具体错误
-- `error.code` 用于判断错误类型，例如 `CONFIG_ERROR`、`NOT_FOUND`、`INVALID_INPUT`
+- `error.code` 用于判断错误类型，例如 `CONFIGer_ERROR`、`NOT_FOUND`、`INVALID_INPUT`
 - `recoverable=true` 表示可以继续引导用户修复后重试
 
 ---
