@@ -4,6 +4,7 @@
         :class="[{ 'text-shimmer': loading }]"
         :title="thisValue.title + ' ' + thisValue.content"
     >
+        <i v-if="thisValue.icon" class="ms-Icon" :class="[`ms-Icon--${thisValue.icon}`]"></i>
         <p class="title">{{ thisValue.title }}</p>
         <p class="content" @click="copyTextContent(thisValue.content)">{{ thisValue.content }}</p>
     </span>
@@ -55,22 +56,27 @@ export default {
     border-radius: 6px;
     opacity: 0.7;
     transition: opacity 0.3s ease-in-out;
-    text-shadow: 1px 0px 3px rgba(0, 0, 0, 0.1);
+    text-shadow: 1px 0px 2px rgba(0, 0, 0, 0.1);
 
     &:hover {
         opacity: 1;
     }
 
-    .title {
+    .ms-Icon {
         font-size: 12px;
+    }
+
+    .title {
+        font-size: 10px;
         font-weight: 500;
         line-height: 1.5;
+        cursor: default;
     }
 
     .content {
         @include nowrap;
 
-        font-size: 12px;
+        font-size: 10px;
         font-weight: 400;
         line-height: 1.5;
     }
