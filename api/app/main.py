@@ -10,7 +10,6 @@ from .controllers.config import router as config_router
 from .controllers.response_proxy import router as response_proxy_router
 from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
-from .controllers.train import router as train_router
 from .controllers.resource import router as resource_router
 from .controllers.obtainer import router as obtainer_router
 
@@ -60,7 +59,6 @@ app.include_router(config_router, prefix="/config", tags=["config"])
 app.include_router(response_proxy_router, prefix="/responseProxy", tags=["responseProxy"])
 app.include_router(starter_router, prefix="/starter", tags=["starter"])
 app.include_router(task_router, prefix="/task", tags=["task"])
-app.include_router(train_router, prefix="/train", tags=["train"])
 app.include_router(resource_router, prefix="/resource", tags=["resource"])
 app.include_router(obtainer_router, prefix="/obtainer", tags=["obtainer"])
 
@@ -78,12 +76,9 @@ async def root():
         "message": "LLaMA Factory Remote Training Service",
         "version": "1.0.0",
         "endpoints": {
-            "train": "POST /train - 启动训练任务",
-            "status": "GET /train/status/{task_id} - 查询任务状态",
-            "logs": "GET /train/logs/{task_id} - 获取任务日志",
-            "tasks": "GET /train/tasks - 获取所有任务列表",
-            "swanlab-logs-task": "GET /train/swanlab-logs/{task_id} - 获取指定任务的SwanLab日志文件夹路径",
-            "swanlab-logs-all": "GET /train/swanlab-logs - 获取所有SwanLab日志文件夹"
+            "task-train-status": "GET /task/train_status - 获取 Trainer 指标文件",
+            "codex-submit": "POST /starter/codex/stream - 提交 Codex SDK 任务",
+            "codex-session": "GET /starter/codex/session/{session_id} - 获取 Codex 会话状态"
         }
     }
 

@@ -21,6 +21,15 @@ router = APIRouter(tags=["task"])
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(os.path.dirname(CURRENT_DIR))
+LoopAI_DIR = os.path.dirname(BASE_DIR)
+
+
+def _resolve_output_dir(output_dir: str) -> str:
+    output_dir = (output_dir or "outputs").strip() or "outputs"
+    output_dir = os.path.expanduser(output_dir)
+    if os.path.isabs(output_dir):
+        return output_dir
+    return os.path.abspath(os.path.join(LoopAI_DIR, output_dir))
 
 @router.post("/task", operation_id='createTask', summary='创建任务项')
 async def create_task(taskItem: TaskItem):
@@ -153,6 +162,7 @@ async def get_latest_runtimes(task_id: str):
 @router.get("/train_status", operation_id='getTrainStatus', summary='获取训练状态')
 async def get_train_status(output_dir: str, task_id: str, train_task_id: str):
     """获取训练状态"""
+    output_dir = _resolve_output_dir(output_dir)
     watch_path = os.path.join(output_dir, task_id, 'trainer', train_task_id)
     final_path = os.path.join(watch_path, 'metrics', 'metrics.json')
     if os.path.exists(final_path):
