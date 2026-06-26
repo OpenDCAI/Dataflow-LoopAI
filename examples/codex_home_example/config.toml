@@ -13,7 +13,7 @@ trust_level = "trusted"
 [mcp_servers.loopai_mcp]
 command = "python3"
 args = ["-m", "loopai.mcp.server"]
-cwd = ".."
+cwd = "."
 startup_timeout_sec = 20
 tool_timeout_sec = 60
 enabled = true

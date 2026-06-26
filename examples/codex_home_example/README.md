@@ -31,7 +31,7 @@
 - [loopai/mcp/tools/configer.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/tools/configer.py)
   将 `loopai.skills.Configer` 包装成 MCP tools
 - [codex_home/hooks/check_config_write.py](/home/lpc/repos/Dataflow-LoopAI/codex_home/hooks/check_config_write.py)
-  一个 `PreToolUse` 示例，在 `config_update*` 前做写入拦截
+  一个 `PreToolUse` 示例，在 `configer_update*` 前做写入拦截
 
 如果你直接在当前仓库里试用，建议同时确保：
 
@@ -43,4 +43,4 @@
 当前示例已经在 [config.toml](/home/lpc/repos/Dataflow-LoopAI/examples/codex_home_example/config.toml) 里添加：
 
 - `loopai_mcp` stdio MCP server
-- `mcp__loopai_mcp__config_update(_task)` 的 `PreToolUse` hook 示例
+- `mcp__loopai_mcp__configer_update(_task)` 的 `PreToolUse` hook 示例

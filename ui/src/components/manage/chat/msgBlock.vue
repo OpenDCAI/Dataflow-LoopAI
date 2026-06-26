@@ -629,20 +629,18 @@ export default {
         .tool-msg-info {
             @include Vcenter;
 
-            width: 1px;
+            width: 100%;
             max-width: 100%;
-            padding-left: 15px;
             gap: 5px;
-            flex: 1;
             flex-wrap: wrap;
             user-select: none;
             cursor: default;
+            overflow: hidden;
 
             .tool-msg-item {
                 @include HbetweenVcenter;
 
-                width: auto;
-                max-width: 100%;
+                width: 100%;
                 height: auto;
                 gap: 5px;
                 padding: 5px;
@@ -659,6 +657,7 @@ export default {
                     overflow-x: overlay;
 
                     .tool-msg-value {
+                        width: 100%;
                         border-radius: 8px;
                     }
                 }
@@ -666,7 +665,9 @@ export default {
                 .tool-msg-key {
                     @include Vcenter;
 
+                    width: auto;
                     height: 100%;
+                    flex-shrink: 0;
                 }
 
                 .tool-msg-value {
