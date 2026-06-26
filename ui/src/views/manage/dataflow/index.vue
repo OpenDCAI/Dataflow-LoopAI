@@ -63,6 +63,7 @@
                                 border-radius="50"
                                 font-size="12"
                                 style="width: 25px; height: 25px"
+                                @click="handleRefreshClick"
                             >
                                 <i class="ms-Icon ms-Icon--Refresh"></i>
                             </fv-button>
@@ -427,7 +428,12 @@ export default {
         this.getStateSchema()
     },
     methods: {
-        ...mapActions(useLoopAI, ['getStatus', 'getStateSchema', 'setCurrentTask']),
+        ...mapActions(useLoopAI, [
+            'getStatus',
+            'getStateSchema',
+            'setCurrentTask',
+            'resetStarterCodexSession'
+        ]),
         setViewport() {
             const flow = useVueFlow(this.flowId)
             flow.setViewport({
@@ -475,6 +481,35 @@ export default {
             } catch (e) {}
         },
         handleSaveClick() {},
+        handleRefreshClick() {
+            if (!this.currentTask?.task_id) {
+                this.$barWarning(this.local('No active task to reset.'), {
+                    status: 'warning'
+                })
+                return
+            }
+            this.$infoBox(this.local('Are you sure to reset this conversation?'), {
+                status: 'warning',
+                confirm: async () => {
+                    try {
+                        const res = await this.resetStarterCodexSession()
+                        if (res?.code === 200) {
+                            this.$barWarning(this.local('Conversation reset successfully.'), {
+                                status: 'correct'
+                            })
+                            return
+                        }
+                        this.$barWarning(res?.message || this.local('Failed to reset conversation.'), {
+                            status: 'warning'
+                        })
+                    } catch (error) {
+                        this.$barWarning(this.local('Failed to reset conversation.'), {
+                            status: 'error'
+                        })
+                    }
+                }
+            })
+        },
         stop() {
             this.$api.starter.stopAgent().then((res) => {
                 if (res.code === 200) {
