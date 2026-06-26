@@ -17,7 +17,7 @@ CODEX_HOME_EXAMPLE_DIR = os.path.join(PROJECT_ROOT, "examples", "codex_home_exam
 
 
 def ensure_codex_home():
-    """Ensure ./codex_home contains the example seed files without deleting runtime state."""
+    """Ensure ./codex_home contains example seed files without deleting runtime state."""
     if not os.path.isdir(CODEX_HOME_EXAMPLE_DIR):
         raise FileNotFoundError(f"codex_home example directory not found: {CODEX_HOME_EXAMPLE_DIR}")
 
@@ -25,9 +25,10 @@ def ensure_codex_home():
     for entry_name in os.listdir(CODEX_HOME_EXAMPLE_DIR):
         source_path = os.path.join(CODEX_HOME_EXAMPLE_DIR, entry_name)
         target_path = os.path.join(CODEX_HOME_DIR, entry_name)
-        if os.path.exists(target_path):
-            continue
+
         if os.path.isdir(source_path) and not os.path.islink(source_path):
+            if os.path.exists(target_path):
+                continue
             shutil.copytree(source_path, target_path)
         else:
             shutil.copy2(source_path, target_path)
