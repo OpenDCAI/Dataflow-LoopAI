@@ -25,7 +25,7 @@
                 {{ local('Task ID') }}: {{ modelValue.task_id }}
             </p>
         </div>
-        <div v-if="modelValue.task_id && isRunning" class="row-item">
+        <div v-if="modelValue.task_id && runningLLM" class="row-item">
             <div class="board-item-block">
                 <div
                     v-if="usageInfo.gpu_usage && usageInfo.gpu_usage.length > 0"
@@ -115,7 +115,7 @@ export default {
         thisValue() {
             this.$emit('update:modelValue', this.thisValue)
         },
-        isRunning(val) {
+        runningLLM(val) {
             if (!val) return clearInterval(this.timer.state)
             else this.getStateInit()
         }
@@ -123,13 +123,13 @@ export default {
     computed: {
         ...mapState(useAppConfig, ['local']),
         ...mapState(useTheme, ['theme', 'color']),
-        ...mapState(useLoopAI, ['taskStatus']),
-        isRunning() {
-            return this.taskStatus.running
+        ...mapState(useLoopAI, ['msgStreamModel']),
+        runningLLM() {
+            return this.msgStreamModel.loading
         }
     },
     mounted() {
-        if (this.isRunning) this.getStateInit()
+        if (this.runningLLM) this.getStateInit()
     },
     methods: {
         getStateInit() {

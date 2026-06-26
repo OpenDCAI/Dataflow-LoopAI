@@ -11,7 +11,7 @@
                     :model-value="msgMapper(msg)"
                     :loading="index >= currentMsg.length - 1"
                 />
-                <p v-if="false">{{ msg }}</p>
+                <p v-if="false" style="font-size: 8px">{{ msg }}</p>
             </div>
         </div>
     </transition>
@@ -73,7 +73,8 @@ export default {
             if (msg.type === 'event') {
                 const event = msg?.event || {}
                 if (['item.completed', 'item.started'].includes(msg?.event?.type)) {
-                    if (event.item?.type === 'agent_message') return msgBlock
+                    if (['agent_message', 'mcp_tool_call', 'todo_list'].includes(event.item?.type))
+                        return msgBlock
                     if (['command_execution', 'file_change'].includes(event.item?.type))
                         return simpleText
                 }
@@ -119,22 +120,55 @@ export default {
                                 content: event.item?.text
                             }
                         }
+                    if (event.item?.type === 'mcp_tool_call')
+                        return {
+                            type: 'tool',
+                            data: {
+                                content: JSON.stringify({
+                                    Server: event.item?.server,
+                                    Tool: event.item?.tool,
+                                    Args: event.item?.arguments
+                                })
+                            }
+                        }
+                    if (event.item?.type === 'todo_list') {
+                        const items = event.item?.items || []
+                        let contents = items
+                            .map((item) => `[${item?.completed ? 'x' : ''}] ${item?.text}`)
+                            .join('\n')
+                        return {
+                            type: 'assistant',
+                            data: {
+                                content: contents.join('\n')
+                            }
+                        }
+                    }
                     if (event.item?.type === 'command_execution')
                         return {
+                            icon: 'CommandPrompt',
                             title: this.local('Command Execution'),
                             content: event.item?.command
                         }
                     if (event.item?.type === 'file_change')
                         return {
+                            icon: 'RepeatAll',
                             title: this.local('File Change'),
                             content: event.item?.changes?.[0]?.path
                         }
                 }
                 if (['error'].includes(event.type))
                     return {
+                        icon: 'Error',
                         title: '',
                         content: event?.message
                     }
+            }
+            if (['finishing'].includes(msg.type)) {
+                return {
+                    icon: 'SpecialEffectSize',
+                    title: this.local('Finishing'),
+                    content: msg.message
+                }
             }
             if (['completed'].includes(msg.type)) {
                 return {

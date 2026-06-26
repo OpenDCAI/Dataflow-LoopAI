@@ -146,6 +146,28 @@ export const useLoopAI = defineStore('useLoopAI', () => {
             })
     }
 
+    const resetStarterCodexSession = async () => {
+        if (!currentTask.value?.task_id) return null
+        closeMsgStream()
+        const resp = await proxy.$api.starter
+            .starterCodexSessionReset(currentTask.value.task_id)
+            .then(async (res) => {
+                if (res.code === 200) {
+                    taskMessages.value = []
+                    msgStreamModel.value.status = 'stale'
+                    msgStreamModel.value.loading = false
+                    msgStreamModel.value.msgs = []
+                    await getMessages()
+                }
+                return res
+            })
+            .catch((error) => {
+                msgStreamModel.value.loading = false
+                throw error
+            })
+        return resp
+    }
+
     const closeMsgStream = ({ keepMessage = false } = {}) => {
         if (msgEventSource.value) {
             msgEventSource.value.close()
@@ -216,6 +238,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         msgStreamModel,
         currentMsg,
         getMessages,
+        resetStarterCodexSession,
         getMsgStream,
         stateSchema,
         getStateSchema
