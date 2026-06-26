@@ -57,6 +57,15 @@
                     </template>
                     <template v-slot:right-space>
                         <div class="command-bar-right-space">
+                            <fv-button
+                                theme="dark"
+                                :background="gradient"
+                                border-radius="50"
+                                font-size="12"
+                                style="width: 25px; height: 25px"
+                            >
+                                <i class="ms-Icon ms-Icon--Refresh"></i>
+                            </fv-button>
                             <i
                                 class="ms-Icon ms-Icon--FullCircleMask status-coin"
                                 :class="[
