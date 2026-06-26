@@ -657,6 +657,7 @@ export default {
                     overflow-x: overlay;
 
                     .tool-msg-value {
+                        width: 100%;
                         border-radius: 8px;
                     }
                 }
