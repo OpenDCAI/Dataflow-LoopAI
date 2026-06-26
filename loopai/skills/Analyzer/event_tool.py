@@ -68,13 +68,11 @@ def get_analyzer_event_writer(
     log_file_path: str = "./outputs",
     stdout: bool = False,
     state: Optional[dict[str, Any]] = None,
-    run_id: Optional[str] = None,
 ) -> Callable[[StreamEvent | dict[str, Any] | Any], StreamEvent]:
     base_writer = get_event_writer(
         name="analyzer",
         context_id=context_id,
         log_file_path=log_file_path,
-        run_id=run_id,
     )
 
     def write(payload: StreamEvent | dict[str, Any] | Any) -> StreamEvent:

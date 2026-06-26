@@ -54,6 +54,17 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _try_call_stream_writer_status(stream_writer: Any, method_name: str) -> None:
+    if stream_writer is None:
+        return
+    try:
+        method = getattr(stream_writer, method_name, None)
+        if callable(method):
+            method()
+    except Exception:
+        pass
+
+
 def build_success_payload(data: Any = None, message: str = "Sub-agent completed.") -> dict[str, Any]:
     return {
         "ok": True,
@@ -91,7 +102,12 @@ def build_error_payload(
     }
 
 
-def emit_success(data: Any = None, message: str = "Sub-agent completed.") -> None:
+def emit_success(
+    data: Any = None,
+    message: str = "Sub-agent completed.",
+    stream_writer: Any = None,
+) -> None:
+    _try_call_stream_writer_status(stream_writer, "set_completed")
     print(json.dumps(build_success_payload(data=data, message=message), ensure_ascii=False))
     sys.exit(0)
 
@@ -101,7 +117,9 @@ def emit_error(
     code: str | ErrorCode = ErrorCode.UNHANDLED_EXCEPTION,
     recoverable: bool = True,
     message: str | None = None,
+    stream_writer: Any = None,
 ) -> None:
+    _try_call_stream_writer_status(stream_writer, "set_failed")
     print(
         json.dumps(
             build_error_payload(

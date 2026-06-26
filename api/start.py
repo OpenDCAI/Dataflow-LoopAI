@@ -5,7 +5,6 @@
 
 import os
 import sys
-import json
 import shutil
 import subprocess
 from omegaconf import OmegaConf
@@ -17,23 +16,19 @@ CODEX_HOME_DIR = os.path.join(PROJECT_ROOT, "codex_home")
 CODEX_HOME_EXAMPLE_DIR = os.path.join(PROJECT_ROOT, "examples", "codex_home_example")
 
 
-def reset_codex_home():
-    """Reset ./codex_home from examples/codex_home_example before API startup."""
+def ensure_codex_home():
+    """Ensure ./codex_home contains example seed files without deleting runtime state."""
     if not os.path.isdir(CODEX_HOME_EXAMPLE_DIR):
         raise FileNotFoundError(f"codex_home example directory not found: {CODEX_HOME_EXAMPLE_DIR}")
 
     os.makedirs(CODEX_HOME_DIR, exist_ok=True)
-    for entry_name in os.listdir(CODEX_HOME_DIR):
-        entry_path = os.path.join(CODEX_HOME_DIR, entry_name)
-        if os.path.isdir(entry_path) and not os.path.islink(entry_path):
-            shutil.rmtree(entry_path)
-        else:
-            os.unlink(entry_path)
-
     for entry_name in os.listdir(CODEX_HOME_EXAMPLE_DIR):
         source_path = os.path.join(CODEX_HOME_EXAMPLE_DIR, entry_name)
         target_path = os.path.join(CODEX_HOME_DIR, entry_name)
+
         if os.path.isdir(source_path) and not os.path.islink(source_path):
+            if os.path.exists(target_path):
+                continue
             shutil.copytree(source_path, target_path)
         else:
             shutil.copy2(source_path, target_path)
@@ -89,30 +84,21 @@ def main():
     # 保存当前工作目录
     current_dir = os.getcwd()
     print(f"📂 Current directory: {current_dir}")
-    print(f"📂 Switching to LLaMA Factory directory: {llamafactory_dir}")
+    print(f"📂 LLaMA Factory directory: {llamafactory_dir}")
 
     try:
-        reset_codex_home()
-        print(f"✅ Reset codex_home from example: {CODEX_HOME_EXAMPLE_DIR}")
+        ensure_codex_home()
+        print(f"✅ Ensured codex_home seed files from example: {CODEX_HOME_EXAMPLE_DIR}")
     except Exception as e:
-        print(f"❌ Failed to reset codex_home: {e}")
+        print(f"❌ Failed to prepare codex_home: {e}")
         return 1
     
     # 启动服务
-    print("🚀 Starting LLaMA Factory Training Service...")
+    print("🚀 Starting LoopAI Service...")
     print(f"📖 API Documentation: http://localhost:{api_port}/docs")
     print(f"💡 Health Check: http://localhost:{api_port}/health")
     
     try:
-        # 切换到LLaMA Factory目录
-        os.chdir(llamafactory_dir)
-        print(f"✅ Changed working directory to: {os.getcwd()}")        # 启动uvicorn服务器
-        # cmd = [
-        #     "uvicorn", 
-        #     "app.main:app",
-        #     "--host", "0.0.0.0", 
-        #     "--port", "8000"
-        # ]
         cmd = [
             sys.executable,
             "-m", "uvicorn",
@@ -133,7 +119,7 @@ def main():
         # 使用subprocess启动服务
         process = subprocess.Popen(
             cmd, 
-            cwd=llamafactory_dir,  # 在LLaMA Factory目录中运行
+            cwd=current_dir,
             env=env
         )
         

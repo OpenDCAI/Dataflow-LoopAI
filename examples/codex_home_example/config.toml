@@ -7,5 +7,26 @@ env_key = "DASHSCOPE_API_KEY"
 wire_api = "responses"
 supports_websockets = false
 
-[projects."/home/lpc/repos/Dataflow-LoopAI"]
+[projects.".."]
 trust_level = "trusted"
+
+[mcp_servers.loopai_mcp]
+command = "python3"
+args = ["-m", "loopai.mcp.server"]
+cwd = "."
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+enabled = true
+required = false
+default_tools_approval_mode = "prompt"
+enabled_tools = [
+  "configer_get_schema",
+  "configer_get",
+  "configer_get_task",
+  "configer_update",
+  "configer_update_task",
+]
+
+[mcp_servers.loopai_mcp.env]
+PYTHONPATH = "./"
+DB_PATH = "./api/db/db.sqlite3"

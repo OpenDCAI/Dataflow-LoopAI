@@ -2,16 +2,24 @@ from __future__ import annotations
 
 import os
 import pickle
+import uuid
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+import logging
+
+from loopai.common.db_tool.runtime import sync_task_runtime_sync
+from loopai.common.db_tool.base import require_db_path
 
 
 try:
     import fcntl
 except ModuleNotFoundError:  # pragma: no cover
     fcntl = None
+
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now_iso() -> str:
@@ -64,7 +72,7 @@ class StreamEvent:
     message: Optional[str] = None
     data: Optional[Any] = None
     time: Optional[str] = None
-    run_id: Optional[str] = None
+    version_id: Optional[str] = None
     node: Optional[str] = None
     status: Optional[str] = None
     context_id: Optional[str] = None
@@ -79,7 +87,7 @@ class StreamEvent:
         message: Optional[str] = None,
         data: Optional[Any] = None,
         time: Optional[str] = None,
-        run_id: Optional[str] = None,
+        version_id: Optional[str] = None,
         node: Optional[str] = None,
         status: Optional[str] = None,
         context_id: Optional[str] = None,
@@ -92,7 +100,7 @@ class StreamEvent:
         self.message = message
         self.data = data
         self.time = time
-        self.run_id = run_id
+        self.version_id = version_id
         self.node = node
         self.status = status
         self.context_id = context_id
@@ -167,20 +175,53 @@ def _normalize_event_groups(payload: Any) -> dict[str, list[StreamEvent]]:
 
 
 class PickleEventWriter:
-    def __init__(self, name: str, context_id: str, event_path: Path, run_id: str | None = None):
+    def __init__(self, name: str, context_id: str, event_path: Path, version_id: str | None = None):
         self.name = name
         self.context_id = context_id
         self.event_path = event_path
-        self.run_id = run_id
+        self.version_id = version_id
 
     def __call__(self, payload: StreamEvent | dict[str, Any]) -> StreamEvent:
         event = _coerce_stream_event(payload)
-        if event.run_id is None:
-            event.run_id = self.run_id
+        event.node = self.name
         if event.context_id is None:
             event.context_id = self.context_id
+        if self.version_id is None:
+            self.version_id = event.version_id or str(uuid.uuid4())
+        event.version_id = self.version_id
+        event.status = "running"
+        self._sync_runtime(status=event.status)
         self._append_event(event)
+        self.set_running()
         return event
+
+    def set_running(self):
+        if self.version_id is None:
+            self.version_id = str(uuid.uuid4())
+        self._sync_runtime(status="running")
+    
+    def set_failed(self):
+        if self.version_id is None:
+            self.version_id = str(uuid.uuid4())
+        self._sync_runtime(status="failed")
+    
+    def set_completed(self):
+        if self.version_id is None:
+            self.version_id = str(uuid.uuid4())
+        self._sync_runtime(status="completed")
+
+    def _sync_runtime(self, *, status: str) -> None:
+        try:
+            db_path = require_db_path()
+            sync_task_runtime_sync(
+                db_path=db_path,
+                task_id=self.context_id,
+                node_name=self.name,
+                version=self.version_id,
+                status=status,
+            )
+        except Exception as exc:  # pragma: no cover - runtime sync is best effort
+            logger.warning("Failed to sync task runtime for %s/%s: %s", self.context_id, self.name, exc)
 
     def _append_event(self, event: StreamEvent) -> None:
         self.event_path.parent.mkdir(parents=True, exist_ok=True)
@@ -212,7 +253,7 @@ def get_event_writer(
     context_id: str,
     log_file_path: str = "./outputs",
     *,
-    run_id: str | None = None,
+    version_id: str | None = None,
 ) -> PickleEventWriter:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
@@ -222,7 +263,7 @@ def get_event_writer(
         name=agent_name,
         context_id=context_value,
         event_path=event_path,
-        run_id=run_id,
+        version_id=version_id,
     )
 
 

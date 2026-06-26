@@ -77,11 +77,20 @@
 
 - `skills/configer/SKILL.md`
 
+如果运行时已经加载了 `loopai_mcp` MCP server，也优先用下面这些 MCP tools 做实际读写，因为这样 Codex 的 `PreToolUse` hooks 可以在写配置前拦截：
+
+- `mcp__loopai_mcp__configer_get_schema`
+- `mcp__loopai_mcp__configer_get`
+- `mcp__loopai_mcp__configer_get_task`
+- `mcp__loopai_mcp__configer_update`
+- `mcp__loopai_mcp__configer_update_task`
+
 注意：
 
 - 这个路径应优先理解为工作区中的 `skills/configer/SKILL.md`
 - 如果运行时存在独立 `CODEX_HOME`，其中同名 skill 只是同一份预设的镜像
 - 不要先通过全仓搜索 README 或源码来猜参数，优先读取该 skill 并调用其中提到的配置函数
+- 如果 MCP tools 可用，优先通过 MCP tools 读写；只有在 MCP 不可用时才回退到本地 Python skill 调用
 
 该 skill 负责：
 
@@ -139,7 +148,7 @@ LoopAI 子任务、worker、工具函数统一遵循以下返回结构。
 - 只要 `ok` 为 `false`，就视为执行失败
 - `message` 用于面向用户说明
 - `error.detail` 用于展示具体错误
-- `error.code` 用于判断错误类型，例如 `CONFIG_ERROR`、`NOT_FOUND`、`INVALID_INPUT`
+- `error.code` 用于判断错误类型，例如 `CONFIGer_ERROR`、`NOT_FOUND`、`INVALID_INPUT`
 - `recoverable=true` 表示可以继续引导用户修复后重试
 
 ---

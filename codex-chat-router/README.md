@@ -10,4 +10,4 @@ The conversion, streaming, and history modules under `src/ccswitch/` are vendore
 LOOPAI_CODEX_PROXY_UPSTREAM_API_KEY=... ./scripts/start_codex_deepseek_proxy.sh
 ```
 
-The local Responses base URL is `http://127.0.0.1:15721/v1` by default. Build artifacts are directed to `/data/xuebinrui/cargo-target/loopai-codex-chat-router` by the startup script.
+The local Responses base URL is `http://127.0.0.1:15721/v1` by default. Build artifacts and temporary files are directed to the project-local `.cache_codex/` directory by the startup script.

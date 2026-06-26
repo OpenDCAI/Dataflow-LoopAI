@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+import tomlkit
+
 from tortoise.expressions import Q
 
 from ...models.db_models import StarterConfig, TaskModel, ThreadHistory
@@ -21,11 +23,22 @@ API_DIR = APP_DIR.parent
 PROJECT_ROOT = API_DIR.parent
 CODEX_RUNNER_DIR = PROJECT_ROOT / "codex-runner"
 DEFAULT_CODEX_HOME = PROJECT_ROOT / "codex_home"
+EXAMPLE_CODEX_HOME = PROJECT_ROOT / "examples" / "codex_home_example"
 PROCESS_EXIT_GRACE_SECONDS = 3
 FALLBACK_CODEX_HOME = Path.home() / ".codex"
 DEFAULT_CODEX_SANDBOX_MODE = "danger-full-access"
 ALLOWED_CODEX_SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
 CODEX_RUNNER_STREAM_LIMIT = 1024 * 1024
+CODEX_CONFIG_ROOT_OVERRIDES = [
+    ("codex_model_provider", "model_provider"),
+]
+CODEX_PROVIDER_OVERRIDES = [
+    ("codex_base_url", "base_url"),
+    ("codex_api_key_env_key", "env_key"),
+    ("codex_provider_name", "name"),
+    ("codex_wire_api", "wire_api"),
+    ("codex_supports_websockets", "supports_websockets"),
+]
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -202,30 +215,85 @@ def _resolved_codex_home(system_config: dict[str, Any]) -> Path:
     return DEFAULT_CODEX_HOME
 
 
-def _sync_codex_home_config(system_config: dict[str, Any]) -> Path:
+def _apply_config_overrides(
+    source: dict[str, Any],
+    target: dict[str, Any],
+    override_keys: list[tuple[str, str]],
+) -> None:
+    for source_key, target_key in override_keys:
+        if source_key not in source:
+            continue
+        value = source.get(source_key)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                continue
+        if source_key == "codex_supports_websockets":
+            value = _to_bool(value)
+        target[target_key] = value
+
+
+def _sync_codex_home_config(
+    system_config: dict[str, Any],
+    env_overrides: dict[str, Any] | None = None,
+) -> Path:
     codex_home = _resolved_codex_home(system_config)
     codex_home.mkdir(parents=True, exist_ok=True)
 
     config_path = codex_home / "config.toml"
-    provider_name = "dashscope_http"
-    base_url = str(system_config.get("codex_base_url") or "").strip()
     workspace = str(system_config.get("codex_workspace") or PROJECT_ROOT).strip() or str(PROJECT_ROOT)
+    example_config_path = EXAMPLE_CODEX_HOME / "config.toml"
+    if example_config_path.exists():
+        parsed = tomlkit.parse(example_config_path.read_text(encoding="utf-8"))
+        template = parsed if isinstance(parsed, dict) else {}
+    else:
+        template = {}
+    _apply_config_overrides(system_config, template, CODEX_CONFIG_ROOT_OVERRIDES)
+    provider_name = str(template.get("model_provider") or "dashscope_http").strip()
+    template["model_provider"] = provider_name
 
-    config_lines = [
-        f'model_provider = "{provider_name}"',
-        "",
-        f"[model_providers.{provider_name}]",
-        'name = "DashScope HTTP"',
-        f'base_url = "{base_url}"',
-        'env_key = "DASHSCOPE_API_KEY"',
-        'wire_api = "responses"',
-        "supports_websockets = false",
-        "",
-        f'[projects."{workspace}"]',
-        'trust_level = "trusted"',
-        "",
-    ]
-    config_path.write_text("\n".join(config_lines), encoding="utf-8")
+    model_providers = template.setdefault("model_providers", {})
+    provider_config = model_providers.setdefault(provider_name, {})
+    if not isinstance(provider_config, dict):
+        provider_config = {}
+        model_providers[provider_name] = provider_config
+
+    _apply_config_overrides(system_config, provider_config, CODEX_PROVIDER_OVERRIDES)
+    if system_config.get("codex_api_key") and not provider_config.get("env_key"):
+        provider_config["env_key"] = "CODEX_API_KEY"
+
+    projects = template.get("projects")
+    project_config: dict[str, Any] | None = None
+    if isinstance(projects, dict):
+        current_project = projects.get(workspace)
+        if isinstance(current_project, dict):
+            project_config = dict(current_project)
+        else:
+            for value in projects.values():
+                if isinstance(value, dict):
+                    project_config = dict(value)
+                    break
+    if project_config is None:
+        project_config = {"trust_level": "trusted"}
+    project_config.setdefault("trust_level", "trusted")
+    template["projects"] = {workspace: project_config}
+
+    mcp_servers = template.setdefault("mcp_servers", {})
+    if isinstance(mcp_servers, dict):
+        loopai_mcp = mcp_servers.get("loopai_mcp")
+        if isinstance(loopai_mcp, dict):
+            mcp_env = loopai_mcp.setdefault("env", {})
+            if isinstance(mcp_env, dict):
+                for key, value in (env_overrides or {}).items():
+                    key = str(key)
+                    if value is None:
+                        mcp_env.pop(key, None)
+                    else:
+                        mcp_env[key] = str(value)
+
+    config_path.write_text(tomlkit.dumps(template), encoding="utf-8")
     return codex_home
 
 
@@ -369,7 +437,13 @@ class CodexSessionStore:
                 return message
         return None
 
-    def add_assistant_message(self, session_id: str, content: str, result: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    def add_assistant_message(
+        self,
+        session_id: str,
+        content: str,
+        result: dict[str, Any] | None = None,
+        after_message_id: str | None = None,
+    ) -> dict[str, Any] | None:
         session = self.get(session_id)
         if session is None:
             return None
@@ -381,7 +455,16 @@ class CodexSessionStore:
             "created_at": _utc_now(),
             "result": result,
         }
-        session.setdefault("conversation", []).append(message)
+        conversation = session.setdefault("conversation", [])
+        inserted = False
+        if after_message_id:
+            for index, item in enumerate(conversation):
+                if item.get("id") == after_message_id:
+                    conversation.insert(index + 1, message)
+                    inserted = True
+                    break
+        if not inserted:
+            conversation.append(message)
         session["updated_at"] = _utc_now()
         return message
 
@@ -399,6 +482,40 @@ class CodexSessionStore:
         session["pending_request"] = queued_item
         session["updated_at"] = _utc_now()
         return queued_item
+
+    def take_next_pending_prompt(self, session_id: str) -> dict[str, Any] | None:
+        session = self.get(session_id)
+        if session is None:
+            return None
+        pending_prompts = session.setdefault("pending_prompts", [])
+        if not pending_prompts:
+            session["pending_request"] = None
+            session["updated_at"] = _utc_now()
+            return None
+        queued_item = pending_prompts.pop(0)
+        session["pending_request"] = pending_prompts[0] if pending_prompts else None
+        session["updated_at"] = _utc_now()
+        return queued_item
+
+    def start_queued_prompt(self, session_id: str, queued_item: dict[str, Any]) -> dict[str, Any] | None:
+        session = self.get(session_id)
+        if session is None:
+            return None
+        message_id = str(queued_item.get("message_id") or "").strip()
+        if message_id:
+            message = self.set_message_state(session_id, message_id, "running")
+            if message is not None:
+                active_prompt = {
+                    "message_id": message_id,
+                    "prompt": message.get("content") or queued_item.get("prompt") or "",
+                    "created_at": message.get("created_at") or queued_item.get("created_at") or _utc_now(),
+                }
+                session["active_prompt"] = active_prompt
+                session["prompt"] = active_prompt["prompt"]
+                session["updated_at"] = _utc_now()
+                return active_prompt
+        prompt = str(queued_item.get("prompt") or "")
+        return self.start_prompt(session_id, prompt)
 
     def record_event(self, session_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         session = self.get(session_id)
@@ -642,6 +759,11 @@ class CodexStarterService:
             env[str(key)] = str(value)
 
         env["CODEX_WORKSPACE"] = resolved_workspace
+        existing_pythonpath = str(env.get("PYTHONPATH") or "").strip()
+        pythonpath_parts = [resolved_workspace]
+        if existing_pythonpath:
+            pythonpath_parts.append(existing_pythonpath)
+        env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
 
         model = system_config.get("codex_model")
         base_url = system_config.get("codex_base_url")
@@ -721,8 +843,69 @@ class CodexStarterService:
         if persisted_thread_id and not session.get("codex_thread_id"):
             self.session_store.update(session_id, codex_thread_id=persisted_thread_id)
             session = self.session_store.get(session_id) or session
+        queued_item: dict[str, Any] | None = None
+        current_prompt = prompt
 
-        active_prompt = self.session_store.start_prompt(session_id, prompt)
+        while True:
+            async for chunk, queued_item in self._stream_single_prompt(
+                prompt=current_prompt,
+                workspace=workspace,
+                session_id=session_id,
+                env_overrides=env_overrides,
+                queued_item=queued_item,
+            ):
+                yield chunk
+
+            if queued_item is None:
+                queued_item = self.session_store.take_next_pending_prompt(session_id)
+            if queued_item is None:
+                break
+
+            current_prompt = str(queued_item.get("prompt") or "").strip()
+            if not current_prompt:
+                queued_item = None
+                continue
+
+            self.session_store.update(
+                session_id,
+                status="submitted",
+                prompt=current_prompt,
+                final_result=None,
+                last_error=None,
+            )
+            queued_payload = {
+                "type": "queued.auto_resume",
+                "session_id": session_id,
+                "message": "Automatically starting next queued prompt",
+                "queued_item": queued_item,
+                "remaining_pending_prompts": (self.session_store.get(session_id) or {}).get("pending_prompts", []),
+            }
+            self.session_store.record_event(session_id, queued_payload)
+            await self.persist_session_snapshot(session_id)
+            yield _sse(queued_payload)
+
+    async def _stream_single_prompt(
+        self,
+        prompt: str,
+        workspace: str | None,
+        session_id: str,
+        env_overrides: dict[str, Any] | None,
+        queued_item: dict[str, Any] | None = None,
+    ) -> AsyncIterator[tuple[str, dict[str, Any] | None]]:
+        session = self.session_store.get(session_id)
+        if session is None:
+            yield _sse({
+                "type": "error",
+                "session_id": session_id,
+                "message": "Codex session not found",
+            }), None
+            return
+
+        active_prompt = (
+            self.session_store.start_queued_prompt(session_id, queued_item)
+            if queued_item is not None
+            else self.session_store.start_prompt(session_id, prompt)
+        )
         await self.persist_session_snapshot(session_id)
         merged_system_config = dict(self.system_config)
         merged_system_config.update(session.get("inputs", {}))
@@ -737,7 +920,7 @@ class CodexStarterService:
                 "type": "error",
                 "session_id": session_id,
                 "message": f"codex-runner not found: {CODEX_RUNNER_DIR}",
-            })
+            }), None
             return
 
         env = self._build_env(
@@ -749,7 +932,10 @@ class CodexStarterService:
         use_project_config = _to_bool(merged_system_config.get("codex_use_project_config"), False)
         merged_system_config = dict(merged_system_config)
         merged_system_config["codex_workspace"] = resolved_workspace
-        resolved_codex_home = _sync_codex_home_config(merged_system_config)
+        resolved_codex_home = _sync_codex_home_config(
+            merged_system_config,
+            env_overrides=merged_env_overrides,
+        )
         resumed_thread_id = str(session.get("codex_thread_id") or "").strip()
 
         self.session_store.update(
@@ -781,7 +967,7 @@ class CodexStarterService:
         }
         self.session_store.record_event(session_id, init_payload)
         await self.persist_session_snapshot(session_id)
-        yield _sse(init_payload)
+        yield _sse(init_payload), queued_item
 
         try:
             try:
@@ -807,7 +993,7 @@ class CodexStarterService:
                     self.session_store.set_message_state(session_id, active_prompt["message_id"], "failed")
                 self.session_store.record_event(session_id, error_payload)
                 await self.persist_session_snapshot(session_id)
-                yield _sse(error_payload)
+                yield _sse(error_payload), None
                 return
 
             assert proc.stdout is not None
@@ -853,10 +1039,7 @@ class CodexStarterService:
                         and payload["event"].get("type") == "thread.started"
                     ):
                         thread_id = payload["event"].get("thread_id")
-                        self.session_store.update(
-                            session_id,
-                            codex_thread_id=thread_id,
-                        )
+                        self.session_store.update(session_id, codex_thread_id=thread_id)
                         await self.sync_task_thread_id(session_id, thread_id)
 
                     payload["session_id"] = session_id
@@ -881,7 +1064,7 @@ class CodexStarterService:
                     payload = await event_queue.get()
                     if payload is None:
                         break
-                    yield _sse(payload)
+                    yield _sse(payload), queued_item
                     if payload.get("type") == "completed" and payload.get("_source") == "stdout":
                         completed_seen = True
                         break
@@ -900,7 +1083,7 @@ class CodexStarterService:
                     )
                     self.session_store.record_event(session_id, finishing_payload)
                     await self.persist_session_snapshot(session_id)
-                    yield _sse(finishing_payload)
+                    yield _sse(finishing_payload), queued_item
 
                     try:
                         returncode = await asyncio.wait_for(proc.wait(), timeout=PROCESS_EXIT_GRACE_SECONDS)
@@ -920,7 +1103,7 @@ class CodexStarterService:
                         }
                         self.session_store.record_event(session_id, cleanup_payload)
                         await self.persist_session_snapshot(session_id)
-                        yield _sse(cleanup_payload)
+                        yield _sse(cleanup_payload), queued_item
                 else:
                     await finalize_task
                     returncode = await proc.wait()
@@ -949,12 +1132,15 @@ class CodexStarterService:
                 }
                 self.session_store.record_event(session_id, final_error_payload)
                 await self.persist_session_snapshot(session_id)
-                yield _sse(final_error_payload)
+                yield _sse(final_error_payload), None
                 return
+
+            next_queued_item = self.session_store.take_next_pending_prompt(session_id)
+            has_pending = next_queued_item is not None
 
             self.session_store.update(
                 session_id,
-                status="completed",
+                status="submitted" if has_pending else "completed",
                 final_result=final_result,
                 active_prompt=None,
             )
@@ -964,18 +1150,26 @@ class CodexStarterService:
             if isinstance(final_result, dict):
                 final_response = str(final_result.get("finalResponse") or "")
             if final_response:
-                self.session_store.add_assistant_message(session_id, final_response, result=final_result)
+                self.session_store.add_assistant_message(
+                    session_id,
+                    final_response,
+                    result=final_result,
+                    after_message_id=active_prompt["message_id"] if active_prompt else None,
+                )
             done_payload = {
                 "type": "done",
                 "session_id": session_id,
                 "returncode": returncode,
                 "result": final_result,
+                "has_pending": has_pending,
             }
+            if next_queued_item is not None:
+                done_payload["next_queued_item"] = next_queued_item
             if cleanup_forced:
                 done_payload["cleanup_forced"] = True
             self.session_store.record_event(session_id, done_payload)
             await self.persist_session_snapshot(session_id)
-            yield _sse(done_payload)
+            yield _sse(done_payload), next_queued_item
         except Exception as exc:
             self.session_store.update(session_id, status="failed", last_error=str(exc), active_prompt=None)
             if active_prompt:
@@ -987,4 +1181,4 @@ class CodexStarterService:
             }
             self.session_store.record_event(session_id, error_payload)
             await self.persist_session_snapshot(session_id)
-            yield _sse(error_payload)
+            yield _sse(error_payload), None

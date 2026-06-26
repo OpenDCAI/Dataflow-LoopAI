@@ -12,6 +12,10 @@
 ## 主要能力
 
 - 手动初始化和关闭 Tortoise ORM
+- 按模块拆分数据库能力：
+  - `base.py`：数据库连接与 session
+  - `task.py`：`StarterConfig` / `TaskModel` 配置读写
+  - `runtime.py`：`TaskRuntime` 状态读写
 - 读取默认 `StarterConfig` 的 `system` / `states`
 - 读取指定 `task_id` 的 `system` / `states`
 - 读取指定 states 分组，如 `default` / `judger` / `analyzer`
@@ -20,6 +24,7 @@
   - 覆盖已存在字段
   - 保留未修改字段
   - 支持新增字段
+- 创建、更新、查询任务运行时状态 `TaskRuntime`
 
 ## 基本用法
 
@@ -32,6 +37,8 @@ from loopai.common.db_tool import (
     update_default_state_section_config,
     get_task_state_section_config,
     update_task_state_section_config,
+    upsert_task_runtime,
+    get_latest_task_runtime,
 )
 
 DB_PATH = "api/db/db.sqlite3"
@@ -63,6 +70,19 @@ async def main():
                 "eval_temperature": 0.2,
             },
         )
+
+        await upsert_task_runtime(
+            "your-task-id",
+            "judger",
+            "runtime-version-uuid",
+            "running",
+        )
+
+        latest_runtime = await get_latest_task_runtime(
+            "your-task-id",
+            "judger",
+        )
+        print(latest_runtime)
 
 
 if __name__ == "__main__":
@@ -163,6 +183,32 @@ if __name__ == "__main__":
 更新默认 `StarterConfig.default_states` 下某个分组。
 
 支持的 `updates` 格式与 `update_task_state_section_config(...)` 相同。
+
+## Runtime 状态管理
+
+### `create_task_runtime(task_id, node_name, status)`
+
+创建一条新的任务运行时状态记录，`version` 会在内部自动生成。
+
+### `update_task_runtime(task_id, node_name, version, status)`
+
+更新指定 `task_id + node_name + version` 对应的状态；不存在时返回 `None`。
+
+### `upsert_task_runtime(task_id, node_name, version, status)`
+
+如果指定运行记录已存在则更新，否则创建。
+
+### `get_latest_task_runtime(task_id, node_name)`
+
+查询某个节点的最新状态。
+
+### `list_task_runtime_history(task_id, node_name)`
+
+查询某个节点的全部历史状态，按最新更新时间倒序返回。
+
+### `list_latest_task_runtimes(task_id)`
+
+查询当前任务下所有节点各自的最新状态。
 
 ## 返回结构说明
 
