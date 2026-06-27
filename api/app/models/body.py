@@ -32,6 +32,13 @@ class ConfigModel(BaseModel):
     config: str
 
 
+class TaskStateConfigModel(BaseModel):
+    id: Optional[int] = None
+    task_id: Optional[str] = None
+    name: Optional[str] = None
+    states: Optional[dict] = None
+
+
 class TaskItem(BaseModel):
     id: Optional[int] = None
     task_id: Optional[str] = None

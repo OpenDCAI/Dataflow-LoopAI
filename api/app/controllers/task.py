@@ -1,17 +1,20 @@
 import os
+import json
 from fastapi import APIRouter
-from ..models.body import response_body, TaskItem
+from ..models.body import response_body, TaskItem, TaskStateConfigModel
 from ..services.task import (
     TaskServiceError,
     create_task as create_task_service,
     delete_task as delete_task_service,
     get_latest_task_runtime,
     get_task as get_task_service,
+    get_task_state_config as get_task_state_config_service,
     get_train_status as get_train_status_service,
     list_latest_task_runtimes,
     list_task_runtime_history,
     list_tasks as list_tasks_service,
     update_task as update_task_service,
+    update_task_state_config as update_task_state_config_service,
 )
 
 router = APIRouter(tags=["task"])
@@ -59,6 +62,24 @@ async def update_task(taskItem: TaskItem):
     if not task:
         return response_body(code=404, status='error', message='任务项不存在')()
     return response_body(data=task)()
+
+
+@router.get("/task/{task_id}/state_config", operation_id='getTaskStateConfig', summary='获取任务State配置')
+async def get_task_state_config(task_id: str):
+    """获取任务State配置"""
+    task_state_config = await get_task_state_config_service(task_id)
+    if not task_state_config:
+        return response_body(code=404, status='error', message='任务项不存在')()
+    return response_body(data=task_state_config)()
+
+
+@router.post("/task/{task_id}/state_config", operation_id='updateTaskStateConfig', summary='更新任务State配置')
+async def update_task_state_config(task_id: str, state_config: TaskStateConfigModel):
+    """更新任务State配置"""
+    try:
+        return response_body(data=await update_task_state_config_service(task_id, state_config.states or {}))()
+    except TaskServiceError as exc:
+        return response_body(code=exc.code, status='error', message=exc.message)()
 
 @router.delete("/task/{id}", operation_id='delTask', summary='删除任务项')
 async def del_task(id: str):
