@@ -39,9 +39,38 @@ class MetricsExtractor:
         self.accuracy_pattern = re.compile(rf'(?:accuracy|acc)[:\s=]+({number_pattern})', re.IGNORECASE)
         self.perplexity_pattern = re.compile(rf'(?:perplexity|ppl)[:\s=]+({number_pattern})', re.IGNORECASE)
 
+    def _to_number(self, value: Any) -> Optional[float]:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, str):
+            try:
+                return float(value.strip())
+            except (ValueError, OverflowError):
+                return None
+        return None
+
+    def _fill_step_from_epoch(self, metrics: Dict[str, Any]):
+        if 'epoch' not in metrics or 'step' in metrics:
+            return
+        if self.total_steps <= 0 or self.total_epochs <= 0:
+            return
+        try:
+            metrics['step'] = int(float(metrics['epoch']) * self.total_steps / self.total_epochs)
+        except (TypeError, ValueError, OverflowError, ZeroDivisionError):
+            return
+
     def extract_metrics(self, line: str) -> Dict[str, Any]:
         """从日志行中提取指标"""
         metrics = {}
+
+        if (
+            'Num update steps per epoch' in line
+            or 'Num Epochs' in line
+            or 'Total optimization steps' in line
+        ):
+            return metrics
 
         # 首先尝试提取JSON格式的指标
         json_matches = self.json_pattern.findall(line)
@@ -51,10 +80,10 @@ class MetricsExtractor:
                 parsed = json.loads(cleaned_json)
                 if isinstance(parsed, dict):
                     for key, value in parsed.items():
-                        if isinstance(value, (int, float)):
-                            metrics[key] = value
-                            if 'epoch' in metrics and 'step' not in metrics:
-                                metrics['step'] = int(metrics['epoch'] * self.total_steps / self.total_epochs) if self.total_epochs > 0 else None
+                        number = self._to_number(value)
+                        if number is not None:
+                            metrics[key] = int(number) if key == 'step' else number
+                    self._fill_step_from_epoch(metrics)
             except json.JSONDecodeError:
                 continue
 
@@ -85,6 +114,8 @@ class MetricsExtractor:
                         print(f"无法解析 {metric_name} 的值 '{value_str}': {e}")
                         continue
 
+            self._fill_step_from_epoch(metrics)
+
         return metrics
 
 
@@ -114,13 +145,13 @@ class RealTimeLogParser:
 
             with open(self.log_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
-                    step_match = re.search(r'Total optimization steps = (\d+)', line)
-                    epoch_match = re.search(r'Num Epochs = (\d+)', line)
+                    step_match = re.search(r'Total optimization steps = ([\d,]+)', line)
+                    epoch_match = re.search(r'Num Epochs = ([\d,]+)', line)
                     if step_match:
-                        self.total_steps = int(step_match.group(1))
+                        self.total_steps = int(step_match.group(1).replace(',', ''))
                         self.if_total_steps_recorded = True
                     if epoch_match:
-                        self.total_epochs = int(epoch_match.group(1))
+                        self.total_epochs = int(epoch_match.group(1).replace(',', ''))
                         self.if_total_epochs_recorded = True
         except Exception as e:
             print(f"读取日志文件以获取总步数时出错: {e}")

@@ -36,6 +36,34 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _unwrap_config_value(value: Any) -> Any:
+    if isinstance(value, dict) and "value" in value:
+        return _unwrap_config_value(value.get("value"))
+    if isinstance(value, dict):
+        return {key: _unwrap_config_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_unwrap_config_value(item) for item in value]
+    return value
+
+
+def _load_task_trainer_config(task_id: str, db_path: str | None) -> Dict[str, Any]:
+    if not task_id:
+        raise ValueError("task_id is required for task-scoped Trainer config")
+    if not db_path:
+        raise ValueError("DB_PATH is required when TASK_ID is provided")
+
+    from loopai.skills.Configer import get_configer_task_state_config
+
+    os.environ["DB_PATH"] = str(db_path)
+    result = get_configer_task_state_config(section_name="trainer", task_id=task_id)
+    if not result.get("ok"):
+        detail = (result.get("error") or {}).get("detail") or result.get("message")
+        raise RuntimeError(detail or "failed to load Trainer task state config")
+
+    raw_config = result.get("data", {}).get("config", {})
+    return _unwrap_config_value(raw_config) if isinstance(raw_config, dict) else {}
+
+
 def _load_config_state(config_path: str) -> Dict[str, Any]:
     path = Path(config_path)
     if not path.exists():
@@ -90,6 +118,29 @@ def resolve_trainer_runtime_config(
 
     trainer = _trainer(state)
     system = _system(state)
+
+    explicit_task_id = _first_non_empty(
+        thread_id,
+        kwargs.get("task_id"),
+        os.getenv("TASK_ID"),
+        state.get("task_id"),
+    )
+    db_path = _first_non_empty(
+        kwargs.get("db_path"),
+        os.getenv("DB_PATH"),
+        state.get("DB_PATH"),
+    )
+    task_state_loaded = False
+    if explicit_task_id and explicit_task_id != _DEFAULT_THREAD_ID and (os.getenv("TASK_ID") or db_path):
+        db_trainer_config = _load_task_trainer_config(str(explicit_task_id), str(db_path) if db_path else None)
+        trainer.update({
+            key: value
+            for key, value in db_trainer_config.items()
+            if value is not None and value != ""
+        })
+        if db_path:
+            state["DB_PATH"] = str(db_path)
+        task_state_loaded = True
 
     resolved_task_id = _first_non_empty(
         thread_id,
@@ -190,6 +241,8 @@ def resolve_trainer_runtime_config(
         "state": state,
         "thread_id": str(resolved_task_id),
         "missing_fields": get_missing_trainer_fields(state),
+        "db_path": str(db_path) if db_path else None,
+        "task_state_loaded": task_state_loaded,
     }
 
 

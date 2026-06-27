@@ -25,6 +25,8 @@ enabled_tools = [
   "configer_get_task",
   "configer_update",
   "configer_update_task",
+  "trainer_run",
+  "trainer_load_events",
 ]
 
 [mcp_servers.loopai_mcp.env]
