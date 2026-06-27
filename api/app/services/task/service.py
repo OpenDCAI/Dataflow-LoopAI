@@ -1,18 +1,31 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from ...models.db_models import TaskRuntime
+from tortoise.expressions import Q
+
+from ...models.body import TaskItem
+from ...models.db_models import TaskModel, TaskRuntime
 from ...utils.config.config import get_state_config
+from ...utils.task.task import config_format
 
 
 CURRENT_DIR = Path(__file__).resolve().parent
 APP_DIR = CURRENT_DIR.parent.parent
 API_DIR = APP_DIR.parent
 PROJECT_ROOT = API_DIR.parent
+
+
+class TaskServiceError(Exception):
+    def __init__(self, message: str, code: int = 400):
+        super().__init__(message)
+        self.message = message
+        self.code = code
 
 
 def _merge_state(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -59,6 +72,37 @@ def _serialize_task_runtime(runtime: TaskRuntime) -> dict[str, Any]:
     }
 
 
+def _serialize_task(task: TaskModel) -> dict[str, Any]:
+    return {
+        "id": task.id,
+        "task_id": task.task_id,
+        "name": task.name,
+        "config": task.config,
+        "state": task.state,
+        "ai_thread_id": task.ai_thread_id,
+        "createdAt": task.createdAt,
+        "updatedAt": task.updatedAt,
+    }
+
+
+def _serialize_task_summary(task: TaskModel) -> dict[str, Any]:
+    return {
+        "id": task.id,
+        "task_id": task.task_id,
+        "name": task.name,
+        "ai_thread_id": task.ai_thread_id,
+        "createdAt": task.createdAt,
+        "updatedAt": task.updatedAt,
+    }
+
+
+def _parse_task_config(raw_config: str | None) -> dict[str, Any]:
+    try:
+        return json.loads(raw_config)
+    except Exception as exc:
+        raise TaskServiceError("config格式错误") from exc
+
+
 async def build_initial_task_state(
     task_id: str,
     state_overrides: dict[str, Any] | None = None,
@@ -79,6 +123,80 @@ def parse_task_state_overrides(raw_state: str | None) -> dict[str, Any] | None:
     if not isinstance(parsed, dict):
         raise ValueError("state must be a JSON object")
     return parsed
+
+
+async def create_task(task_item: TaskItem) -> dict[str, Any]:
+    task_id = str(uuid.uuid4())
+    config = _parse_task_config(task_item.config)
+
+    try:
+        state_overrides = parse_task_state_overrides(task_item.state)
+        initial_state = await build_initial_task_state(task_id, state_overrides=state_overrides)
+    except Exception as exc:
+        raise TaskServiceError(f"state格式错误: {exc}") from exc
+
+    formatted_config = config_format(config, task_id)
+    task = TaskModel(
+        task_id=task_id,
+        name=task_item.name,
+        config=json.dumps(formatted_config),
+        state=json.dumps(initial_state, ensure_ascii=False),
+    )
+    await task.save()
+    return _serialize_task(task)
+
+
+async def get_task(task_id: str) -> dict[str, Any] | None:
+    task = await TaskModel.get_or_none(task_id=task_id)
+    if not task:
+        return None
+    return _serialize_task(task)
+
+
+async def list_tasks(
+    search: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    qs = TaskModel.all()
+    if search:
+        qs = qs.filter(Q(name__icontains=search) | Q(task_id__icontains=search))
+
+    tasks = await qs.offset(offset).limit(limit)
+    return [_serialize_task_summary(task) for task in tasks]
+
+
+async def update_task(task_item: TaskItem) -> dict[str, Any] | None:
+    task = await TaskModel.get_or_none(id=task_item.id)
+    if not task:
+        return None
+
+    task.name = task_item.name
+    if task_item.config:
+        config = _parse_task_config(task_item.config)
+        formatted_config = config_format(config, task.task_id)
+        task.config = json.dumps(formatted_config)
+
+    await task.save()
+    return _serialize_task(task)
+
+
+async def delete_task(task_id: str) -> bool:
+    task = await TaskModel.get_or_none(id=task_id)
+    if not task:
+        return False
+    await task.delete()
+    return True
+
+
+def get_train_status(output_dir: str, task_id: str, train_task_id: str) -> list[Any]:
+    watch_path = os.path.join(output_dir, task_id, "trainer", train_task_id)
+    final_path = os.path.join(watch_path, "metrics", "metrics.json")
+    if not os.path.exists(final_path):
+        raise TaskServiceError(f"训练状态文件不存在:{final_path}", code=404)
+
+    with open(final_path, "r") as file_obj:
+        return json.load(file_obj)
 
 
 async def create_task_runtime(
