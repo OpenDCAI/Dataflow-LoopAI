@@ -105,12 +105,11 @@ export class TaskStateConfigModel {
      *
 
      */ 
-    constructor(id = undefined,task_id = undefined,name = undefined,states = undefined,config = undefined){
+    constructor(id = undefined,task_id = undefined,name = undefined,states = undefined){
         this.id = id
         this.task_id = task_id
         this.name = name
         this.states = states
-        this.config = config
     }
     
     

@@ -87,6 +87,7 @@
         </div>
         <page-loading :model-value="!lock.loading" title="Loading..."></page-loading>
         <resourcePanel v-model="show.dataset" :title="local('Resources')"></resourcePanel>
+        <task-state-panel v-model="show.statePanel"></task-state-panel>
         <detail-node-panel
             v-if="detailNodeProps"
             v-model="show.detailNode"
@@ -110,6 +111,7 @@ import msgList from '@/components/manage/chat/msgList.vue'
 import resourcePanel from '@/components/manage/mainFlow/panels/resourcePanel/index.vue'
 import currentTaskBlock from '@/components/manage/mainFlow/tools/currentTaskBlock.vue'
 import detailNodePanel from '@/components/manage/mainFlow/panels/detailNodePanel.vue'
+import taskStatePanel from '@/components/manage/loopaiFlow/taskStatePanel.vue'
 
 import resourceIcon from '@/assets/flow/resources.svg'
 import pipelineIcon from '@/assets/flow/pipeline.svg'
@@ -124,7 +126,8 @@ export default {
         msgList,
         resourcePanel,
         currentTaskBlock,
-        detailNodePanel
+        detailNodePanel,
+        taskStatePanel
     },
     data() {
         return {
@@ -389,6 +392,7 @@ export default {
             show: {
                 taskNav: false,
                 dataset: false,
+                statePanel: false,
                 detailNode: true,
                 fullScreen: false
             },
@@ -480,7 +484,15 @@ export default {
                 }
             } catch (e) {}
         },
-        handleAdjustStatesClick() {},
+        handleAdjustStatesClick() {
+            if (!this.currentTask?.task_id) {
+                this.$barWarning(this.local('No active task to view states.'), {
+                    status: 'warning'
+                })
+                return
+            }
+            this.show.statePanel = true
+        },
         handleRefreshClick() {
             if (!this.currentTask?.task_id) {
                 this.$barWarning(this.local('No active task to reset.'), {
