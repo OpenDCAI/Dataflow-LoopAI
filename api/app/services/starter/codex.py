@@ -284,8 +284,10 @@ def _sync_codex_home_config(
     if isinstance(mcp_servers, dict):
         loopai_mcp = mcp_servers.get("loopai_mcp")
         if isinstance(loopai_mcp, dict):
+            loopai_mcp["cwd"] = str(PROJECT_ROOT)
             mcp_env = loopai_mcp.setdefault("env", {})
             if isinstance(mcp_env, dict):
+                mcp_env["PYTHONPATH"] = str(PROJECT_ROOT)
                 for key, value in (env_overrides or {}).items():
                     key = str(key)
                     if value is None:

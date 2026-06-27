@@ -17,6 +17,7 @@
 - 如何理解 `task_id` 上下文
 - 如何在配置类请求中调用工作区里的 `skills/configer/SKILL.md`
 - 如何把 Configer 暴露成可被 Codex hook 拦截的 MCP tools
+- 如何通过 MCP tools 调用 Judger / Trainer
 - 如何统一解析 LoopAI 的 success / error 返回
 
 ## 推荐用法
@@ -30,6 +31,10 @@
   LoopAI Configer 的 MCP server 入口
 - [loopai/mcp/tools/configer.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/tools/configer.py)
   将 `loopai.skills.Configer` 包装成 MCP tools
+- [loopai/mcp/tools/judger.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/tools/judger.py)
+  将 `loopai.skills.Judger` 包装成 MCP tools
+- [loopai/mcp/tools/trainer.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/tools/trainer.py)
+  将 Trainer 执行与事件读取包装成 MCP tools
 - [codex_home/hooks/check_config_write.py](/home/lpc/repos/Dataflow-LoopAI/codex_home/hooks/check_config_write.py)
   一个 `PreToolUse` 示例，在 `configer_update*` 前做写入拦截
 
@@ -43,4 +48,7 @@
 当前示例已经在 [config.toml](/home/lpc/repos/Dataflow-LoopAI/examples/codex_home_example/config.toml) 里添加：
 
 - `loopai_mcp` stdio MCP server
+- `configer_*` 配置读写 tools
+- `judger_run` / `judger_load_events`
+- `trainer_run` / `trainer_load_events`
 - `mcp__loopai_mcp__configer_update(_task)` 的 `PreToolUse` hook 示例

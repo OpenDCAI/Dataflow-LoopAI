@@ -25,6 +25,8 @@ enabled_tools = [
   "configer_get_task",
   "configer_update",
   "configer_update_task",
+  "judger_run",
+  "judger_load_events",
   "trainer_run",
   "trainer_load_events",
 ]
