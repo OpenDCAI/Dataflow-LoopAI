@@ -8,7 +8,7 @@ export default {
     children: [
         {
             path: '',
-            component: AsyncLoad(() => import("@/views/manage/dataflow/index.vue"))
+            component: AsyncLoad(() => import("@/views/manage/loopaiFlow/index.vue"))
         },
         {
             path: 'config',
