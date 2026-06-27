@@ -5,12 +5,12 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from ..models.db_models import TaskRuntime
-from ..utils.config.config import get_state_config
+from ...models.db_models import TaskRuntime
+from ...utils.config.config import get_state_config
 
 
 CURRENT_DIR = Path(__file__).resolve().parent
-APP_DIR = CURRENT_DIR.parent
+APP_DIR = CURRENT_DIR.parent.parent
 API_DIR = APP_DIR.parent
 PROJECT_ROOT = API_DIR.parent
 
