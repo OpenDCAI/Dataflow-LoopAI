@@ -1,8 +1,14 @@
-import os
 from fastapi import APIRouter
 from ..models.body import response_body, ResourceItem
-from ..models.db_models import ResourceModel
-from ..utils.resource.resource import format_db_item, preview_json, preview_csv, preview_text
+from ..services.resource import (
+    ResourceServiceError,
+    count_resources,
+    create_resource as create_resource_service,
+    delete_resource as delete_resource_service,
+    list_resources,
+    preview_resource as preview_resource_service,
+    update_resource as update_resource_service,
+)
 
 router = APIRouter(tags=["resource"])
 
@@ -10,88 +16,50 @@ router = APIRouter(tags=["resource"])
 @router.get("/resource", operation_id='getResource', summary="获取资源列表")
 async def get_resource(search: str = '', offset: int = 0, limit: int = 30):
     """获取资源列表"""
-    resources = await ResourceModel.filter(name__contains=search).offset(offset).limit(limit)
-    resources = [format_db_item(ds) for ds in resources]
-    return response_body(data=resources)()
+    return response_body(data=await list_resources(search, offset, limit))()
 
 @router.get("/resource/count", operation_id='getResourceCount', summary="获取资源总数")
 async def get_resource_count(search: str = ''):
     """获取资源总数"""
-    count = await ResourceModel.filter(name__contains=search).count()
-    return response_body(data={"count": count})()
+    return response_body(data=await count_resources(search))()
 
 
 @router.post("/resource", operation_id='createResource', summary="创建资源")
 async def create_resource(name: str, description: str = '', path: str = '', res_type: str = ''):
     """创建资源"""
-    resource = ResourceItem(
-        name=name,
-        description=description,
-        path=path,
-        res_type=res_type
-    )
-    resource = format_db_item(resource)
-    ds_model = ResourceModel(
-        name=resource.name,
-        description=resource.description,
-        path=resource.path,
-        status=resource.status,
-        file_type=resource.file_type,
-        res_type=resource.res_type
-    )
-    await ds_model.save()
-    return response_body(data=resource)()
+    return response_body(
+        data=await create_resource_service(
+            name=name,
+            description=description,
+            path=path,
+            res_type=res_type,
+        )
+    )()
 
 
 @router.put("/resource/{resource_id}", operation_id='updateResource', summary="更新资源")
 async def update_resource(resource_id: int, resource: ResourceItem):
     """更新资源"""
-    ds_model = await ResourceModel.get_or_none(id=resource_id)
-    if not ds_model:
-        return response_body(code=404, message="resource not found")()
-    resource = format_db_item(resource)
-    ds_model.name = resource.name
-    ds_model.path = resource.path
-    ds_model.status = resource.status
-    ds_model.file_type = resource.file_type
-    ds_model.res_type = resource.res_type
-    await ds_model.save()
-    return response_body(data=resource)()
+    try:
+        return response_body(data=await update_resource_service(resource_id, resource))()
+    except ResourceServiceError as exc:
+        return response_body(code=exc.code, message=exc.message)()
 
 @router.delete("/resource/{resource_id}", operation_id='deleteResource', summary="删除资源")
 async def delete_resource(resource_id: int):
     """删除资源"""
-    ds_model = await ResourceModel.get_or_none(id=resource_id)
-    if not ds_model:
-        return response_body(code=404, message="resource not found")()
-    await ds_model.delete()
-    return response_body()()
+    try:
+        await delete_resource_service(resource_id)
+        return response_body()()
+    except ResourceServiceError as exc:
+        return response_body(code=exc.code, message=exc.message)()
 
 @router.post("/resource/preview", operation_id='previewResource', summary="预览资源")
 async def preview_resource(resource_id: str, offset: int = 0, limit: int = 15):
     """预览资源
     :param resource_id: 资源ID, 可以是文件路径或数据库ID, 其中文件路径需要以`file:///`开头
     """
-    if resource_id.startswith('file:///'):
-        path = resource_id[len('file:///'):]
-    else:
-        ds_model = await ResourceModel.get_or_none(id=resource_id)
-        if not ds_model:
-            return response_body(code=404, message="resource not found")()
-        path = ds_model.path
-    ext = os.path.splitext(path)[1]
-    if not os.path.exists(path):
-        return response_body(code=404, message="file not found")()
-    if ext == '.jsonl' or ext == '.json':
-        samples, count = preview_json(path, offset, limit)
-    elif ext in ['.csv', '.tsv']:
-        samples, count = preview_csv(path, offset, limit)
-    elif ext in ['.txt', '.md', '.html', '.log', '.yaml', '.yml', '.ini', '.xml']:
-        samples, count = preview_text(path, offset, limit)
-    else:
-        return response_body(code=401, message="file type not supported")()
-    return response_body(data={
-        "samples": samples,
-        "count": count,
-        "ext": ext
-    })()
+    try:
+        return response_body(data=await preview_resource_service(resource_id, offset, limit))()
+    except ResourceServiceError as exc:
+        return response_body(code=exc.code, message=exc.message)()
