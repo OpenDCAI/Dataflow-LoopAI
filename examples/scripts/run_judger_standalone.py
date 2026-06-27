@@ -38,6 +38,11 @@ import json
 import os
 import sys
 from pathlib import Path
+
+# 确保项目根目录在 sys.path 中，无需 PYTHONPATH
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 from typing import Any, Dict, Optional
 
 
@@ -215,12 +220,6 @@ def main():
         help="Force start from a specific pipeline step",
     )
     parser.add_argument(
-        "--checkpoint-path",
-        type=str,
-        default=None,
-        help="SQLite checkpoint file path",
-    )
-    parser.add_argument(
         "--task-id",
         type=str,
         default=None,
@@ -285,7 +284,7 @@ def main():
                     state[key] = config[key]
         task_id_from_config = state.get("task_id")
 
-    thread_id = args.task_id or task_id_from_config or os.getenv("TASK_ID") or "judger-default"
+    thread_id = args.task_id or os.getenv("TASK_ID") or task_id_from_config
 
     try:
         result = run(
@@ -293,7 +292,6 @@ def main():
             thread_id=thread_id,
             resume=args.resume,
             from_step=args.from_step,
-            checkpoint_path=args.checkpoint_path,
             **kwargs,
         )
 
@@ -317,6 +315,14 @@ def main():
         from loopai.common.exception import emit_success
 
         judger = result.get("judger", {})
+        bench = judger.get("bench") or {}
+
+        # 统一指标：code/text2sql → pass_at_k，general_text → stats
+        metrics = judger.get("metrics") or {}
+        if not metrics:
+            metrics = (bench.get("meta") or {}).get("eval_result") or {}
+        metrics_str = json.dumps(metrics, ensure_ascii=False) if metrics else ""
+
         emit_success(
             data={
                 "task_type": judger.get("eval_task_type"),
@@ -324,7 +330,8 @@ def main():
                 "output_case_path": judger.get("output_case_path"),
                 "output_problem_path": judger.get("output_problem_path"),
                 "output_pred_path": judger.get("output_pred_path"),
-                "bench": judger.get("bench"),
+                "bench": bench,
+                "metrics": metrics_str,
             },
             message="Judger pipeline completed.",
         )

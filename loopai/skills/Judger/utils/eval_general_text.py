@@ -289,14 +289,14 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     bench_name = cfg.get("bench_name") or "general_text_eval"
 
     writer(StreamEvent(
-        current="judger", progress=0.0,
+        current=state.get("current", "judger"), progress=0.0,
         message="开始通用文本评测 (One-Eval)",
         data={"bench_name": bench_name, "eval_type": eval_type}))
 
     # 读取待评测样本
     rows = _read_jsonl(eval_result_path)
     writer(StreamEvent(
-        current="judger", progress=0.1, message="读取待评测样本完成",
+        current=state.get("current", "judger"), progress=0.1, message="读取待评测样本完成",
         data={"records": len(rows)}))
 
     # 生成 dataset_cache
@@ -305,7 +305,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     dataset_cache_path_s = str(dataset_cache_path.resolve())
     state["judger"]["output_problem_path"] = dataset_cache_path_s
     writer(StreamEvent(
-        current="judger", progress=0.2, message="已生成 dataset_cache",
+        current=state.get("current", "judger"), progress=0.2, message="已生成 dataset_cache",
         data={"output_problem_path": dataset_cache_path_s}))
 
     # 构造 bench 和 model_config
@@ -321,7 +321,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     model_config = _build_model_config(cfg)
     writer(StreamEvent(
-        current="judger", progress=0.35,
+        current=state.get("current", "judger"), progress=0.35,
         message="One-Eval 配置完成，正在调用 DataFlowEvalTool",
         data={"bench_name": bench_name, "eval_type": eval_type}))
 
@@ -355,7 +355,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     logger.info(f"[Judger/general_text] DataFlowEvalTool subprocess started "
                 f"pid={proc.pid}")
     writer(StreamEvent(
-        current="judger", progress=0.5,
+        current=state.get("current", "judger"), progress=0.5,
         message="DataFlowEvalTool 子进程已启动，等待评测完成",
         data={"pid": proc.pid}))
 
@@ -372,7 +372,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
             if proc.is_alive():
                 elapsed = int(time.time() - wait_start)
                 writer(StreamEvent(
-                    current="judger", progress=0.55,
+                    current=state.get("current", "judger"), progress=0.55,
                     message="DataFlowEvalTool 子进程仍在运行",
                     data={"pid": proc.pid, "waited_seconds": elapsed}))
         if payload is None:
@@ -407,7 +407,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         result_queue.close()
 
     writer(StreamEvent(
-        current="judger", progress=0.7,
+        current=state.get("current", "judger"), progress=0.7,
         message="DataFlowEvalTool 子进程完成，生成评测结果"))
 
     if not bench.meta:
@@ -440,7 +440,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         }
 
     writer(StreamEvent(
-        current="judger", progress=0.8, message="等待评测结果...",
+        current=state.get("current", "judger"), progress=0.8, message="等待评测结果...",
         data={"output_pred_path": detail_path, "stats": stats}))
 
     # 确定 detail 文件路径
@@ -473,7 +473,11 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     state["judger"]["output_pred_path"] = step2_file_path
 
     writer(StreamEvent(
-        current="judger", progress=1.0, message="通用文本评测完成",
-        data={"output_result_path": summary_json_path, "output_pred_path": step2_file_path}))
+        current=state.get("current", "judger"), progress=1.0, message="通用文本评测完成",
+        data={
+            "output_result_path": summary_json_path,
+            "output_pred_path": step2_file_path,
+            "metrics": json.dumps(stats, ensure_ascii=False) if stats else "",
+        }))
 
     return state

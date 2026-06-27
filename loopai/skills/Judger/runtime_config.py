@@ -207,23 +207,28 @@ def resolve_judger_runtime_config(
         if output_dir:
             state["output_dir"] = output_dir
 
-        state["judger"]["eval_model_path"] = model_path
-        state["judger"]["eval_task_type"] = task_type
-        state["judger"]["eval_temperature"] = temperature
-        state["judger"]["eval_top_p"] = top_p
-        state["judger"]["eval_problem_path"] = problem_path
-        state["judger"]["eval_batch_size"] = batch_size
-        state["judger"]["eval_case_num"] = case_num
+        # 只在值非空时才覆盖，避免把 DB/state 中的已有值冲掉
+        for key, val in (
+            ("eval_model_path", model_path),
+            ("eval_task_type", task_type),
+            ("eval_temperature", temperature),
+            ("eval_top_p", top_p),
+            ("eval_problem_path", problem_path),
+            ("eval_batch_size", batch_size),
+            ("eval_case_num", case_num),
+            ("eval_vllm_tensor_parallel_size", tensor_parallel_size),
+            ("eval_vllm_gpu_memory_utilization", gpu_memory_utilization),
+            ("cuda_visible_devices", cuda_visible_devices),
+            ("bench_name", bench_name),
+            ("bench_dataflow_eval_type", bench_dataflow_eval_type),
+            ("key_mapping", key_mapping),
+        ):
+            if val is not None:
+                state["judger"][key] = val
         if format_type is not None:
             state["judger"]["eval_format_type"] = format_type
         if text2sql_dir is not None:
             state["judger"]["eval_text2sql_dir"] = text2sql_dir
-        state["judger"]["eval_vllm_tensor_parallel_size"] = tensor_parallel_size
-        state["judger"]["eval_vllm_gpu_memory_utilization"] = gpu_memory_utilization
-        state["judger"]["cuda_visible_devices"] = cuda_visible_devices
-        state["judger"]["bench_name"] = bench_name
-        state["judger"]["bench_dataflow_eval_type"] = bench_dataflow_eval_type
-        state["judger"]["key_mapping"] = key_mapping
         if db_path:
             state["DB_PATH"] = db_path
 

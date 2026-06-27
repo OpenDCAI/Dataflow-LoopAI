@@ -7,7 +7,7 @@ from typing import Any
 from omegaconf import OmegaConf
 
 from api.app.models.db_models import StarterConfig
-from loopai.schema.states import get_state_config_schema
+# 懒加载，避免 MCP 启动时级联导入 langgraph → torch
 
 from .base import _sqlite_connect, require_db_path
 
@@ -40,6 +40,8 @@ def format_value(item: dict[str, Any]) -> dict[str, Any]:
     item["value"] = value
     if type_name == "bool":
         item["value"] = bool(item["value"])
+    elif type_name in {"dict", "list", "json", "object", "array"}:
+        return item
     else:
         if type(item["value"]) in {int, float}:
             return item
@@ -63,6 +65,8 @@ def _normalize_system_config(system_config: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_state_config(states_data: dict[str, Any], language: str | None = None) -> dict[str, Any]:
+    from loopai.schema.states import get_state_config_schema  # 懒加载，避免 MCP 级联导入
+
     language = language or states_data.get("language", "zh")
     nested_states_schema = get_state_config_schema(language)
     default_schema = nested_states_schema.get("default", {})
