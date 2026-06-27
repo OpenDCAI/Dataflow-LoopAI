@@ -15,7 +15,7 @@ command = "python3"
 args = ["-m", "loopai.mcp.server"]
 cwd = "."
 startup_timeout_sec = 20
-tool_timeout_sec = 60
+tool_timeout_sec = 600
 enabled = true
 required = false
 default_tools_approval_mode = "prompt"
@@ -25,6 +25,8 @@ enabled_tools = [
   "configer_get_task",
   "configer_update",
   "configer_update_task",
+  "judger_run",
+  "judger_load_events",
   "trainer_run",
   "trainer_load_events",
 ]

@@ -69,6 +69,34 @@
 3. 如果上下文中已经明确某个阶段完成，且用户要求继续下一阶段，应按流程识别下一类 sub-agent，但仍先做当前任务信息读取与确认。
 4. 如果用户只是普通闲聊或无需工作流动作的简单问答，可以按 `chat` 处理。
 
+如果运行时已经加载了 `loopai_mcp` MCP server，执行类意图优先使用现成 MCP tools：
+
+- `judge` 优先使用 `mcp__loopai_mcp__judger_run`
+- 用户要求查看 Judger 过程或评测明细时，优先使用 `mcp__loopai_mcp__judger_load_events`
+- `train` 优先使用 `mcp__loopai_mcp__trainer_run`
+- 用户要求查看 Trainer 过程或训练事件时，优先使用 `mcp__loopai_mcp__trainer_load_events`
+
+注意：
+
+- 这些工具要求运行环境已设置 `DB_PATH`
+- `judger_run` 还要求存在当前任务上下文，对应 `TASK_ID` / `task_id`
+- 调用执行类工具前，仍应先向用户摘要当前任务信息并做简短确认
+- `loopai_mcp` 不提供 resources/templates 是正常现象，不能因为 `list_mcp_resources` 或 `list_mcp_resource_templates` 为空，就判断 MCP 不可用
+- 判断 `loopai_mcp` 是否可用，必须以当前会话是否存在可调用的 `mcp__loopai_mcp__*` tools 为准
+- 如果用户明确要求“通过 MCP 执行评测 / 调用 `judger_run`”，必须调用 `mcp__loopai_mcp__judger_run`
+- 如果用户明确要求走 MCP，而当前会话中不存在 `mcp__loopai_mcp__judger_run`，必须直接说明“当前会话未加载该 MCP tool”，禁止静默回退到 Python 直接调用 `loopai.skills.Judger`
+- 同理，如果用户明确要求通过 MCP 读取 Judger 事件，必须调用 `mcp__loopai_mcp__judger_load_events`
+- 只有在用户没有要求 MCP，且当前会话确实没有对应 MCP tool 时，才允许回退到本地 Python skill / 函数调用
+- 只有在当前回合中实际发生了 `mcp__loopai_mcp__judger_run` 或 `mcp__loopai_mcp__judger_load_events` 的 tool call，才算“已经通过 MCP 调用了 Judger”
+- 如果执行计划或实际执行中出现 `exec_command`、`python`、`python3`、`python3 -c`、`from loopai.skills.Judger import run`、`loopai.skills.Judger.run(...)`、`from loopai.mcp.tools.judger import judger_run`、`loopai.mcp.tools.judger.judger_run(...)`，一律视为没有走 MCP
+- `@mcp.tool(...)` 装饰器只表示该函数可被 MCP server 暴露；如果通过 Python import 直接调用这个函数，仍然只是本地 Python 执行，不算 MCP 协议调用
+- 禁止把“通过 shell 执行 Python 命令 / 脚本 / 单行代码”描述成“调用 MCP tool”
+- 如果准备执行 `judger_run` 时发现自己打算使用 `exec_command` 或 Python import 作为替代，必须立即停止并向用户说明当前会话没有正确走到 MCP tool
+- 如果当前会话缺少 `mcp__loopai_mcp__judger_run`，但用户仍要求通过 MCP 调用，则优先使用 Python MCP SDK 作为 MCP client 连接 `loopai.mcp.server`，而不是手写 JSON-RPC
+- 这种 Python SDK 方式的标准入口是 [call_loopai_mcp.py](./examples/scripts/call_loopai_mcp.py)
+- 允许的 MCP fallback 形态是：通过 `mcp.ClientSession` + `mcp.client.stdio.stdio_client` 调用 server 的 `list_tools` / `call_tool`
+- 不允许临时手写 initialize / tools/list 的 JSON-RPC 报文，不允许通过 `subprocess.Popen(... \"-m\", \"loopai.mcp.server\")` 自己拼协议
+
 ---
 
 ## Config Skill
@@ -91,6 +119,12 @@
 - 如果运行时存在独立 `CODEX_HOME`，其中同名 skill 只是同一份预设的镜像
 - 不要先通过全仓搜索 README 或源码来猜参数，优先读取该 skill 并调用其中提到的配置函数
 - 如果 MCP tools 可用，优先通过 MCP tools 读写；只有在 MCP 不可用时才回退到本地 Python skill 调用
+- `list_mcp_resources` / `list_mcp_resource_templates` 为空，不构成 “MCP 不可用” 的证据
+- 如果用户明确要求通过 MCP 调用 Configer，而当前会话中不存在 `mcp__loopai_mcp__configer_*` tools，必须直接说明当前会话未加载对应 MCP tools，不能伪装成已经走了 MCP
+- 只有在当前回合中实际发生了 `mcp__loopai_mcp__configer_*` 的 tool call，才算“已经通过 MCP 调用了 Configer”
+- 如果执行计划或实际执行中出现 `exec_command`、`python`、`python3`、`python3 -c`、`loopai.skills.Configer`、`loopai.skills.Configer.*`、`loopai.mcp.tools.configer`、`loopai.mcp.tools.configer.*`，一律视为没有走 MCP
+- 禁止把“通过 shell 执行 Python 命令 / 脚本 / 单行代码”描述成“调用 MCP Configer tool”
+- 如果当前会话缺少 `mcp__loopai_mcp__configer_*` wrapper tool，但用户仍要求通过 MCP 调用 Configer，也应优先使用Python MCP SDK client，而不是手写协议或直接 import tool 函数
 
 该 skill 负责：
 
