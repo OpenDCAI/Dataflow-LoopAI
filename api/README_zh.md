@@ -4,7 +4,7 @@
 
 `api/` 是 LoopAI WebUI 的 FastAPI 后端。它负责管理 WebUI 配置、任务记录、数据资源、硬件与运行状态，并为指定任务启动集成在 `loopai` 中的 Starter 工作流。
 
-Trainer 现在已经集成到 LoopAI 的 Agent 图中，常规情况下由 `StarterAgent` 调度启动，不再作为独立 API 服务使用。当前保留的 `/train/*` 路由主要用于兼容已有流程，以及支持训练日志、指标和直接 LLaMA Factory 任务工具。
+Trainer 已经集成到 LoopAI 的 Agent 图中，常规情况下由 `StarterAgent`、Codex/MCP 工具或 `loopai.skills.Trainer` 启动。旧的独立 `/train/*` 服务已经移除；WebUI 训练日志和指标通过任务输出目录以及 `/task/train_status` 读取。
 
 ## 总体 API 框架
 
@@ -19,7 +19,6 @@ FastAPI app (api/app/main.py)
       +-- /task      WebUI 任务 CRUD 与任务状态快照
       +-- /resource  数据资源登记与文件预览
       +-- /starter   启动、停止、恢复、流式输出 LoopAI StarterAgent
-      +-- /train     兼容训练任务、日志和指标接口
       |
       +-- SQLite     api/db/db.sqlite3
       +-- Files      api/dist, api/logs, api/runs, api/configs
@@ -29,7 +28,7 @@ FastAPI app (api/app/main.py)
 `api/app/main.py` 启动时会：
 
 - 使用 `api/db/db.sqlite3` 注册 Tortoise ORM；
-- 挂载 `config`、`task`、`resource`、`starter`、`train` 路由；
+- 挂载 `config`、`task`、`resource`、`starter` 路由；
 - 从 `/` 托管 `api/dist/index.html`；
 - 从 `/assets/*` 托管 Vite 构建产物；
 - 在 `/docs` 暴露 OpenAPI 文档。
@@ -47,10 +46,9 @@ api/
 │   │   ├── config.py        # Starter 配置与 State schema
 │   │   ├── task.py          # WebUI 任务记录与持久化状态
 │   │   ├── resource.py      # 数据资源登记与预览
-│   │   ├── starter.py       # LoopAI StarterAgent 运行控制与流式输出
-│   │   └── train.py         # 兼容训练、日志、指标接口
+│   │   └── starter.py       # LoopAI StarterAgent 运行控制与流式输出
 │   ├── models/              # 请求、响应和数据库模型
-│   └── utils/               # starter、config、resource、monitor、train 等工具
+│   └── utils/               # starter、config、resource、monitor 等工具
 ├── configs/                 # 后端流程创建的运行配置
 ├── db/                      # SQLite 数据库目录
 ├── dist/                    # FastAPI 托管的已发布前端 dist
@@ -232,25 +230,13 @@ curl -X POST "http://localhost:8855/starter/agent/input?text=Improve%20my%20mode
 curl "http://localhost:8855/starter/agent/status"
 ```
 
-### Train 兼容 API
+### Trainer 指标
 
-挂载在 `/train`。
-
-这些接口不是启动集成 LoopAI Trainer 工作流的主要方式。常规 WebUI 操作应使用 Starter API。`train` 路由保留用于直接/历史训练任务，以及 UI 访问日志、SwanLab 文件夹和指标。
+旧的直接 `/train/*` API 已经移除。常规训练通过集成的 TrainerAgent 路径执行。WebUI 图表通过下面的任务级接口读取指标：
 
 | Method | Path | 说明 |
 | --- | --- | --- |
-| `POST` | `/train/` | 从 JSON 配置启动直接训练任务。 |
-| `POST` | `/train/upload` | 从上传的 YAML 启动直接训练任务。 |
-| `GET` | `/train/status/{task_id}` | 读取直接训练任务状态。 |
-| `GET` | `/train/logs/{task_id}` | 读取直接训练日志。 |
-| `GET` | `/train/tasks` | 列出直接训练任务。 |
-| `DELETE` | `/train/tasks/{task_id}` | 取消直接训练任务。 |
-| `GET` | `/train/swanlab-logs/{task_id}` | 读取单个任务的 SwanLab 日志路径。 |
-| `GET` | `/train/swanlab-logs` | 列出 SwanLab 日志目录。 |
-| `GET` | `/train/metrics/{task_id}` | 读取最近训练指标。 |
-| `GET` | `/train/metrics/{task_id}/file` | 下载或读取指标文件。 |
-| `DELETE` | `/train/metrics/{task_id}` | 删除单个任务的指标。 |
+| `GET` | `/task/train_status` | 从任务输出目录读取 Trainer 指标。 |
 
 ## 数据与运行文件
 
