@@ -134,12 +134,12 @@ export default {
                     if (event.item?.type === 'todo_list') {
                         const items = event.item?.items || []
                         let contents = items
-                            .map((item) => `[${item?.completed ? 'x' : ''}] ${item?.text}`)
+                            .map((item) => `- [${item?.completed ? 'x' : ' '}] ${item?.text}`)
                             .join('\n')
                         return {
                             type: 'assistant',
                             data: {
-                                content: contents.join('\n')
+                                content: contents
                             }
                         }
                     }
