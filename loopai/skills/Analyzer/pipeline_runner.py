@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
-import sqlite3
-from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
 from .event_tool import StreamEvent
+from .state_bridge import load_analyzer_state_from_configer, update_analyzer_state_via_configer
 
 
 ANALYZER_PIPELINE_STEPS = (
@@ -58,56 +56,19 @@ def _json_safe(value: Any) -> Any:
         return str(value)
 
 
-def _checkpoint_dir(checkpoint_path: str) -> None:
-    checkpoint_dir = os.path.dirname(checkpoint_path)
-    if checkpoint_dir:
-        os.makedirs(checkpoint_dir, exist_ok=True)
-
-
-def _connect(checkpoint_path: str) -> sqlite3.Connection:
-    _checkpoint_dir(checkpoint_path)
-    conn = sqlite3.connect(checkpoint_path)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS analyzer_checkpoints (
-            thread_id TEXT PRIMARY KEY,
-            state_json TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    return conn
-
-
 def save_analyzer_checkpoint(state: Dict[str, Any], thread_id: str, checkpoint_path: str) -> None:
-    payload = json.dumps(_json_safe(state), ensure_ascii=False)
-    updated_at = datetime.now(timezone.utc).isoformat()
-    with _connect(checkpoint_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO analyzer_checkpoints(thread_id, state_json, updated_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(thread_id) DO UPDATE SET
-                state_json = excluded.state_json,
-                updated_at = excluded.updated_at
-            """,
-            (thread_id, payload, updated_at),
-        )
-        conn.commit()
+    """Compatibility shim.
+
+    Checkpoint/resume is owned by the external runtime now. Analyzer only
+    persists schema-compatible analyzer state through Configer when DB_PATH and
+    TASK_ID are available. ``checkpoint_path`` is kept for old callers.
+    """
+    update_analyzer_state_via_configer(state, task_id=thread_id)
 
 
 def load_analyzer_checkpoint(thread_id: str, checkpoint_path: str) -> Dict[str, Any]:
-    if not os.path.exists(checkpoint_path):
-        raise RuntimeError(f"No checkpoint found for thread_id={thread_id} in checkpoint_path={checkpoint_path}")
-    with _connect(checkpoint_path) as conn:
-        row = conn.execute(
-            "SELECT state_json FROM analyzer_checkpoints WHERE thread_id = ? LIMIT 1",
-            (thread_id,),
-        ).fetchone()
-    if row is None:
-        raise RuntimeError(f"No checkpoint found for thread_id={thread_id} in checkpoint_path={checkpoint_path}")
-    return json.loads(row[0])
+    """Compatibility shim loading task Analyzer state through Configer."""
+    return load_analyzer_state_from_configer(task_id=thread_id)
 
 
 def _start_index(step_name: str) -> int:

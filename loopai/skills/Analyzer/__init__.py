@@ -11,14 +11,17 @@ def run(
     baseline_result_path: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Run Analyzer standalone (Codex / CLI entry point).
+    """Run Analyzer skill (Codex / MCP entry point).
 
     事件会在流水线执行期间实时写入
     ``<output_dir>/<task_id>/analyzer.pkl``。
-    """
-    from loopai.skills.Analyzer.runner import run_analyzer_standalone
 
-    return run_analyzer_standalone(
+    返回统一 success/error payload；如需旧的 final state 返回值，
+    直接调用 ``loopai.skills.Analyzer.runner.run_analyzer_standalone``。
+    """
+    from loopai.skills.Analyzer.runner import run_analyzer_standalone_payload
+
+    return run_analyzer_standalone_payload(
         state=state,
         thread_id=thread_id,
         resume=resume,

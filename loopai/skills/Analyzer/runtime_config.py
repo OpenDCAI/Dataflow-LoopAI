@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
+from .state_bridge import load_system_runtime_config
+
 _DEFAULT_CHECKPOINT_PATH = "outputs/analyzer_checkpoints.sqlite"
 _DEFAULT_THREAD_ID = "analyzer-default"
 
@@ -22,6 +24,16 @@ def _analyzer(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         state["analyzer"] = {}
         return state["analyzer"]
     return analyzer
+
+
+def _system_runtime(state: Optional[Dict[str, Any]], kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    task_id = _first_non_empty(
+        kwargs.get("thread_id"),
+        kwargs.get("task_id"),
+        os.getenv("TASK_ID"),
+        state.get("task_id") if isinstance(state, dict) else None,
+    )
+    return load_system_runtime_config(task_id)
 
 
 def _needs_llm(analyzer: Dict[str, Any], kwargs: Dict[str, Any]) -> bool:
@@ -57,21 +69,32 @@ def resolve_analyzer_runtime_config(
     for legacy compatibility.
     """
     analyzer = _analyzer(state)
+    system_runtime = _system_runtime(state, kwargs)
 
     env_api_key = os.getenv("ANALYZER_API_KEY")
+    system_api_key = _first_non_empty(
+        system_runtime.get("analyzer_api_key"),
+        system_runtime.get("analyze_api_key"),
+        system_runtime.get("starter_api_key"),
+        system_runtime.get("codex_api_key"),
+        system_runtime.get("api_key"),
+    )
     legacy_api_key = analyzer.get("analyze_api_key") or analyzer.get("api_key")
     api_key = _first_non_empty(
         kwargs.get("analyzer_api_key"),
         kwargs.get("api_key"),
+        system_api_key,
         env_api_key,
         legacy_api_key,
     )
-    if env_api_key:
-        api_key = env_api_key
 
     model = _first_non_empty(
         kwargs.get("analyzer_model"),
         kwargs.get("model"),
+        system_runtime.get("analyzer_model"),
+        system_runtime.get("analyze_model"),
+        system_runtime.get("starter_model_name"),
+        system_runtime.get("starter_model_path"),
         os.getenv("ANALYZER_MODEL"),
         analyzer.get("analyze_model_path"),
         analyzer.get("model"),
@@ -79,6 +102,9 @@ def resolve_analyzer_runtime_config(
     base_url = _first_non_empty(
         kwargs.get("analyzer_base_url"),
         kwargs.get("base_url"),
+        system_runtime.get("analyzer_base_url"),
+        system_runtime.get("analyze_base_url"),
+        system_runtime.get("starter_base_url"),
         os.getenv("ANALYZER_BASE_URL"),
         analyzer.get("analyze_base_url"),
         analyzer.get("base_url"),
@@ -102,7 +128,9 @@ def resolve_analyzer_runtime_config(
         _DEFAULT_CHECKPOINT_PATH,
     )
 
-    if _needs_llm(analyzer, kwargs) and not api_key:
+    require_api_key = kwargs.get("require_api_key")
+    needs_llm = bool(require_api_key) if require_api_key is not None else bool(model or base_url)
+    if needs_llm and not api_key:
         raise RuntimeError("missing required env: ANALYZER_API_KEY")
 
     if isinstance(state, dict):
@@ -129,5 +157,15 @@ def resolve_analyzer_runtime_config(
         "analyzer_model": model,
         "analyzer_base_url": base_url,
         "has_analyzer_api_key": bool(api_key),
-        "api_key_source": "env" if env_api_key else ("legacy_config" if legacy_api_key else None),
+        "api_key_source": (
+            "kwargs"
+            if _first_non_empty(kwargs.get("analyzer_api_key"), kwargs.get("api_key"))
+            else "system"
+            if system_api_key
+            else "env"
+            if env_api_key
+            else "legacy_config"
+            if legacy_api_key
+            else None
+        ),
     }

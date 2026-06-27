@@ -7,6 +7,9 @@ system:
   codex_api_key: "sk-..."
   codex_model: "gpt-4o-mini"
   codex_base_url: "http://123.129.219.111:3000/v1"
+  analyzer_api_key: ""
+  analyzer_model: ""
+  analyzer_base_url: ""
   codex_workspace: "/home/lpc/repos/Dataflow-LoopAI"
   codex_home: "/home/lpc/repos/Dataflow-LoopAI/codex_home"
   codex_run_timeout_ms: 300000
@@ -37,9 +40,9 @@ default_states:
     eval_batch_size: 10
 
   analyzer:
-    analyze_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
-    analyze_base_url: "http://127.0.0.1:8911/v1"
-    analyze_api_key: "EMPTY"
+    analyze_model_path: ""
+    analyze_base_url: ""
+    analyze_api_key: ""
     analyze_temperature: 0
     analyze_top_p: 0.95
     output_brief: true

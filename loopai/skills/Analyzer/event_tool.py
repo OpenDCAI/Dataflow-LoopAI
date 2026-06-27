@@ -86,6 +86,9 @@ def get_analyzer_event_writer(
             print(json.dumps(event_payload, ensure_ascii=False), flush=True)
         return event
 
+    setattr(write, "set_running", getattr(base_writer, "set_running", lambda: None))
+    setattr(write, "set_failed", getattr(base_writer, "set_failed", lambda: None))
+    setattr(write, "set_completed", getattr(base_writer, "set_completed", lambda: None))
     return write
 
 

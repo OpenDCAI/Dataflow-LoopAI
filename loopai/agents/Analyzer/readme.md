@@ -621,14 +621,14 @@ result = run_analyzer_standalone(
 )
 ```
 
-runner 内部仍然使用：
+`loopai.skills.Analyzer.run(...)` 是 Codex / MCP 面向入口，返回统一 success / error payload。
+如需兼容旧调用并直接拿最终 state，可调用：
 
 ```python
-AnalyzerAgent(checkpointer=checkpointer, store=store)
-graph.invoke(...)
+from loopai.skills.Analyzer.runner import run_analyzer_standalone
 ```
 
-返回值为 Analyzer graph 的最终 state / result。
+Analyzer 核心业务节点仍保留在 `loopai/agents/Analyzer`，standalone 运行层只做运行控制、Configer 状态读写、StreamEvent 和异常返回封装。
 
 ### 2. CLI 入口
 
@@ -643,21 +643,23 @@ python examples/scripts/run_analyzer_standalone.py \
 CLI 支持参数：
 
 - `--config-path`：YAML / JSON 配置路径。如果配置中包含 `default_states`，则使用 `default_states` 作为输入 state。
-- `--thread-id`：LangGraph checkpoint 使用的 thread id。
-- `--checkpoint-path`：SQLite checkpoint 文件路径，默认 `outputs/analyzer_checkpoints.sqlite`。
-- `--resume`：使用相同 `thread_id` 从 checkpoint 恢复。
+- `--thread-id`：Analyzer task / thread id，优先级为 CLI > `TASK_ID` env > state/default。
+- `--checkpoint-path`：旧参数兼容保留；Analyzer 不再维护内部 SQLite checkpoint 表。
+- `--resume`：从 Configer / 外部 runtime 管理的任务状态恢复。
 - `--from-node`：从指定 Analyzer 节点继续运行。
 - `--print-result`：将最终 state / result 打印为 JSON。
+- `--stream-stdout`：将 Analyzer StreamEvent 以 JSONL 打印到 stdout。
 
 ### 3. 断点续跑
 
-使用相同 `thread_id` 恢复最近 checkpoint：
+当前 Analyzer 不再自行维护 SQLite checkpoint。续跑 / retry / trace 由外部 Starter、Codex runtime 或任务 DB 负责；Analyzer 只保留 function-level pipeline 和 `current` / `last_completed` 运行态字段。
+
+使用相同 `thread_id` 恢复任务状态：
 
 ```bash
 python examples/scripts/run_analyzer_standalone.py \
   --config-path examples/config/starter.yaml \
   --thread-id analyzer-test-001 \
-  --checkpoint-path outputs/analyzer_checkpoints.sqlite \
   --resume
 ```
 
@@ -667,7 +669,6 @@ python examples/scripts/run_analyzer_standalone.py \
 python examples/scripts/run_analyzer_standalone.py \
   --config-path examples/config/starter.yaml \
   --thread-id analyzer-test-001 \
-  --checkpoint-path outputs/analyzer_checkpoints.sqlite \
   --resume \
   --from-node analyze_result_node
 ```
@@ -686,7 +687,7 @@ draw_conclusion
 finish
 ```
 
-`resume` 和 `from_node` 使用同一套恢复入口逻辑：先从 SQLite checkpoint 读取 snapshot，再根据 `snapshot.next`、`state["current"]` 或用户指定的 `--from-node` 决定恢复节点，并临时构建以该节点为 entry point 的 Analyzer graph。这样中断在 `draw_conclusion_node` 时，续跑只会执行 `draw_conclusion_node -> finish_node`，不会重新执行 `eval_model_node` 和 `analyze_result_node`。
+`resume` 和 `from_node` 使用同一套 function-level pipeline 入口逻辑。`from_node` 会强制从指定 Analyzer step 开始；`resume` 会优先通过 Configer 读取 task 的 Analyzer state。Analyzer 本身不创建 `analyzer_checkpoints` 表，也不直接接管外部 runtime 的 checkpoint 生命周期。
 
 ### 4. state 兼容性
 
