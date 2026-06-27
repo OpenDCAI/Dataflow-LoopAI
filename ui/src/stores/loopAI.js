@@ -222,6 +222,17 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         })
     }
 
+    const getTaskStateConfig = async (task_id = currentTask.value?.task_id) => {
+        if (!task_id) return null
+        const resp = await proxy.$api.task.getTaskStateConfig(task_id)
+        return resp
+    }
+    const updateTaskStateConfig = async (payload, task_id = currentTask.value?.task_id) => {
+        if (!task_id) return null
+        const resp = await proxy.$api.task.updateTaskStateConfig(task_id, payload)
+        return resp
+    }
+
     return {
         configId,
         config,
@@ -241,6 +252,8 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         resetStarterCodexSession,
         getMsgStream,
         stateSchema,
-        getStateSchema
+        getStateSchema,
+        getTaskStateConfig,
+        updateTaskStateConfig
     }
 })
