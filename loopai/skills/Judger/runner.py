@@ -501,7 +501,7 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 def run_judger_pipeline(
     state: Optional[Dict[str, Any]],
-    thread_id: Optional[str] = None,
+    task_id: Optional[str] = None,
     resume: bool = False,
     from_step: Optional[str] = None,
     **kwargs: Any,
@@ -515,7 +515,7 @@ def run_judger_pipeline(
 
     Args:
         state: 包含 ``state["judger"]`` 配置的状态字典。
-        thread_id: checkpoint 和事件的上下文 ID（= task_id）。
+        task_id: 任务唯一标识，用于读写 state、事件流和输出目录。
         resume: 从 checkpoint 恢复执行。
         from_step: 强制从指定步骤开始。
         **kwargs: 运行时覆盖参数。
@@ -527,11 +527,11 @@ def run_judger_pipeline(
 
     # 加载或初始化 state
     if resume:
-        state = _load_task_state(thread_id)
+        state = _load_task_state(task_id)
     elif state is not None:
         state = dict(state)
     else:
-        state = _load_task_state(thread_id)
+        state = _load_task_state(task_id)
         if not state.get("judger"):
             # 任务无 state → 回退到全局默认配置
             from loopai.skills.Configer import get_configer_state_config
@@ -541,15 +541,15 @@ def run_judger_pipeline(
             cfg = get_configer_state_config(section_name="default")
             if cfg and cfg.get("data"):
                 defaults = _unwrap_configer(cfg["data"].get("config", {}))
-                state["task_id"] = defaults.get("task_id", thread_id)
+                state["task_id"] = defaults.get("task_id", task_id)
                 state["output_dir"] = defaults.get("output_dir", "./outputs")
 
     state.setdefault("judger", {})
-    resolve_judger_runtime_config(state, thread_id=thread_id, **kwargs)
+    resolve_judger_runtime_config(state, task_id=task_id, **kwargs)
 
-    # thread_id 优先用 env/kwargs 解析后的 state["task_id"]，回退到显式传参
-    thread_id = state.get("task_id") or thread_id or ""
-    if not thread_id:
+    # task_id 优先用 env/kwargs 解析后的 state["task_id"]，回退到显式传参
+    task_id = state.get("task_id") or task_id or ""
+    if not task_id:
         emit_error(
             ValueError("task_id is required but was not provided."),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
@@ -561,12 +561,12 @@ def run_judger_pipeline(
     # ---- 创建事件写入器 ----
     writer = get_event_writer(
         name="judger",
-        context_id=thread_id,
+        context_id=task_id,
         log_file_path=output_dir,
     )
     writer(StreamEvent(
         current="judger", progress=0.0, message="Judger pipeline started",
-        data={"task_id": thread_id, "resume": resume,
+        data={"task_id": task_id, "resume": resume,
               "task_type": (state.get("judger") or {}).get("eval_task_type")}))
 
     # 根据任务类型选择流水线
@@ -574,7 +574,7 @@ def run_judger_pipeline(
     steps = _GENERAL_TEXT_STEPS if task_type == "general_text" else _CODE_TEXTSQL_STEPS
 
     judger_cfg = state.get("judger") or {}
-    logger.info(f"[Judger] task_id={thread_id} task_type={task_type} "
+    logger.info(f"[Judger] task_id={task_id} task_type={task_type} "
                 f"pipeline={' -> '.join(steps)}")
     logger.info(f"[Judger] model_path={judger_cfg.get('eval_model_path')} "
                 f"problem_path={judger_cfg.get('eval_problem_path')} "
@@ -603,7 +603,7 @@ def run_judger_pipeline(
     for i, step_name in enumerate(steps[start_at:], start_at):
         state["current"] = f"judger.{step_name}"
         logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} starting...")
-        _save_task_progress(state, thread_id)
+        _save_task_progress(state, task_id)
 
         writer(StreamEvent(
             current=state["current"], progress=0.0,
@@ -611,7 +611,7 @@ def run_judger_pipeline(
 
         if step_name == "finish":
             state["last_completed"] = "finish"
-            _save_task_progress(state, thread_id)
+            _save_task_progress(state, task_id)
             writer(StreamEvent(
                 current=state["current"], progress=1.0, message="流水线完成"))
             logger.info(f"[Judger] pipeline finished")
@@ -619,7 +619,7 @@ def run_judger_pipeline(
 
         state = _run_step(step_name, state, writer)
         state["last_completed"] = step_name
-        _save_task_progress(state, thread_id)
+        _save_task_progress(state, task_id)
 
         logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} done")
 

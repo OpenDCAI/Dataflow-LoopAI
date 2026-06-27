@@ -254,7 +254,7 @@ from loopai.skills.Judger import run, load_events
 # 运行流水线
 result = run(
     state=None,             # dict with state["judger"] fields，None 时从 Configer 加载
-    thread_id="task_001",   # 必填，= task_id
+    task_id="task_001",   # 必填，= task_id
     resume=False,           # True = 从 Configer 恢复上次进度
     from_step=None,         # 强制起始步骤名
     **kwargs,               # 运行时覆盖（优先于 state）
@@ -692,7 +692,7 @@ try:
             "task_id": "codex_task_001",
             "output_dir": "./outputs",
         },
-        thread_id="codex_task_001",
+        task_id="codex_task_001",
     )
     # 成功：emit_success 输出到 stdout
     sys.exit(0)

@@ -284,12 +284,12 @@ def main():
                     state[key] = config[key]
         task_id_from_config = state.get("task_id")
 
-    thread_id = args.task_id or os.getenv("TASK_ID") or task_id_from_config
+    task_id = args.task_id or os.getenv("TASK_ID") or task_id_from_config
 
     try:
         result = run(
             state=state,
-            thread_id=thread_id,
+            task_id=task_id,
             resume=args.resume,
             from_step=args.from_step,
             **kwargs,
@@ -299,7 +299,7 @@ def main():
             _print_result(result)
 
         if args.print_events:
-            task_id = result.get("task_id") or thread_id
+            task_id = result.get("task_id") or task_id
             output_dir = result.get("output_dir") or args.output_dir or "./outputs"
             from loopai.skills.Judger import load_events
             events = load_events(task_id=task_id, output_dir=output_dir)
