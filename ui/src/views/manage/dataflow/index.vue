@@ -113,7 +113,7 @@ import detailNodePanel from '@/components/manage/mainFlow/panels/detailNodePanel
 
 import resourceIcon from '@/assets/flow/resources.svg'
 import pipelineIcon from '@/assets/flow/pipeline.svg'
-import saveIcon from '@/assets/flow/save.svg'
+import adjustIcon from '@/assets/flow/adjust.svg'
 
 export default {
     components: {
@@ -147,10 +147,10 @@ export default {
                     }
                 },
                 {
-                    name: () => this.local('Save'),
-                    img: saveIcon,
+                    name: () => this.local('States'),
+                    img: adjustIcon,
                     func: () => {
-                        this.handleSaveClick()
+                        this.handleAdjustStatesClick()
                     }
                 }
             ],
@@ -480,7 +480,7 @@ export default {
                 }
             } catch (e) {}
         },
-        handleSaveClick() {},
+        handleAdjustStatesClick() {},
         handleRefreshClick() {
             if (!this.currentTask?.task_id) {
                 this.$barWarning(this.local('No active task to reset.'), {
