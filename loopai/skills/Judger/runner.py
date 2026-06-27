@@ -358,7 +358,15 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     writer(StreamEvent(
         current=state.get("current"), progress=0.0, message="正在启动本地 vLLM 服务",
         data={"model_path": model_path, "tensor_parallel_size": tensor_parallel_size}))
-    start_vllm_openai_api_server(env_configs, tensor_parallel_size, gpu_memory_utilization, model_path)
+    try:
+        start_vllm_openai_api_server(env_configs, tensor_parallel_size, gpu_memory_utilization, model_path)
+    except Exception:
+        logger.exception(f"[Judger] vLLM 启动失败")
+        writer(StreamEvent(
+            current=state.get("current"), progress=1.0, message="vLLM 启动失败",
+            data={"error": "vLLM startup failed", "model_path": model_path,
+                  "tensor_parallel_size": tensor_parallel_size}))
+        raise
     state["judger"]["eval_base_url"] = f"http://localhost:{DEFAULT_VLLM_PORT}/v1"
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="vLLM 服务已启动",

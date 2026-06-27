@@ -12,11 +12,12 @@ Judger Skill 用于在无 LangGraph（独立模式）下运行 LoopAI 评测流�
 
 ## How to Invoke（强制）
 
-**Codex 必须通过 CLI 子进程调用 Judger，禁止进程内直接导入：**
+**Codex 必须通过以下方式调用 Judger，禁止进程内直接导入：**
 
 | 方式 | 入口 | 适用场景 |
 |---|---|---|
-| **CLI 子进程** | `python examples/scripts/run_judger_standalone.py` | Codex 编排、手动调试 |
+| **MCP tool（推荐）** | `mcp__loopai_mcp__judger_run` | Codex 编排，自动管理 lifecycle，`sys.exit` 被安全拦截 |
+| **CLI 子进程** | `python examples/scripts/run_judger_standalone.py` | 手动调试、脚本 |
 
 **禁止使用的路径：**
 - ❌ `loopai.agents.Judger.JudgerAgent` — 旧 LangGraph 实现，不会产生 `judger.pkl` 事件流，state 不写入 Configer，Codex 无法读取评测指标
