@@ -6,22 +6,25 @@
         ></i>
     </div>
     <div class="loopai-msg-list-container" ref="list" :class="{ collapsed: isCollapsed }">
-        <msg-block
-            v-show="showMe(msg)"
-            v-for="(msg, index) in taskMessages"
-            :key="index"
-            :model-value="msg"
-        />
-        <response-block v-show="msgStreamModel.loading"></response-block>
-        <msg-block
-            v-show="msgStreamModel.status === 'failed'"
-            :model-value="{
-                type: 'assistant',
-                data: {
-                    content: local('##### Run Failed, Please Retry')
-                }
-            }"
-        />
+        <template v-for="(msg, index) in taskMessages" :key="index">
+            <transition name="msg-collapse" appear>
+                <msg-block v-show="showMe(msg)" :model-value="msg" />
+            </transition>
+        </template>
+        <transition name="msg-collapse" appear>
+            <response-block v-show="msgStreamModel.loading"></response-block>
+        </transition>
+        <transition name="msg-collapse" appear>
+            <msg-block
+                v-show="msgStreamModel.status === 'failed'"
+                :model-value="{
+                    type: 'assistant',
+                    data: {
+                        content: local('##### Run Failed, Please Retry')
+                    }
+                }"
+            />
+        </transition>
     </div>
 </template>
 
@@ -117,5 +120,24 @@ export default {
     &.collapsed {
         width: 0px;
     }
+}
+
+.msg-collapse-enter-active,
+.msg-collapse-leave-active,
+.msg-collapse-appear-active {
+    overflow: hidden;
+    transition: max-height 1s ease-out;
+}
+
+.msg-collapse-enter-from,
+.msg-collapse-leave-to,
+.msg-collapse-appear-from {
+    max-height: 0;
+}
+
+.msg-collapse-enter-to,
+.msg-collapse-leave-from,
+.msg-collapse-appear-to {
+    max-height: 1000px;
 }
 </style>

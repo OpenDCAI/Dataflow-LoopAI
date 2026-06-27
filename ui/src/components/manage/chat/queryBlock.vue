@@ -42,8 +42,9 @@
             :disabled="holdon"
             style="margin-left: 5px"
             @click="submitQuery"
-            >{{ local('Submit') }}</fv-button
-        >
+            >{{ local('Submit') }}
+            <i class="ms-Icon ms-Icon--ReturnKeySm" style="margin-left: 5px"></i>
+        </fv-button>
     </div>
 </template>
 
