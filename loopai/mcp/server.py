@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .base import mcp
 from .tools import configer  # noqa: F401
+from .tools import judger   # noqa: F401
 from .tools import trainer  # noqa: F401
 
 
