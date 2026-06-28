@@ -156,7 +156,6 @@ def resolve_judger_runtime_config(
 
     # --- global ---
     task_id = _first_non_empty(
-        kwargs.get("thread_id"),
         kwargs.get("task_id"),
         os.getenv("TASK_ID"),
         state.get("task_id") if is_state_dict else None,
@@ -233,7 +232,7 @@ def resolve_judger_runtime_config(
             state["DB_PATH"] = db_path
 
     return {
-        "thread_id": str(task_id) if task_id else "",
+        "task_id": str(task_id) if task_id else "",
         "output_dir": str(output_dir or _DEFAULT_OUTPUT_DIR),
         "db_path": db_path,
         "model_path": model_path,
