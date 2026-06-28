@@ -4,7 +4,7 @@ from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 
 
-# MCP is served through the parent FastAPI app and mounted at `/mcp`.
+# MCP tools are registered once here and can be exposed by any HTTP wrapper.
 mcp = FastMCP(
     "loopai-mcp",
     streamable_http_path="/mcp",
@@ -19,11 +19,7 @@ def ensure_mcp_tools_registered() -> None:
 
 
 def build_embedded_mcp_app() -> Starlette:
-    """Build a Streamable HTTP MCP app intended to be mounted at `/mcp`.
-
-    The outer FastAPI app owns the real HTTP host/port, so the inner MCP app
-    only needs to expose `/` before it is mounted at `/mcp`.
-    """
+    """Build a Streamable HTTP MCP app intended to be mounted at `/mcp`."""
     ensure_mcp_tools_registered()
     original_path = mcp.settings.streamable_http_path
     mcp.settings.streamable_http_path = "/"

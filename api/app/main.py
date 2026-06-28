@@ -3,7 +3,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from tortoise.contrib.fastapi import register_tortoise
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from .controllers.config import router as config_router
@@ -12,10 +11,8 @@ from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
 from .controllers.resource import router as resource_router
 from .controllers.obtainer import router as obtainer_router
-from loopai.mcp.base import build_embedded_mcp_app, mcp
 
 import os
-import signal
 
 # 配置目录
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,20 +23,12 @@ DB_PATH = os.path.join(BASE_DIR, "db", "db.sqlite3")
 DIST_DIR = Path(BASE_DIR) / "dist"
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-EMBEDDED_MCP_APP = build_embedded_mcp_app()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    async with mcp.session_manager.run():
-        yield
 
 # 创建FastAPI应用
 app = FastAPI(
     title="LLaMA Factory Remote Training Service",
     description="远程训练服务，支持通过API触发LLaMA Factory训练任务",
     version="1.0.0",
-    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -64,7 +53,6 @@ app.include_router(starter_router, prefix="/starter", tags=["starter"])
 app.include_router(task_router, prefix="/task", tags=["task"])
 app.include_router(resource_router, prefix="/resource", tags=["resource"])
 app.include_router(obtainer_router, prefix="/obtainer", tags=["obtainer"])
-app.mount("/mcp", EMBEDDED_MCP_APP)
 
 app.mount(
     "/assets",

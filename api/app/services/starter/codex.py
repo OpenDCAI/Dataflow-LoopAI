@@ -39,9 +39,6 @@ CODEX_PROVIDER_OVERRIDES = [
     ("codex_wire_api", "wire_api"),
     ("codex_supports_websockets", "supports_websockets"),
 ]
-DEFAULT_API_PORT = 8855
-
-
 def _to_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -238,7 +235,6 @@ def _apply_config_overrides(
 
 def _sync_codex_home_config(
     system_config: dict[str, Any],
-    env_overrides: dict[str, Any] | None = None,
 ) -> Path:
     codex_home = _resolved_codex_home(system_config)
     codex_home.mkdir(parents=True, exist_ok=True)
@@ -280,19 +276,6 @@ def _sync_codex_home_config(
         project_config = {"trust_level": "trusted"}
     project_config.setdefault("trust_level", "trusted")
     template["projects"] = {workspace: project_config}
-
-    mcp_servers = template.setdefault("mcp_servers", {})
-    if isinstance(mcp_servers, dict):
-        loopai_mcp = mcp_servers.get("loopai_mcp")
-        if isinstance(loopai_mcp, dict):
-            api_port = system_config.get("api_port", DEFAULT_API_PORT)
-            try:
-                resolved_api_port = int(api_port)
-            except (TypeError, ValueError):
-                resolved_api_port = DEFAULT_API_PORT
-
-            loopai_mcp["url"] = f"http://127.0.0.1:{resolved_api_port}/mcp/"
-            loopai_mcp.pop("env", None)
 
     config_path.write_text(tomlkit.dumps(template), encoding="utf-8")
     return codex_home
@@ -935,7 +918,6 @@ class CodexStarterService:
         merged_system_config["codex_workspace"] = resolved_workspace
         resolved_codex_home = _sync_codex_home_config(
             merged_system_config,
-            env_overrides=merged_env_overrides,
         )
         resumed_thread_id = str(session.get("codex_thread_id") or "").strip()
 

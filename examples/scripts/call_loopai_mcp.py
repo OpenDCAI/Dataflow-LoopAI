@@ -21,8 +21,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--server-url",
-        default=os.environ.get("LOOPAI_MCP_SERVER_URL", "http://127.0.0.1:8855/mcp/"),
-        help="HTTP MCP endpoint exposed by the FastAPI service, for example `http://127.0.0.1:8855/mcp/`.",
+        default=os.environ.get("LOOPAI_MCP_SERVER_URL", "http://127.0.0.1:8765/mcp/"),
+        help="HTTP MCP endpoint exposed by the standalone LoopAI MCP service, for example `http://127.0.0.1:8765/mcp/`.",
     )
     parser.add_argument(
         "--db-path",
@@ -37,7 +37,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--list-tools",
         action="store_true",
-        help="List MCP tools exposed by the FastAPI-mounted LoopAI MCP endpoint.",
+        help="List MCP tools exposed by the standalone LoopAI MCP HTTP endpoint.",
     )
     parser.add_argument(
         "--tool",
