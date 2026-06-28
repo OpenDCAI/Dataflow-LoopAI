@@ -12,6 +12,7 @@ from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
 from .controllers.resource import router as resource_router
 from .controllers.obtainer import router as obtainer_router
+from loopai.mcp.base import build_embedded_mcp_app, mcp
 
 import os
 import signal
@@ -25,11 +26,13 @@ DB_PATH = os.path.join(BASE_DIR, "db", "db.sqlite3")
 DIST_DIR = Path(BASE_DIR) / "dist"
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+EMBEDDED_MCP_APP = build_embedded_mcp_app()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield  # 在 yield 前的代码会在应用 启动时执行，在 yield 后的代码会在应用 关闭时执行。        print(f"terminate process {p.pid}")
+    async with mcp.session_manager.run():
+        yield
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -61,6 +64,7 @@ app.include_router(starter_router, prefix="/starter", tags=["starter"])
 app.include_router(task_router, prefix="/task", tags=["task"])
 app.include_router(resource_router, prefix="/resource", tags=["resource"])
 app.include_router(obtainer_router, prefix="/obtainer", tags=["obtainer"])
+app.mount("/mcp", EMBEDDED_MCP_APP)
 
 app.mount(
     "/assets",

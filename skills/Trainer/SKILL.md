@@ -154,8 +154,8 @@ Trainer is exposed through the unified `loopai_mcp` server:
 
 In Codex these appear as:
 
-- `mcp__loopai_mcp__trainer_run`
-- `mcp__loopai_mcp__trainer_load_events`
+- `trainer_run`
+- `trainer_load_events`
 
 Prefer calling `configer_get_task(section_name="trainer", task_id=...)` before `trainer_run` when you need to inspect or confirm task config.
 

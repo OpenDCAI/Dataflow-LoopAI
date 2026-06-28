@@ -27,8 +27,8 @@
 项目专用 skill 建议直接维护在工作区：
 
 - [skills/configer/SKILL.md](/home/lpc/repos/Dataflow-LoopAI/skills/configer/SKILL.md)
-- [loopai/mcp/server.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/server.py)
-  LoopAI Configer 的 MCP server 入口
+- [loopai/mcp/base.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/base.py)
+  LoopAI MCP tool 注册与挂载入口
 - [loopai/mcp/tools/configer.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/tools/configer.py)
   将 `loopai.skills.Configer` 包装成 MCP tools
 - [loopai/mcp/tools/judger.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/tools/judger.py)
@@ -47,8 +47,8 @@
 
 当前示例已经在 [config.toml](/home/lpc/repos/Dataflow-LoopAI/examples/codex_home_example/config.toml) 里添加：
 
-- `loopai_mcp` stdio MCP server
+- `loopai_mcp` HTTP MCP server
 - `configer_*` 配置读写 tools
 - `judger_run` / `judger_load_events`
 - `trainer_run` / `trainer_load_events`
-- `mcp__loopai_mcp__configer_update(_task)` 的 `PreToolUse` hook 示例
+- `configer_update(_task)` 的 `PreToolUse` hook 示例

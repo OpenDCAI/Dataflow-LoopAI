@@ -26,21 +26,21 @@
 
 这会导致Codex调用失败率大增.
 
-只有经过 `loopai/mcp/tools/*.py` 注册，并且被 `loopai/mcp/server.py` 导入，再被 `config.toml` 的 `enabled_tools` 打开，Codex 才会严格执行。
+只有经过 `loopai/mcp/tools/*.py` 注册，并且被 `loopai/mcp/base.py` 中的统一注册逻辑加载，再被 `config.toml` 的 `enabled_tools` 打开，Codex 才会严格执行。
 
 ## 当前仓库里的 MCP 入口
 
-当前统一的 MCP server 是：
+当前统一的 MCP 定义入口是：
 
 - server 名称定义：[loopai/mcp/base.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/base.py)
-- server 启动入口：[loopai/mcp/server.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/server.py)
+- tool 注册入口：[loopai/mcp/base.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/base.py)
 
 现在的模式是：
 
 - 只维护一个统一的 `loopai_mcp` server
 - 不同 skill 通过不同 tool 名挂到这个 server 下面
 
-这也是后续最推荐的方式。通常不要为每个 skill 再单独起一个新的 MCP server。
+这也是后续最推荐的方式。通常不要为每个 skill 再单独维护新的 MCP 入口。
 
 ## 第一步：先把 skill 的 Python 入口做稳定
 
@@ -149,50 +149,44 @@ tool 命名建议遵守下面的模式：
 
 因为在 Codex 侧最终看到的名字会变成：
 
-- `mcp__loopai_mcp__analyzer_run`
+- `analyzer_run`
 
 如果基础名本身太短或太泛，后面会很难分辨。
 
-## 第四步：把新 tool 模块接到 MCP server 上
+## 第四步：把新 tool 模块接到统一 MCP 入口上
 
 仅仅创建了 `loopai/mcp/tools/foo.py` 还不够。
 
-你还需要在：
+你还需要确保它会被统一注册入口加载。
 
-- [loopai/mcp/server.py](/home/lpc/repos/Dataflow-LoopAI/loopai/mcp/server.py)
-
-里导入它。
-
-当前 `server.py` 的模式是：
+当前 `base.py` 的模式是：
 
 ```python
-from .base import mcp
-from .tools import configer
+def ensure_mcp_tools_registered() -> None:
+    from .tools import configer
 ```
 
 如果你新增了 `foo.py`，就要改成类似：
 
 ```python
-from .base import mcp
-from .tools import configer
-from .tools import foo
+def ensure_mcp_tools_registered() -> None:
+    from .tools import configer
+    from .tools import foo
 ```
 
 这里即使导入结果没被直接使用，也必须保留。因为导入本身会触发 `@mcp.tool(...)` 注册。
 
-如果没 import，tool 就不会出现在 server 里。
+如果没 import，tool 就不会出现在 MCP app 里。
 
 ## 第五步：在 `config.toml` 中启用这个 tool
 
-MCP server 注册完成后，还要在 Codex 的 `config.toml` 中把它打开。
+MCP tool 注册完成后，还要在 Codex 的 `config.toml` 中把它打开。
 
 当前推荐配置模式是：
 
 ```toml
 [mcp_servers.loopai_mcp]
-command = "python3"
-args = ["-m", "loopai.mcp.server"]
-cwd = "/home/lpc/repos/Dataflow-LoopAI"
+url = "http://127.0.0.1:8855/mcp/"
 enabled = true
 enabled_tools = [
   "configer_get_schema",
@@ -200,19 +194,15 @@ enabled_tools = [
   "foo_run",
   "foo_load_events",
 ]
-
-[mcp_servers.loopai_mcp.env]
-PYTHONPATH = "/home/lpc/repos/Dataflow-LoopAI"
-DB_PATH = "/home/lpc/repos/Dataflow-LoopAI/api/db/db.sqlite3"
 ```
 
 要点如下：
 
 - `loopai_mcp` 是 server key，不是 tool 名
-- `args = ["-m", "loopai.mcp.server"]` 表示启动统一的 LoopAI MCP server
+- `url = "http://127.0.0.1:8855/mcp/"` 表示 Codex 通过 FastAPI 暴露的 HTTP 地址连接统一的 LoopAI MCP server
 - `enabled_tools` 里列出的才会真正暴露给 Codex
 
 最终在 Codex 侧，这些工具名会显示为：
 
-- `mcp__loopai_mcp__foo_run`
-- `mcp__loopai_mcp__foo_load_events`
+- `foo_run`
+- `foo_load_events`

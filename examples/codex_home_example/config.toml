@@ -11,9 +11,7 @@ supports_websockets = false
 trust_level = "trusted"
 
 [mcp_servers.loopai_mcp]
-command = "python3"
-args = ["-m", "loopai.mcp.server"]
-cwd = "."
+url = "http://127.0.0.1:8855/mcp/"
 startup_timeout_sec = 20
 tool_timeout_sec = 600
 enabled = true
@@ -30,7 +28,3 @@ enabled_tools = [
   "trainer_run",
   "trainer_load_events",
 ]
-
-[mcp_servers.loopai_mcp.env]
-PYTHONPATH = "./"
-DB_PATH = "./api/db/db.sqlite3"

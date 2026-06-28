@@ -16,7 +16,7 @@ Judger Skill 用于在无 LangGraph（独立模式）下运行 LoopAI 评测流�
 
 | 方式 | 入口 | 适用场景 |
 |---|---|---|
-| **MCP tool（推荐）** | `mcp__loopai_mcp__judger_run` | Codex 编排，自动管理 lifecycle，`sys.exit` 被安全拦截 |
+| **MCP tool（推荐）** | `judger_run` | Codex 编排，自动管理 lifecycle，`sys.exit` 被安全拦截 |
 | **CLI 子进程** | `python examples/scripts/run_judger_standalone.py` | 手动调试、脚本 |
 
 **禁止使用的路径：**

@@ -12,7 +12,7 @@ def __getattr__(name):
     if name == "JudgerAgent":
         raise RuntimeError(
             "JudgerAgent is deprecated. Use:\n"
-            "  - MCP tool:  mcp__loopai_mcp__judger_run\n"
+            "  - MCP tool:  judger_run\n"
             "  - CLI:       python examples/scripts/run_judger_standalone.py\n"
             "  - Python:    loopai.skills.Judger.run()\n"
             "The old LangGraph-based JudgerAgent no longer produces judger.pkl events."

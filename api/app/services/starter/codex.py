@@ -39,6 +39,7 @@ CODEX_PROVIDER_OVERRIDES = [
     ("codex_wire_api", "wire_api"),
     ("codex_supports_websockets", "supports_websockets"),
 ]
+DEFAULT_API_PORT = 8855
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -284,16 +285,14 @@ def _sync_codex_home_config(
     if isinstance(mcp_servers, dict):
         loopai_mcp = mcp_servers.get("loopai_mcp")
         if isinstance(loopai_mcp, dict):
-            loopai_mcp["cwd"] = str(PROJECT_ROOT)
-            mcp_env = loopai_mcp.setdefault("env", {})
-            if isinstance(mcp_env, dict):
-                mcp_env["PYTHONPATH"] = str(PROJECT_ROOT)
-                for key, value in (env_overrides or {}).items():
-                    key = str(key)
-                    if value is None:
-                        mcp_env.pop(key, None)
-                    else:
-                        mcp_env[key] = str(value)
+            api_port = system_config.get("api_port", DEFAULT_API_PORT)
+            try:
+                resolved_api_port = int(api_port)
+            except (TypeError, ValueError):
+                resolved_api_port = DEFAULT_API_PORT
+
+            loopai_mcp["url"] = f"http://127.0.0.1:{resolved_api_port}/mcp/"
+            loopai_mcp.pop("env", None)
 
     config_path.write_text(tomlkit.dumps(template), encoding="utf-8")
     return codex_home
