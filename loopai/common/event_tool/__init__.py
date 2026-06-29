@@ -179,15 +179,21 @@ class PickleEventWriter:
         self.name = name
         self.context_id = context_id
         self.event_path = event_path
-        self.version_id = version_id
+        self.version_id = version_id or str(uuid.uuid4())
 
     def __call__(self, payload: StreamEvent | dict[str, Any]) -> StreamEvent:
         event = _coerce_stream_event(payload)
         event.node = event.node or self.name
         if event.context_id is None:
             event.context_id = self.context_id
-        if self.version_id is None:
-            self.version_id = event.version_id or str(uuid.uuid4())
+        if event.version_id and event.version_id != self.version_id:
+            logger.warning(
+                "Ignoring mismatched event version_id for %s/%s: event=%s writer=%s",
+                self.context_id,
+                self.name,
+                event.version_id,
+                self.version_id,
+            )
         event.version_id = self.version_id
         event.status = event.status or "running"
         self._sync_runtime(status=event.status)
@@ -293,13 +299,14 @@ def get_event_writer(
 ) -> PickleEventWriter:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
+    version_value = _sanitize_path_component(version_id or str(uuid.uuid4()), "version")
     base_path = Path(log_file_path)
-    event_path = base_path / context_value / f"{agent_name}.pkl"
+    event_path = base_path / context_value / agent_name / version_value / f"{agent_name}.pkl"
     return PickleEventWriter(
         name=agent_name,
         context_id=context_value,
         event_path=event_path,
-        version_id=version_id,
+        version_id=version_value,
     )
 
 
@@ -307,8 +314,10 @@ def load_stream_events(
     name: str,
     context_id: str,
     log_file_path: str = "./outputs",
+    *,
+    version_id: str | None = None,
 ) -> list[StreamEvent]:
-    grouped_events = load_stream_event_groups(name, context_id, log_file_path)
+    grouped_events = load_stream_event_groups(name, context_id, log_file_path, version_id=version_id)
     flattened_events: list[StreamEvent] = []
     for events in grouped_events.values():
         flattened_events.extend(events)
@@ -320,25 +329,40 @@ def load_stream_event_groups(
     name: str,
     context_id: str,
     log_file_path: str = "./outputs",
+    *,
+    version_id: str | None = None,
 ) -> dict[str, list[StreamEvent]]:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
-    event_path = Path(log_file_path) / context_value / f"{agent_name}.pkl"
-    if not event_path.exists():
-        return {}
+    base_path = Path(log_file_path) / context_value
+    event_paths: list[Path] = []
+    if version_id:
+        version_value = _sanitize_path_component(version_id, "version")
+        event_paths.append(base_path / agent_name / version_value / f"{agent_name}.pkl")
+    else:
+        event_paths.extend(sorted((base_path / agent_name).glob(f"*/{agent_name}.pkl")))
+        event_paths.append(base_path / f"{agent_name}.pkl")
 
-    with event_path.open("rb") as file_obj:
-        events = pickle.load(file_obj)
+    merged: dict[str, list[StreamEvent]] = {}
+    for event_path in event_paths:
+        if not event_path.exists():
+            continue
+        with event_path.open("rb") as file_obj:
+            events = pickle.load(file_obj)
+        for current_key, group_events in _normalize_event_groups(events).items():
+            merged.setdefault(current_key, []).extend(group_events)
 
-    return _normalize_event_groups(events)
+    return merged
 
 
 def dump_stream_events_json(
     name: str,
     context_id: str,
     log_file_path: str = "./outputs",
+    *,
+    version_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    return [item.json() for item in load_stream_events(name, context_id, log_file_path)]
+    return [item.json() for item in load_stream_events(name, context_id, log_file_path, version_id=version_id)]
 
 
 __all__ = [

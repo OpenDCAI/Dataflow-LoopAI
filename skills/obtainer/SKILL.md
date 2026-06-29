@@ -131,12 +131,15 @@ The command writes:
 
 ObtainerCLI can persist `StreamEvent` entries through `loopai.common.event_tool`.
 
-Enable events by passing a task id, or by setting `TASK_ID`:
+Enable events by passing a task id, or by setting `TASK_ID`. Each run has a `version_id`;
+pass `--version-id` or set `VERSION_ID` / `LOOP_VERSION_ID` to align it with the loop UUID.
+If omitted, the event writer creates a new UUID for that sub-agent run:
 
 ```bash
 loopai-obtainercli lake status \
   --lake .loopai/lake.yaml \
   --task-id data_task_001 \
+  --version-id loop_uuid_001 \
   --output-dir ./outputs \
   --json
 ```
@@ -144,7 +147,7 @@ loopai-obtainercli lake status \
 Events are written to:
 
 ```text
-<output_dir>/<task_id>/obtainercli.pkl
+<output_dir>/<task_id>/obtainercli/<version_id>/obtainercli.pkl
 ```
 
 Read them from Python:
@@ -163,6 +166,37 @@ Each event uses:
 - `progress` from `0.0` to `1.0` where the command can report phases
 
 Use `--no-events` to suppress event persistence even when `TASK_ID` is set.
+
+When `searchagent` or `download manifest` runs with `--task-id` and `--version-id` and no explicit `--output-root`, static outputs default to:
+
+```text
+<output_dir>/<task_id>/obtainercli/<version_id>/
+```
+
+## Loop Version Tags
+
+The data lake is shared across loop rounds. Every ingest performed inside a loop must tag records with the loop UUID so later training/export steps can tell which records entered which loop round.
+
+```bash
+loopai-obtainercli ingest path \
+  --lake .loopai/lake.yaml \
+  --input ./records.jsonl \
+  --dataset math_seed \
+  --task-id data_task_001 \
+  --version-id loop_uuid_001 \
+  --loop-id loop_uuid_001 \
+  --tags source=huggingface \
+  --json
+```
+
+`ingest path` automatically appends:
+
+```text
+version_id=<version_id>
+loop_uuid=<loop_id or version_id>
+```
+
+These values are written to `record_tags` and can be used by `sample --include-tag loop_uuid=<uuid>`.
 
 ## End-To-End Agent Workflow
 

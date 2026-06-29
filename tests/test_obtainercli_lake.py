@@ -596,10 +596,50 @@ def test_cli_persists_stream_events(tmp_path: Path) -> None:
     )
 
     assert exit_code == 0
-    event_path = output_dir / "obtainer-task" / "obtainercli.pkl"
-    assert event_path.exists()
+    event_paths = list((output_dir / "obtainer-task" / "obtainercli").glob("*/obtainercli.pkl"))
+    assert len(event_paths) == 1
     events = load_events("obtainer-task", output_dir=str(output_dir))
     assert [event["status"] for event in events] == ["started", "completed"]
     assert {event["current"] for event in events} == {"obtainercli"}
+    assert events[-1]["version_id"]
     assert events[-1]["node"] == "lake.init"
     assert events[-1]["progress"] == 1.0
+
+
+def test_cli_ingest_tags_records_with_loop_version(tmp_path: Path) -> None:
+    from loopai.skills.ObtainerCLI.cli import run
+
+    lake_root = tmp_path / "lake"
+    link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    input_path = tmp_path / "input" / "records.jsonl"
+    _write_jsonl(input_path, [{"text": "loop version sample", "source_uri": "file://loop.txt"}])
+    init_lake(root=lake_root, link_path=link_path, if_not_exists=True)
+
+    exit_code = run(
+        [
+            "ingest",
+            "path",
+            "--lake",
+            str(link_path),
+            "--input",
+            str(input_path),
+            "--dataset",
+            "loop_seed",
+            "--tags",
+            "quality=high",
+            "--task-id",
+            "loop-task",
+            "--output-dir",
+            str(tmp_path / "outputs"),
+            "--version-id",
+            "version-001",
+            "--loop-id",
+            "loop-uuid-001",
+        ]
+    )
+
+    assert exit_code == 0
+    tags = read_table(lake_root, "record_tags")
+    assert any(row["tag_name"] == "version_id" and row["tag_value"] == "version-001" for row in tags)
+    assert any(row["tag_name"] == "loop_uuid" and row["tag_value"] == "loop-uuid-001" for row in tags)
+    assert any(row["tag_name"] == "quality" and row["tag_value"] == "high" for row in tags)

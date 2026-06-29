@@ -79,8 +79,41 @@ def _command_event_data(args: argparse.Namespace) -> dict:
         "split",
         "max_rows",
         "streaming",
+        "version_id",
+        "loop_id",
     )
     return {key: getattr(args, key) for key in safe_keys if hasattr(args, key)}
+
+
+def _arg_was_supplied(argv: list[str] | None, option: str) -> bool:
+    if argv is None:
+        return False
+    return any(item == option or item.startswith(f"{option}=") for item in argv)
+
+
+def _agent_version_dir(*, output_dir: str, task_id: str, agent_name: str, version_id: str) -> Path:
+    return Path(output_dir) / task_id / agent_name / version_id
+
+
+def _runtime_version_id(args: argparse.Namespace, writer: object | None) -> str:
+    writer_version = getattr(writer, "version_id", "") if writer is not None else ""
+    return str(getattr(args, "version_id", "") or writer_version or "").strip()
+
+
+def _loop_id(args: argparse.Namespace, version_id: str) -> str:
+    return str(getattr(args, "loop_id", "") or version_id or "").strip()
+
+
+def _ingest_tags(raw_tags: str, *, version_id: str, loop_id: str) -> list[str]:
+    tags = [raw_tags] if raw_tags else []
+    runtime_tags = []
+    if version_id:
+        runtime_tags.append(f"version_id={version_id}")
+    if loop_id:
+        runtime_tags.append(f"loop_uuid={loop_id}")
+    if runtime_tags:
+        tags.append(",".join(runtime_tags))
+    return tags
 
 
 def _extract_event_args(argv: list[str] | None) -> tuple[list[str] | None, dict[str, object]]:
@@ -111,6 +144,22 @@ def _extract_event_args(argv: list[str] | None) -> tuple[list[str] | None, dict[
             overrides["output_dir"] = item.split("=", 1)[1]
             index += 1
             continue
+        if item == "--version-id" and index + 1 < len(argv):
+            overrides["version_id"] = argv[index + 1]
+            index += 2
+            continue
+        if item.startswith("--version-id="):
+            overrides["version_id"] = item.split("=", 1)[1]
+            index += 1
+            continue
+        if item == "--loop-id" and index + 1 < len(argv):
+            overrides["loop_id"] = argv[index + 1]
+            index += 2
+            continue
+        if item.startswith("--loop-id="):
+            overrides["loop_id"] = item.split("=", 1)[1]
+            index += 1
+            continue
         remaining.append(item)
         index += 1
     return remaining, overrides
@@ -120,6 +169,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="loopai-obtainercli")
     parser.add_argument("--task-id", default=os.getenv("TASK_ID", ""))
     parser.add_argument("--output-dir", default=os.getenv("OUTPUT_DIR", "./outputs"))
+    parser.add_argument("--version-id", default=os.getenv("VERSION_ID") or os.getenv("LOOP_VERSION_ID") or "")
+    parser.add_argument("--loop-id", default=os.getenv("LOOP_UUID") or os.getenv("LOOP_ID") or "")
     parser.add_argument("--no-events", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -240,7 +291,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    parse_argv, event_overrides = _extract_event_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    parse_argv, event_overrides = _extract_event_args(raw_argv)
     args = parser.parse_args(parse_argv)
     for key, value in event_overrides.items():
         setattr(args, key, value)
@@ -248,8 +300,20 @@ def run(argv: list[str] | None = None) -> int:
     writer = get_obtainer_event_writer(
         task_id=args.task_id,
         output_dir=args.output_dir,
+        version_id=args.version_id or None,
         enabled=not args.no_events,
     )
+    version_id = _runtime_version_id(args, writer)
+    loop_id = _loop_id(args, version_id)
+    if hasattr(args, "output_root") and args.task_id and version_id and not _arg_was_supplied(raw_argv, "--output-root"):
+        args.output_root = str(
+            _agent_version_dir(
+                output_dir=args.output_dir,
+                task_id=args.task_id,
+                agent_name="obtainercli",
+                version_id=version_id,
+            )
+        )
     emit_obtainer_event(
         writer,
         node=node,
@@ -292,7 +356,7 @@ def run(argv: list[str] | None = None) -> int:
                 task_type=args.task_type,
                 processing_level=args.processing_level,
                 source_kind=args.source_kind,
-                tags=[args.tags] if args.tags else [],
+                tags=_ingest_tags(args.tags, version_id=version_id, loop_id=loop_id),
                 idempotency_key=args.idempotency_key or None,
             )
             config = read_lake_config_for_lake(args.lake)

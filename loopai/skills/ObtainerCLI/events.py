@@ -10,6 +10,7 @@ def get_obtainer_event_writer(
     *,
     task_id: str | None = None,
     output_dir: str = "./outputs",
+    version_id: str | None = None,
     enabled: bool = True,
 ) -> EventWriter | None:
     if not enabled or not task_id:
@@ -20,6 +21,7 @@ def get_obtainer_event_writer(
         name="obtainercli",
         context_id=task_id,
         log_file_path=output_dir,
+        version_id=version_id,
     )
 
 
@@ -53,11 +55,12 @@ def emit_obtainer_event(
         return
 
 
-def load_events(task_id: str, output_dir: str = "./outputs") -> list[dict[str, Any]]:
+def load_events(task_id: str, output_dir: str = "./outputs", version_id: str | None = None) -> list[dict[str, Any]]:
     from loopai.common.event_tool import dump_stream_events_json
 
     return dump_stream_events_json(
         name="obtainercli",
         context_id=task_id,
         log_file_path=output_dir,
+        version_id=version_id,
     )

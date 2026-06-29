@@ -209,3 +209,51 @@ def test_cli_searchagent_emits_json(tmp_path, monkeypatch, capsys):
     assert exit_code == 0
     assert payload["ok"] is True
     assert payload["schema_version"] == "obtainercli.searchagent.v1"
+
+
+def test_cli_searchagent_defaults_output_root_to_version_dir(tmp_path, monkeypatch, capsys):
+    from loopai.skills.ObtainerCLI import cli
+
+    captured = {}
+
+    def fake_run_searchagent(**kwargs):
+        captured.update(kwargs)
+        return {
+            "ok": True,
+            "status": "completed",
+            "schema_version": "obtainercli.searchagent.v1",
+            "manifest_path": str(Path(kwargs["output_root"]) / "searchagent_manifest.json"),
+            "candidates": [],
+            "download_list": [],
+            "tasks": [],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(cli, "run_searchagent", fake_run_searchagent)
+
+    exit_code = cli.run(
+        [
+            "searchagent",
+            "--query",
+            "math reasoning",
+            "--model-name",
+            "test-model",
+            "--base-url",
+            "http://127.0.0.1:8000/v1",
+            "--api-key",
+            "test-key",
+            "--task-id",
+            "task-001",
+            "--output-dir",
+            str(tmp_path / "outputs"),
+            "--version-id",
+            "loop-version-001",
+            "--no-deepsearch",
+            "--json",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert captured["output_root"] == str(tmp_path / "outputs" / "task-001" / "obtainercli" / "loop-version-001")
