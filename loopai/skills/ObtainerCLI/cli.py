@@ -542,3 +542,7 @@ def run(argv: list[str] | None = None) -> int:
 
 def main() -> None:
     raise SystemExit(run(sys.argv[1:]))
+
+
+if __name__ == "__main__":
+    main()
