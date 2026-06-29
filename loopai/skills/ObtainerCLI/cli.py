@@ -267,7 +267,7 @@ def build_parser() -> argparse.ArgumentParser:
     download_manifest_cmd.add_argument("--output-root", default="./outputs/downloads")
     download_manifest_cmd.add_argument("--limit", type=int, default=0)
     download_manifest_cmd.add_argument("--split", default="train")
-    download_manifest_cmd.add_argument("--max-rows", type=int, default=200)
+    download_manifest_cmd.add_argument("--max-rows", type=int, default=0)
     download_manifest_cmd.add_argument("--streaming", action=argparse.BooleanOptionalAction, default=True)
     download_manifest_cmd.add_argument("--json", action="store_true")
 

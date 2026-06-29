@@ -39,7 +39,11 @@ def test_download_manifest_exports_huggingface_rows(tmp_path, monkeypatch):
                 {
                     "question": "1+1?",
                     "answer": "2",
-                }
+                },
+                {
+                    "question": "2+2?",
+                    "answer": "4",
+                },
             ]
         )
 
@@ -49,26 +53,19 @@ def test_download_manifest_exports_huggingface_rows(tmp_path, monkeypatch):
         manifest=manifest,
         output_root=tmp_path / "downloads",
         limit=1,
-        max_rows=10,
+        max_rows=0,
     )
 
     records_path = Path(result["records_jsonl"][0])
     rows = [json.loads(line) for line in records_path.read_text(encoding="utf-8").splitlines()]
     assert result["ok"] is True
     assert result["completed"] == 1
-    assert rows == [
-        {
-            "question": "1+1?",
-            "answer": "2",
-            "text": "1+1?",
-            "instruction": "1+1?",
-            "input": "1+1?",
-            "output": "2",
-            "source_domain": "huggingface",
-            "source_uri": "hf://datasets/openai/gsm8k/train#1",
-            "split": "train",
-        }
+    assert [row["source_uri"] for row in rows] == [
+        "hf://datasets/openai/gsm8k/train#1",
+        "hf://datasets/openai/gsm8k/train#2",
     ]
+    assert rows[0]["output"] == "2"
+    assert rows[1]["output"] == "4"
 
 
 def test_cli_download_manifest_emits_json(tmp_path, monkeypatch, capsys):

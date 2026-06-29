@@ -120,9 +120,10 @@ def _export_huggingface_jsonl(
 
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     dataset = _load_hf_dataset(dataset_id, split=split, streaming=streaming)
+    selected_rows = dataset if max_rows == 0 else islice(dataset, max_rows)
     rows_iter = (
         _normalize_row(dict(row), dataset_id=dataset_id, split=split, row_index=index)
-        for index, row in enumerate(islice(dataset, max_rows), 1)
+        for index, row in enumerate(selected_rows, 1)
     )
     dataset_name = _safe_name(dataset_id)
     records_path = output_root / "records" / f"{dataset_name}.{split}.jsonl"
@@ -145,14 +146,14 @@ def download_manifest(
     output_root: str | Path,
     limit: int = 0,
     split: str = "train",
-    max_rows: int = 200,
+    max_rows: int = 0,
     streaming: bool = True,
 ) -> dict[str, Any]:
-    if max_rows <= 0:
+    if max_rows < 0:
         raise ObtainerCliError(
             "INVALID_MAX_ROWS",
-            "download max rows must be positive",
-            hint="Pass --max-rows with a positive integer.",
+            "download max rows must be zero or positive",
+            hint="Use --max-rows 0 for the full dataset, or pass a positive integer for debugging only.",
         )
 
     payload = _read_manifest(manifest)

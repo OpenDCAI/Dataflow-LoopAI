@@ -20,6 +20,16 @@ ObtainerCLI Skill is the agent-facing workflow for LoopAI data acquisition and l
 
 Do not treat this skill as only a thin CLI wrapper. The agent must manage the whole data flow and keep each source, tag, and export decision explicit.
 
+## Hard Constraints
+
+- Production acquisition must ingest the full selected dataset, not a smoke-test subset.
+- Do not use `--limit`, small `--max-rows`, `head`, `sample`, or hand-written tiny fixtures as the final ingested data. Those are only allowed for connectivity tests before the real run.
+- If a smoke test is run, its output must be clearly kept out of the production lake or tagged as smoke/test data and not presented as the completed dataset acquisition.
+- Every dataset ingest must include complete operational tags before it enters the shared data lake.
+- Required ingest tags include source platform, source dataset id/name, source URL or URI, license when known, language when known, domain, task type, processing level, source kind, split when applicable, loop UUID, and version id.
+- If any required tag is unknown, use an explicit `unknown` value and record the reason in the run notes or manifest; do not silently omit the tag.
+- The shared lake is the cross-loop source of truth, so never overwrite or hide loop/version provenance.
+
 ## Python Implementation
 
 ```text
@@ -114,11 +124,12 @@ It reads `download_list` in order and exports provider records to JSONL. The fir
 loopai-obtainercli download manifest \
   --manifest ./outputs/searchagent_manifest.json \
   --output-root ./outputs/downloads \
-  --limit 1 \
   --split train \
-  --max-rows 200 \
+  --max-rows 0 \
   --json
 ```
+
+`--max-rows 0` means export the full split. Positive `--max-rows` values are for debugging only and must not be used for final data-lake ingestion.
 
 The command writes:
 
@@ -256,6 +267,7 @@ Recommended source-selection process:
 - Record source URL, dataset name, version or snapshot date, license, and filtering assumptions.
 - Avoid downloading data that is clearly unrelated, duplicated, private, or license-incompatible.
 - For web collection, use the WebCrawler skill or an existing crawler pipeline, then treat the collected output as local input for ingestion.
+- For final acquisition, download every selected dataset in full. Do not stop after a few records once the pipeline works.
 
 Downloaded or generated data must be converted to JSONL before ingestion. Each line should be a JSON object.
 
@@ -303,8 +315,10 @@ Metadata rules:
 - `dataset` should be stable and descriptive.
 - `idempotency-key` should include dataset name and version/snapshot where possible.
 - `domain`, `task-type`, `processing-level`, and `source-kind` must reflect the user's need and the actual source.
-- `tags` should preserve license, language, quality level, source platform, benchmark name, or any filtering decision needed for later sampling.
+- `tags` must preserve source platform, source dataset id/name, source URL or URI, license, language, quality level, benchmark name, split, loop UUID, version id, and any filtering decision needed for later sampling.
+- Missing metadata must be tagged explicitly, for example `license=unknown` or `lang=unknown`, rather than omitted.
 - Do not ingest unreviewed raw downloads as `gold` or `postprocessed_high_quality`.
+- Do not mark the task complete until all selected full datasets have been ingested and their tags are visible through `tag list`.
 
 If auto-embedding is enabled, ingestion may run embedding indexing after records are written. If it fails, inspect the warning and decide whether to retry indexing manually.
 
