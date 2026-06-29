@@ -23,6 +23,9 @@ Do not treat this skill as only a thin CLI wrapper. The agent must manage the wh
 ## Hard Constraints
 
 - Production acquisition must ingest the full selected dataset, not a smoke-test subset.
+- Dataset acquisition from an analysis report must search first. Run `searchagent` to produce a candidate `download_list` before downloading, unless the user explicitly provides a local file or explicitly says to skip search.
+- Do not hand-write a one-item manifest as the final acquisition plan when the task is to discover datasets. A hand-written manifest is only acceptable for a narrow CLI connectivity test.
+- Search must use deepsearch/research context first, then provider search such as Hugging Face and Kaggle, so the final download list is grounded in current external sources.
 - Do not use `--limit`, small `--max-rows`, `head`, `sample`, or hand-written tiny fixtures as the final ingested data. Those are only allowed for connectivity tests before the real run.
 - If a smoke test is run, its output must be clearly kept out of the production lake or tagged as smoke/test data and not presented as the completed dataset acquisition.
 - Every dataset ingest must include complete operational tags before it enters the shared data lake.
@@ -262,12 +265,16 @@ ObtainerCLI currently ingests local files; it does not yet provide dedicated `in
 
 Recommended source-selection process:
 
+- For analyzer reports or broad data needs, run `loopai-obtainercli searchagent` first and use its `download_list` as the acquisition candidate list.
+- Use deepsearch output to enrich provider keywords before Hugging Face / Kaggle search.
 - Search datasets that match the user need, license, domain, task type, language, and recency requirements.
 - Prefer primary dataset pages and official mirrors over reposts.
 - Record source URL, dataset name, version or snapshot date, license, and filtering assumptions.
 - Avoid downloading data that is clearly unrelated, duplicated, private, or license-incompatible.
 - For web collection, use the WebCrawler skill or an existing crawler pipeline, then treat the collected output as local input for ingestion.
 - For final acquisition, download every selected dataset in full. Do not stop after a few records once the pipeline works.
+
+After search, inspect the manifest and either download all relevant entries or record an explicit reason for excluding a candidate, such as incompatible license, wrong language, duplicate source, missing required fields, or unreachable provider.
 
 Downloaded or generated data must be converted to JSONL before ingestion. Each line should be a JSON object.
 
