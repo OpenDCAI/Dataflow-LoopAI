@@ -183,7 +183,7 @@ class PickleEventWriter:
 
     def __call__(self, payload: StreamEvent | dict[str, Any]) -> StreamEvent:
         event = _coerce_stream_event(payload)
-        event.node = self.name
+        event.node = event.node or self.name
         if event.context_id is None:
             event.context_id = self.context_id
         if self.version_id is None:

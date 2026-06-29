@@ -12,7 +12,7 @@ ObtainerCLI Skill is the agent-facing workflow for LoopAI data acquisition and l
 1. Check the current data lake status.
 2. Initialize a lake if no usable lake exists.
 3. Search for relevant datasets or confirm local inputs.
-4. Download or collect the selected data.
+4. Download or collect the needed data.
 5. Normalize the data to supported JSONL records.
 6. Ingest the data into the lake with required metadata and tags.
 7. Index embeddings when needed.
@@ -57,6 +57,8 @@ Supported commands:
 ```text
 loopai-obtainercli lake init
 loopai-obtainercli lake status
+loopai-obtainercli searchagent
+loopai-obtainercli download manifest
 loopai-obtainercli ingest path
 loopai-obtainercli index embed
 loopai-obtainercli tag list
@@ -64,6 +66,66 @@ loopai-obtainercli sample
 ```
 
 All CLI commands emit JSON. Prefer parsing the JSON result instead of scraping text.
+
+### SearchAgent Dataset Collection
+
+`searchagent` is a standalone CLI wrapper around the existing Obtainer dataset search logic.
+It does not call the old LangGraph `download_node`; instead it reuses the same Obtainer utility components that `download_node` used for planning and candidate selection:
+
+- deepsearch first: generate research queries, search the web, read selected pages, and summarize dataset-search clues;
+- LLM download-method decision for provider search;
+- Hugging Face / Kaggle candidate search managers;
+- web results are research context only, not final download candidates;
+- writes a `searchagent_manifest.json` containing an unranked candidate download list.
+
+It does not select or rank entries. The manifest is consumed in order by `download manifest`, then the exported JSONL can be passed to `ingest path`.
+
+```bash
+loopai-obtainercli searchagent \
+  --query-file ./outputs/analyzer_report.md \
+  --output-root ./outputs \
+  --max-deep-queries 3 \
+  --max-deep-pages 3 \
+  --json
+```
+
+By default, SearchAgent reads LLM parameters from `starter.yaml`:
+
+- `system.starter_model_path` / `system.starter_model_name`
+- `system.starter_base_url`
+- `system.starter_api_key`
+
+CLI flags override the starter values when explicitly supplied.
+
+The command writes:
+
+```text
+<output-root>/searchagent_manifest.json
+unranked `download_list` entries with `download.method` and provider-specific IDs / URLs
+task entries with `deepsearch.summary`, `deepsearch.urls`, and `enriched_search_keywords`
+```
+
+### Manifest Download
+
+`download manifest` is the minimal bridge from SearchAgent candidates to lake-ready files.
+It reads `download_list` in order and exports provider records to JSONL. The first version supports Hugging Face datasets through `datasets.load_dataset`; Kaggle entries are preserved in the result as skipped unless a fuller downloader is added.
+
+```bash
+loopai-obtainercli download manifest \
+  --manifest ./outputs/searchagent_manifest.json \
+  --output-root ./outputs/downloads \
+  --limit 1 \
+  --split train \
+  --max-rows 200 \
+  --json
+```
+
+The command writes:
+
+```text
+<output-root>/download_results.json
+<output-root>/records/<dataset>.<split>.jsonl
+```
 
 ## Stream Events
 
