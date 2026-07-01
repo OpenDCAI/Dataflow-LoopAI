@@ -68,10 +68,95 @@ def test_download_manifest_exports_huggingface_rows(tmp_path, monkeypatch):
     assert rows[1]["output"] == "4"
 
 
+def test_download_manifest_caps_zero_max_rows_per_dataset(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import download
+
+    manifest = tmp_path / "searchagent_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "download_list": [
+                    {
+                        "source": "huggingface",
+                        "dataset_id": "large/data",
+                        "download": {
+                            "method": "huggingface",
+                            "dataset_id": "large/data",
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_load_hf_dataset(dataset_id, *, split, streaming):
+        assert dataset_id == "large/data"
+        for index in range(download.MAX_ROWS_PER_DATASET + 1):
+            yield {"text": f"row {index}"}
+
+    monkeypatch.setattr(download, "_load_hf_dataset", fake_load_hf_dataset)
+
+    result = download.download_manifest(
+        manifest=manifest,
+        output_root=tmp_path / "downloads",
+        max_rows=0,
+    )
+
+    records_path = Path(result["records_jsonl"][0])
+    assert sum(1 for _ in records_path.open(encoding="utf-8")) == download.MAX_ROWS_PER_DATASET
+    assert result["max_rows_requested"] == 0
+    assert result["max_rows_effective"] == download.MAX_ROWS_PER_DATASET
+    assert result["results"][0]["row_cap_applied"] is True
+
+
+def test_download_manifest_caps_oversized_max_rows_per_dataset(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import download
+
+    manifest = tmp_path / "searchagent_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "download_list": [
+                    {
+                        "source": "huggingface",
+                        "dataset_id": "large/data",
+                        "download": {
+                            "method": "huggingface",
+                            "dataset_id": "large/data",
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_load_hf_dataset(dataset_id, *, split, streaming):
+        assert dataset_id == "large/data"
+        for index in range(download.MAX_ROWS_PER_DATASET + 1):
+            yield {"text": f"row {index}"}
+
+    monkeypatch.setattr(download, "_load_hf_dataset", fake_load_hf_dataset)
+
+    result = download.download_manifest(
+        manifest=manifest,
+        output_root=tmp_path / "downloads",
+        max_rows=download.MAX_ROWS_PER_DATASET + 500,
+    )
+
+    records_path = Path(result["records_jsonl"][0])
+    assert sum(1 for _ in records_path.open(encoding="utf-8")) == download.MAX_ROWS_PER_DATASET
+    assert result["max_rows_requested"] == download.MAX_ROWS_PER_DATASET + 500
+    assert result["max_rows_effective"] == download.MAX_ROWS_PER_DATASET
+    assert result["results"][0]["row_cap_applied"] is True
+
+
 def test_cli_download_manifest_emits_json(tmp_path, monkeypatch, capsys):
     from loopai.skills.ObtainerCLI import cli
 
     def fake_download_manifest(**kwargs):
+        assert kwargs["max_rows"] == 100_000
         return {
             "ok": True,
             "status": "completed",

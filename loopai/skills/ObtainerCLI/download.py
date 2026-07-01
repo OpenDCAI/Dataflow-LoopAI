@@ -11,6 +11,9 @@ from .errors import ObtainerCliError
 from .models import canonical_json, utc_now
 
 
+MAX_ROWS_PER_DATASET = 100_000
+
+
 def _safe_name(value: str) -> str:
     name = re.sub(r"[^A-Za-z0-9._-]+", "__", value.strip())
     return name.strip("._-") or "dataset"
@@ -120,7 +123,8 @@ def _export_huggingface_jsonl(
 
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     dataset = _load_hf_dataset(dataset_id, split=split, streaming=streaming)
-    selected_rows = dataset if max_rows == 0 else islice(dataset, max_rows)
+    effective_max_rows = _effective_max_rows(max_rows)
+    selected_rows = islice(dataset, effective_max_rows)
     rows_iter = (
         _normalize_row(dict(row), dataset_id=dataset_id, split=split, row_index=index)
         for index, row in enumerate(selected_rows, 1)
@@ -135,9 +139,18 @@ def _export_huggingface_jsonl(
         "dataset_id": dataset_id,
         "split": split,
         "rows_written": rows_written,
+        "max_rows_requested": max_rows,
+        "max_rows_effective": effective_max_rows,
+        "row_cap_applied": max_rows == 0 or max_rows > effective_max_rows,
         "records_jsonl": str(records_path.resolve()),
         "candidate": item,
     }
+
+
+def _effective_max_rows(max_rows: int) -> int:
+    if max_rows <= 0:
+        return MAX_ROWS_PER_DATASET
+    return min(max_rows, MAX_ROWS_PER_DATASET)
 
 
 def download_manifest(
@@ -146,14 +159,14 @@ def download_manifest(
     output_root: str | Path,
     limit: int = 0,
     split: str = "train",
-    max_rows: int = 0,
+    max_rows: int = MAX_ROWS_PER_DATASET,
     streaming: bool = True,
 ) -> dict[str, Any]:
     if max_rows < 0:
         raise ObtainerCliError(
             "INVALID_MAX_ROWS",
             "download max rows must be zero or positive",
-            hint="Use --max-rows 0 for the full dataset, or pass a positive integer for debugging only.",
+            hint=f"Use a value from 1 to {MAX_ROWS_PER_DATASET}; 0 is capped to the default per-dataset limit.",
         )
 
     payload = _read_manifest(manifest)
@@ -218,6 +231,9 @@ def download_manifest(
         "created_at": utc_now(),
         "manifest": str(Path(manifest).resolve()),
         "output_root": str(output_path.resolve()),
+        "max_rows_requested": max_rows,
+        "max_rows_effective": _effective_max_rows(max_rows),
+        "max_rows_per_dataset": MAX_ROWS_PER_DATASET,
         "requested": len(items),
         "completed": len(completed),
         "results": results,

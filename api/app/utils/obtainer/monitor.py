@@ -42,29 +42,20 @@ def _read_table_safe(lake_root: Path, table: str) -> tuple[list[dict], dict]:
     path = table_path(lake_root, table)
     warnings: list[dict] = []
     rows: list[dict] = []
-    if path.exists():
-        try:
-            rows = read_table(lake_root, table)
-        except Exception as exc:
-            warnings.append(
-                {
-                    "code": "TABLE_READ_ERROR",
-                    "table": table,
-                    "message": str(exc),
-                }
-            )
-    else:
+    try:
+        rows = read_table(lake_root, table)
+    except Exception as exc:
         warnings.append(
             {
-                "code": "TABLE_FILE_MISSING",
+                "code": "TABLE_READ_ERROR",
                 "table": table,
-                "message": f"Table file does not exist: {path}",
+                "message": str(exc),
             }
         )
     return rows, {
         "name": table,
         "path": str(path),
-        "exists": path.exists(),
+        "exists": path.exists() or bool(rows),
         "count": len(rows),
         "size_bytes": _path_size(path),
         "modified_at": _modified_at(path),
