@@ -5,6 +5,7 @@ from .service import (
     delete_task,
     get_latest_task_runtime,
     get_task,
+    get_task_state_config,
     get_train_status,
     list_latest_task_runtimes,
     list_task_runtime_history,
@@ -12,6 +13,7 @@ from .service import (
     parse_task_state_overrides,
     TaskServiceError,
     update_task,
+    update_task_state_config,
     update_task_runtime,
     upsert_task_runtime,
 )
@@ -23,6 +25,7 @@ __all__ = [
     "delete_task",
     "get_latest_task_runtime",
     "get_task",
+    "get_task_state_config",
     "get_train_status",
     "list_latest_task_runtimes",
     "list_task_runtime_history",
@@ -30,6 +33,7 @@ __all__ = [
     "parse_task_state_overrides",
     "TaskServiceError",
     "update_task",
+    "update_task_state_config",
     "update_task_runtime",
     "upsert_task_runtime",
 ]

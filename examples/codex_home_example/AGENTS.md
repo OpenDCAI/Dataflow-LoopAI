@@ -69,6 +69,20 @@
 3. 如果上下文中已经明确某个阶段完成，且用户要求继续下一阶段，应按流程识别下一类 sub-agent，但仍先做当前任务信息读取与确认。
 4. 如果用户只是普通闲聊或无需工作流动作的简单问答，可以按 `chat` 处理。
 
+执行类意图优先使用本地 skill 或 CLI：
+
+- `judge` 优先使用 Judger Skill 或 `examples/scripts/run_judger_standalone.py`
+- 用户要求查看 Judger 过程或评测明细时，优先读取 `judger.pkl` 事件流
+- `train` 优先使用 Trainer Skill
+- 用户要求查看 Trainer 过程或训练事件时，优先读取 Trainer 事件输出
+
+注意：
+
+- 这些路径要求运行环境已设置 `DB_PATH`
+- Judger 还要求存在当前任务上下文，对应 `TASK_ID` / `task_id`
+- 调用执行类能力前，仍应先向用户摘要当前任务信息并做简短确认
+- 不要把 shell 启动脚本或 Python import 描述成“调用 tool”
+
 ---
 
 ## Config Skill
@@ -77,20 +91,14 @@
 
 - `skills/configer/SKILL.md`
 
-如果运行时已经加载了 `loopai_mcp` MCP server，也优先用下面这些 MCP tools 做实际读写，因为这样 Codex 的 `PreToolUse` hooks 可以在写配置前拦截：
-
-- `mcp__loopai_mcp__configer_get_schema`
-- `mcp__loopai_mcp__configer_get`
-- `mcp__loopai_mcp__configer_get_task`
-- `mcp__loopai_mcp__configer_update`
-- `mcp__loopai_mcp__configer_update_task`
+优先使用本地 `skills/configer/SKILL.md` 中定义的方法做实际读写。
 
 注意：
 
 - 这个路径应优先理解为工作区中的 `skills/configer/SKILL.md`
 - 如果运行时存在独立 `CODEX_HOME`，其中同名 skill 只是同一份预设的镜像
 - 不要先通过全仓搜索 README 或源码来猜参数，优先读取该 skill 并调用其中提到的配置函数
-- 如果 MCP tools 可用，优先通过 MCP tools 读写；只有在 MCP 不可用时才回退到本地 Python skill 调用
+- 如果需要修改配置，优先走 skill 或明确的本地 Python/CLI 封装，不要伪装成远程 tool 调用
 
 该 skill 负责：
 

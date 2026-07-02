@@ -30,7 +30,11 @@ def get_analyzer_checkpoint_state(
         require_api_key=False,
         **kwargs,
     )
-    return load_analyzer_checkpoint(runtime["thread_id"], runtime["checkpoint_path"])
+    return load_analyzer_checkpoint(
+        runtime["thread_id"],
+        runtime["checkpoint_path"],
+        version_id=runtime["version_id"],
+    )
 
 
 def run_analyzer_standalone(
@@ -57,11 +61,16 @@ def run_analyzer_standalone(
 
     start_node = normalize_analyzer_step(from_node) if from_node else None
     if resume:
-        state = load_analyzer_checkpoint(runtime["thread_id"], runtime["checkpoint_path"])
+        state = load_analyzer_checkpoint(
+            runtime["thread_id"],
+            runtime["checkpoint_path"],
+            version_id=runtime["version_id"],
+        )
         resolve_analyzer_runtime_config(
             state,
             thread_id=runtime["thread_id"],
             checkpoint_path=runtime["checkpoint_path"],
+            version_id=runtime["version_id"],
             **kwargs,
         )
         if start_node is None:
@@ -76,6 +85,7 @@ def run_analyzer_standalone(
         log_file_path=output_dir,
         stdout=kwargs.get("stream_stdout"),
         state=state,
+        version_id=runtime["version_id"],
     )
     try:
         result = run_analyzer_pipeline(
@@ -85,6 +95,7 @@ def run_analyzer_standalone(
             resume=False,
             from_node=start_node,
             baseline_result_path=baseline_result_path,
+            version_id=runtime["version_id"],
             writer=writer,
         )
     except Exception as exc:
@@ -106,6 +117,7 @@ def run_analyzer_standalone(
         status="completed",
         data={
             "task_id": result.get("task_id") if isinstance(result, dict) else runtime["thread_id"],
+            "version_id": runtime["version_id"],
             "current": result.get("current") if isinstance(result, dict) else None,
         },
     ))
@@ -161,6 +173,7 @@ def run_analyzer_standalone_payload(
         data={
             "result": {
                 "task_id": final_state.get("task_id") if isinstance(final_state, dict) else thread_id,
+                "version_id": final_state.get("version_id") if isinstance(final_state, dict) else None,
                 "current": final_state.get("current") if isinstance(final_state, dict) else None,
                 "last_completed": final_state.get("last_completed") if isinstance(final_state, dict) else None,
                 "insights": analyzer_state.get("analysis_summary") or analyzer_state.get("historical_comparison") or {},

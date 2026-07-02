@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
 from .event_tool import StreamEvent
@@ -56,18 +59,77 @@ def _json_safe(value: Any) -> Any:
         return str(value)
 
 
-def save_analyzer_checkpoint(state: Dict[str, Any], thread_id: str, checkpoint_path: str) -> None:
-    """Compatibility shim.
+def _checkpoint_dir(checkpoint_path: str) -> None:
+    checkpoint_dir = os.path.dirname(checkpoint_path)
+    if checkpoint_dir:
+        os.makedirs(checkpoint_dir, exist_ok=True)
 
-    Checkpoint/resume is owned by the external runtime now. Analyzer only
-    persists schema-compatible analyzer state through Configer when DB_PATH and
-    TASK_ID are available. ``checkpoint_path`` is kept for old callers.
+
+def _connect(checkpoint_path: str) -> sqlite3.Connection:
+    _checkpoint_dir(checkpoint_path)
+    conn = sqlite3.connect(checkpoint_path)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS analyzer_checkpoints_v2 (
+            thread_id TEXT NOT NULL,
+            version_id TEXT NOT NULL,
+            state_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(thread_id, version_id)
+        )
+        """
+    )
+    conn.commit()
+    return conn
+
+
+def save_analyzer_checkpoint(
+    state: Dict[str, Any],
+    thread_id: str,
+    checkpoint_path: str,
+    version_id: str = "default",
+) -> None:
+    """Persist a version-scoped Analyzer checkpoint.
+
+    The version dimension prevents a finished run for the same task_id from
+    causing a later version run to be skipped.
     """
+    state["version_id"] = version_id
+    state.setdefault("analyzer", {})["version_id"] = version_id
+    payload = json.dumps(_json_safe(state), ensure_ascii=False)
+    updated_at = datetime.now(timezone.utc).isoformat()
+    with _connect(checkpoint_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO analyzer_checkpoints_v2(thread_id, version_id, state_json, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(thread_id, version_id) DO UPDATE SET
+                state_json = excluded.state_json,
+                updated_at = excluded.updated_at
+            """,
+            (thread_id, version_id, payload, updated_at),
+        )
+        conn.commit()
     update_analyzer_state_via_configer(state, task_id=thread_id)
 
 
-def load_analyzer_checkpoint(thread_id: str, checkpoint_path: str) -> Dict[str, Any]:
-    """Compatibility shim loading task Analyzer state through Configer."""
+def load_analyzer_checkpoint(
+    thread_id: str,
+    checkpoint_path: str,
+    version_id: str = "default",
+) -> Dict[str, Any]:
+    if os.path.exists(checkpoint_path):
+        with _connect(checkpoint_path) as conn:
+            row = conn.execute(
+                """
+                SELECT state_json FROM analyzer_checkpoints_v2
+                WHERE thread_id = ? AND version_id = ?
+                LIMIT 1
+                """,
+                (thread_id, version_id),
+            ).fetchone()
+        if row is not None:
+            return json.loads(row[0])
     return load_analyzer_state_from_configer(task_id=thread_id)
 
 
@@ -128,10 +190,11 @@ def run_analyzer_pipeline(
     resume: bool = False,
     from_node: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
+    version_id: str = "default",
     writer: Optional[Callable] = None,
 ) -> Dict[str, Any]:
     if resume:
-        state = load_analyzer_checkpoint(thread_id, checkpoint_path)
+        state = load_analyzer_checkpoint(thread_id, checkpoint_path, version_id=version_id)
     elif state is None:
         raise ValueError("state is required when resume is false.")
 
@@ -161,7 +224,7 @@ def run_analyzer_pipeline(
             },
         ))
 
-    if from_node is None and _is_finished(state):
+    if resume and from_node is None and _is_finished(state):
         if writer:
             writer(StreamEvent(
                 current="analyzer.pipeline",
@@ -172,7 +235,7 @@ def run_analyzer_pipeline(
 
     for step_name in ANALYZER_PIPELINE_STEPS[start_at:]:
         state["current"] = step_name
-        save_analyzer_checkpoint(state, thread_id, checkpoint_path)
+        save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
 
         if writer:
             writer(StreamEvent(
@@ -183,7 +246,7 @@ def run_analyzer_pipeline(
 
         if step_name == "finish":
             state["last_completed"] = "finish"
-            save_analyzer_checkpoint(state, thread_id, checkpoint_path)
+            save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
             if writer:
                 writer(StreamEvent(
                     current="analyzer.finish",
@@ -194,7 +257,7 @@ def run_analyzer_pipeline(
 
         state = _run_step(step_name, state, writer=writer)
         state["last_completed"] = step_name
-        save_analyzer_checkpoint(state, thread_id, checkpoint_path)
+        save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
 
         if writer:
             writer(StreamEvent(

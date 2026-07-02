@@ -1,19 +1,35 @@
+import os
+import json
 from fastapi import APIRouter
-from ..models.body import response_body, TaskItem
+from ..models.body import response_body, TaskItem, TaskStateConfigModel
 from ..services.task import (
     TaskServiceError,
     create_task as create_task_service,
     delete_task as delete_task_service,
     get_latest_task_runtime,
     get_task as get_task_service,
+    get_task_state_config as get_task_state_config_service,
     get_train_status as get_train_status_service,
     list_latest_task_runtimes,
     list_task_runtime_history,
     list_tasks as list_tasks_service,
     update_task as update_task_service,
+    update_task_state_config as update_task_state_config_service,
 )
 
 router = APIRouter(tags=["task"])
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(CURRENT_DIR))
+LoopAI_DIR = os.path.dirname(BASE_DIR)
+
+
+def _resolve_output_dir(output_dir: str) -> str:
+    output_dir = (output_dir or "outputs").strip() or "outputs"
+    output_dir = os.path.expanduser(output_dir)
+    if os.path.isabs(output_dir):
+        return output_dir
+    return os.path.abspath(os.path.join(LoopAI_DIR, output_dir))
 
 @router.post("/task", operation_id='createTask', summary='创建任务项')
 async def create_task(taskItem: TaskItem):
@@ -47,6 +63,24 @@ async def update_task(taskItem: TaskItem):
         return response_body(code=404, status='error', message='任务项不存在')()
     return response_body(data=task)()
 
+
+@router.get("/task/{task_id}/state_config", operation_id='getTaskStateConfig', summary='获取任务State配置')
+async def get_task_state_config(task_id: str):
+    """获取任务State配置"""
+    task_state_config = await get_task_state_config_service(task_id)
+    if not task_state_config:
+        return response_body(code=404, status='error', message='任务项不存在')()
+    return response_body(data=task_state_config)()
+
+
+@router.post("/task/{task_id}/state_config", operation_id='updateTaskStateConfig', summary='更新任务State配置')
+async def update_task_state_config(task_id: str, state_config: TaskStateConfigModel):
+    """更新任务State配置"""
+    try:
+        return response_body(data=await update_task_state_config_service(task_id, state_config.states or {}))()
+    except TaskServiceError as exc:
+        return response_body(code=exc.code, status='error', message=exc.message)()
+
 @router.delete("/task/{id}", operation_id='delTask', summary='删除任务项')
 async def del_task(id: str):
     """删除任务项"""
@@ -77,7 +111,12 @@ async def get_latest_runtimes(task_id: str):
 @router.get("/train_status", operation_id='getTrainStatus', summary='获取训练状态')
 async def get_train_status(output_dir: str, task_id: str, train_task_id: str):
     """获取训练状态"""
-    try:
-        return response_body(data=get_train_status_service(output_dir, task_id, train_task_id))()
-    except TaskServiceError as exc:
-        return response_body(code=exc.code, status='error', message=exc.message)()
+    output_dir = _resolve_output_dir(output_dir)
+    watch_path = os.path.join(output_dir, task_id, 'trainer', train_task_id)
+    final_path = os.path.join(watch_path, 'metrics', 'metrics.json')
+    if os.path.exists(final_path):
+        with open(final_path, 'r') as f:
+            metrics = json.load(f)
+            return response_body(data=metrics)()
+    else:
+        return response_body(code=404, status='error', message='训练状态文件不存在:' + final_path)()

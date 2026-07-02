@@ -115,7 +115,16 @@ from loopai.skills.Configer import (
 )
 ```
 
-Analyzer no longer owns an internal SQLite checkpoint table. External Starter/Codex runtime owns retry/resume. The Analyzer runner still accepts `resume`, `from_node`, and `checkpoint_path` for compatibility, but state persistence is delegated to Configer and StreamEvent.
+Analyzer keeps a lightweight version-scoped checkpoint for standalone resume. The checkpoint key is `(task_id/thread_id, version_id)`, so a completed version1 run will not cause version2 of the same task to be skipped.
+
+Use a new version id for a new attempt:
+
+```bash
+python examples/scripts/run_analyzer_standalone.py \
+  --config-path examples/config/starter.yaml \
+  --thread-id task-001 \
+  --version-id version2
+```
 
 Standalone function pipeline remains:
 
@@ -126,7 +135,7 @@ The in-memory state still carries:
 - `state["current"]`
 - `state["last_completed"]`
 
-`--from-node` forces a specific Analyzer step. `--resume` loads task Analyzer state through Configer when no explicit state is provided.
+`--from-node` forces a specific Analyzer step. `--resume` loads the matching version-scoped checkpoint first, then falls back to Configer task state if no checkpoint exists.
 
 ## Historical Comparison
 Set `baseline_result_path` to enable Historical Comparison. Current results come from `analyzer.eval_result_path`; baseline results come from `baseline_result_path`.
@@ -164,22 +173,7 @@ Analyzer emits explicit terminal events:
 - `analyzer.failed`
 
 ## MCP Tools
-Analyzer is exposed through the unified LoopAI MCP server:
-
-```toml
-[mcp_servers.loopai_mcp]
-command = "python3"
-args = ["-m", "loopai.mcp.server"]
-enabled_tools = [
-  "analyzer_run",
-  "analyzer_load_events",
-]
-```
-
-Codex tool names will appear as:
-
-- `mcp__loopai_mcp__analyzer_run`
-- `mcp__loopai_mcp__analyzer_load_events`
+Analyzer MCP exposure is currently disabled. Do not register `analyzer_run` or `analyzer_load_events` until the team re-enables Analyzer MCP routing.
 
 ## Success Response
 `from loopai.skills.Analyzer import run` returns:

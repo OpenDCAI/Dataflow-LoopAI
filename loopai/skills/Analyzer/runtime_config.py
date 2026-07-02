@@ -7,6 +7,7 @@ from .state_bridge import load_system_runtime_config
 
 _DEFAULT_CHECKPOINT_PATH = "outputs/analyzer_checkpoints.sqlite"
 _DEFAULT_THREAD_ID = "analyzer-default"
+_DEFAULT_VERSION_ID = "default"
 
 
 def _first_non_empty(*values: Any) -> Any:
@@ -127,6 +128,16 @@ def resolve_analyzer_runtime_config(
         analyzer.get("checkpoint_path"),
         _DEFAULT_CHECKPOINT_PATH,
     )
+    version_id = _first_non_empty(
+        kwargs.get("version_id"),
+        kwargs.get("run_id"),
+        os.getenv("ANALYZER_VERSION_ID"),
+        os.getenv("VERSION_ID"),
+        state.get("version_id") if isinstance(state, dict) else None,
+        analyzer.get("version_id"),
+        analyzer.get("run_id"),
+        _DEFAULT_VERSION_ID,
+    )
 
     require_api_key = kwargs.get("require_api_key")
     needs_llm = bool(require_api_key) if require_api_key is not None else bool(model or base_url)
@@ -147,11 +158,16 @@ def resolve_analyzer_runtime_config(
         analyzer["analyze_api_key"] = api_key
     if checkpoint_path:
         analyzer["checkpoint_path"] = checkpoint_path
+    if version_id:
+        if isinstance(state, dict):
+            state["version_id"] = str(version_id)
+        analyzer["version_id"] = str(version_id)
     if db_path:
         analyzer["db_path"] = db_path
 
     return {
         "thread_id": str(task_id or _DEFAULT_THREAD_ID),
+        "version_id": str(version_id or _DEFAULT_VERSION_ID),
         "checkpoint_path": str(checkpoint_path or _DEFAULT_CHECKPOINT_PATH),
         "db_path": db_path,
         "analyzer_model": model,

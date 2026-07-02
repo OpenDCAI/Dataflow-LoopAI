@@ -73,6 +73,11 @@ def _parse_args() -> argparse.Namespace:
         help="Legacy compatibility option. Analyzer state is managed by Configer/external runtime.",
     )
     parser.add_argument(
+        "--version-id",
+        default=None,
+        help="Analyzer run version id. Use a new value for version2 to avoid reusing an old finished checkpoint.",
+    )
+    parser.add_argument(
         "--baseline-result-path",
         default=None,
         help="Optional previous jsonl result path for Historical Comparison.",
@@ -115,6 +120,7 @@ def main() -> None:
             resume=args.resume,
             from_node=args.from_node,
             checkpoint_path=args.checkpoint_path,
+            version_id=args.version_id,
             baseline_result_path=args.baseline_result_path,
             stream_stdout=args.stream_stdout,
         )
@@ -145,6 +151,7 @@ def main() -> None:
     emit_success(
         data={
             "task_id": result.get("task_id") if isinstance(result, dict) else args.thread_id,
+            "version_id": result.get("version_id") if isinstance(result, dict) else args.version_id,
             "current": result.get("current") if isinstance(result, dict) else None,
             "last_completed": result.get("last_completed") if isinstance(result, dict) else None,
         },

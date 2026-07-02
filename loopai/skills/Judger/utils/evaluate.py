@@ -105,7 +105,7 @@ def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
             completion_id[task_id] += 1
             n_samples += 1
             writer(StreamEvent(
-                current="judger",
+                current=state.get("current", "judger"),
                 progress=round(n_samples / total_samples, 1),
                 message=f"{task_type}任务样本提交进度",
                 data={"progress_detail": f"{n_samples}/{total_samples}"}))
@@ -119,7 +119,7 @@ def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
             results[result["task_id"]].append((result["completion_id"], result))
             n_samples2 += 1
             writer(StreamEvent(
-                current="judger",
+                current=state.get("current", "judger"),
                 progress=round(n_samples2 / total_samples, 1),
                 message=f"{task_type}任务样本评测进度",
                 data={"progress_detail": f"{n_samples2}/{total_samples}"}))
@@ -183,7 +183,7 @@ def run_evaluate_text2sql(state: Dict[str, Any], writer) -> Dict[str, Any]:
             completion_id[task_id] += 1
             n_samples += 1
             writer(StreamEvent(
-                current="judger",
+                current=state.get("current", "judger"),
                 progress=round(n_samples / total_samples, 1),
                 message=f"{task_type}任务样本提交进度",
                 data={"progress_detail": f"{n_samples}/{total_samples}"}))
@@ -197,7 +197,7 @@ def run_evaluate_text2sql(state: Dict[str, Any], writer) -> Dict[str, Any]:
             results[result["task_id"]].append((result["completion_id"], result))
             n_samples2 += 1
             writer(StreamEvent(
-                current="judger",
+                current=state.get("current", "judger"),
                 progress=round(n_samples2 / total_samples, 1),
                 message=f"{task_type}任务样本评测进度",
                 data={"progress_detail": f"{n_samples2}/{total_samples}"}))

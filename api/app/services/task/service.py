@@ -12,7 +12,7 @@ from tortoise.expressions import Q
 from ...models.body import TaskItem
 from ...models.db_models import TaskModel, TaskRuntime
 from ...utils.config.config import get_state_config
-from ...utils.task.task import config_format
+from ...utils.task.task import apply_state_config_updates, build_task_state_config, config_format
 
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -151,6 +151,72 @@ async def get_task(task_id: str) -> dict[str, Any] | None:
     if not task:
         return None
     return _serialize_task(task)
+
+
+async def _load_task_state(task: TaskModel) -> dict[str, Any]:
+    base_state = await build_initial_task_state(task.task_id)
+    if not task.state:
+        return base_state
+    try:
+        current_state = json.loads(task.state)
+    except Exception:
+        return base_state
+    if not isinstance(current_state, dict):
+        return base_state
+    merged_state = _merge_state(base_state, current_state)
+    merged_state["task_id"] = task.task_id
+    merged_state.setdefault("messages", [])
+    return merged_state
+
+
+def _parse_state_config_payload(raw_payload: Any) -> dict[str, Any]:
+    if raw_payload is None:
+        raise TaskServiceError("config不能为空")
+    if isinstance(raw_payload, str):
+        try:
+            raw_payload = json.loads(raw_payload)
+        except Exception as exc:
+            raise TaskServiceError("config格式错误") from exc
+    if not isinstance(raw_payload, dict):
+        raise TaskServiceError("config格式错误")
+    if "states" in raw_payload:
+        raw_payload = raw_payload.get("states")
+    if not isinstance(raw_payload, dict):
+        raise TaskServiceError("states格式错误")
+    return raw_payload
+
+
+async def get_task_state_config(task_id: str) -> dict[str, Any] | None:
+    task = await TaskModel.get_or_none(task_id=task_id)
+    if not task:
+        return None
+    state = await _load_task_state(task)
+    states = build_task_state_config(state, language=state.get("language"))
+    return {
+        "id": task.id,
+        "task_id": task.task_id,
+        "name": task.name,
+        "states": states,
+    }
+
+
+async def update_task_state_config(task_id: str, payload: Any) -> dict[str, Any]:
+    task = await TaskModel.get_or_none(task_id=task_id)
+    if not task:
+        raise TaskServiceError("任务项不存在", code=404)
+
+    states_config = _parse_state_config_payload(payload)
+    state = await _load_task_state(task)
+    apply_state_config_updates(state, states_config)
+    state["task_id"] = task_id
+    state.setdefault("messages", [])
+
+    task.state = json.dumps(state, ensure_ascii=False)
+    await task.save()
+    updated = await get_task_state_config(task_id)
+    if not updated:
+        raise TaskServiceError("任务项不存在", code=404)
+    return updated
 
 
 async def list_tasks(

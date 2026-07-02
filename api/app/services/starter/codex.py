@@ -39,8 +39,6 @@ CODEX_PROVIDER_OVERRIDES = [
     ("codex_wire_api", "wire_api"),
     ("codex_supports_websockets", "supports_websockets"),
 ]
-
-
 def _to_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -237,7 +235,6 @@ def _apply_config_overrides(
 
 def _sync_codex_home_config(
     system_config: dict[str, Any],
-    env_overrides: dict[str, Any] | None = None,
 ) -> Path:
     codex_home = _resolved_codex_home(system_config)
     codex_home.mkdir(parents=True, exist_ok=True)
@@ -279,19 +276,6 @@ def _sync_codex_home_config(
         project_config = {"trust_level": "trusted"}
     project_config.setdefault("trust_level", "trusted")
     template["projects"] = {workspace: project_config}
-
-    mcp_servers = template.setdefault("mcp_servers", {})
-    if isinstance(mcp_servers, dict):
-        loopai_mcp = mcp_servers.get("loopai_mcp")
-        if isinstance(loopai_mcp, dict):
-            mcp_env = loopai_mcp.setdefault("env", {})
-            if isinstance(mcp_env, dict):
-                for key, value in (env_overrides or {}).items():
-                    key = str(key)
-                    if value is None:
-                        mcp_env.pop(key, None)
-                    else:
-                        mcp_env[key] = str(value)
 
     config_path.write_text(tomlkit.dumps(template), encoding="utf-8")
     return codex_home
@@ -934,7 +918,6 @@ class CodexStarterService:
         merged_system_config["codex_workspace"] = resolved_workspace
         resolved_codex_home = _sync_codex_home_config(
             merged_system_config,
-            env_overrides=merged_env_overrides,
         )
         resumed_thread_id = str(session.get("codex_thread_id") or "").strip()
 

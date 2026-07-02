@@ -5,35 +5,20 @@ from typing import Any, Dict, List, Optional
 
 def run(
     state: Optional[Dict[str, Any]] = None,
-    thread_id: Optional[str] = None,
+    task_id: Optional[str] = None,
     resume: bool = False,
     from_step: Optional[str] = None,
-    checkpoint_path: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Run Judger standalone (Codex / CLI entry point).
 
-    事件会在流水线执行期间实时写入
-    ``<output_dir>/<task_id>/judger.pkl``。
-
-    Args:
-        state: Full state dict with ``state["judger"]`` config fields.
-            Required unless ``resume=True``.
-        thread_id: Checkpoint thread id (default: ``"judger-default"``).
-        resume: If True, load state from checkpoint and resume.
-        from_step: Force start from a specific pipeline step name.
-        checkpoint_path: Path to sqlite checkpoint file.
-        **kwargs: Runtime overrides.
-
-    Returns:
-        Final state dict.
+    State 存取通过 Configer 走 TaskModel.state，需提前设 ``DB_PATH`` 和 ``TASK_ID``。
     """
     from loopai.skills.Judger.runner import run_judger_pipeline
 
     return run_judger_pipeline(
         state=state,
-        thread_id=thread_id,
-        checkpoint_path=checkpoint_path,
+        task_id=task_id,
         resume=resume,
         from_step=from_step,
         **kwargs,
@@ -50,7 +35,7 @@ def load_events(
     执行完成后可调用此函数获取完整事件列表，用于前端展示或日志分析。
 
     Args:
-        task_id: 任务 ID（对应 run() 的 thread_id）。
+        task_id: 任务 ID。
         output_dir: 输出根目录，默认 ``"./outputs"``。
 
     Returns:

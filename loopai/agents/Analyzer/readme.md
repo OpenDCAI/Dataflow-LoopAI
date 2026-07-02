@@ -621,7 +621,7 @@ result = run_analyzer_standalone(
 )
 ```
 
-`loopai.skills.Analyzer.run(...)` 是 Codex / MCP 面向入口，返回统一 success / error payload。
+`loopai.skills.Analyzer.run(...)` 是 Codex / Skill 面向入口，返回统一 success / error payload。
 如需兼容旧调用并直接拿最终 state，可调用：
 
 ```python
@@ -644,15 +644,16 @@ CLI 支持参数：
 
 - `--config-path`：YAML / JSON 配置路径。如果配置中包含 `default_states`，则使用 `default_states` 作为输入 state。
 - `--thread-id`：Analyzer task / thread id，优先级为 CLI > `TASK_ID` env > state/default。
-- `--checkpoint-path`：旧参数兼容保留；Analyzer 不再维护内部 SQLite checkpoint 表。
-- `--resume`：从 Configer / 外部 runtime 管理的任务状态恢复。
+- `--checkpoint-path`：Analyzer standalone 的 SQLite checkpoint 文件路径。
+- `--version-id`：Analyzer 运行版本号。相同 `task_id` 的 version2 应传新值，避免复用 version1 的完成状态。
+- `--resume`：从相同 `thread_id + version_id` 的 checkpoint 恢复；没有 checkpoint 时回退到 Configer task state。
 - `--from-node`：从指定 Analyzer 节点继续运行。
 - `--print-result`：将最终 state / result 打印为 JSON。
 - `--stream-stdout`：将 Analyzer StreamEvent 以 JSONL 打印到 stdout。
 
 ### 3. 断点续跑
 
-当前 Analyzer 不再自行维护 SQLite checkpoint。续跑 / retry / trace 由外部 Starter、Codex runtime 或任务 DB 负责；Analyzer 只保留 function-level pipeline 和 `current` / `last_completed` 运行态字段。
+Analyzer standalone 保留轻量 SQLite checkpoint，并按 `(thread_id, version_id)` 隔离。这样同一个 `task_id` 完成 version1 后，再运行 version2 不会因为 version1 已经 `finish` 而直接跳过。
 
 使用相同 `thread_id` 恢复任务状态：
 
@@ -660,6 +661,7 @@ CLI 支持参数：
 python examples/scripts/run_analyzer_standalone.py \
   --config-path examples/config/starter.yaml \
   --thread-id analyzer-test-001 \
+  --version-id version1 \
   --resume
 ```
 
@@ -669,8 +671,18 @@ python examples/scripts/run_analyzer_standalone.py \
 python examples/scripts/run_analyzer_standalone.py \
   --config-path examples/config/starter.yaml \
   --thread-id analyzer-test-001 \
+  --version-id version1 \
   --resume \
   --from-node analyze_result_node
+```
+
+运行同一 task 的新版本时，使用新的 `--version-id`，并且不加 `--resume`：
+
+```bash
+python examples/scripts/run_analyzer_standalone.py \
+  --config-path examples/config/starter.yaml \
+  --thread-id analyzer-test-001 \
+  --version-id version2
 ```
 
 当前可用 Analyzer 节点名：
@@ -687,7 +699,7 @@ draw_conclusion
 finish
 ```
 
-`resume` 和 `from_node` 使用同一套 function-level pipeline 入口逻辑。`from_node` 会强制从指定 Analyzer step 开始；`resume` 会优先通过 Configer 读取 task 的 Analyzer state。Analyzer 本身不创建 `analyzer_checkpoints` 表，也不直接接管外部 runtime 的 checkpoint 生命周期。
+`resume` 和 `from_node` 使用同一套 function-level pipeline 入口逻辑。`from_node` 会强制从指定 Analyzer step 开始；`resume` 会优先读取同一 `thread_id + version_id` 的 checkpoint，避免跨版本误续跑。
 
 ### 4. state 兼容性
 
@@ -706,6 +718,6 @@ runner 不重命名字段、不删除字段、不改变节点之间传递的 sta
 
 ### 5. 注意事项
 
-- CLI 默认使用 SQLite checkpointer，因此可以跨进程续跑。请保持 `--thread-id` 和 `--checkpoint-path` 一致。
+- CLI 默认使用 version-scoped SQLite checkpoint，因此可以跨进程续跑。请保持 `--thread-id`、`--version-id` 和 `--checkpoint-path` 一致。
 - `--print-result` 会脱敏 `api_key`、`analyze_api_key` 和所有 `*_key` 字段。
 - 如果 Analyzer 在 standalone 模式下遇到原本要跳回 Starter 父图的配置补全流程，runner 会返回对应的 state update，例如 `exception=ConfigerError`、`next_to=config_node` 和 `configer.configer_error`，便于独立调试。

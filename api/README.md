@@ -4,7 +4,7 @@ English | [简体中文](./README_zh.md)
 
 `api/` is the FastAPI backend for the LoopAI WebUI. It manages WebUI configuration, task records, data resources, hardware/runtime status, and starts the integrated `loopai` Starter workflow for a selected task.
 
-The Trainer is now part of LoopAI's agent graph and is normally launched through `StarterAgent`, not as a standalone API service. The remaining `/train/*` routes are kept for compatibility and for training logs, metrics, and direct LLaMA Factory task utilities used by existing UI flows.
+The Trainer is part of LoopAI's agent graph and is launched through `StarterAgent`, Codex tools, or `loopai.skills.Trainer`. The legacy standalone `/train/*` service has been removed; Trainer logs and metrics for the WebUI are read through task-scoped outputs such as `/task/train_status`.
 
 ## Overall API Framework
 
@@ -19,7 +19,6 @@ FastAPI app (api/app/main.py)
       +-- /task      WebUI task CRUD and task-state snapshots
       +-- /resource  data/resource registry and file preview
       +-- /starter   start, stop, resume, stream LoopAI StarterAgent
-      +-- /train     compatibility training task/log/metric endpoints
       |
       +-- SQLite     api/db/db.sqlite3
       +-- Files      api/dist, api/logs, api/runs, api/configs
@@ -29,7 +28,7 @@ FastAPI app (api/app/main.py)
 At startup `api/app/main.py`:
 
 - registers Tortoise ORM with `api/db/db.sqlite3`;
-- includes the `config`, `task`, `resource`, `starter`, and `train` routers;
+- includes the `config`, `task`, `resource`, and `starter` routers;
 - serves `api/dist/index.html` from `/`;
 - serves Vite assets from `/assets/*`;
 - exposes OpenAPI docs at `/docs`.
@@ -46,10 +45,9 @@ api/
 │   │   ├── config.py        # Starter config and state schema
 │   │   ├── task.py          # WebUI task records and persisted task state
 │   │   ├── resource.py      # Data/resource registry and previews
-│   │   ├── starter.py       # LoopAI StarterAgent runtime control and streaming
-│   │   └── train.py         # Compatibility training/log/metric routes
+│   │   └── starter.py       # LoopAI StarterAgent runtime control and streaming
 │   ├── models/              # Request/response and DB models
-│   └── utils/               # Backend helpers for starter, config, resource, monitor, train
+│   └── utils/               # Backend helpers for starter, config, resource, monitor
 ├── configs/                 # Runtime config files created by backend flows
 ├── db/                      # SQLite database directory
 ├── dist/                    # Published frontend dist served by FastAPI
@@ -219,25 +217,13 @@ curl -X POST "http://localhost:8855/starter/agent/input?text=Improve%20my%20mode
 curl "http://localhost:8855/starter/agent/status"
 ```
 
-### Train Compatibility API
+### Trainer Metrics
 
-Mounted at `/train`.
-
-These endpoints are not the primary way to start the integrated LoopAI Trainer workflow. Use the Starter API for normal WebUI operation. The train routes remain available for direct/legacy training tasks and UI access to logs, SwanLab folders, and metrics.
+The legacy direct `/train/*` API has been removed. Normal training runs through the integrated TrainerAgent path. WebUI charts read task-scoped metrics from:
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/train/` | Start a direct training task from JSON config. |
-| `POST` | `/train/upload` | Start a direct training task from uploaded YAML. |
-| `GET` | `/train/status/{task_id}` | Read direct training task status. |
-| `GET` | `/train/logs/{task_id}` | Read direct training logs. |
-| `GET` | `/train/tasks` | List direct training tasks. |
-| `DELETE` | `/train/tasks/{task_id}` | Cancel a direct training task. |
-| `GET` | `/train/swanlab-logs/{task_id}` | Read SwanLab log path for one task. |
-| `GET` | `/train/swanlab-logs` | List SwanLab log folders. |
-| `GET` | `/train/metrics/{task_id}` | Read recent training metrics. |
-| `GET` | `/train/metrics/{task_id}/file` | Download/read metrics file. |
-| `DELETE` | `/train/metrics/{task_id}` | Delete metrics for one task. |
+| `GET` | `/task/train_status` | Read Trainer metrics from a task output directory. |
 
 ## Data And Runtime Files
 

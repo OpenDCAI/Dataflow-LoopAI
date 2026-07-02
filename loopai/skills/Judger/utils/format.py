@@ -117,7 +117,7 @@ def _preprocess_json_file(
                     success_lines += 1
 
                 writer(StreamEvent(
-                    current="judger",
+                    current=state.get("current", "judger"),
                     progress=round(cnt_lines / total_lines, 1),
                     message="任务数据格式化中",
                     data={"success": success_lines, "filtered": filtered_lines,
@@ -134,14 +134,14 @@ def _preprocess_json_file(
     except FileNotFoundError:
         logger.error(f"文件不存在: {input_path}")
         writer(StreamEvent(
-            current="judger", progress=1.0, message="任务数据格式化出错",
+            current=state.get("current", "judger"), progress=1.0, message="任务数据格式化出错",
             data={"msg": f"文件不存在: {input_path}"}))
     except Exception as e:
         if use_temp_file and temp_file and os.path.exists(temp_file.name):
             os.remove(temp_file.name)
         logger.error(f"格式化意外错误: {e}")
         writer(StreamEvent(
-            current="judger", progress=1.0, message="任务数据格式化出错",
+            current=state.get("current", "judger"), progress=1.0, message="任务数据格式化出错",
             data={"msg": str(e)}))
     finally:
         if temp_file:
