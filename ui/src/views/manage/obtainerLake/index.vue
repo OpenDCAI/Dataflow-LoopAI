@@ -19,12 +19,14 @@
                 </div>
                 <div class="right-block">
                     <fv-text-box
+                        v-if="advancedMode"
                         v-model="lakePath"
                         class="lake-input"
                         border-radius="6"
                         :reveal-border="true"
                         :is-box-shadow="true"
                         placeholder=".loopai/lake.yaml"
+                        :title="local('Path to the lake config file')"
                         @keyup.enter="refresh"
                     ></fv-text-box>
                     <fv-button
@@ -32,29 +34,54 @@
                         :disabled="loading || rebuilding"
                         border-radius="6"
                         :is-box-shadow="true"
+                        :title="local('Reload the DataMixer monitor data')"
                         @click="refresh"
                     >
                         {{ local('Refresh') }}
                     </fv-button>
                     <fv-button
+                        v-if="advancedMode"
                         icon="Sync"
                         :disabled="loading || rebuilding"
                         border-radius="6"
                         :is-box-shadow="true"
+                        :title="local('Rebuild the monitor cache, may take a while')"
                         @click="rebuildMonitorCache"
                     >
-                        {{ rebuilding ? 'Rebuilding' : 'Rebuild Cache' }}
+                        {{ rebuilding ? local('Rebuilding') : local('Rebuild Cache') }}
                     </fv-button>
                     <fv-button
+                        v-if="advancedMode"
                         theme="dark"
                         icon="LightningBolt"
                         :disabled="loading || rebuilding || probing || !monitor"
                         :background="gradient"
                         border-radius="6"
                         :is-box-shadow="true"
+                        :title="local('Check embedding service availability')"
                         @click="probeEmbedding"
                     >
-                        {{ probing ? 'Probing' : 'Probe' }}
+                        {{ probing ? local('Probing') : local('Probe') }}
+                    </fv-button>
+                    <fv-button
+                        icon="DeveloperTools"
+                        :theme="advancedMode ? 'dark' : 'light'"
+                        :background="advancedMode ? 'rgba(64, 99, 170, 1)' : ''"
+                        border-radius="6"
+                        :is-box-shadow="true"
+                        :title="local('Show advanced tools')"
+                        @click="toggleAdvanced"
+                    >
+                        {{ local('Advanced') }}
+                    </fv-button>
+                    <fv-button
+                        icon="LocaleLanguage"
+                        border-radius="6"
+                        :is-box-shadow="true"
+                        :title="local('Switch Language')"
+                        @click="toggleLanguage"
+                    >
+                        {{ language === 'zh' ? 'EN' : '中文' }}
                     </fv-button>
                 </div>
             </div>
@@ -78,35 +105,46 @@
                 <section v-if="activeView === 'lakes'" class="lake-dashboard">
                     <section class="dm-panel active-lake-panel">
                         <div class="panel-head">
-                            <p>Active Lake</p>
+                            <p>{{ local('Active Lake') }}</p>
                             <span>{{ activeLakeLabel }}</span>
                         </div>
                         <div class="active-lake-grid">
                             <div class="active-score">
                                 <span>{{ formatNumber(activeLake?.samples || 0) }}</span>
-                                <p>records</p>
+                                <p>{{ local('records') }}</p>
                             </div>
                             <div class="active-meta">
                                 <p :title="activeLake?.warehouse">{{ activeLake?.warehouse || lakeState?.warehouse || '-' }}</p>
-                                <span>{{ formatNumber(activeLake?.datasets || 0) }} datasets · {{ activeLake?.source_type || 'pointer' }}</span>
+                                <span>{{ formatNumber(activeLake?.datasets || 0) }} {{ local('datasets') }} · {{ activeLake?.source_type || 'pointer' }}</span>
                             </div>
                         </div>
                         <div class="lake-action-row">
-                            <button type="button" :disabled="lakeActionRunning" @click="scanLakes">
+                            <button
+                                type="button"
+                                :disabled="lakeActionRunning"
+                                :title="local('Rescan the workspace for DataMixer lakes')"
+                                @click="scanLakes"
+                            >
                                 <i class="ms-Icon ms-Icon--Refresh"></i>
-                                <span>{{ lakeActionRunning ? 'Scanning' : 'Scan' }}</span>
+                                <span>{{ lakeActionRunning ? local('Scanning') : local('Scan') }}</span>
                             </button>
-                            <button type="button" class="secondary" :disabled="lakeActionRunning" @click="unloadActiveLake">
+                            <button
+                                type="button"
+                                class="secondary"
+                                :disabled="lakeActionRunning"
+                                :title="local('Disconnect the active lake (data is kept on disk)')"
+                                @click="unloadActiveLake"
+                            >
                                 <i class="ms-Icon ms-Icon--PlugDisconnected"></i>
-                                <span>Unload</span>
+                                <span>{{ local('Unload') }}</span>
                             </button>
                         </div>
                     </section>
 
                     <section class="dm-panel lake-candidates-panel">
                         <div class="panel-head">
-                            <p>Discovered Lakes</p>
-                            <span>{{ lakeCandidates.length }} candidates</span>
+                            <p>{{ local('Discovered Lakes') }}</p>
+                            <span>{{ lakeCandidates.length }} {{ local('candidates') }}</span>
                         </div>
                         <div class="lake-card-grid">
                             <article
@@ -121,11 +159,11 @@
                                         <p>{{ lake.name || 'DataMixer Lake' }}</p>
                                         <span>{{ lake.source_type }}</span>
                                     </div>
-                                    <strong>{{ lake.active ? 'Active' : lake.status }}</strong>
+                                    <strong>{{ lake.active ? local('Active') : lake.status }}</strong>
                                 </div>
                                 <div class="lake-card-metrics">
-                                    <span>{{ formatNumber(lake.samples || 0) }} records</span>
-                                    <span>{{ formatNumber(lake.datasets || 0) }} datasets</span>
+                                    <span>{{ formatNumber(lake.samples || 0) }} {{ local('records') }}</span>
+                                    <span>{{ formatNumber(lake.datasets || 0) }} {{ local('datasets') }}</span>
                                     <span>{{ lake.status || '-' }}</span>
                                 </div>
                                 <p class="lake-path" :title="lake.warehouse">{{ lake.warehouse }}</p>
@@ -133,18 +171,19 @@
                                     <button
                                         type="button"
                                         :disabled="lakeActionRunning || lake.active || !lake.warehouse_exists"
+                                        :title="local('Load this lake as the active one')"
                                         @click.stop="loadScannedLake(lake)"
                                     >
                                         <i class="ms-Icon ms-Icon--OpenFolderHorizontal"></i>
-                                        <span>Load</span>
+                                        <span>{{ local('Load') }}</span>
                                     </button>
                                     <button type="button" class="secondary" @click.stop="setDetail(lake.name, lake)">
-                                        Details
+                                        {{ local('Details') }}
                                     </button>
                                 </div>
                             </article>
                             <div v-if="lakeCandidates.length === 0" class="empty-lakes">
-                                {{ lakeActionRunning ? 'Scanning...' : 'No DataMixer lakes found' }}
+                                {{ lakeActionRunning ? `${local('Scanning')}...` : local('No DataMixer lakes found') }}
                             </div>
                         </div>
                     </section>
@@ -154,7 +193,7 @@
                 <section class="status-strip">
                     <div class="health-score" :class="healthLevel">
                         <span>{{ summary.health_score ?? 0 }}</span>
-                        <p>Health</p>
+                        <p>{{ local('Health') }}</p>
                     </div>
                     <div class="status-meta">
                         <p class="status-title">{{ statusTitle }}</p>
@@ -169,7 +208,8 @@
                             type="button"
                             class="status-badge warning"
                             :class="{ active: warnings.length > 0 }"
-                            @click="setDetail('Warnings', warnings)"
+                            :title="local('Warnings')"
+                            @click="setDetail(local('Warnings'), warnings)"
                         >
                             <i class="ms-Icon ms-Icon--Warning"></i>
                             <span>{{ warnings.length }}</span>
@@ -177,7 +217,7 @@
                     </div>
                 </section>
 
-                <section class="surface-panel">
+                <section v-if="advancedMode" class="surface-panel">
                     <div
                         v-for="item in operationSurface"
                         :key="item.key"
@@ -193,9 +233,9 @@
                     </div>
                 </section>
 
-                <section class="dm-panel command-panel">
+                <section v-if="advancedMode" class="dm-panel command-panel">
                     <div class="panel-head">
-                        <p>DataMixer Command Surface</p>
+                        <p>{{ local('DataMixer Command Surface') }}</p>
                         <span>{{ commandEndpointLabel }}</span>
                     </div>
                     <div class="command-layout">
@@ -224,7 +264,7 @@
                             <div class="command-actions">
                                 <button type="button" :disabled="commandRunning" @click="runCommand">
                                     <i class="ms-Icon ms-Icon--Play"></i>
-                                    <span>{{ commandRunning ? 'Running' : 'Run' }}</span>
+                                    <span>{{ commandRunning ? local('Running') : local('Run') }}</span>
                                 </button>
                                 <button type="button" class="secondary" @click="applyCommandTemplate('status')">
                                     status
@@ -260,8 +300,8 @@
                 <div class="main-grid">
                     <section class="dm-panel warehouse-panel">
                         <div class="panel-head">
-                            <p>Warehouse</p>
-                            <span>{{ tableRows.length }} views</span>
+                            <p>{{ local('Warehouse') }}</p>
+                            <span>{{ tableRows.length }} {{ local('views') }}</span>
                         </div>
                         <div class="warehouse-layout">
                             <div class="config-grid">
@@ -296,8 +336,8 @@
 
                     <section class="dm-panel ingest-panel">
                         <div class="panel-head">
-                            <p>Ingest Runs</p>
-                            <span>{{ ingestRows.length }} recent</span>
+                            <p>{{ local('Ingest Runs') }}</p>
+                            <span>{{ ingestRows.length }} {{ local('recent') }}</span>
                         </div>
                         <base-chart type="bar" :chart-data="ingestTrendChart" :options="trendOptions"></base-chart>
                     </section>
@@ -306,7 +346,7 @@
                 <div class="insight-grid">
                     <section class="dm-panel">
                         <div class="panel-head">
-                            <p>Composition</p>
+                            <p>{{ local('Composition') }}</p>
                             <div class="segmented-control">
                                 <button
                                     v-for="mode in compositionModes"
@@ -328,15 +368,15 @@
 
                     <section class="dm-panel">
                         <div class="panel-head">
-                            <p>Top Tags</p>
-                            <span>{{ topTags.length }} values</span>
+                            <p>{{ local('Top Tags') }}</p>
+                            <span>{{ topTags.length }} {{ local('values') }}</span>
                         </div>
                         <base-chart type="bar" :chart-data="tagChart" :options="horizontalBarOptions"></base-chart>
                     </section>
 
                     <section class="dm-panel embedding-panel">
                         <div class="panel-head">
-                            <p>Embedding</p>
+                            <p>{{ local('Embedding') }}</p>
                             <span>{{ formatPercent(embedding.coverage) }}</span>
                         </div>
                         <div class="embedding-layout">
@@ -346,25 +386,25 @@
                                 :options="doughnutOptions"
                             ></base-chart>
                             <div class="embedding-meta">
-                                <p><span>Model</span>{{ embedding.embedding_model || '-' }}</p>
-                                <p><span>Backend</span>{{ embedding.embedding_backend || '-' }}</p>
-                                <p><span>Provider</span>{{ embedding.embedding_provider || '-' }}</p>
-                                <p><span>Probe</span>{{ embedding.probe?.status || 'not_checked' }}</p>
+                                <p><span>{{ local('Model') }}</span>{{ embedding.embedding_model || '-' }}</p>
+                                <p><span>{{ local('Backend') }}</span>{{ embedding.embedding_backend || '-' }}</p>
+                                <p><span>{{ local('Provider') }}</span>{{ embedding.embedding_provider || '-' }}</p>
+                                <p><span>{{ local('Probe') }}</span>{{ embedding.probe?.status || 'not_checked' }}</p>
                             </div>
                         </div>
                     </section>
                 </div>
 
-                <div class="detail-grid">
+                <div class="detail-grid" :class="{ simple: !advancedMode }">
                     <section class="dm-panel quality-panel">
                         <div class="panel-head">
-                            <p>Quality Findings</p>
-                            <span>{{ formatNumber(summary.quality_findings || 0) }} items</span>
+                            <p>{{ local('Quality Findings') }}</p>
+                            <span>{{ formatNumber(summary.quality_findings || 0) }} {{ local('items') }}</span>
                         </div>
                         <base-chart type="bar" :chart-data="qualityChart" :options="stackedOptions"></base-chart>
                     </section>
 
-                    <aside class="dm-panel inspect-panel">
+                    <aside v-if="advancedMode" class="dm-panel inspect-panel">
                         <div class="panel-head">
                             <p>{{ detailTitle }}</p>
                             <span>JSON</span>
@@ -375,7 +415,7 @@
 
                 <section class="dm-panel latest-panel">
                     <div class="panel-head">
-                        <p>Latest DataMixer Rows</p>
+                        <p>{{ local('Latest DataMixer Rows') }}</p>
                         <div class="segmented-control">
                             <button
                                 v-for="tab in tabs"
@@ -421,7 +461,7 @@
 </template>
 
 <script>
-import { mapState } from 'pinia'
+import { mapState, mapActions } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
 import baseChart from '@/components/manage/obtainerLake/baseChart.vue'
@@ -451,6 +491,7 @@ export default {
             probing: false,
             error: '',
             activeView: 'workbench',
+            advancedMode: false,
             activeTab: 'records',
             compositionMode: 'processing_level',
             detail: null,
@@ -468,7 +509,7 @@ export default {
         }
     },
     computed: {
-        ...mapState(useAppConfig, ['local']),
+        ...mapState(useAppConfig, ['local', 'language']),
         ...mapState(useTheme, ['gradient']),
         summary() {
             return this.monitor?.summary || {}
@@ -481,8 +522,8 @@ export default {
         },
         views() {
             return [
-                { key: 'workbench', label: 'Workbench' },
-                { key: 'lakes', label: 'Lake Management' }
+                { key: 'workbench', label: this.local('Workbench') },
+                { key: 'lakes', label: this.local('Lake Management') }
             ]
         },
         lakeRoot() {
@@ -493,18 +534,18 @@ export default {
             return this.lakePath
         },
         statusTitle() {
-            if (!this.monitor) return 'No DataMixer warehouse loaded'
-            if (this.monitor.cache_status === 'cache_missing') return 'Monitor cache is missing'
-            if (this.monitor.cache_status === 'rebuilding') return 'Monitor cache is rebuilding'
-            if (this.monitor.stale) return 'Monitor cache is stale'
-            if (this.warnings.length > 0) return 'DataMixer warehouse needs attention'
-            return 'DataMixer warehouse is healthy'
+            if (!this.monitor) return this.local('No DataMixer warehouse loaded')
+            if (this.monitor.cache_status === 'cache_missing') return this.local('Monitor cache is missing')
+            if (this.monitor.cache_status === 'rebuilding') return this.local('Monitor cache is rebuilding')
+            if (this.monitor.stale) return this.local('Monitor cache is stale')
+            if (this.warnings.length > 0) return this.local('DataMixer warehouse needs attention')
+            return this.local('DataMixer warehouse is healthy')
         },
         statusSubtitle() {
-            if (!this.monitor) return 'Waiting for monitor response'
-            if (this.monitor.stale_reason) return `Cache ${this.monitor.cache_status || 'stale'} · ${this.monitor.stale_reason}`
-            if (this.monitor.cache_status) return `Cache ${this.monitor.cache_status} · Last refresh ${this.formatTime(this.monitor.refreshed_at)}`
-            return `Last refresh ${this.formatTime(this.monitor.refreshed_at)}`
+            if (!this.monitor) return this.local('Waiting for monitor response')
+            if (this.monitor.stale_reason) return `${this.local('Cache')} ${this.monitor.cache_status || 'stale'} · ${this.monitor.stale_reason}`
+            if (this.monitor.cache_status) return `${this.local('Cache')} ${this.monitor.cache_status} · ${this.local('Last refresh')} ${this.formatTime(this.monitor.refreshed_at)}`
+            return `${this.local('Last refresh')} ${this.formatTime(this.monitor.refreshed_at)}`
         },
         catalogLabel() {
             return this.monitor?.config?.catalog || 'datamixer'
@@ -519,28 +560,28 @@ export default {
             return [
                 {
                     key: 'monitor',
-                    label: 'Monitor',
+                    label: this.local('Monitor'),
                     note: 'GET /obtainer/lake/monitor',
                     state: 'available',
                     command: 'status'
                 },
                 {
                     key: 'embedding',
-                    label: 'Embedding Probe',
+                    label: this.local('Embedding Probe'),
                     note: 'index stats',
                     state: 'available',
                     command: 'index stats'
                 },
                 {
                     key: 'ingest',
-                    label: 'Ingest / Agent Ingest',
+                    label: this.local('Ingest / Agent Ingest'),
                     note: 'POST /obtainer/datamixer/cli',
                     state: 'available',
                     command: 'agent-ingest /path/to/file --engine builtin'
                 },
                 {
                     key: 'recipe',
-                    label: 'Recipe Export',
+                    label: this.local('Recipe Export'),
                     note: 'recipe export --snapshot',
                     state: 'available',
                     command: 'recipe plan /path/to/recipe.yaml'
@@ -551,12 +592,16 @@ export default {
             return this.commandEndpoint || 'loopai-obtainercli dm'
         },
         commandResultText() {
-            return JSON.stringify(this.commandResult || { message: 'Run a DataMixer command to inspect its JSON result.' }, null, 2)
+            return JSON.stringify(
+                this.commandResult || { message: this.local('Run a DataMixer command to inspect its JSON result.') },
+                null,
+                2
+            )
         },
         monitorProgressText() {
             const seconds = Math.max(Number(this.monitorElapsedSeconds || 0), 0)
-            if (this.rebuilding) return `Rebuilding monitor cache · ${seconds}s`
-            return `Refreshing monitor · ${seconds}s`
+            if (this.rebuilding) return `${this.local('Rebuilding monitor cache')} · ${seconds}s`
+            return `${this.local('Refreshing monitor')} · ${seconds}s`
         },
         lakeCandidates() {
             return this.lakeScan?.lakes || []
@@ -572,9 +617,9 @@ export default {
             return [
                 {
                     key: 'records',
-                    label: 'Records',
+                    label: this.local('Records'),
                     value: this.formatNumber(this.summary.records || 0),
-                    note: `${this.formatNumber(this.summary.datasets || 0)} datasets`,
+                    note: `${this.formatNumber(this.summary.datasets || 0)} ${this.local('datasets')}`,
                     icon: 'Database',
                     background: 'rgba(64, 99, 170, 0.12)',
                     color: 'rgba(64, 99, 170, 1)',
@@ -582,9 +627,9 @@ export default {
                 },
                 {
                     key: 'embedding',
-                    label: 'Embedding Coverage',
+                    label: this.local('Embedding Coverage'),
                     value: this.formatPercent(this.summary.embedding_coverage || 0),
-                    note: `${this.formatNumber(this.embedding.pending_records || 0)} pending`,
+                    note: `${this.formatNumber(this.embedding.pending_records || 0)} ${this.local('pending')}`,
                     icon: 'LightningBolt',
                     background: 'rgba(20, 145, 116, 0.12)',
                     color: 'rgba(20, 120, 96, 1)',
@@ -592,9 +637,9 @@ export default {
                 },
                 {
                     key: 'quality',
-                    label: 'Quality Findings',
+                    label: this.local('Quality Findings'),
                     value: this.formatNumber(this.summary.quality_findings || 0),
-                    note: `${this.warnings.length} warnings`,
+                    note: `${this.warnings.length} ${this.local('warnings')}`,
                     icon: 'Diagnostic',
                     background: 'rgba(203, 101, 36, 0.14)',
                     color: 'rgba(181, 83, 20, 1)',
@@ -602,9 +647,9 @@ export default {
                 },
                 {
                     key: 'exports',
-                    label: 'Exports',
+                    label: this.local('Exports'),
                     value: this.formatNumber(this.summary.exports || 0),
-                    note: `${this.formatNumber(this.summary.ingest_runs || 0)} ingest runs`,
+                    note: `${this.formatNumber(this.summary.ingest_runs || 0)} ${this.local('ingest runs')}`,
                     icon: 'Upload',
                     background: 'rgba(144, 91, 166, 0.12)',
                     color: 'rgba(116, 65, 145, 1)',
@@ -615,11 +660,11 @@ export default {
         configItems() {
             const config = this.monitor?.config || {}
             return [
-                { key: 'lake_config', label: 'Lake Config', value: this.monitor?.lake_config || this.lakePath },
-                { key: 'lake_root', label: 'Warehouse Root', value: this.lakeRoot },
-                { key: 'catalog', label: 'Catalog', value: config.catalog || 'datamixer' },
-                { key: 'namespace', label: 'Namespace', value: config.namespace || '-' },
-                { key: 'warehouse', label: 'Warehouse', value: config.warehouse || '-' }
+                { key: 'lake_config', label: this.local('Lake Config'), value: this.monitor?.lake_config || this.lakePath },
+                { key: 'lake_root', label: this.local('Warehouse Root'), value: this.lakeRoot },
+                { key: 'catalog', label: this.local('Catalog'), value: config.catalog || 'datamixer' },
+                { key: 'namespace', label: this.local('Namespace'), value: config.namespace || '-' },
+                { key: 'warehouse', label: this.local('Warehouse'), value: config.warehouse || '-' }
             ]
         },
         tableRows() {
@@ -645,10 +690,10 @@ export default {
         },
         compositionModes() {
             return [
-                { key: 'processing_level', label: 'Level' },
-                { key: 'domain', label: 'Domain' },
-                { key: 'source_kind', label: 'Source' },
-                { key: 'task_type', label: 'Task' }
+                { key: 'processing_level', label: this.local('Level') },
+                { key: 'domain', label: this.local('Domain') },
+                { key: 'source_kind', label: this.local('Source') },
+                { key: 'task_type', label: this.local('Task') }
             ]
         },
         ingestTrendChart() {
@@ -657,19 +702,19 @@ export default {
                 labels,
                 datasets: [
                     {
-                        label: 'Seen',
+                        label: this.local('Seen'),
                         data: this.ingestRows.map((row) => row.rows_seen || 0),
                         backgroundColor: 'rgba(104, 121, 141, 0.5)',
                         borderRadius: 4
                     },
                     {
-                        label: 'Written',
+                        label: this.local('Written'),
                         data: this.ingestRows.map((row) => row.rows_written || 0),
                         backgroundColor: 'rgba(20, 145, 116, 0.72)',
                         borderRadius: 4
                     },
                     {
-                        label: 'Quarantined',
+                        label: this.local('Quarantined'),
                         data: this.ingestRows.map((row) => row.rows_quarantined || 0),
                         backgroundColor: 'rgba(185, 72, 83, 0.72)',
                         borderRadius: 4
@@ -697,7 +742,7 @@ export default {
                 labels: rows.map((row) => `${row.tag_name}=${row.tag_value}`),
                 datasets: [
                     {
-                        label: 'Records',
+                        label: this.local('Records'),
                         data: rows.map((row) => row.count),
                         backgroundColor: 'rgba(64, 99, 170, 0.72)',
                         borderRadius: 4
@@ -728,7 +773,7 @@ export default {
         },
         embeddingChart() {
             return {
-                labels: ['Indexed', 'Pending'],
+                labels: [this.local('Indexed'), this.local('Pending')],
                 datasets: [
                     {
                         data: [this.embedding.indexed_records || 0, this.embedding.pending_records || 0],
@@ -781,48 +826,48 @@ export default {
         },
         tabs() {
             return [
-                { key: 'records', label: 'Records' },
-                { key: 'ingest_runs', label: 'Runs' },
-                { key: 'quality_findings', label: 'Quality' },
-                { key: 'exports', label: 'Exports' },
-                { key: 'warnings', label: 'Warnings' }
+                { key: 'records', label: this.local('Records') },
+                { key: 'ingest_runs', label: this.local('Runs') },
+                { key: 'quality_findings', label: this.local('Quality') },
+                { key: 'exports', label: this.local('Exports') },
+                { key: 'warnings', label: this.local('Warnings') }
             ]
         },
         columns() {
             return {
                 records: [
-                    { key: 'record_id', label: 'Record' },
-                    { key: 'dataset_id', label: 'Dataset' },
-                    { key: 'processing_level', label: 'Level' },
-                    { key: 'source_kind', label: 'Source' },
-                    { key: 'text', label: 'Text' }
+                    { key: 'record_id', label: this.local('Record') },
+                    { key: 'dataset_id', label: this.local('Dataset') },
+                    { key: 'processing_level', label: this.local('Level') },
+                    { key: 'source_kind', label: this.local('Source') },
+                    { key: 'text', label: this.local('Text') }
                 ],
                 ingest_runs: [
-                    { key: 'ingest_run_id', label: 'Run' },
-                    { key: 'status', label: 'Status' },
-                    { key: 'rows_seen', label: 'Seen' },
-                    { key: 'rows_written', label: 'Written' },
-                    { key: 'finished_at', label: 'Finished' }
+                    { key: 'ingest_run_id', label: this.local('Run') },
+                    { key: 'status', label: this.local('Status') },
+                    { key: 'rows_seen', label: this.local('Seen') },
+                    { key: 'rows_written', label: this.local('Written') },
+                    { key: 'finished_at', label: this.local('Finished') }
                 ],
                 quality_findings: [
-                    { key: 'finding_type', label: 'Type' },
-                    { key: 'severity', label: 'Severity' },
-                    { key: 'score', label: 'Score' },
-                    { key: 'detector', label: 'Detector' },
-                    { key: 'created_at', label: 'Created' }
+                    { key: 'finding_type', label: this.local('Type') },
+                    { key: 'severity', label: this.local('Severity') },
+                    { key: 'score', label: this.local('Score') },
+                    { key: 'detector', label: this.local('Detector') },
+                    { key: 'created_at', label: this.local('Created') }
                 ],
                 exports: [
-                    { key: 'export_id', label: 'Export' },
-                    { key: 'strategy', label: 'Strategy' },
-                    { key: 'actual_size', label: 'Rows' },
-                    { key: 'format', label: 'Format' },
-                    { key: 'created_at', label: 'Created' }
+                    { key: 'export_id', label: this.local('Export') },
+                    { key: 'strategy', label: this.local('Strategy') },
+                    { key: 'actual_size', label: this.local('Rows') },
+                    { key: 'format', label: this.local('Format') },
+                    { key: 'created_at', label: this.local('Created') }
                 ],
                 warnings: [
-                    { key: 'code', label: 'Code' },
-                    { key: 'table', label: 'Table' },
-                    { key: 'line', label: 'Line' },
-                    { key: 'message', label: 'Message' }
+                    { key: 'code', label: this.local('Code') },
+                    { key: 'table', label: this.local('Table') },
+                    { key: 'line', label: this.local('Line') },
+                    { key: 'message', label: this.local('Message') }
                 ]
             }
         },
@@ -834,7 +879,7 @@ export default {
             return this.monitor?.latest?.[this.activeTab] || []
         },
         detailTitle() {
-            return this.detail?.title || 'DataMixer Summary'
+            return this.detail?.title || this.local('DataMixer Summary')
         },
         detailText() {
             return JSON.stringify(this.detail?.payload || this.summary || {}, null, 2)
@@ -850,6 +895,9 @@ export default {
     },
     mounted() {
         this.activeView = this.routeView()
+        try {
+            this.advancedMode = localStorage.getItem('dm-advanced-mode') === '1'
+        } catch (error) {}
         this.loadCommandSurface()
         this.scanLakes({ silent: true })
         if (this.activeView === 'workbench') {
@@ -861,6 +909,16 @@ export default {
         this.stopRebuildPolling()
     },
     methods: {
+        ...mapActions(useAppConfig, ['setLanguage']),
+        toggleLanguage() {
+            this.setLanguage(this.language === 'zh' ? 'en' : 'zh')
+        },
+        toggleAdvanced() {
+            this.advancedMode = !this.advancedMode
+            try {
+                localStorage.setItem('dm-advanced-mode', this.advancedMode ? '1' : '0')
+            } catch (error) {}
+        },
         routeView() {
             return String(this.$route?.path || '').includes('/datamixer/lakes') ? 'lakes' : 'workbench'
         },
@@ -1933,6 +1991,10 @@ export default {
 
 .detail-grid {
     grid-template-columns: minmax(0, 1fr) 380px;
+
+    &.simple {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 
 .dm-panel {
