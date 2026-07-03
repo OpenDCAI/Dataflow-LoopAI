@@ -47,6 +47,8 @@ def write_lake_config(
     embedding_model: str = "BAAI/bge-small-zh-v1.5",
     embedding_backend: str = "local-jsonl",
     embedding_text_field: str = "text",
+    auto_embed_async: bool = True,
+    auto_embed_batch_size: int = 512,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     warehouse = warehouse or root / "warehouse"
@@ -66,6 +68,8 @@ def write_lake_config(
                 f"embedding_model: {embedding_model}",
                 f"embedding_backend: {embedding_backend}",
                 f"embedding_text_field: {embedding_text_field}",
+                f"auto_embed_async: {_bool_text(auto_embed_async)}",
+                f"auto_embed_batch_size: {int(auto_embed_batch_size)}",
                 "",
             ]
         ),

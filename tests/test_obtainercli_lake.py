@@ -14,6 +14,7 @@ sys.modules.setdefault("colorlog", types.SimpleNamespace(ColoredFormatter=loggin
 
 from loopai.skills.ObtainerCLI.cli import run
 from loopai.skills.ObtainerCLI.config import write_lake_config
+from loopai.skills.ObtainerCLI.monitor_state import monitor_state_path
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -111,6 +112,11 @@ def test_obtainercli_dm_init_ingest_query_index_and_recipe_export(tmp_path: Path
     init = _dm(warehouse, ["init"], capsys)
     assert Path(init["initialized"]) == warehouse
     assert (warehouse / "datamixer.toml").exists()
+    exit_code = run(["dm", "lake", "monitor", "rebuild", "--warehouse", str(warehouse)])
+    monitor_rebuild = _last_json(capsys)
+    assert exit_code == 0
+    assert monitor_rebuild["status"] == "queued"
+    assert monitor_state_path(warehouse).exists()
     status = _dm(warehouse, ["status"], capsys)
     assert status["warehouse"] == str(warehouse)
     assert status["samples"] == 0
@@ -697,6 +703,74 @@ def test_dm_lake_pointer_resolves_to_datamixer_warehouse(tmp_path: Path, capsys)
     assert payload["result"]["samples"] == 0
 
 
+def test_dm_lake_load_reuses_existing_datamixer_warehouse(tmp_path: Path, capsys) -> None:
+    warehouse = tmp_path / "shared" / "warehouse"
+    link = tmp_path / "repo" / ".loopai" / "lake.yaml"
+
+    _dm(warehouse, ["init"], capsys)
+
+    exit_code = run(["dm", "lake", "load", "--warehouse", str(warehouse), "--link", str(link)])
+    payload = _last_json(capsys)
+    assert exit_code == 0
+    assert payload["command"] == "dm lake load"
+    assert payload["warehouse"] == str(warehouse.resolve())
+    assert payload["lake_config"] == str(link.resolve())
+    assert link.exists()
+
+    result = run(["dm", "--lake", str(link), "status"])
+    status = _last_json(capsys)
+    assert result == 0
+    assert status["result"]["warehouse"] == str(warehouse.resolve())
+
+
+def test_dm_lake_delete_unloads_pointer_and_preserves_warehouse(tmp_path: Path, capsys) -> None:
+    warehouse = tmp_path / "shared" / "warehouse"
+    link = tmp_path / "repo" / ".loopai" / "lake.yaml"
+
+    _dm(warehouse, ["init"], capsys)
+    run(["dm", "lake", "load", "--warehouse", str(warehouse), "--link", str(link)])
+    _last_json(capsys)
+
+    exit_code = run(["dm", "lake", "delete", "--link", str(link)])
+    payload = _last_json(capsys)
+    assert exit_code == 0
+    assert payload["command"] == "dm lake delete"
+    assert payload["pointer_removed"] is True
+    assert payload["warehouse_deleted"] is False
+    assert not link.exists()
+    assert (warehouse / "datamixer.toml").exists()
+
+
+def test_dm_lake_scan_discovers_project_lakes_and_marks_active(tmp_path: Path, capsys) -> None:
+    lake_root = tmp_path / "lake"
+    warehouse = lake_root / "warehouse"
+    link = tmp_path / "repo" / ".loopai" / "lake.yaml"
+
+    _dm(warehouse, ["init"], capsys)
+    write_lake_config(link, root=lake_root, warehouse=warehouse)
+
+    exit_code = run(
+        [
+            "dm",
+            "lake",
+            "scan",
+            "--project-root",
+            str(tmp_path),
+            "--link",
+            str(link),
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 0
+    assert payload["command"] == "dm lake scan"
+    assert payload["count"] >= 1
+    active = [lake for lake in payload["lakes"] if lake["active"]]
+    assert len(active) == 1
+    assert active[0]["warehouse"] == str(warehouse.resolve())
+    assert active[0]["warehouse_exists"] is True
+
+
 def test_sft_export_agent_start_dry_run_writes_isolated_worker_prompt(
     tmp_path: Path,
     monkeypatch,
@@ -861,3 +935,163 @@ def test_sft_export_agent_start_defaults_to_background(
     assert captured["warehouse"] == warehouse.resolve()
     assert Path(captured["prompt_path"]).exists()
     assert (run_dir / "thread.json").exists()
+
+
+def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"
+    run_dir = tmp_path / "acquisition_run"
+    report = tmp_path / "analysis_report.md"
+    report.write_text("Need general domain datasets.", encoding="utf-8")
+    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
+    monkeypatch.setenv("CODEX_API_KEY", "dummy")
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "dataset-acquisition-agent",
+            "start",
+            "--run",
+            str(run_dir),
+            "--analysis-report",
+            str(report),
+            "--objective",
+            "ingest general domain datasets",
+            "--target-datasets",
+            "30",
+            "--max-rows-per-dataset",
+            "200000",
+            "--dry-run",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 0
+    assert payload["status"] == "dry_run"
+    assert payload["command"] == "dm.dataset-acquisition-agent"
+    prompt = (run_dir / "worker_prompt.md").read_text(encoding="utf-8")
+    assert "compare the candidate list against the original user" in prompt
+    assert "Each single dataset is capped at 100000 rows" in prompt
+    assert "DataMixer `ingest` or `agent-ingest`" in prompt
+    state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
+    assert state["target_datasets"] == 30
+    assert state["max_rows_per_dataset"] == 100000
+
+
+def test_dataset_acquisition_agent_start_defaults_to_background(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    warehouse = tmp_path / "warehouse"
+    run_dir = tmp_path / "acquisition_run"
+    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
+    monkeypatch.setenv("CODEX_API_KEY", "dummy")
+    captured: dict[str, object] = {}
+
+    def fake_spawn_background(**kwargs):
+        captured.update(kwargs)
+        return {
+            "ok": True,
+            "status": "background_started",
+            "run_dir": str(kwargs["run_dir"]),
+            "pid": 5252,
+            "prompt_path": str(kwargs["prompt_path"]),
+            "thread_id": kwargs.get("thread_id") or None,
+        }
+
+    monkeypatch.setattr(dataset_acquisition_agent, "_spawn_background", fake_spawn_background)
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "dataset-acquisition-agent",
+            "start",
+            "--run",
+            str(run_dir),
+            "--objective",
+            "ingest 3 math datasets",
+            "--target-datasets",
+            "3",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 0
+    assert payload["status"] == "background_started"
+    assert payload["pid"] == 5252
+    assert captured["warehouse"] == warehouse.resolve()
+    assert Path(captured["prompt_path"]).exists()
+    assert (run_dir / "thread.json").exists()
+
+
+def test_dataset_acquisition_agent_resume_reuses_saved_thread_id(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    warehouse = tmp_path / "warehouse"
+    run_dir = tmp_path / "acquisition_run"
+    run_dir.mkdir()
+    (run_dir / "thread.json").write_text(
+        json.dumps(
+            {
+                "warehouse": str(warehouse),
+                "thread_id": "thread-acq-123",
+                "provider": {"source": "env", "model": "deepseek-chat"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
+    monkeypatch.setenv("CODEX_API_KEY", "dummy")
+    captured: dict[str, object] = {}
+
+    def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True, thread_id=None):
+        captured["prompt"] = prompt
+        captured["thread_id"] = thread_id
+        (run_dir / "final_report.json").write_text(
+            json.dumps({"ok": True, "datasets_ingested": 1}),
+            encoding="utf-8",
+        )
+        return {"summary": "resumed", "thread_id": thread_id}
+
+    monkeypatch.setattr(dataset_acquisition_agent.codex, "run_via_sdk", fake_run_via_sdk, raising=False)
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "dataset-acquisition-agent",
+            "resume",
+            "--run",
+            str(run_dir),
+            "--message",
+            "drop unrelated datasets and continue",
+            "--foreground",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 0
+    assert captured["thread_id"] == "thread-acq-123"
+    assert "drop unrelated datasets and continue" in str(captured["prompt"])
+    assert payload["thread_id"] == "thread-acq-123"
+    status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "completed"
+    assert status["worker_ok"] is True

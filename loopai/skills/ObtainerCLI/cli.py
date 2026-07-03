@@ -8,10 +8,13 @@ import os
 import sys
 from pathlib import Path
 
-from .datamixer_adapter import datamixer_argv_from_lake
+from .datamixer_adapter import datamixer_argv_from_lake, start_background_auto_embed
+from .dataset_acquisition_agent import run_agent as run_dataset_acquisition_agent
 from .download import MAX_ROWS_PER_DATASET, download_manifest
 from .errors import ObtainerCliError
 from .events import emit_obtainer_event, get_obtainer_event_writer
+from .lake_manager import current_lake_pointer, delete_lake_pointer, load_lake_pointer, scan_lake_candidates
+from .monitor_state import start_background_rebuild, update_monitor_delta
 from .searchagent import run_searchagent
 from .sft_export_agent import run_agent as run_sft_export_agent
 
@@ -61,6 +64,7 @@ def _run_datamixer_command(argv: list[str], *, lake: str = "", root: str = "") -
             exit_code=exit_code,
             details=parsed if isinstance(parsed, dict) else {"raw": raw},
         )
+    _update_monitor_after_datamixer_command(args, parsed if isinstance(parsed, dict) else {}, lake=lake, root=root)
     return {
         "ok": True,
         "command": "dm",
@@ -72,10 +76,93 @@ def _run_datamixer_command(argv: list[str], *, lake: str = "", root: str = "") -
     }
 
 
+def _root_from_datamixer_args(args: list[str], *, root: str = "") -> str:
+    if root:
+        return root
+    index = 0
+    while index < len(args):
+        item = args[index]
+        if item == "--root" and index + 1 < len(args):
+            return args[index + 1]
+        if item.startswith("--root="):
+            return item.split("=", 1)[1]
+        index += 1
+    return ""
+
+
+def _datamixer_command_key(args: list[str]) -> tuple[str, ...]:
+    skip_next = False
+    parts: list[str] = []
+    for item in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if item in {"--root"}:
+            skip_next = True
+            continue
+        if item == "--json" or item.startswith("--root="):
+            continue
+        if item.startswith("-"):
+            continue
+        parts.append(item)
+        if len(parts) >= 2:
+            break
+    return tuple(parts)
+
+
+def _is_monitor_mutating_datamixer_command(key: tuple[str, ...]) -> bool:
+    return key[:1] in {("ingest",), ("agent-ingest",)} or key[:2] in {
+        ("op", "run"),
+        ("pipeline", "run"),
+        ("dataflow", "agent-run"),
+        ("index", "build"),
+        ("recipe", "export"),
+        ("snapshot", "create"),
+    }
+
+
+def _update_monitor_after_datamixer_command(args: list[str], result: dict, *, lake: str = "", root: str = "") -> None:
+    key = _datamixer_command_key(args)
+    if not _is_monitor_mutating_datamixer_command(key):
+        return
+    warehouse = _root_from_datamixer_args(args, root=root)
+    if not warehouse:
+        return
+    written = int(result.get("written") or result.get("rows_written") or 0)
+    indexed = int(result.get("indexed") or result.get("rows_indexed") or 0)
+    exports = 1 if key[:2] == ("recipe", "export") else 0
+    delta = {
+        "summary_delta": {
+            "records": written,
+            "embeddings": indexed,
+            "exports": exports,
+        }
+    }
+    try:
+        update_monitor_delta(
+            warehouse,
+            delta,
+            operation_id="dm." + ".".join(key),
+            trigger_background=False,
+            lake=lake or None,
+        )
+        if written > 0 and lake:
+            dataset = key[1] if key[:1] in {("ingest",), ("agent-ingest",)} and len(key) > 1 else None
+            start_background_auto_embed(
+                lake=lake,
+                dataset=dataset,
+                operation_id="dm." + ".".join(key),
+            )
+    except Exception:
+        pass
+
+
 def _run_dm_command(argv: list[str], *, lake: str = "", root: str = "") -> dict:
     args = list(argv or [])
     if args and args[0] == "--":
         args = args[1:]
+    if args and args[0] == "lake":
+        return _run_dm_lake_command(args[1:], lake=lake)
     if args and args[0] == "sft-export-agent":
         result = run_sft_export_agent(args[1:], root=root)
         result.setdefault("ok", True)
@@ -83,7 +170,75 @@ def _run_dm_command(argv: list[str], *, lake: str = "", root: str = "") -> dict:
         result.setdefault("status", "success")
         result.setdefault("warnings", [])
         return result
+    if args and args[0] == "dataset-acquisition-agent":
+        result = run_dataset_acquisition_agent(args[1:], root=root)
+        result.setdefault("ok", True)
+        result.setdefault("command", "dm.dataset-acquisition-agent")
+        result.setdefault("status", "success")
+        result.setdefault("warnings", [])
+        return result
     return _run_datamixer_command(args, lake=lake, root=root)
+
+
+def _run_dm_lake_command(argv: list[str], *, lake: str = "") -> dict:
+    parser = argparse.ArgumentParser(prog="loopai-obtainercli dm lake")
+    sub = parser.add_subparsers(dest="lake_action", required=True)
+    current = sub.add_parser("current")
+    current.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    scan = sub.add_parser("scan")
+    scan.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    scan.add_argument("--project-root", default=".")
+    scan.add_argument("--root", action="append", default=[])
+    scan.add_argument("--max-depth", type=int, default=6)
+    load = sub.add_parser("load")
+    load.add_argument("--warehouse", required=True)
+    load.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    load.add_argument("--lake-root", default="")
+    delete = sub.add_parser("delete")
+    delete.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    delete.add_argument("--delete-warehouse", action="store_true")
+    delete.add_argument("--yes", action="store_true")
+    monitor = sub.add_parser("monitor")
+    monitor_sub = monitor.add_subparsers(dest="monitor_action", required=True)
+    monitor_rebuild = monitor_sub.add_parser("rebuild")
+    monitor_rebuild.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    monitor_rebuild.add_argument("--warehouse", default="")
+    parsed = parser.parse_args(argv)
+    if parsed.lake_action == "current":
+        return current_lake_pointer(link_path=parsed.link)
+    if parsed.lake_action == "scan":
+        return scan_lake_candidates(
+            project_root=parsed.project_root,
+            active_link=parsed.link,
+            extra_roots=parsed.root,
+            max_depth=parsed.max_depth,
+        )
+    if parsed.lake_action == "load":
+        return load_lake_pointer(
+            warehouse=parsed.warehouse,
+            link_path=parsed.link,
+            lake_root=parsed.lake_root or None,
+        )
+    if parsed.lake_action == "delete":
+        return delete_lake_pointer(
+            link_path=parsed.link,
+            delete_warehouse=parsed.delete_warehouse,
+            yes=parsed.yes,
+        )
+    if parsed.lake_action == "monitor" and parsed.monitor_action == "rebuild":
+        warehouse = parsed.warehouse
+        if not warehouse:
+            current = current_lake_pointer(link_path=parsed.link)
+            warehouse = str(current.get("warehouse") or "")
+        if not warehouse:
+            raise ObtainerCliError(
+                "DATAMIXER_WAREHOUSE_NOT_FOUND",
+                "No DataMixer warehouse is loaded for monitor rebuild.",
+                hint="Use `dm lake load --warehouse <warehouse>` first, or pass --warehouse.",
+                exit_code=2,
+            )
+        return start_background_rebuild(warehouse, lake=parsed.link)
+    raise ObtainerCliError("UNSUPPORTED_DM_LAKE_COMMAND", f"Unsupported dm lake command: {parsed.lake_action}")
 
 
 def _command_event_data(args: argparse.Namespace) -> dict:

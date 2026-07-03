@@ -15,8 +15,16 @@ export default {
             component: AsyncLoad(() => import("@/views/manage/config/index.vue"))
         },
         {
-            path: 'obtainer-lake',
+            path: 'datamixer',
             component: AsyncLoad(() => import("@/views/manage/obtainerLake/index.vue"))
+        },
+        {
+            path: 'datamixer/lakes',
+            component: AsyncLoad(() => import("@/views/manage/obtainerLake/index.vue"))
+        },
+        {
+            path: 'obtainer-lake',
+            redirect: '/m/datamixer'
         }
     ]
 };

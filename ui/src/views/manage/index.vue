@@ -75,10 +75,10 @@ export default {
                 },
                 {
                     key: 2,
-                    name: () => this.local('Obtainer Lake'),
+                    name: () => this.local('DataMixer'),
                     icon: 'Database',
                     img: datalake,
-                    route: '/m/obtainer-lake'
+                    route: '/m/datamixer'
                 },
                 {
                     key: -1,
@@ -104,9 +104,17 @@ export default {
         ...mapState(useTheme, ['color', 'gradient', 'theme'])
     },
     mounted() {
+        this.syncNavForViewport()
         this.routeFormat()
+        window.addEventListener('resize', this.syncNavForViewport)
+    },
+    beforeUnmount() {
+        window.removeEventListener('resize', this.syncNavForViewport)
     },
     methods: {
+        syncNavForViewport() {
+            this.isExpand = window.innerWidth >= 1024
+        },
         handleItemClick(item) {
             this.$Go(`${item.route}`)
         },

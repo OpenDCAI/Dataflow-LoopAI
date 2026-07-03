@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import random
+import subprocess
+import sys
 from array import array
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -58,6 +60,28 @@ def read_audit_rows(lake_root: str | Path, table: str) -> list[dict]:
     return rows
 
 
+def _bool_from_config(value: str | None, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_from_config(value: str | None, default: int) -> int:
+    try:
+        parsed = int(str(value or "").strip())
+        return parsed if parsed > 0 else default
+    except ValueError:
+        return default
+
+
+def _embedding_key(row: Mapping[str, Any]) -> tuple[Any, Any, Any, Any]:
+    return (row.get("record_id"), row.get("embedding_model"), row.get("text_field"), row.get("index_backend"))
+
+
+def _existing_embedding_keys(lake_root: str | Path) -> set[tuple[Any, Any, Any, Any]]:
+    return {_embedding_key(row) for row in read_audit_rows(lake_root, "embeddings")}
+
+
 def open_store(lake: str | Path) -> DataStore:
     root = warehouse_root(lake)
     if not (root / "datamixer.toml").exists():
@@ -77,6 +101,8 @@ def init_datamixer_lake(
     embedding_model: str = "BAAI/bge-small-zh-v1.5",
     embedding_backend: str = "local-jsonl",
     embedding_text_field: str = "text",
+    auto_embed_async: bool = True,
+    auto_embed_batch_size: int = 512,
 ) -> dict:
     lake_root = Path(root).expanduser().resolve()
     if lake_root.exists() and any(lake_root.iterdir()) and not if_not_exists:
@@ -92,6 +118,8 @@ def init_datamixer_lake(
         "embedding_model": embedding_model,
         "embedding_backend": embedding_backend,
         "embedding_text_field": embedding_text_field,
+        "auto_embed_async": auto_embed_async,
+        "auto_embed_batch_size": auto_embed_batch_size,
     }
     write_lake_config(lake_root / "lake.yaml", root=lake_root, warehouse=lake_root / "warehouse", **config_kwargs)
     if link_path is not None:
@@ -348,7 +376,7 @@ def ingest_datamixer_path(
                 }
             ],
         )
-    return {
+    payload = {
         "ok": True,
         "command": "ingest path",
         "status": "success",
@@ -361,6 +389,44 @@ def ingest_datamixer_path(
         "new_blobs": result.new_blobs,
         "deduped_blobs": result.deduped_blobs,
     }
+    try:
+        from .monitor_state import update_monitor_delta
+
+        update_monitor_delta(
+            warehouse_root(lake),
+            {
+                "summary_delta": {
+                    "records": result.written,
+                    "assets": 1,
+                    "ingest_runs": 1,
+                    "quality_findings": sum(
+                        len(row.get("quality_findings") or [])
+                        for row in raw_rows
+                        if isinstance(row.get("quality_findings") or [], list)
+                    ),
+                },
+                "latest": {
+                    "ingest_runs": [
+                        {
+                            "ingest_run_id": ingest_run_id,
+                            "status": "succeeded",
+                            "rows_seen": result.ingested,
+                            "rows_written": result.written,
+                            "rows_quarantined": 0,
+                            "finished_at": utc_now(),
+                        }
+                    ]
+                },
+            },
+            operation_id=ingest_run_id,
+            trigger_background=False,
+            lake=lake,
+        )
+        if result.written:
+            start_background_auto_embed(lake=lake, dataset=dataset, operation_id=ingest_run_id)
+    except Exception:
+        pass
+    return payload
 
 
 def _legacy_dataset_row(row: Mapping[str, Any]) -> dict:
@@ -692,6 +758,52 @@ def _local_hash_vector(text: str, dim: int = 16) -> list[float]:
     return [round(digest[i] / 255.0, 6) for i in range(dim)]
 
 
+def _commit_embedding_batch(
+    *,
+    lake_root: Path,
+    lake: str | Path,
+    store: DataStore,
+    batch_rows: list[dict[str, Any]],
+    batch_vectors: list[list[float]],
+    batch_texts: list[str],
+) -> int:
+    if not batch_rows:
+        return 0
+    with commit_lock(lake_root):
+        existing = _existing_embedding_keys(lake_root)
+        rows: list[dict[str, Any]] = []
+        vectors: list[list[float]] = []
+        texts: list[str] = []
+        for row, vector, text in zip(batch_rows, batch_vectors, batch_texts):
+            if _embedding_key(row) in existing:
+                continue
+            rows.append(row)
+            vectors.append(vector)
+            texts.append(text)
+        if not rows:
+            return 0
+        for row, vector, text in zip(rows, vectors, texts):
+            if len(vector) == store.index.vectors.dim:
+                store.index.vectors.add(row["record_id"], array("f", [float(v) for v in vector]))
+            store.index.fulltext.add(row["record_id"], text)
+        store.index.vectors.flush()
+        store.index.fulltext.commit()
+        append_audit_rows(lake_root, "embeddings", rows)
+    try:
+        from .monitor_state import update_monitor_delta
+
+        update_monitor_delta(
+            warehouse_root(lake),
+            {"summary_delta": {"embeddings": len(rows)}},
+            operation_id=f"index_embed_{sha256_text(str(lake_root) + utc_now())[:12]}",
+            trigger_background=False,
+            lake=lake,
+        )
+    except Exception:
+        pass
+    return len(rows)
+
+
 def index_datamixer_embeddings(
     *,
     lake: str | Path,
@@ -704,82 +816,187 @@ def index_datamixer_embeddings(
     base_url: str = "",
     api_key: str = "",
     batch_size: int = 32,
+    commit_per_batch: bool = False,
 ) -> dict:
     from .index import _openai_compatible_embeddings
 
     lake_root = resolve_lake_root(lake)
     store = open_store(lake_root)
     dataset_ids = _dataset_ids_for_name(lake_root, dataset)
-    existing = {
-        (row.get("record_id"), row.get("embedding_model"), row.get("text_field"), row.get("index_backend"))
-        for row in read_audit_rows(lake_root, "embeddings")
-    }
+    existing = _existing_embedding_keys(lake_root)
     samples = store.catalog.query()
-    candidates = []
-    for sample in samples:
-        if dataset_ids is not None and sample.get("dataset_id") not in dataset_ids:
-            continue
-        content = store.get_content(sample["cid"])
-        legacy = _legacy_record_row(store, sample)
-        text = str(legacy.get(text_field) or store_text(content))
-        key = (sample["sample_id"], model, text_field, backend)
-        if key in existing:
-            continue
-        candidates.append((sample, text))
-
     rows = []
+    indexed_count = 0
+
+    def process_batch(batch: list[tuple[Mapping[str, Any], str]]) -> None:
+        nonlocal indexed_count
+        if not batch:
+            return
+        texts = [text for _, text in batch]
+        if provider == "local-hash":
+            vectors = [_local_hash_vector(text, dim=dim) for text in texts]
+        elif provider == "openai-compatible":
+            vectors = _openai_compatible_embeddings(
+                base_url=base_url or "http://127.0.0.1:8000/v1",
+                api_key=api_key,
+                model=model,
+                inputs=texts,
+            )
+        else:
+            raise ValueError(f"Unsupported embedding provider: {provider}")
+        batch_rows = []
+        for (sample, text), vector in zip(batch, vectors):
+            batch_rows.append(
+                {
+                    "record_id": sample["sample_id"],
+                    "dataset_id": sample["dataset_id"],
+                    "source_snapshot_id": "",
+                    "text_field": text_field,
+                    "chunk_id": "chunk_000000",
+                    "chunk_text_sha256": sha256_text(str(text)),
+                    "embedding_model": model,
+                    "embedding_dim": len(vector),
+                    "vector": [float(v) for v in vector],
+                    "vector_uri": "",
+                    "index_backend": backend,
+                    "index_status": "indexed",
+                    "created_at": utc_now(),
+                }
+            )
+        if commit_per_batch:
+            indexed_count += _commit_embedding_batch(
+                lake_root=lake_root,
+                lake=lake,
+                store=store,
+                batch_rows=batch_rows,
+                batch_vectors=vectors,
+                batch_texts=texts,
+            )
+            return
+        for row, vector, text in zip(batch_rows, vectors, texts):
+            if len(vector) == store.index.vectors.dim:
+                store.index.vectors.add(row["record_id"], array("f", [float(v) for v in vector]))
+            store.index.fulltext.add(row["record_id"], text)
+        rows.extend(batch_rows)
+
     try:
-        for offset in range(0, len(candidates), batch_size):
-            batch = candidates[offset : offset + batch_size]
-            texts = [text for _, text in batch]
-            if provider == "local-hash":
-                vectors = [_local_hash_vector(text, dim=dim) for text in texts]
-            elif provider == "openai-compatible":
-                vectors = _openai_compatible_embeddings(
-                    base_url=base_url or "http://127.0.0.1:8000/v1",
-                    api_key=api_key,
-                    model=model,
-                    inputs=texts,
-                )
-            else:
-                raise ValueError(f"Unsupported embedding provider: {provider}")
-            for (sample, text), vector in zip(batch, vectors):
-                if len(vector) == store.index.vectors.dim:
-                    store.index.vectors.add(sample["sample_id"], array("f", [float(v) for v in vector]))
-                store.index.fulltext.add(sample["sample_id"], text)
-                rows.append(
-                    {
-                        "record_id": sample["sample_id"],
-                        "dataset_id": sample["dataset_id"],
-                        "source_snapshot_id": "",
-                        "text_field": text_field,
-                        "chunk_id": "chunk_000000",
-                        "chunk_text_sha256": sha256_text(str(text)),
-                        "embedding_model": model,
-                        "embedding_dim": len(vector),
-                        "vector": [float(v) for v in vector],
-                        "vector_uri": "",
-                        "index_backend": backend,
-                        "index_status": "indexed",
-                        "created_at": utc_now(),
-                    }
-                )
-        store.index.vectors.flush()
-        store.index.fulltext.commit()
+        batch: list[tuple[Mapping[str, Any], str]] = []
+        for sample in samples:
+            if dataset_ids is not None and sample.get("dataset_id") not in dataset_ids:
+                continue
+            legacy = _legacy_record_row(store, sample)
+            text = str(legacy.get(text_field) or legacy.get("text") or "")
+            key = (sample["sample_id"], model, text_field, backend)
+            if key in existing:
+                continue
+            batch.append((sample, text))
+            if len(batch) >= batch_size:
+                process_batch(batch)
+                batch = []
+        process_batch(batch)
+        if not commit_per_batch:
+            store.index.vectors.flush()
+            store.index.fulltext.commit()
     finally:
         store.close()
-    append_audit_rows(lake_root, "embeddings", rows)
-    return {
+    if not commit_per_batch:
+        append_audit_rows(lake_root, "embeddings", rows)
+        indexed_count = len(rows)
+    payload = {
         "ok": True,
         "command": "index embed",
         "status": "success",
         "warnings": [],
         "lake_root": str(lake_root),
-        "rows_indexed": len(rows),
+        "rows_indexed": indexed_count,
         "embedding_model": model,
         "index_backend": backend,
         "embedding_provider": provider,
     }
+    try:
+        from .monitor_state import update_monitor_delta
+
+        if not commit_per_batch:
+            update_monitor_delta(
+                warehouse_root(lake),
+                {"summary_delta": {"embeddings": indexed_count}},
+                operation_id=f"index_embed_{sha256_text(model + backend + utc_now())[:12]}",
+                trigger_background=False,
+                lake=lake,
+            )
+    except Exception:
+        pass
+    return payload
+
+
+def auto_embed_pending_embeddings(
+    *,
+    lake: str | Path,
+    dataset: str | None = None,
+    batch_size: int | None = None,
+) -> dict:
+    config = read_lake_config_for_lake(lake)
+    if not _bool_from_config(config.get("auto_embed"), True):
+        return {
+            "ok": True,
+            "command": "auto embed",
+            "status": "skipped",
+            "warnings": [{"code": "AUTO_EMBED_DISABLED", "message": "auto_embed is false"}],
+            "rows_indexed": 0,
+        }
+    provider = config.get("embedding_provider") or "openai-compatible"
+    model = config.get("embedding_model") or "BAAI/bge-small-zh-v1.5"
+    backend = config.get("embedding_backend") or "local-jsonl"
+    text_field = config.get("embedding_text_field") or "text"
+    resolved_batch_size = batch_size or _int_from_config(config.get("auto_embed_batch_size"), 512)
+    return index_datamixer_embeddings(
+        lake=lake,
+        dataset=dataset,
+        model=model,
+        backend=backend,
+        text_field=text_field,
+        provider=provider,
+        base_url=config.get("embedding_base_url") or "http://127.0.0.1:8000/v1",
+        api_key=config.get("embedding_api_key") or "",
+        batch_size=resolved_batch_size,
+        commit_per_batch=True,
+    )
+
+
+def start_background_auto_embed(
+    *,
+    lake: str | Path,
+    dataset: str | None = None,
+    operation_id: str = "",
+) -> dict:
+    config = read_lake_config_for_lake(lake)
+    if not _bool_from_config(config.get("auto_embed"), True):
+        return {"status": "skipped", "reason": "auto_embed_disabled"}
+    if not _bool_from_config(config.get("auto_embed_async"), True):
+        result = auto_embed_pending_embeddings(lake=lake, dataset=dataset)
+        return {"status": "completed", "result": result}
+    batch_size = _int_from_config(config.get("auto_embed_batch_size"), 512)
+    cmd = [
+        sys.executable,
+        "-m",
+        "loopai.skills.ObtainerCLI.auto_embed_worker",
+        "--lake",
+        str(lake),
+        "--batch-size",
+        str(batch_size),
+    ]
+    if dataset:
+        cmd.extend(["--dataset", dataset])
+    if operation_id:
+        cmd.extend(["--operation-id", operation_id])
+    subprocess.Popen(
+        cmd,
+        cwd=str(Path.cwd()),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {"status": "queued", "batch_size": batch_size, "operation_id": operation_id}
 
 
 def _parse_balance_tag(sample: dict, tag_name: str) -> str:
@@ -1044,7 +1261,7 @@ def sample_datamixer_records(
             }
         ],
     )
-    return {
+    payload = {
         "ok": True,
         "command": "sample",
         "status": status,
@@ -1054,6 +1271,34 @@ def sample_datamixer_records(
         "actual_size": len(selected),
         "output_uri": str(Path(output).resolve()),
     }
+    try:
+        from .monitor_state import update_monitor_delta
+
+        update_monitor_delta(
+            warehouse_root(lake),
+            {
+                "summary_delta": {"exports": 1},
+                "latest": {
+                    "exports": [
+                        {
+                            "export_id": export_id,
+                            "strategy": strategy,
+                            "requested_size": n,
+                            "actual_size": len(selected),
+                            "output_uri": str(Path(output).resolve()),
+                            "format": "jsonl",
+                            "created_at": utc_now(),
+                        }
+                    ]
+                },
+            },
+            operation_id=export_id,
+            trigger_background=False,
+            lake=lake,
+        )
+    except Exception:
+        pass
+    return payload
 
 
 def datamixer_argv_from_lake(args: list[str], lake: str | Path | None) -> list[str]:

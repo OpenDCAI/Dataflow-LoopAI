@@ -46,7 +46,9 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse columns --json
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse stats --json
 ```
 
-如果 repo 内已有 `.loopai/lake.yaml`，`--lake` 只负责把指针解析到同一个 DataMixer warehouse：
+LoopAI 项目应复用同一个 DataMixer warehouse。repo 内的
+`.loopai/lake.yaml` 是可切换指针，`--lake` 只负责把指针解析到同一个
+DataMixer warehouse：
 
 ```yaml
 root: /data/lakes/code_sft
@@ -62,9 +64,82 @@ namespace: loopai
 loopai-obtainercli dm --lake .loopai/lake.yaml stats --json
 ```
 
-## 3. SearchAgent 与下载
+先扫描项目目录、`outputs`、`.loopai` 和常见 LoopAI 缓存目录中的候选
+DataMixer lake：
 
-Analyzer 报告进入 Codex SDK 后，应启用 Obtainer skill，并先把报告解析成明确的数据集搜集意图。不要只把整份报告丢给搜索。
+```bash
+loopai-obtainercli dm lake scan --link .loopai/lake.yaml --project-root .
+```
+
+从扫描结果中选择已有 warehouse，加载为当前项目的数据湖指针：
+
+```bash
+loopai-obtainercli dm lake load \
+  --warehouse /data/lakes/code_sft/warehouse \
+  --link .loopai/lake.yaml
+```
+
+查看当前指针：
+
+```bash
+loopai-obtainercli dm lake current --link .loopai/lake.yaml
+```
+
+卸载当前项目指针但保留可复用 warehouse：
+
+```bash
+loopai-obtainercli dm lake delete --link .loopai/lake.yaml
+```
+
+只有明确要删除真实 DataMixer warehouse 文件时才使用：
+
+```bash
+loopai-obtainercli dm lake delete --link .loopai/lake.yaml --delete-warehouse --yes
+```
+
+## 3. 数据搜集、下载与入湖 Worker
+
+Analyzer 报告进入 Codex SDK 后，应启用 Obtainer skill，并优先用
+`dataset-acquisition-agent` 启动隔离 worker。外层 Codex 不需要直接编排
+SearchAgent、download 和 ingest 细节。
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent start \
+  --run ./outputs/acquisition_run \
+  --analysis-report ./outputs/analyzer_report.md \
+  --objective "collect buggy and fixed Python code-pair datasets covering syntax, logic, runtime, and assertion failures for SFT training" \
+  --keywords "program repair dataset, buggy fixed code pairs, Python SyntaxError fix, runtime exception repair, assertion failure repair" \
+  --target-datasets 8 \
+  --max-rows-per-dataset 100000 \
+  --discovery-mode auto \
+  --model deepseek-codex \
+  --json
+```
+
+默认后台运行，立即返回 PID、日志路径和 run 目录。轮询状态：
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent status \
+  --run ./outputs/acquisition_run \
+  --json
+```
+
+继续同一个内部 Codex thread：
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent resume \
+  --run ./outputs/acquisition_run \
+  --message "Remove unrelated datasets from the filtered manifest, then continue ingest." \
+  --model deepseek-codex \
+  --json
+```
+
+Worker 内部策略会要求：先把报告解析成明确搜集意图，候选列表先与原始需求
+校对并写 rejections，再下载；单数据集最多 100000 行；下载后规范 JSONL；
+入湖必须走 DataMixer `ingest` 或 `agent-ingest`；最终写 `final_report.json`。
+
+底层 SearchAgent 与下载命令仍保留为采集桥，主要供 worker 内部调用或人工调试。
+手工使用时，不要只把整份报告丢给搜索。
 
 ```bash
 loopai-obtainercli searchagent \
@@ -77,7 +152,8 @@ loopai-obtainercli searchagent \
   --json
 ```
 
-检查 `searchagent_manifest.json` 后下载候选数据集。采集桥对单个数据集最多写出 100000 行：
+检查 `searchagent_manifest.json` 后，先剔除不相关数据集并写 filtered manifest
+和 rejection report，再下载候选数据集。采集桥对单个数据集最多写出 100000 行：
 
 ```bash
 loopai-obtainercli download manifest \

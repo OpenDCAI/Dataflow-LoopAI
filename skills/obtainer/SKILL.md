@@ -16,15 +16,17 @@ When a long-running Codex SDK loop receives an Analyzer report, failure taxonomy
 training recipe, or next-iteration data request, treat it as an Obtainer input,
 not a generic coding task:
 
-1. Identify the dataset-acquisition intent from the report.
-2. Run `searchagent` with explicit objectives and keywords derived from that intent.
-3. Inspect the returned manifest and download only suitable datasets with the
-   acquisition cap recorded.
-4. Ingest downloaded data into DataMixer with complete metadata and tags.
-5. Run DataMixer processing, quality, decontamination, deduplication, indexing,
+1. Identify whether the report needs dataset acquisition, production export, or both.
+2. For acquisition/download/ingest, start the managed
+   `dataset-acquisition-agent` worker instead of manually driving
+   SearchAgent/download/ingest from the outer Codex context.
+3. Poll worker status and decide whether to resume the same worker or start a
+   fresh worker.
+4. Run DataMixer processing, quality, decontamination, deduplication, indexing,
    and recall operations required by the recipe.
-6. Export production data through a DataMixer recipe with lineage and snapshot
-   metadata.
+5. For production SFT outflow, start the managed `sft-export-agent` worker.
+6. Report warehouse path, datasets, record counts, recipe/export artifacts,
+   lineage, manifests, and snapshots.
 
 Do not introduce a separate DataMixer skill. DataMixer is already integrated into
 Obtainer and must be invoked through `loopai-obtainercli dm ...`.
@@ -39,6 +41,14 @@ Obtainer and must be invoked through `loopai-obtainercli dm ...`.
   `loopai-obtainercli dm ...` for initialization, schema inspection, dataset
   registry, ingest, query, processing operators, indexing, recall, recipes,
   snapshots, lineage, and export.
+- **Reuse the active DataMixer warehouse.** Treat `.loopai/lake.yaml` as a
+  project pointer to a reusable DataMixer warehouse. Do not create a new lake per
+  task unless the user explicitly asks for a new warehouse. Use `dm lake load`
+  to point the project at an existing warehouse and `dm lake delete` to unload
+  the pointer; deletion preserves the warehouse unless `--delete-warehouse
+  --yes` is explicitly supplied. Prefer `dm lake scan` before choosing a
+  warehouse, so the agent sees project and cache candidates instead of guessing
+  paths.
 - **Search before acquiring from a report.** First recognize the
   dataset-acquisition intent: target sample shape, task types, domains, source
   hints, proportions, quality gates, and concrete search objectives. Pass that
@@ -100,7 +110,22 @@ Use `--root` when operating directly on a DataMixer warehouse. Use `--lake` only
 when a LoopAI lake pointer already exists and should resolve to the integrated
 DataMixer warehouse. All `dm` commands emit machine-readable JSON.
 
-Search and provider download are Obtainer acquisition bridges:
+Manage the project pointer to a reusable DataMixer warehouse:
+
+```bash
+loopai-obtainercli dm lake scan --link .loopai/lake.yaml --project-root .
+loopai-obtainercli dm lake current --link .loopai/lake.yaml
+loopai-obtainercli dm lake load --warehouse /path/to/warehouse --link .loopai/lake.yaml
+loopai-obtainercli dm lake delete --link .loopai/lake.yaml
+```
+
+`dm lake delete` unloads only the pointer by default. Use
+`--delete-warehouse --yes` only when the actual reusable warehouse should be
+removed.
+
+Search and provider download are Obtainer acquisition bridges. Outer Codex
+normally reaches them through `dataset-acquisition-agent`; call these low-level
+commands directly only for debugging or a deliberately manual acquisition run:
 
 ```bash
 loopai-obtainercli searchagent ...
@@ -108,6 +133,51 @@ loopai-obtainercli download manifest ...
 ```
 
 After download, all lake work returns to `loopai-obtainercli dm ...`.
+
+## Dataset Acquisition Worker
+
+For dataset discovery, candidate pruning, download, normalization, and DataMixer
+ingest, outer Codex should use the managed acquisition worker wrapper.
+
+Start a new worker:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent start \
+  --run ./outputs/acquisition_run \
+  --analysis-report ./outputs/analyzer_report.md \
+  --objective "collect general-domain instruction and QA datasets" \
+  --keywords "instruction tuning dataset, open QA dataset, summarization dataset" \
+  --target-datasets 30 \
+  --max-rows-per-dataset 100000 \
+  --discovery-mode auto \
+  --model deepseek-codex
+```
+
+`start` runs the inner Codex SDK worker in the background by default and returns
+PID plus log paths. Use `--foreground` only when the caller intentionally wants
+to block.
+
+Poll status:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent status \
+  --run ./outputs/acquisition_run
+```
+
+Resume the same worker:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent resume \
+  --run ./outputs/acquisition_run \
+  --message "Remove unrelated datasets from the filtered manifest, then continue ingest." \
+  --model deepseek-codex
+```
+
+The worker wrapper injects the detailed acquisition policy: explicit objective
+and keywords, candidate list review against the original request before
+download, rejection report, 100,000-row per-dataset cap, normalized JSONL,
+DataMixer-only ingest/status/query/index operations, complete provenance tags,
+and `final_report.json`.
 
 ## DataMixer Lake Operations
 
@@ -224,8 +294,9 @@ loopai-obtainercli dm --root /path/to/warehouse lineage list --json
 
 ## SearchAgent Dataset Collection
 
-For Analyzer reports, do not call `searchagent` with only `--query-file`. First
-turn the report into explicit acquisition intents.
+This is the low-level discovery bridge used by the acquisition worker. For
+manual debugging, do not call `searchagent` with only `--query-file`; first turn
+the report into explicit acquisition intents.
 
 ```bash
 loopai-obtainercli searchagent \
@@ -274,7 +345,8 @@ keywords, and unranked provider download candidates.
 
 ## Manifest Download
 
-Use `download manifest` only to materialize SearchAgent candidates into local
+This is the low-level download bridge used by the acquisition worker. Use
+`download manifest` only to materialize SearchAgent candidates into local
 lake-ready files. It is not a lake operation.
 
 Before downloading, compare the manifest against the original user request and
@@ -359,23 +431,18 @@ and blockers.
 ## End-To-End Agent Workflow
 
 1. Read the Analyzer report or user request and extract the dataset intent.
-2. Run `searchagent` with explicit objectives and keywords.
-3. Inspect the manifest. If unsuitable, refine once or stop.
-4. Compare candidates against the original request, write a filtered manifest,
-   and record rejected unrelated datasets with reasons.
-5. Run `download manifest` for selected splits, respecting the 100,000-row
-   per-dataset acquisition cap.
-6. Inspect downloaded schemas and sample records.
-7. Ingest with DataMixer `dm ingest` or `dm agent-ingest`, preserving metadata.
-8. Run DataMixer operators for quality, deduplication, safety, and post-training
+2. Start `dataset-acquisition-agent` for discovery, candidate pruning,
+   download, normalization, and DataMixer ingest.
+3. Poll `dataset-acquisition-agent status`; resume or restart based on
+   `final_report.json` and blockers.
+4. Run DataMixer operators for quality, deduplication, safety, and post-training
    validity tags. For downstream-task specific processing, prefer
    `dm dataflow agent-run` so Codex SDK plans and trial-runs the DataFlow
    operator chain before merge-back.
-9. Build indexes when semantic recall or semantic deduplication is needed.
-10. Create and validate a DataMixer recipe for the requested training mix.
-11. Run `recipe plan` and `recipe preview`; stop on shortage or semantic tag gaps.
-12. Run `recipe export --snapshot`.
-13. Report warehouse path, datasets, record counts, processing results, recipe
+5. Build indexes when semantic recall or semantic deduplication is needed.
+6. Start `sft-export-agent` for production recipe planning and export.
+7. Poll `sft-export-agent status`; resume or restart based on blockers.
+8. Report warehouse path, datasets, record counts, processing results, recipe
     fingerprint, snapshot id, export path, and manifest path.
 
 ## Failure Handling

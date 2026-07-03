@@ -1,12 +1,21 @@
 <template>
-    <div class="ol-monitor-container">
-        <div class="ol-major-container">
-            <div class="ol-title-block">
+    <div class="dm-container">
+        <div class="dm-major-container">
+            <div class="dm-title-block">
                 <div class="title-copy">
-                    <p class="main-title">Obtainer Lake Monitor</p>
-                    <p class="sub-title" :title="lakeRoot || lakePath">
-                        {{ lakeRoot || lakePath }}
-                    </p>
+                    <p class="main-title">DataMixer</p>
+                    <p class="sub-title" :title="workspaceTitle">{{ workspaceTitle }}</p>
+                    <div class="view-switch">
+                        <button
+                            v-for="view in views"
+                            :key="view.key"
+                            type="button"
+                            :class="{ active: activeView === view.key }"
+                            @click="setActiveView(view.key)"
+                        >
+                            {{ view.label }}
+                        </button>
+                    </div>
                 </div>
                 <div class="right-block">
                     <fv-text-box
@@ -15,10 +24,12 @@
                         border-radius="6"
                         :reveal-border="true"
                         :is-box-shadow="true"
+                        placeholder=".loopai/lake.yaml"
+                        @keyup.enter="refresh"
                     ></fv-text-box>
                     <fv-button
                         icon="Refresh"
-                        :disabled="loading"
+                        :disabled="loading || rebuilding"
                         border-radius="6"
                         :is-box-shadow="true"
                         @click="refresh"
@@ -26,43 +37,206 @@
                         {{ local('Refresh') }}
                     </fv-button>
                     <fv-button
+                        icon="Sync"
+                        :disabled="loading || rebuilding"
+                        border-radius="6"
+                        :is-box-shadow="true"
+                        @click="rebuildMonitorCache"
+                    >
+                        {{ rebuilding ? 'Rebuilding' : 'Rebuild Cache' }}
+                    </fv-button>
+                    <fv-button
                         theme="dark"
                         icon="LightningBolt"
-                        :disabled="loading || probing"
+                        :disabled="loading || rebuilding || probing || !monitor"
                         :background="gradient"
                         border-radius="6"
                         :is-box-shadow="true"
                         @click="probeEmbedding"
                     >
-                        {{ probing ? local('Probing') : local('Probe') }}
+                        {{ probing ? 'Probing' : 'Probe' }}
                     </fv-button>
                 </div>
             </div>
 
-            <div class="ol-content-block">
-                <page-loading :model-value="loading" title="Loading..." :z-index="3"></page-loading>
+            <div class="dm-content-block">
+                <div v-if="loading || rebuilding" class="monitor-loading-strip">
+                    <div class="monitor-loading-copy">
+                        <i class="ms-Icon ms-Icon--Sync"></i>
+                        <span>{{ monitorProgressText }}</span>
+                    </div>
+                    <div class="monitor-progress">
+                        <span></span>
+                    </div>
+                </div>
 
                 <div v-if="error" class="error-banner">
                     <i class="ms-Icon ms-Icon--ErrorBadge"></i>
                     <span>{{ error }}</span>
                 </div>
 
-                <div class="status-strip">
+                <section v-if="activeView === 'lakes'" class="lake-dashboard">
+                    <section class="dm-panel active-lake-panel">
+                        <div class="panel-head">
+                            <p>Active Lake</p>
+                            <span>{{ activeLakeLabel }}</span>
+                        </div>
+                        <div class="active-lake-grid">
+                            <div class="active-score">
+                                <span>{{ formatNumber(activeLake?.samples || 0) }}</span>
+                                <p>records</p>
+                            </div>
+                            <div class="active-meta">
+                                <p :title="activeLake?.warehouse">{{ activeLake?.warehouse || lakeState?.warehouse || '-' }}</p>
+                                <span>{{ formatNumber(activeLake?.datasets || 0) }} datasets · {{ activeLake?.source_type || 'pointer' }}</span>
+                            </div>
+                        </div>
+                        <div class="lake-action-row">
+                            <button type="button" :disabled="lakeActionRunning" @click="scanLakes">
+                                <i class="ms-Icon ms-Icon--Refresh"></i>
+                                <span>{{ lakeActionRunning ? 'Scanning' : 'Scan' }}</span>
+                            </button>
+                            <button type="button" class="secondary" :disabled="lakeActionRunning" @click="unloadActiveLake">
+                                <i class="ms-Icon ms-Icon--PlugDisconnected"></i>
+                                <span>Unload</span>
+                            </button>
+                        </div>
+                    </section>
+
+                    <section class="dm-panel lake-candidates-panel">
+                        <div class="panel-head">
+                            <p>Discovered Lakes</p>
+                            <span>{{ lakeCandidates.length }} candidates</span>
+                        </div>
+                        <div class="lake-card-grid">
+                            <article
+                                v-for="lake in lakeCandidates"
+                                :key="lake.id"
+                                class="lake-card"
+                                :class="{ active: lake.active, missing: !lake.warehouse_exists }"
+                                @click="setDetail(lake.name, lake)"
+                            >
+                                <div class="lake-card-head">
+                                    <div>
+                                        <p>{{ lake.name || 'DataMixer Lake' }}</p>
+                                        <span>{{ lake.source_type }}</span>
+                                    </div>
+                                    <strong>{{ lake.active ? 'Active' : lake.status }}</strong>
+                                </div>
+                                <div class="lake-card-metrics">
+                                    <span>{{ formatNumber(lake.samples || 0) }} records</span>
+                                    <span>{{ formatNumber(lake.datasets || 0) }} datasets</span>
+                                    <span>{{ lake.status || '-' }}</span>
+                                </div>
+                                <p class="lake-path" :title="lake.warehouse">{{ lake.warehouse }}</p>
+                                <div class="lake-card-actions">
+                                    <button
+                                        type="button"
+                                        :disabled="lakeActionRunning || lake.active || !lake.warehouse_exists"
+                                        @click.stop="loadScannedLake(lake)"
+                                    >
+                                        <i class="ms-Icon ms-Icon--OpenFolderHorizontal"></i>
+                                        <span>Load</span>
+                                    </button>
+                                    <button type="button" class="secondary" @click.stop="setDetail(lake.name, lake)">
+                                        Details
+                                    </button>
+                                </div>
+                            </article>
+                            <div v-if="lakeCandidates.length === 0" class="empty-lakes">
+                                {{ lakeActionRunning ? 'Scanning...' : 'No DataMixer lakes found' }}
+                            </div>
+                        </div>
+                    </section>
+                </section>
+
+                <template v-else>
+                <section class="status-strip">
                     <div class="health-score" :class="healthLevel">
                         <span>{{ summary.health_score ?? 0 }}</span>
                         <p>Health</p>
                     </div>
                     <div class="status-meta">
-                        <p class="status-title">{{ monitorStatus }}</p>
-                        <p class="status-subtitle">
-                            {{ local('Last refresh') }}: {{ monitor?.refreshed_at || '-' }}
-                        </p>
+                        <p class="status-title">{{ statusTitle }}</p>
+                        <p class="status-subtitle" :title="statusSubtitle">{{ statusSubtitle }}</p>
                     </div>
-                    <div class="warning-pill" :class="{ active: warnings.length > 0 }">
-                        <i class="ms-Icon ms-Icon--Warning"></i>
-                        <span>{{ warnings.length }}</span>
+                    <div class="status-badges">
+                        <button type="button" class="status-badge" @click="setDetail('DataMixer Config', monitor?.config)">
+                            <i class="ms-Icon ms-Icon--Database"></i>
+                            <span>{{ catalogLabel }}</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="status-badge warning"
+                            :class="{ active: warnings.length > 0 }"
+                            @click="setDetail('Warnings', warnings)"
+                        >
+                            <i class="ms-Icon ms-Icon--Warning"></i>
+                            <span>{{ warnings.length }}</span>
+                        </button>
                     </div>
-                </div>
+                </section>
+
+                <section class="surface-panel">
+                    <div
+                        v-for="item in operationSurface"
+                        :key="item.key"
+                        class="surface-item"
+                        :class="item.state"
+                        @click="applyCommandTemplate(item.command)"
+                    >
+                        <span class="surface-dot"></span>
+                        <div>
+                            <p>{{ item.label }}</p>
+                            <span>{{ item.note }}</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="dm-panel command-panel">
+                    <div class="panel-head">
+                        <p>DataMixer Command Surface</p>
+                        <span>{{ commandEndpointLabel }}</span>
+                    </div>
+                    <div class="command-layout">
+                        <div class="command-groups">
+                            <div v-for="group in commandGroups" :key="group.key" class="command-group">
+                                <p>{{ group.label }}</p>
+                                <div class="command-chips">
+                                    <button
+                                        v-for="command in group.commands"
+                                        :key="`${group.key}-${command}`"
+                                        type="button"
+                                        @click="applyCommandTemplate(command)"
+                                    >
+                                        {{ command }}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="command-runner">
+                            <textarea
+                                v-model="commandLine"
+                                spellcheck="false"
+                                placeholder="status"
+                                @keydown.ctrl.enter.prevent="runCommand"
+                            ></textarea>
+                            <div class="command-actions">
+                                <button type="button" :disabled="commandRunning" @click="runCommand">
+                                    <i class="ms-Icon ms-Icon--Play"></i>
+                                    <span>{{ commandRunning ? 'Running' : 'Run' }}</span>
+                                </button>
+                                <button type="button" class="secondary" @click="applyCommandTemplate('status')">
+                                    status
+                                </button>
+                                <button type="button" class="secondary" @click="applyCommandTemplate('lineage list')">
+                                    lineage
+                                </button>
+                            </div>
+                            <pre>{{ commandResultText }}</pre>
+                        </div>
+                    </div>
+                </section>
 
                 <div class="kpi-grid">
                     <button
@@ -70,7 +244,7 @@
                         :key="item.key"
                         class="kpi-card"
                         type="button"
-                        @click="setDetail(item.label, item)"
+                        @click="setDetail(item.label, item.payload)"
                     >
                         <div class="kpi-icon" :style="{ background: item.background, color: item.color }">
                             <i class="ms-Icon" :class="`ms-Icon--${item.icon}`"></i>
@@ -83,18 +257,67 @@
                     </button>
                 </div>
 
-                <div class="chart-grid primary">
-                    <section class="monitor-panel trend-panel">
+                <div class="main-grid">
+                    <section class="dm-panel warehouse-panel">
                         <div class="panel-head">
-                            <p>Ingest Trend</p>
-                            <span>{{ ingestRows.length }} runs</span>
+                            <p>Warehouse</p>
+                            <span>{{ tableRows.length }} views</span>
+                        </div>
+                        <div class="warehouse-layout">
+                            <div class="config-grid">
+                                <button
+                                    v-for="item in configItems"
+                                    :key="item.key"
+                                    type="button"
+                                    class="config-tile"
+                                    @click="setDetail(item.label, item)"
+                                >
+                                    <span>{{ item.label }}</span>
+                                    <p :title="item.value">{{ item.value || '-' }}</p>
+                                </button>
+                            </div>
+                            <div class="table-health">
+                                <button
+                                    v-for="table in tableRows"
+                                    :key="table.name"
+                                    class="table-row"
+                                    type="button"
+                                    @click="setDetail(table.name, table)"
+                                >
+                                    <span class="table-status" :class="{ ok: table.exists, warn: !table.exists }"></span>
+                                    <span class="table-name">{{ table.name }}</span>
+                                    <span class="table-count">{{ formatNumber(table.count) }}</span>
+                                    <span class="table-size">{{ formatBytes(table.size_bytes) }}</span>
+                                    <span class="table-time">{{ formatTime(table.modified_at) }}</span>
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="dm-panel ingest-panel">
+                        <div class="panel-head">
+                            <p>Ingest Runs</p>
+                            <span>{{ ingestRows.length }} recent</span>
                         </div>
                         <base-chart type="bar" :chart-data="ingestTrendChart" :options="trendOptions"></base-chart>
                     </section>
-                    <section class="monitor-panel composition-panel">
+                </div>
+
+                <div class="insight-grid">
+                    <section class="dm-panel">
                         <div class="panel-head">
-                            <p>Lake Composition</p>
-                            <span>processing level</span>
+                            <p>Composition</p>
+                            <div class="segmented-control">
+                                <button
+                                    v-for="mode in compositionModes"
+                                    :key="mode.key"
+                                    type="button"
+                                    :class="{ active: compositionMode === mode.key }"
+                                    @click="compositionMode = mode.key"
+                                >
+                                    {{ mode.label }}
+                                </button>
+                            </div>
                         </div>
                         <base-chart
                             type="doughnut"
@@ -102,29 +325,21 @@
                             :options="doughnutOptions"
                         ></base-chart>
                     </section>
-                </div>
 
-                <div class="chart-grid secondary">
-                    <section class="monitor-panel">
+                    <section class="dm-panel">
                         <div class="panel-head">
                             <p>Top Tags</p>
                             <span>{{ topTags.length }} values</span>
                         </div>
                         <base-chart type="bar" :chart-data="tagChart" :options="horizontalBarOptions"></base-chart>
                     </section>
-                    <section class="monitor-panel">
+
+                    <section class="dm-panel embedding-panel">
                         <div class="panel-head">
-                            <p>Quality Findings</p>
-                            <span>{{ summary.quality_findings || 0 }} items</span>
-                        </div>
-                        <base-chart type="bar" :chart-data="qualityChart" :options="stackedOptions"></base-chart>
-                    </section>
-                    <section class="monitor-panel">
-                        <div class="panel-head">
-                            <p>Embedding Health</p>
+                            <p>Embedding</p>
                             <span>{{ formatPercent(embedding.coverage) }}</span>
                         </div>
-                        <div class="embedding-block">
+                        <div class="embedding-layout">
                             <base-chart
                                 type="doughnut"
                                 :chart-data="embeddingChart"
@@ -140,42 +355,28 @@
                     </section>
                 </div>
 
-                <div class="deep-grid">
-                    <section class="monitor-panel table-panel">
+                <div class="detail-grid">
+                    <section class="dm-panel quality-panel">
                         <div class="panel-head">
-                            <p>Table Health</p>
-                            <span>{{ tableRows.length }} tables</span>
+                            <p>Quality Findings</p>
+                            <span>{{ formatNumber(summary.quality_findings || 0) }} items</span>
                         </div>
-                        <div class="table-health">
-                            <button
-                                v-for="table in tableRows"
-                                :key="table.name"
-                                class="table-row"
-                                type="button"
-                                @click="setDetail(table.name, table)"
-                            >
-                                <span class="table-status" :class="{ ok: table.exists, warn: !table.exists }"></span>
-                                <span class="table-name">{{ table.name }}</span>
-                                <span class="table-count">{{ formatNumber(table.count) }}</span>
-                                <span class="table-size">{{ formatBytes(table.size_bytes) }}</span>
-                                <span class="table-time">{{ formatTime(table.modified_at) }}</span>
-                            </button>
-                        </div>
+                        <base-chart type="bar" :chart-data="qualityChart" :options="stackedOptions"></base-chart>
                     </section>
 
-                    <aside class="monitor-panel detail-panel">
+                    <aside class="dm-panel inspect-panel">
                         <div class="panel-head">
                             <p>{{ detailTitle }}</p>
-                            <span>Drill-down</span>
+                            <span>JSON</span>
                         </div>
                         <pre>{{ detailText }}</pre>
                     </aside>
                 </div>
 
-                <section class="monitor-panel latest-panel">
+                <section class="dm-panel latest-panel">
                     <div class="panel-head">
-                        <p>Latest</p>
-                        <div class="tab-controls">
+                        <p>Latest DataMixer Rows</p>
+                        <div class="segmented-control">
                             <button
                                 v-for="tab in tabs"
                                 :key="tab.key"
@@ -199,7 +400,7 @@
                             <tbody>
                                 <tr
                                     v-for="(row, index) in activeRows"
-                                    :key="index"
+                                    :key="`${activeTab}-${index}`"
                                     @click="setDetail(activeTab, row)"
                                 >
                                     <td v-for="column in activeColumns" :key="column.key">
@@ -207,12 +408,13 @@
                                     </td>
                                 </tr>
                                 <tr v-if="activeRows.length === 0">
-                                    <td :colspan="activeColumns.length">{{ local('No Data') }}</td>
+                                    <td :colspan="activeColumns.length || 1">{{ local('No Data') }}</td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
                 </section>
+                </template>
             </div>
         </div>
     </div>
@@ -222,24 +424,47 @@
 import { mapState } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
-import pageLoading from '@/components/general/pageLoading.vue'
 import baseChart from '@/components/manage/obtainerLake/baseChart.vue'
-import { getEmbeddingHealth, getLakeMonitor } from '@/services/obtainerLake'
+import {
+    deleteDataMixerLake,
+    getDataMixerCommands,
+    getDataMixerEmbeddingHealth,
+    getDataMixerMonitor,
+    loadDataMixerLake,
+    rebuildDataMixerMonitor,
+    runDataMixerCli,
+    scanDataMixerLakes
+} from '@/services/obtainerLake'
 
 export default {
     components: {
-        pageLoading,
         baseChart
     },
     data() {
         return {
             lakePath: '.loopai/lake.yaml',
             monitor: null,
+            lakeState: {},
+            lakeScan: null,
             loading: false,
+            rebuilding: false,
             probing: false,
             error: '',
+            activeView: 'workbench',
             activeTab: 'records',
-            detail: null
+            compositionMode: 'processing_level',
+            detail: null,
+            commandGroups: [],
+            commandEndpoint: 'loopai-obtainercli dm',
+            commandLine: 'status',
+            commandRunning: false,
+            commandResult: null,
+            lakeActionRunning: false,
+            pendingWorkbenchRefresh: false,
+            monitorRefreshStartedAt: 0,
+            monitorElapsedSeconds: 0,
+            monitorProgressTimer: null,
+            rebuildPollTimer: null
         }
     },
     computed: {
@@ -254,19 +479,94 @@ export default {
         warnings() {
             return this.monitor?.warnings || []
         },
+        views() {
+            return [
+                { key: 'workbench', label: 'Workbench' },
+                { key: 'lakes', label: 'Lake Management' }
+            ]
+        },
         lakeRoot() {
             return this.monitor?.lake_root || ''
         },
-        monitorStatus() {
-            if (!this.monitor) return 'No lake loaded'
-            if (this.warnings.length > 0) return 'Warnings detected'
-            return 'Healthy'
+        workspaceTitle() {
+            if (this.monitor?.lake_root) return `${this.monitor.lake_root} - ${this.monitor.lake_config || this.lakePath}`
+            return this.lakePath
+        },
+        statusTitle() {
+            if (!this.monitor) return 'No DataMixer warehouse loaded'
+            if (this.monitor.cache_status === 'cache_missing') return 'Monitor cache is missing'
+            if (this.monitor.cache_status === 'rebuilding') return 'Monitor cache is rebuilding'
+            if (this.monitor.stale) return 'Monitor cache is stale'
+            if (this.warnings.length > 0) return 'DataMixer warehouse needs attention'
+            return 'DataMixer warehouse is healthy'
+        },
+        statusSubtitle() {
+            if (!this.monitor) return 'Waiting for monitor response'
+            if (this.monitor.stale_reason) return `Cache ${this.monitor.cache_status || 'stale'} · ${this.monitor.stale_reason}`
+            if (this.monitor.cache_status) return `Cache ${this.monitor.cache_status} · Last refresh ${this.formatTime(this.monitor.refreshed_at)}`
+            return `Last refresh ${this.formatTime(this.monitor.refreshed_at)}`
+        },
+        catalogLabel() {
+            return this.monitor?.config?.catalog || 'datamixer'
         },
         healthLevel() {
             const score = Number(this.summary.health_score || 0)
             if (score >= 85) return 'good'
             if (score >= 60) return 'warn'
             return 'bad'
+        },
+        operationSurface() {
+            return [
+                {
+                    key: 'monitor',
+                    label: 'Monitor',
+                    note: 'GET /obtainer/lake/monitor',
+                    state: 'available',
+                    command: 'status'
+                },
+                {
+                    key: 'embedding',
+                    label: 'Embedding Probe',
+                    note: 'index stats',
+                    state: 'available',
+                    command: 'index stats'
+                },
+                {
+                    key: 'ingest',
+                    label: 'Ingest / Agent Ingest',
+                    note: 'POST /obtainer/datamixer/cli',
+                    state: 'available',
+                    command: 'agent-ingest /path/to/file --engine builtin'
+                },
+                {
+                    key: 'recipe',
+                    label: 'Recipe Export',
+                    note: 'recipe export --snapshot',
+                    state: 'available',
+                    command: 'recipe plan /path/to/recipe.yaml'
+                }
+            ]
+        },
+        commandEndpointLabel() {
+            return this.commandEndpoint || 'loopai-obtainercli dm'
+        },
+        commandResultText() {
+            return JSON.stringify(this.commandResult || { message: 'Run a DataMixer command to inspect its JSON result.' }, null, 2)
+        },
+        monitorProgressText() {
+            const seconds = Math.max(Number(this.monitorElapsedSeconds || 0), 0)
+            if (this.rebuilding) return `Rebuilding monitor cache · ${seconds}s`
+            return `Refreshing monitor · ${seconds}s`
+        },
+        lakeCandidates() {
+            return this.lakeScan?.lakes || []
+        },
+        activeLake() {
+            return this.lakeCandidates.find((lake) => lake.active) || null
+        },
+        activeLakeLabel() {
+            if (this.activeLake?.status) return this.activeLake.status
+            return this.lakeState?.status || 'missing'
         },
         kpis() {
             return [
@@ -276,17 +576,19 @@ export default {
                     value: this.formatNumber(this.summary.records || 0),
                     note: `${this.formatNumber(this.summary.datasets || 0)} datasets`,
                     icon: 'Database',
-                    background: 'rgba(75, 111, 193, 0.12)',
-                    color: 'rgba(75, 111, 193, 1)'
+                    background: 'rgba(64, 99, 170, 0.12)',
+                    color: 'rgba(64, 99, 170, 1)',
+                    payload: this.summary
                 },
                 {
-                    key: 'coverage',
+                    key: 'embedding',
                     label: 'Embedding Coverage',
                     value: this.formatPercent(this.summary.embedding_coverage || 0),
                     note: `${this.formatNumber(this.embedding.pending_records || 0)} pending`,
                     icon: 'LightningBolt',
-                    background: 'rgba(20, 155, 124, 0.12)',
-                    color: 'rgba(20, 120, 96, 1)'
+                    background: 'rgba(20, 145, 116, 0.12)',
+                    color: 'rgba(20, 120, 96, 1)',
+                    payload: this.embedding
                 },
                 {
                     key: 'quality',
@@ -294,8 +596,9 @@ export default {
                     value: this.formatNumber(this.summary.quality_findings || 0),
                     note: `${this.warnings.length} warnings`,
                     icon: 'Diagnostic',
-                    background: 'rgba(209, 105, 40, 0.14)',
-                    color: 'rgba(181, 83, 20, 1)'
+                    background: 'rgba(203, 101, 36, 0.14)',
+                    color: 'rgba(181, 83, 20, 1)',
+                    payload: this.monitor?.latest?.quality_findings || []
                 },
                 {
                     key: 'exports',
@@ -303,10 +606,24 @@ export default {
                     value: this.formatNumber(this.summary.exports || 0),
                     note: `${this.formatNumber(this.summary.ingest_runs || 0)} ingest runs`,
                     icon: 'Upload',
-                    background: 'rgba(166, 80, 151, 0.12)',
-                    color: 'rgba(136, 55, 121, 1)'
+                    background: 'rgba(144, 91, 166, 0.12)',
+                    color: 'rgba(116, 65, 145, 1)',
+                    payload: this.monitor?.latest?.exports || []
                 }
             ]
+        },
+        configItems() {
+            const config = this.monitor?.config || {}
+            return [
+                { key: 'lake_config', label: 'Lake Config', value: this.monitor?.lake_config || this.lakePath },
+                { key: 'lake_root', label: 'Warehouse Root', value: this.lakeRoot },
+                { key: 'catalog', label: 'Catalog', value: config.catalog || 'datamixer' },
+                { key: 'namespace', label: 'Namespace', value: config.namespace || '-' },
+                { key: 'warehouse', label: 'Warehouse', value: config.warehouse || '-' }
+            ]
+        },
+        tableRows() {
+            return Object.values(this.monitor?.tables || {}).sort((a, b) => String(a.name).localeCompare(String(b.name)))
         },
         ingestRows() {
             return this.monitor?.charts?.ingest_trend || []
@@ -314,19 +631,24 @@ export default {
         topTags() {
             return this.monitor?.charts?.top_tags || []
         },
-        tableRows() {
-            return Object.values(this.monitor?.tables || {})
-        },
         palette() {
             return [
-                'rgba(75, 111, 193, 0.82)',
-                'rgba(20, 155, 124, 0.82)',
-                'rgba(209, 105, 40, 0.82)',
-                'rgba(166, 80, 151, 0.82)',
-                'rgba(224, 172, 62, 0.86)',
-                'rgba(78, 151, 168, 0.82)',
-                'rgba(190, 76, 88, 0.82)',
-                'rgba(112, 127, 143, 0.82)'
+                'rgba(64, 99, 170, 0.82)',
+                'rgba(20, 145, 116, 0.82)',
+                'rgba(203, 101, 36, 0.82)',
+                'rgba(144, 91, 166, 0.82)',
+                'rgba(218, 165, 55, 0.86)',
+                'rgba(69, 148, 163, 0.82)',
+                'rgba(185, 72, 83, 0.82)',
+                'rgba(104, 121, 141, 0.82)'
+            ]
+        },
+        compositionModes() {
+            return [
+                { key: 'processing_level', label: 'Level' },
+                { key: 'domain', label: 'Domain' },
+                { key: 'source_kind', label: 'Source' },
+                { key: 'task_type', label: 'Task' }
             ]
         },
         ingestTrendChart() {
@@ -337,23 +659,26 @@ export default {
                     {
                         label: 'Seen',
                         data: this.ingestRows.map((row) => row.rows_seen || 0),
-                        backgroundColor: 'rgba(112, 127, 143, 0.5)'
+                        backgroundColor: 'rgba(104, 121, 141, 0.5)',
+                        borderRadius: 4
                     },
                     {
                         label: 'Written',
                         data: this.ingestRows.map((row) => row.rows_written || 0),
-                        backgroundColor: 'rgba(20, 155, 124, 0.72)'
+                        backgroundColor: 'rgba(20, 145, 116, 0.72)',
+                        borderRadius: 4
                     },
                     {
                         label: 'Quarantined',
                         data: this.ingestRows.map((row) => row.rows_quarantined || 0),
-                        backgroundColor: 'rgba(190, 76, 88, 0.72)'
+                        backgroundColor: 'rgba(185, 72, 83, 0.72)',
+                        borderRadius: 4
                     }
                 ]
             }
         },
         compositionChart() {
-            const data = this.monitor?.charts?.composition?.processing_level || {}
+            const data = this.monitor?.charts?.composition?.[this.compositionMode] || {}
             const labels = Object.keys(data)
             return {
                 labels,
@@ -374,7 +699,7 @@ export default {
                     {
                         label: 'Records',
                         data: rows.map((row) => row.count),
-                        backgroundColor: 'rgba(75, 111, 193, 0.72)',
+                        backgroundColor: 'rgba(64, 99, 170, 0.72)',
                         borderRadius: 4
                     }
                 ]
@@ -407,7 +732,7 @@ export default {
                 datasets: [
                     {
                         data: [this.embedding.indexed_records || 0, this.embedding.pending_records || 0],
-                        backgroundColor: ['rgba(20, 155, 124, 0.78)', 'rgba(209, 105, 40, 0.45)'],
+                        backgroundColor: ['rgba(20, 145, 116, 0.78)', 'rgba(203, 101, 36, 0.45)'],
                         borderWidth: 0
                     }
                 ]
@@ -457,7 +782,7 @@ export default {
         tabs() {
             return [
                 { key: 'records', label: 'Records' },
-                { key: 'ingest_runs', label: 'Ingest Runs' },
+                { key: 'ingest_runs', label: 'Runs' },
                 { key: 'quality_findings', label: 'Quality' },
                 { key: 'exports', label: 'Exports' },
                 { key: 'warnings', label: 'Warnings' }
@@ -467,7 +792,7 @@ export default {
             return {
                 records: [
                     { key: 'record_id', label: 'Record' },
-                    { key: 'domain', label: 'Domain' },
+                    { key: 'dataset_id', label: 'Dataset' },
                     { key: 'processing_level', label: 'Level' },
                     { key: 'source_kind', label: 'Source' },
                     { key: 'text', label: 'Text' }
@@ -509,41 +834,264 @@ export default {
             return this.monitor?.latest?.[this.activeTab] || []
         },
         detailTitle() {
-            return this.detail?.title || 'Lake Summary'
+            return this.detail?.title || 'DataMixer Summary'
         },
         detailText() {
-            return JSON.stringify(this.detail?.payload || this.summary, null, 2)
+            return JSON.stringify(this.detail?.payload || this.summary || {}, null, 2)
+        }
+    },
+    watch: {
+        '$route.path'() {
+            this.activeView = this.routeView()
+            if (this.activeView === 'workbench' && (this.pendingWorkbenchRefresh || !this.monitor)) {
+                this.refresh({ force: true })
+            }
         }
     },
     mounted() {
-        this.refresh()
+        this.activeView = this.routeView()
+        this.loadCommandSurface()
+        this.scanLakes({ silent: true })
+        if (this.activeView === 'workbench') {
+            this.refresh()
+        }
+    },
+    beforeUnmount() {
+        this.stopMonitorProgress()
+        this.stopRebuildPolling()
     },
     methods: {
-        async refresh() {
-            if (this.loading) return
+        routeView() {
+            return String(this.$route?.path || '').includes('/datamixer/lakes') ? 'lakes' : 'workbench'
+        },
+        setActiveView(view) {
+            this.activeView = view
+            const target = view === 'lakes' ? '/m/datamixer/lakes' : '/m/datamixer'
+            if (this.$route?.path !== target) {
+                this.$router?.push(target).catch(() => {})
+            }
+            if (view === 'workbench' && (this.pendingWorkbenchRefresh || !this.monitor)) {
+                this.refresh({ force: true })
+            }
+        },
+        async loadCommandSurface() {
+            try {
+                const res = await getDataMixerCommands()
+                if (res?.code && res.code !== 200) return
+                this.commandGroups = res.data?.groups || []
+                this.commandEndpoint = res.data?.entrypoint || this.commandEndpoint
+            } catch (error) {
+                this.commandResult = {
+                    error: error?.response?.data?.message || error?.message || 'Failed to load DataMixer commands'
+                }
+            }
+        },
+        startMonitorProgress() {
+            this.stopMonitorProgress()
+            this.monitorRefreshStartedAt = Date.now()
+            this.monitorElapsedSeconds = 0
+            this.monitorProgressTimer = window.setInterval(() => {
+                this.monitorElapsedSeconds = Math.floor((Date.now() - this.monitorRefreshStartedAt) / 1000)
+            }, 1000)
+        },
+        stopMonitorProgress() {
+            if (this.monitorProgressTimer) {
+                window.clearInterval(this.monitorProgressTimer)
+                this.monitorProgressTimer = null
+            }
+        },
+        stopRebuildPolling() {
+            if (this.rebuildPollTimer) {
+                window.clearTimeout(this.rebuildPollTimer)
+                this.rebuildPollTimer = null
+            }
+        },
+        async refresh(options = {}) {
+            if (this.loading && !options.force) return
+            if (this.loading && options.force) return
+            if (this.rebuilding && !options.allowDuringRebuild) return
             this.loading = true
             this.error = ''
+            this.startMonitorProgress()
             try {
-                const res = await getLakeMonitor({ lake: this.lakePath })
-                if (res.code !== 200) {
-                    this.error = res.message || 'Failed to load lake monitor'
+                await this.scanLakes({ silent: true })
+                const res = await getDataMixerMonitor({ lake: this.lakePath })
+                if (res?.code && res.code !== 200) {
+                    this.error = res.message || 'Failed to load DataMixer monitor'
                     return
                 }
-                this.monitor = res.data
-                this.detail = { title: 'Lake Summary', payload: res.data.summary }
+                this.monitor = res.data || null
+                this.detail = { title: 'DataMixer Summary', payload: res.data?.summary || {} }
+                this.pendingWorkbenchRefresh = false
             } catch (error) {
-                this.error = error?.message || 'Failed to load lake monitor'
+                this.error = error?.response?.data?.message || error?.message || 'Failed to load DataMixer monitor'
             } finally {
                 this.loading = false
+                this.stopMonitorProgress()
+            }
+        },
+        async rebuildMonitorCache() {
+            if (this.rebuilding || this.loading) return
+            this.rebuilding = true
+            this.error = ''
+            this.startMonitorProgress()
+            try {
+                const res = await rebuildDataMixerMonitor({ lake: this.lakePath })
+                if (res?.code && res.code !== 200) {
+                    this.error = res.message || 'Failed to rebuild DataMixer monitor cache'
+                    return
+                }
+                this.setDetail('Monitor Rebuild', res.data)
+                await this.pollMonitorRebuild()
+            } catch (error) {
+                this.error = error?.response?.data?.message || error?.message || 'Failed to rebuild DataMixer monitor cache'
+            } finally {
+                this.rebuilding = false
+                this.stopRebuildPolling()
+                this.stopMonitorProgress()
+            }
+        },
+        pollMonitorRebuild() {
+            return new Promise((resolve) => {
+                let attempts = 0
+                const tick = async () => {
+                    attempts += 1
+                    try {
+                        const res = await getDataMixerMonitor({ lake: this.lakePath })
+                        if (!res?.code || res.code === 200) {
+                            this.monitor = res.data || null
+                            this.detail = { title: 'DataMixer Summary', payload: res.data?.summary || {} }
+                            const cacheStatus = res.data?.cache_status || ''
+                            const rebuildStatus = res.data?.rebuild?.status || ''
+                            if (cacheStatus === 'fresh' || cacheStatus === 'error' || rebuildStatus === 'error') {
+                                if (cacheStatus === 'error' || rebuildStatus === 'error') {
+                                    this.error = res.data?.stale_reason || res.data?.rebuild?.message || 'Monitor rebuild failed'
+                                }
+                                resolve()
+                                return
+                            }
+                        }
+                    } catch (error) {
+                        this.error = error?.response?.data?.message || error?.message || 'Failed to poll monitor rebuild'
+                        resolve()
+                        return
+                    }
+                    if (attempts >= 60) {
+                        this.error = 'Monitor rebuild is still running. Refresh again later.'
+                        resolve()
+                        return
+                    }
+                    this.rebuildPollTimer = window.setTimeout(tick, 1000)
+                }
+                tick()
+            })
+        },
+        async scanLakes(options = {}) {
+            if (this.lakeActionRunning && !options.silent) return
+            this.lakeActionRunning = true
+            if (!options.silent) this.error = ''
+            try {
+                const res = await scanDataMixerLakes({ lake: this.lakePath })
+                if (res?.code && res.code !== 200) {
+                    if (!options.silent) this.error = res.message || 'Failed to scan DataMixer lakes'
+                    return
+                }
+                this.lakeScan = res.data || null
+                this.lakeState = res.data?.active || this.lakeState || {}
+            } catch (error) {
+                if (!options.silent) {
+                    this.error = error?.response?.data?.message || error?.message || 'Failed to scan DataMixer lakes'
+                }
+            } finally {
+                this.lakeActionRunning = false
+            }
+        },
+        async loadScannedLake(lake) {
+            if (!lake?.warehouse || this.lakeActionRunning) return
+            this.lakeActionRunning = true
+            this.error = ''
+            try {
+                const res = await loadDataMixerLake({
+                    link: this.lakePath,
+                    warehouse: lake.warehouse,
+                    lake_root: lake.lake_root || undefined
+                })
+                if (res?.code && res.code !== 200) {
+                    this.error = res.message || 'Failed to load DataMixer lake'
+                    this.setDetail('Lake Load Error', res)
+                    return
+                }
+                this.setDetail('Lake Load Result', res.data)
+                if (this.lakeScan?.lakes) {
+                    this.lakeScan.lakes = this.lakeScan.lakes.map((item) => ({
+                        ...item,
+                        active: item.warehouse === lake.warehouse
+                    }))
+                }
+                this.lakeState = {
+                    ...(res.data || {}),
+                    status: 'loaded',
+                    warehouse: lake.warehouse,
+                    warehouse_exists: true
+                }
+                this.monitor = null
+                this.pendingWorkbenchRefresh = true
+            } catch (error) {
+                const payload = {
+                    error: error?.response?.data?.message || error?.message || 'Failed to load DataMixer lake'
+                }
+                this.error = payload.error
+                this.setDetail('Lake Load Error', payload)
+            } finally {
+                this.lakeActionRunning = false
+            }
+        },
+        async unloadActiveLake() {
+            if (this.lakeActionRunning) return
+            this.lakeActionRunning = true
+            this.error = ''
+            try {
+                const res = await deleteDataMixerLake({
+                    link: this.lakePath,
+                    delete_warehouse: false,
+                    yes: false
+                })
+                if (res?.code && res.code !== 200) {
+                    this.error = res.message || 'Failed to unload DataMixer lake'
+                    this.setDetail('Lake Delete Error', res)
+                    return
+                }
+                this.setDetail('Lake Delete Result', res.data)
+                this.monitor = null
+                if (this.lakeScan?.lakes) {
+                    this.lakeScan.lakes = this.lakeScan.lakes.map((item) => ({
+                        ...item,
+                        active: false
+                    }))
+                }
+                this.lakeState = {
+                    status: 'missing',
+                    warehouse: '',
+                    warehouse_exists: false
+                }
+                this.pendingWorkbenchRefresh = true
+            } catch (error) {
+                const payload = {
+                    error: error?.response?.data?.message || error?.message || 'Failed to unload DataMixer lake'
+                }
+                this.error = payload.error
+                this.setDetail('Lake Delete Error', payload)
+            } finally {
+                this.lakeActionRunning = false
             }
         },
         async probeEmbedding() {
-            if (this.probing) return
+            if (this.probing || !this.monitor) return
             this.probing = true
             this.error = ''
             try {
-                const res = await getEmbeddingHealth({ lake: this.lakePath, timeout_seconds: 3 })
-                if (res.code !== 200) {
+                const res = await getDataMixerEmbeddingHealth({ lake: this.lakePath, timeout_seconds: 3 })
+                if (res?.code && res.code !== 200) {
                     this.error = res.message || 'Embedding probe failed'
                     return
                 }
@@ -552,7 +1100,7 @@ export default {
                 }
                 this.setDetail('Embedding Probe', res.data)
             } catch (error) {
-                this.error = error?.message || 'Embedding probe failed'
+                this.error = error?.response?.data?.message || error?.message || 'Embedding probe failed'
             } finally {
                 this.probing = false
             }
@@ -560,11 +1108,52 @@ export default {
         setDetail(title, payload) {
             this.detail = { title, payload }
         },
+        applyCommandTemplate(command) {
+            if (!command) return
+            this.commandLine = command
+        },
+        async runCommand() {
+            if (this.commandRunning) return
+            const line = String(this.commandLine || '').trim()
+            if (!line) return
+            this.commandRunning = true
+            this.error = ''
+            try {
+                const res = await runDataMixerCli({
+                    lake: this.lakePath,
+                    line
+                })
+                if (res?.code && res.code !== 200) {
+                    this.error = res.message || 'DataMixer command failed'
+                    this.commandResult = res
+                    this.setDetail('DataMixer Command Error', res)
+                    return
+                }
+                this.commandResult = res.data
+                this.setDetail('DataMixer Command Result', res.data)
+                if (res.data?.exit === 0) {
+                    await this.refresh()
+                } else {
+                    this.error =
+                        res.data?.output?.error ||
+                        res.data?.raw ||
+                        `DataMixer command exited with code ${res.data?.exit ?? 'unknown'}`
+                }
+            } catch (error) {
+                const payload = {
+                    error: error?.response?.data?.message || error?.message || 'DataMixer command failed'
+                }
+                this.commandResult = payload
+                this.setDetail('DataMixer Command Error', payload)
+            } finally {
+                this.commandRunning = false
+            }
+        },
         severityColor(severity) {
             const key = String(severity).toLowerCase()
-            if (key.includes('error') || key.includes('critical')) return 'rgba(190, 76, 88, 0.78)'
-            if (key.includes('warn')) return 'rgba(209, 105, 40, 0.78)'
-            return 'rgba(75, 111, 193, 0.72)'
+            if (key.includes('error') || key.includes('critical')) return 'rgba(185, 72, 83, 0.78)'
+            if (key.includes('warn')) return 'rgba(203, 101, 36, 0.78)'
+            return 'rgba(64, 99, 170, 0.72)'
         },
         formatNumber(value) {
             return Number(value || 0).toLocaleString()
@@ -593,7 +1182,7 @@ export default {
 </script>
 
 <style lang="scss" scoped>
-.ol-monitor-container {
+.dm-container {
     position: relative;
     width: 100%;
     height: 100%;
@@ -601,17 +1190,17 @@ export default {
     display: flex;
     justify-content: center;
 
-    .ol-major-container {
+    .dm-major-container {
         position: relative;
         width: 100%;
-        max-width: 1500px;
+        max-width: 1540px;
         height: 100%;
         min-height: 0;
         display: flex;
         flex-direction: column;
     }
 
-    .ol-title-block {
+    .dm-title-block {
         @include HbetweenVcenter;
 
         position: absolute;
@@ -619,11 +1208,11 @@ export default {
         padding: 22px 18px 12px;
         z-index: 2;
         gap: 16px;
-        background: rgba(243, 243, 243, 0.86);
+        background: rgba(243, 243, 243, 0.9);
         backdrop-filter: blur(18px);
 
         .title-copy {
-            min-width: 220px;
+            min-width: 240px;
             overflow: hidden;
         }
 
@@ -637,10 +1226,34 @@ export default {
         .sub-title {
             @include nowrap;
 
-            max-width: min(720px, 52vw);
+            max-width: min(780px, 52vw);
             margin-top: 5px;
             font-size: 13px;
             color: rgba(87, 91, 101, 1);
+        }
+
+        .view-switch {
+            @include Vcenter;
+
+            gap: 6px;
+            margin-top: 10px;
+
+            button {
+                height: 30px;
+                padding: 0 10px;
+                border: 1px solid rgba(48, 55, 67, 0.1);
+                border-radius: 6px;
+                color: rgba(64, 72, 86, 1);
+                background: rgba(255, 255, 255, 0.84);
+                cursor: pointer;
+                font-size: 12px;
+
+                &.active {
+                    color: white;
+                    border-color: rgba(64, 99, 170, 1);
+                    background: rgba(64, 99, 170, 1);
+                }
+            }
         }
 
         .right-block {
@@ -651,32 +1264,33 @@ export default {
             min-width: 360px;
 
             .lake-input {
-                width: min(360px, 32vw);
+                width: min(380px, 32vw);
                 min-width: 220px;
             }
         }
     }
 
-    .ol-content-block {
+    .dm-content-block {
         @include narrow-scroll-bar;
 
         position: relative;
         width: 100%;
         height: 100%;
         min-height: 0;
-        padding: 104px 18px 18px;
+        padding: 122px 18px 18px;
         overflow: overlay;
     }
 }
 
 .error-banner,
 .status-strip,
-.monitor-panel,
+.surface-panel,
+.dm-panel,
 .kpi-card {
     border: 1px solid rgba(42, 47, 56, 0.08);
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.92);
-    box-shadow: 0 12px 26px rgba(28, 32, 40, 0.06);
+    background: rgba(255, 255, 255, 0.93);
+    box-shadow: 0 12px 26px rgba(28, 32, 40, 0.055);
 }
 
 .error-banner {
@@ -688,6 +1302,61 @@ export default {
     padding: 0 14px;
     color: rgba(157, 48, 58, 1);
     background: rgba(255, 246, 246, 0.96);
+}
+
+.monitor-loading-strip {
+    display: grid;
+    grid-template-columns: minmax(180px, auto) minmax(160px, 1fr);
+    align-items: center;
+    gap: 12px;
+    min-height: 34px;
+    margin-bottom: 10px;
+    padding: 0 12px;
+    border-radius: 8px;
+    color: rgba(64, 99, 170, 1);
+    background: rgba(64, 99, 170, 0.1);
+    font-size: 12px;
+
+    .monitor-loading-copy {
+        @include Vcenter;
+
+        gap: 8px;
+        min-width: 0;
+
+        span {
+            @include nowrap;
+        }
+    }
+
+    .monitor-progress {
+        position: relative;
+        height: 5px;
+        min-width: 120px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(64, 99, 170, 0.14);
+
+        span {
+            position: absolute;
+            top: 0;
+            left: -35%;
+            width: 35%;
+            height: 100%;
+            border-radius: inherit;
+            background: rgba(64, 99, 170, 0.95);
+            animation: monitor-progress 1.2s ease-in-out infinite;
+        }
+    }
+}
+
+@keyframes monitor-progress {
+    0% {
+        left: -35%;
+    }
+
+    100% {
+        left: 100%;
+    }
 }
 
 .status-strip {
@@ -707,15 +1376,15 @@ export default {
         color: white;
 
         &.good {
-            background: rgba(20, 155, 124, 1);
+            background: rgba(20, 145, 116, 1);
         }
 
         &.warn {
-            background: rgba(209, 105, 40, 1);
+            background: rgba(203, 101, 36, 1);
         }
 
         &.bad {
-            background: rgba(190, 76, 88, 1);
+            background: rgba(185, 72, 83, 1);
         }
 
         span {
@@ -750,20 +1419,429 @@ export default {
         }
     }
 
-    .warning-pill {
+    .status-badges {
+        @include HendVcenter;
+
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .status-badge {
         @include HcenterVcenter;
 
         gap: 6px;
         min-width: 58px;
         height: 36px;
+        padding: 0 12px;
+        border: none;
         border-radius: 18px;
-        color: rgba(20, 120, 96, 1);
-        background: rgba(20, 155, 124, 0.12);
+        color: rgba(64, 99, 170, 1);
+        background: rgba(64, 99, 170, 0.1);
+        cursor: pointer;
+
+        &.warning {
+            color: rgba(20, 120, 96, 1);
+            background: rgba(20, 145, 116, 0.12);
+        }
+
+        &.warning.active {
+            color: rgba(181, 83, 20, 1);
+            background: rgba(203, 101, 36, 0.14);
+        }
+    }
+}
+
+.surface-panel {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px;
+
+    .surface-item {
+        @include Vcenter;
+
+        gap: 8px;
+        min-height: 44px;
+        min-width: 0;
+        padding: 0 10px;
+        border-radius: 6px;
+        border: none;
+        background: rgba(246, 247, 250, 1);
+        cursor: pointer;
+        text-align: left;
+
+        &:hover {
+            background: rgba(239, 242, 248, 1);
+        }
+
+        .surface-dot {
+            width: 9px;
+            height: 9px;
+            flex-shrink: 0;
+            border-radius: 50%;
+            background: rgba(20, 145, 116, 1);
+        }
+
+        &.missing .surface-dot {
+            background: rgba(203, 101, 36, 1);
+        }
+
+        div {
+            min-width: 0;
+        }
+
+        p,
+        span {
+            @include nowrap;
+        }
+
+        p {
+            color: rgba(35, 38, 45, 1);
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        span {
+            display: block;
+            margin-top: 3px;
+            color: rgba(95, 101, 113, 1);
+            font-size: 12px;
+        }
+    }
+}
+
+.command-panel {
+    min-height: 280px;
+    margin-top: 10px;
+
+    .command-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(360px, 0.75fr);
+        gap: 12px;
+        flex: 1;
+        min-height: 0;
+    }
+
+    .command-groups {
+        @include narrow-scroll-bar;
+
+        display: grid;
+        align-content: start;
+        gap: 10px;
+        min-height: 0;
+        overflow: overlay;
+    }
+
+    .command-group {
+        padding: 10px;
+        border-radius: 6px;
+        background: rgba(247, 248, 251, 1);
+
+        p {
+            margin-bottom: 8px;
+            color: rgba(43, 48, 58, 1);
+            font-size: 13px;
+            font-weight: 600;
+        }
+    }
+
+    .command-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+
+        button {
+            min-height: 28px;
+            padding: 0 9px;
+            border: 1px solid rgba(48, 55, 67, 0.1);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.92);
+            color: rgba(60, 67, 80, 1);
+            font-size: 12px;
+            cursor: pointer;
+
+            &:hover {
+                color: rgba(64, 99, 170, 1);
+                border-color: rgba(64, 99, 170, 0.28);
+            }
+        }
+    }
+
+    .command-runner {
+        display: grid;
+        grid-template-rows: 86px auto minmax(0, 1fr);
+        gap: 8px;
+        min-height: 0;
+
+        textarea,
+        pre {
+            @include narrow-scroll-bar;
+
+            width: 100%;
+            border: 1px solid rgba(48, 55, 67, 0.1);
+            border-radius: 6px;
+            font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.5;
+            resize: none;
+        }
+
+        textarea {
+            padding: 9px;
+            background: rgba(252, 253, 255, 1);
+            color: rgba(36, 40, 48, 1);
+            outline: none;
+
+            &:focus {
+                border-color: rgba(64, 99, 170, 0.48);
+            }
+        }
+
+        pre {
+            min-height: 0;
+            margin: 0;
+            padding: 10px;
+            overflow: overlay;
+            color: rgba(235, 239, 246, 1);
+            background: rgba(33, 37, 46, 1);
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+    }
+
+    .command-actions {
+        @include Vcenter;
+
+        gap: 7px;
+        flex-wrap: wrap;
+
+        button {
+            @include HcenterVcenter;
+
+            gap: 6px;
+            min-height: 32px;
+            padding: 0 12px;
+            border: none;
+            border-radius: 6px;
+            background: rgba(64, 99, 170, 1);
+            color: white;
+            cursor: pointer;
+
+            &:disabled {
+                cursor: default;
+                opacity: 0.55;
+            }
+
+            &.secondary {
+                color: rgba(64, 99, 170, 1);
+                background: rgba(64, 99, 170, 0.1);
+            }
+        }
+    }
+}
+
+.lake-dashboard {
+    display: grid;
+    grid-template-columns: 360px minmax(0, 1fr);
+    gap: 10px;
+    align-items: stretch;
+
+    .active-lake-panel,
+    .lake-candidates-panel {
+        min-height: 320px;
+    }
+
+    .active-lake-grid {
+        display: grid;
+        grid-template-columns: 96px minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+        min-height: 120px;
+    }
+
+    .active-score {
+        @include HcenterVcenterC;
+
+        width: 96px;
+        height: 96px;
+        border-radius: 8px;
+        color: white;
+        background: rgba(64, 99, 170, 1);
+
+        span {
+            max-width: 86px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-size: 23px;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+
+        p {
+            margin-top: 5px;
+            font-size: 12px;
+        }
+    }
+
+    .active-meta {
+        min-width: 0;
+
+        p,
+        span {
+            @include nowrap;
+        }
+
+        p {
+            color: rgba(34, 38, 46, 1);
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        span {
+            display: block;
+            margin-top: 8px;
+            color: rgba(95, 101, 113, 1);
+            font-size: 12px;
+        }
+    }
+
+    .lake-card-grid {
+        @include narrow-scroll-bar;
+
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 10px;
+        flex: 1;
+        min-height: 0;
+        overflow: overlay;
+    }
+
+    .lake-card {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+        min-height: 164px;
+        padding: 12px;
+        border: 1px solid rgba(48, 55, 67, 0.1);
+        border-radius: 8px;
+        background: rgba(248, 249, 252, 1);
+        cursor: pointer;
 
         &.active {
-            color: rgba(181, 83, 20, 1);
-            background: rgba(209, 105, 40, 0.14);
+            border-color: rgba(20, 145, 116, 0.42);
+            background: rgba(241, 250, 247, 1);
         }
+
+        &.missing {
+            border-color: rgba(185, 72, 83, 0.28);
+            background: rgba(255, 247, 247, 1);
+        }
+    }
+
+    .lake-card-head {
+        @include HbetweenVcenter;
+
+        min-width: 0;
+        gap: 8px;
+
+        div {
+            min-width: 0;
+        }
+
+        p,
+        span {
+            @include nowrap;
+        }
+
+        p {
+            color: rgba(34, 38, 46, 1);
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        span {
+            display: block;
+            margin-top: 4px;
+            color: rgba(95, 101, 113, 1);
+            font-size: 12px;
+        }
+
+        strong {
+            flex-shrink: 0;
+            padding: 4px 8px;
+            border-radius: 999px;
+            color: rgba(20, 120, 96, 1);
+            background: rgba(20, 145, 116, 0.12);
+            font-size: 12px;
+            font-weight: 600;
+        }
+    }
+
+    .lake-card-metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+
+        span {
+            @include nowrap;
+
+            padding: 7px 8px;
+            border-radius: 6px;
+            color: rgba(58, 64, 76, 1);
+            background: rgba(255, 255, 255, 0.9);
+            font-size: 12px;
+            text-align: center;
+        }
+    }
+
+    .lake-path {
+        @include nowrap;
+
+        color: rgba(85, 92, 106, 1);
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 12px;
+    }
+
+    .lake-card-actions,
+    .lake-action-row {
+        @include Vcenter;
+
+        gap: 8px;
+        flex-wrap: wrap;
+
+        button {
+            @include HcenterVcenter;
+
+            gap: 6px;
+            min-height: 32px;
+            padding: 0 11px;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            background: rgba(64, 99, 170, 1);
+            cursor: pointer;
+
+            &:disabled {
+                opacity: 0.55;
+                cursor: default;
+            }
+
+            &.secondary {
+                color: rgba(64, 99, 170, 1);
+                background: rgba(64, 99, 170, 0.1);
+            }
+        }
+    }
+
+    .empty-lakes {
+        @include HcenterVcenter;
+
+        min-height: 140px;
+        border-radius: 8px;
+        color: rgba(95, 101, 113, 1);
+        background: rgba(247, 248, 251, 1);
+        font-size: 13px;
     }
 }
 
@@ -827,37 +1905,48 @@ export default {
     }
 }
 
-.chart-grid,
-.deep-grid {
+.main-grid,
+.insight-grid,
+.detail-grid {
     display: grid;
     gap: 10px;
     margin-top: 10px;
 }
 
-.chart-grid.primary {
-    grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+.main-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(420px, 0.9fr);
 }
 
-.chart-grid.secondary {
+.insight-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+
+    .dm-panel {
+        height: 340px;
+        min-height: 340px;
+    }
+
+    :deep(.ol-chart-shell) {
+        height: 100%;
+        max-height: 250px;
+    }
 }
 
-.deep-grid {
-    grid-template-columns: minmax(0, 1fr) 360px;
+.detail-grid {
+    grid-template-columns: minmax(0, 1fr) 380px;
 }
 
-.monitor-panel {
+.dm-panel {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    min-height: 230px;
+    min-height: 250px;
     padding: 12px;
     overflow: hidden;
 
     .panel-head {
         @include HbetweenVcenter;
 
-        height: 30px;
+        min-height: 30px;
         gap: 12px;
         margin-bottom: 8px;
         flex-shrink: 0;
@@ -884,12 +1973,134 @@ export default {
     }
 }
 
-.embedding-block {
-    display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
-    gap: 8px;
-    flex: 1;
-    min-height: 0;
+.warehouse-panel {
+    min-height: 300px;
+
+    .warehouse-layout {
+        display: grid;
+        grid-template-columns: 230px minmax(0, 1fr);
+        gap: 10px;
+        flex: 1;
+        min-height: 0;
+    }
+
+    .config-grid {
+        display: grid;
+        align-content: start;
+        gap: 8px;
+    }
+
+    .config-tile {
+        min-width: 0;
+        min-height: 48px;
+        padding: 8px;
+        border: none;
+        border-radius: 6px;
+        background: rgba(246, 247, 250, 1);
+        text-align: left;
+        cursor: pointer;
+
+        span {
+            display: block;
+            font-size: 11px;
+            color: rgba(96, 102, 114, 1);
+        }
+
+        p {
+            @include nowrap;
+
+            margin-top: 5px;
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(34, 38, 46, 1);
+        }
+    }
+
+    .table-health {
+        @include narrow-scroll-bar;
+
+        display: grid;
+        align-content: start;
+        gap: 6px;
+        min-height: 0;
+        overflow: overlay;
+    }
+
+    .table-row {
+        display: grid;
+        grid-template-columns: 18px minmax(130px, 1fr) 76px 82px 138px;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-height: 36px;
+        padding: 0 8px;
+        border: none;
+        border-radius: 6px;
+        background: rgba(247, 248, 251, 1);
+        color: rgba(38, 42, 50, 1);
+        font-size: 12px;
+        text-align: left;
+        cursor: pointer;
+
+        &:hover {
+            background: rgba(238, 241, 247, 1);
+        }
+
+        .table-status {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: rgba(185, 72, 83, 1);
+
+            &.ok {
+                background: rgba(20, 145, 116, 1);
+            }
+        }
+
+        .table-name,
+        .table-time {
+            @include nowrap;
+        }
+
+        .table-count,
+        .table-size {
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+    }
+}
+
+.segmented-control {
+    @include Vcenter;
+
+    gap: 5px;
+    flex-wrap: wrap;
+
+    button {
+        height: 30px;
+        padding: 0 10px;
+        border: 1px solid rgba(48, 55, 67, 0.1);
+        border-radius: 6px;
+        background: rgba(246, 247, 250, 1);
+        color: rgba(69, 75, 88, 1);
+        cursor: pointer;
+        font-size: 12px;
+
+        &.active {
+            color: white;
+            background: rgba(64, 99, 170, 1);
+        }
+    }
+}
+
+.embedding-panel {
+    .embedding-layout {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto;
+        gap: 8px;
+        flex: 1;
+        min-height: 0;
+    }
 
     .embedding-meta {
         display: grid;
@@ -913,65 +2124,7 @@ export default {
     }
 }
 
-.table-panel {
-    min-height: 280px;
-
-    .table-health {
-        @include narrow-scroll-bar;
-
-        display: grid;
-        align-content: start;
-        gap: 6px;
-        flex: 1;
-        min-height: 0;
-        overflow: overlay;
-    }
-
-    .table-row {
-        display: grid;
-        grid-template-columns: 18px minmax(150px, 1fr) 86px 86px 150px;
-        align-items: center;
-        gap: 8px;
-        width: 100%;
-        min-height: 36px;
-        padding: 0 8px;
-        border: none;
-        border-radius: 6px;
-        background: rgba(247, 248, 251, 1);
-        color: rgba(38, 42, 50, 1);
-        font-size: 12px;
-        text-align: left;
-        cursor: pointer;
-
-        &:hover {
-            background: rgba(238, 241, 247, 1);
-        }
-
-        .table-status {
-            width: 9px;
-            height: 9px;
-            border-radius: 50%;
-            background: rgba(190, 76, 88, 1);
-
-            &.ok {
-                background: rgba(20, 155, 124, 1);
-            }
-        }
-
-        .table-name,
-        .table-time {
-            @include nowrap;
-        }
-
-        .table-count,
-        .table-size {
-            text-align: right;
-            font-variant-numeric: tabular-nums;
-        }
-    }
-}
-
-.detail-panel {
+.inspect-panel {
     min-height: 280px;
 
     pre {
@@ -993,30 +2146,8 @@ export default {
 }
 
 .latest-panel {
-    min-height: 280px;
+    min-height: 300px;
     margin-top: 10px;
-
-    .tab-controls {
-        @include Vcenter;
-
-        gap: 5px;
-        flex-wrap: wrap;
-
-        button {
-            height: 30px;
-            padding: 0 10px;
-            border: 1px solid rgba(48, 55, 67, 0.1);
-            border-radius: 6px;
-            background: rgba(246, 247, 250, 1);
-            color: rgba(69, 75, 88, 1);
-            cursor: pointer;
-
-            &.active {
-                color: white;
-                background: rgba(75, 111, 193, 1);
-            }
-        }
-    }
 
     .preview-table {
         @include narrow-scroll-bar;
@@ -1038,94 +2169,116 @@ export default {
             min-height: 38px;
             padding: 9px 8px;
             border-bottom: 1px solid rgba(48, 55, 67, 0.08);
-            color: rgba(36, 40, 48, 1);
+            color: rgba(39, 43, 51, 1);
             font-size: 12px;
             text-align: left;
             vertical-align: top;
-            word-break: break-word;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         th {
-            color: rgba(89, 96, 109, 1);
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: rgba(255, 255, 255, 0.98);
+            color: rgba(92, 98, 110, 1);
             font-weight: 600;
-            background: rgba(247, 248, 251, 1);
         }
 
         tbody tr {
             cursor: pointer;
 
-            &:hover {
+            &:hover td {
                 background: rgba(246, 248, 252, 1);
             }
         }
     }
 }
 
-@media (max-width: 1180px) {
-    .ol-monitor-container {
-        .ol-title-block {
-            align-items: flex-start;
-            flex-direction: column;
-
-            .right-block {
-                width: 100%;
-                justify-content: flex-start;
-
-                .lake-input {
-                    width: 100%;
-                    flex: 1;
-                }
-            }
-        }
-
-        .ol-content-block {
-            padding-top: 154px;
-        }
-    }
-
-    .kpi-grid,
-    .chart-grid.secondary {
+@media screen and (max-width: 1280px) {
+    .surface-panel,
+    .kpi-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .chart-grid.primary,
-    .deep-grid {
-        grid-template-columns: 1fr;
+    .main-grid,
+    .detail-grid,
+    .command-panel .command-layout,
+    .lake-dashboard {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .insight-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
-@media (max-width: 720px) {
-    .ol-monitor-container {
-        .ol-title-block {
-            padding: 14px 12px 10px;
-
-            .main-title {
-                font-size: 22px;
-            }
+@media screen and (max-width: 820px) {
+    .dm-container {
+        .dm-title-block {
+            align-items: stretch;
+            flex-direction: column;
 
             .sub-title {
                 max-width: 100%;
             }
 
             .right-block {
+                justify-content: flex-start;
+                min-width: 0;
                 flex-wrap: wrap;
+
+                .lake-input {
+                    width: 100%;
+                    min-width: 0;
+                }
+            }
+        }
+
+        .dm-content-block {
+            padding-top: 198px;
+        }
+    }
+
+    .surface-panel,
+    .kpi-grid,
+    .insight-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .command-panel {
+        .command-layout {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .command-chips {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+
+            button {
                 min-width: 0;
             }
         }
 
-        .ol-content-block {
-            padding: 174px 12px 12px;
+        .command-runner {
+            grid-template-rows: 92px auto 220px;
         }
     }
 
-    .kpi-grid,
-    .chart-grid.secondary {
-        grid-template-columns: 1fr;
+    .status-strip {
+        align-items: flex-start;
+        flex-direction: column;
     }
 
-    .table-panel {
+    .warehouse-panel {
+        .warehouse-layout {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
         .table-row {
-            grid-template-columns: 18px minmax(110px, 1fr) 72px 72px;
+            grid-template-columns: 18px minmax(120px, 1fr) 64px 76px;
 
             .table-time {
                 display: none;
