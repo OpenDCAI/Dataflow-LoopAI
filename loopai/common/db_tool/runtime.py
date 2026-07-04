@@ -174,6 +174,30 @@ def get_latest_task_runtime_sync(
     return _serialize_task_runtime_row(row)
 
 
+def get_current_task_runtime_sync(
+    db_path: str | os.PathLike[str],
+    task_id: str,
+    version: str,
+) -> dict[str, Any] | None:
+    con = _sqlite_connect(db_path)
+    try:
+        row = con.execute(
+            """
+            select id, task_id, node_name, version, state, status, createdAt, updatedAt
+            from taskruntime
+            where task_id=? and version=?
+            order by updatedAt desc, id desc
+            limit 1
+            """,
+            (task_id, version),
+        ).fetchone()
+    finally:
+        con.close()
+    if row is None:
+        return None
+    return _serialize_task_runtime_row(row)
+
+
 def list_task_runtime_history_sync(
     db_path: str | os.PathLike[str],
     task_id: str,
@@ -297,6 +321,13 @@ async def get_latest_task_runtime(
     node_name: str,
 ) -> dict[str, Any] | None:
     return get_latest_task_runtime_sync(require_db_path(), task_id, node_name)
+
+
+async def get_current_task_runtime(
+    task_id: str,
+    version: str,
+) -> dict[str, Any] | None:
+    return get_current_task_runtime_sync(require_db_path(), task_id, version)
 
 
 async def list_task_runtime_history(

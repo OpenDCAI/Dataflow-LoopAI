@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import pickle
-import uuid
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _new_version_id() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
 
 def _sanitize_path_component(value: str, fallback: str) -> str:
@@ -182,69 +185,31 @@ class PickleEventWriter:
         self.version_id = version_id
 
     def __call__(self, payload: StreamEvent | dict[str, Any]) -> StreamEvent:
-        event = _coerce_stream_event(payload)
-        event.node = self.name
-        if event.context_id is None:
-            event.context_id = self.context_id
-        if self.version_id is None:
-            self.version_id = event.version_id or str(uuid.uuid4())
-        event.version_id = self.version_id
-        event.status = event.status or "running"
-        self._sync_runtime(status=event.status)
-        self._append_event(event)
+        event = self.set_running(payload)
         return event
 
-    def set_running(self):
+    def set_event(self, payload: StreamEvent | dict[str, Any], status: str = 'running') -> StreamEvent:
         if self.version_id is None:
-            self.version_id = str(uuid.uuid4())
-        self._sync_runtime(status="running")
-    
-    def set_failed(self, payload: dict[str, Any] | None = None):
-        if self.version_id is None:
-            self.version_id = str(uuid.uuid4())
+            self.version_id = _new_version_id()
         payload = payload or {}
         self._sync_runtime(status="failed")
-        return self._append_status_event(
-            status="failed",
-            message=payload.get("message", "Sub-agent failed."),
-            data=payload.get("data"),
-            error=payload.get("error", payload),
-        )
-    
-    def set_completed(self, payload: dict[str, Any] | None = None):
-        if self.version_id is None:
-            self.version_id = str(uuid.uuid4())
-        payload = payload or {}
-        self._sync_runtime(status="completed")
-        return self._append_status_event(
-            status="completed",
-            message=payload.get("message", "Sub-agent completed."),
-            data=payload.get("data", payload),
-            error=None,
-        )
-
-    def _append_status_event(
-        self,
-        *,
-        status: str,
-        message: str,
-        data: Any = None,
-        error: Any = None,
-    ) -> StreamEvent:
-        event = StreamEvent(
-            current=self.name,
-            progress=1.0,
-            message=message,
-            data=data,
-            version_id=self.version_id,
-            node=self.name,
-            status=status,
-            context_id=self.context_id,
-            error=error,
-        )
-        event = _coerce_stream_event(event)
+        event = _coerce_stream_event(payload)
+        event.message = payload.get("message", "Sub-agent failed.")
+        event.status = status
+        event.version_id = self.version_id
+        event.node = self.name
+        event.context_id = self.context_id
         self._append_event(event)
         return event
+
+    def set_running(self, payload: dict[str, Any] | None = None):
+        return self.set_event(payload, status="running")
+
+    def set_failed(self, payload: dict[str, Any] | None = None):
+        return self.set_event(payload, status="failed")
+
+    def set_completed(self, payload: dict[str, Any] | None = None):
+        return self.set_event(payload, status="completed")
 
     def _sync_runtime(self, *, status: str) -> None:
         try:
@@ -257,7 +222,8 @@ class PickleEventWriter:
                 status=status,
             )
         except Exception as exc:  # pragma: no cover - runtime sync is best effort
-            logger.warning("Failed to sync task runtime for %s/%s: %s", self.context_id, self.name, exc)
+            logger.warning("Failed to sync task runtime for %s/%s: %s",
+                           self.context_id, self.name, exc)
 
     def _append_event(self, event: StreamEvent) -> None:
         self.event_path.parent.mkdir(parents=True, exist_ok=True)
