@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -472,7 +473,7 @@ def _step_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 
 def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
-    """分发执行单个流水线步骤。"""
+    """分发执行单个流水线步骤。异常先写事件流再抛，确保错误不丢失。"""
     step = normalize_judger_step(step_name)
     dispatch = {
         "validate": _step_validate,
@@ -485,7 +486,22 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
         "eval_general_text": _step_eval_general_text,
     }
     if step in dispatch:
-        return dispatch[step](state, writer)
+        try:
+            return dispatch[step](state, writer)
+        except SystemExit:
+            # emit_error → sys.exit，错误 JSON 已 print 到 stdout，这里补事件流
+            writer(StreamEvent(
+                current=state.get("current"), progress=1.0,
+                message=f"步骤失败: {step_name}",
+                data={"error": "Step failed, see stdout for details"}))
+            raise
+        except Exception:
+            logger.exception(f"[Judger] step {step_name} failed")
+            writer(StreamEvent(
+                current=state.get("current"), progress=1.0,
+                message=f"步骤失败: {step_name}",
+                data={"error": traceback.format_exc()}))
+            raise
     if step == "finish":
         return state
     emit_error(
