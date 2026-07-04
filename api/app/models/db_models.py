@@ -31,6 +31,7 @@ class TaskRuntime(BaseModel):
     task_id = fields.CharField(max_length=255)
     node_name = fields.CharField(max_length=255, null=True)
     version = fields.CharField(max_length=255, null=True)
+    state = fields.TextField(null=True)
     status = fields.TextField(null=True)
     createdAt = fields.DatetimeField(auto_now_add=True)
     updatedAt = fields.DatetimeField(auto_now=True)
