@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import pickle
 from dataclasses import asdict, dataclass, fields
@@ -10,6 +11,7 @@ import logging
 
 from loopai.common.db_tool.runtime import sync_task_runtime_sync
 from loopai.common.db_tool.base import require_db_path
+from loopai.common.db_tool.task import get_task_states_config_sync
 
 
 try:
@@ -78,6 +80,7 @@ class StreamEvent:
     version_id: Optional[str] = None
     node: Optional[str] = None
     status: Optional[str] = None
+    # i.e. task_id
     context_id: Optional[str] = None
     error: Optional[Any] = None
 
@@ -192,7 +195,7 @@ class PickleEventWriter:
         if self.version_id is None:
             self.version_id = _new_version_id()
         payload = payload or {}
-        self._sync_runtime(status="failed")
+        self._sync_runtime(status=status)
         event = _coerce_stream_event(payload)
         event.message = payload.get("message", "Sub-agent failed.")
         event.status = status
@@ -214,16 +217,22 @@ class PickleEventWriter:
     def _sync_runtime(self, *, status: str) -> None:
         try:
             db_path = require_db_path()
+            task_state = self._load_task_state(db_path)
             sync_task_runtime_sync(
                 db_path=db_path,
                 task_id=self.context_id,
                 node_name=self.name,
                 version=self.version_id,
                 status=status,
+                state=task_state,
             )
         except Exception as exc:  # pragma: no cover - runtime sync is best effort
             logger.warning("Failed to sync task runtime for %s/%s: %s",
                            self.context_id, self.name, exc)
+
+    def _load_task_state(self, db_path: str) -> str | None:
+        task_state = get_task_states_config_sync(db_path, self.context_id)
+        return json.dumps(task_state.get("config", {}), ensure_ascii=False)
 
     def _append_event(self, event: StreamEvent) -> None:
         self.event_path.parent.mkdir(parents=True, exist_ok=True)
