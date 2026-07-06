@@ -40,7 +40,19 @@ def run(
     if state is None:
         state = _load_task_state(task_id)
     output_dir = state.get("output_dir", "./outputs")
-    writer = get_event_writer(name="judger", context_id=task_id, log_file_path=output_dir)
+
+    # resume 时读取上次运行的 version_id，复用输出目录
+    version_id = None
+    if resume:
+        try:
+            from loopai.common.db_tool.runtime import get_latest_task_runtime_sync
+            rt = get_latest_task_runtime_sync(os.getenv("DB_PATH"), task_id, "judger")
+            if rt and rt.get("version"):
+                version_id = rt["version"]
+        except Exception:
+            pass
+
+    writer = get_event_writer(name="judger", context_id=task_id, log_file_path=output_dir, version_id=version_id)
 
     result = run_judger_pipeline(
         state=state,
