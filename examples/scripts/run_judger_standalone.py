@@ -260,7 +260,6 @@ def main():
 
     # 从配置文件构建 state（可选）
     state: Optional[Dict[str, Any]] = None
-    task_id_from_config: Optional[str] = None
     if args.config_path:
         config = _load_config(args.config_path)
         if "default_states" in config:
@@ -268,17 +267,19 @@ def main():
         else:
             state = {
                 "judger": config.get("judger", {}),
-                "task_id": args.task_id or config.get("task_id", ""),
                 "output_dir": args.output_dir or config.get("output_dir", "./outputs"),
             }
-        task_id_from_config = state.get("task_id")
 
-    task_id = args.task_id or os.getenv("TASK_ID") or task_id_from_config
+    # task_id 通过环境变量传递，run() 自动读取
+    task_id = args.task_id or os.getenv("TASK_ID")
+    if task_id:
+        os.environ["TASK_ID"] = task_id
+    if args.output_dir:
+        os.environ["OUTPUT_DIR"] = args.output_dir
 
     # run() 内部处理一切：env 校验、writer 创建、emit_success/emit_error
     run(
         state=state,
-        task_id=task_id,
         resume=args.resume,
         from_step=args.from_step,
     )

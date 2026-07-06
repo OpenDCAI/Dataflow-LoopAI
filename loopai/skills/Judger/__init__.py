@@ -2,45 +2,49 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from typing import Any, Dict, List, Optional
 
 from loopai.common.event_tool import get_event_writer
-from loopai.common.exception import emit_success
+from loopai.common.exception import emit_error, emit_success, ErrorCode
 from loopai.skills.Judger.runner import _load_task_state, run_judger_pipeline
 
 
 def run(
     state: Optional[Dict[str, Any]] = None,
-    task_id: Optional[str] = None,
     resume: bool = False,
     from_step: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run Judger standalone (Codex / CLI / subprocess entry point).
 
-    ``DB_PATH`` 和 ``TASK_ID`` 从环境变量自动获取，未设置时 sys.exit(1)。
+    ``DB_PATH`` 和 ``TASK_ID`` 从环境变量自动获取，未设置时 emit_error 退出。
     成功时输出 JSON 到 stdout + sys.exit(0)，失败时 emit_error 已处理。
     不要在进程内直接调用——内部会 sys.exit()。
     """
-    
-    if not os.getenv("DB_PATH"):
-        print(json.dumps({"ok": False, "message": "DB_PATH env is required"}), file=sys.stderr)
-        sys.exit(1)
 
-    resolved_task_id = task_id or os.getenv("TASK_ID")
-    if not resolved_task_id:
-        print(json.dumps({"ok": False, "message": "TASK_ID env or task_id param is required"}), file=sys.stderr)
-        sys.exit(1)
+    if not os.getenv("DB_PATH"):
+        emit_error(
+            ValueError("DB_PATH env is required"),
+            code=ErrorCode.CONFIG_ERROR,
+            message="DB_PATH environment variable is not set.",
+        )
+
+    task_id = os.getenv("TASK_ID")
+    if not task_id:
+        emit_error(
+            ValueError("TASK_ID env is required"),
+            code=ErrorCode.CONFIG_ERROR,
+            message="TASK_ID environment variable is not set.",
+        )
 
     # 提前读 state 获取 output_dir，建 writer
     if state is None:
-        state = _load_task_state(resolved_task_id)
+        state = _load_task_state(task_id)
     output_dir = state.get("output_dir", "./outputs")
-    writer = get_event_writer(name="judger", context_id=resolved_task_id, log_file_path=output_dir)
+    writer = get_event_writer(name="judger", context_id=task_id, log_file_path=output_dir)
 
     result = run_judger_pipeline(
         state=state,
-        task_id=resolved_task_id,
+        task_id=task_id,
         resume=resume,
         from_step=from_step,
         writer=writer,
