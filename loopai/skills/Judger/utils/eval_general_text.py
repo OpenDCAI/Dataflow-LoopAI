@@ -244,6 +244,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         Path(state.get("output_dir") or "./outputs")
         / (state.get("task_id") or "default_task")
         / "judger"
+        / (writer.version_id or "")
     )
     outdir.mkdir(parents=True, exist_ok=True)
     run_ts = time.strftime("%Y%m%d_%H%M%S")

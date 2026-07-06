@@ -12,20 +12,28 @@ Judger Skill 用于在无 LangGraph（独立模式）下运行 LoopAI 评测流�
 
 ## How to Invoke（强制）
 
-**Codex 必须通过以下方式调用 Judger，禁止进程内直接导入：**
+**Codex 必须通过子进程调用 `loopai.skills.Judger.run()`，禁止进程内直接导入：**
+
+```bash
+# 标准调用方式
+DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> \
+python -c "from loopai.skills.Judger import run; run()"
+```
+
+`DB_PATH` 和 `TASK_ID` 必须提前设为环境变量，`run()` 入口会自动校验，缺一不可。
 
 | 方式 | 入口 | 适用场景 |
 |---|---|---|
-| **CLI 子进程（推荐）** | `python examples/scripts/run_judger_standalone.py` | Codex 编排、手动调试、脚本 |
-| **受控 Python 封装** | `loopai.skills.Judger.run(...)` 外包一层子进程/保护层 | 需要代码内集成时 |
+| **Python API（推荐）** | `loopai.skills.Judger.run()` | Codex 子进程调用 |
+| **CLI** | `python examples/scripts/run_judger_standalone.py` | 手动调试 |
 
 **禁止使用的路径：**
-- ❌ `loopai.agents.Judger.JudgerAgent` — **已硬拦截**，`import JudgerAgent` 会直接抛 `RuntimeError`。旧 LangGraph 实现不会产生 `judger.pkl` 事件流，state 不写入 Configer，Codex 无法读取评测指标。Codex 看到此错误不应尝试绕过，必须使用上方 CLI 或受控封装路径
+- ❌ `loopai.agents.Judger.JudgerAgent` — **已硬拦截**，`import JudgerAgent` 抛 `RuntimeError`
 - ❌ Codex 进程内直接 `import loopai.skills.Judger.run()` — pipeline 内 `emit_error` 会 `sys.exit(1)`，杀死 Codex 自身进程
 
 **正确调用后的产物（用于判断是否走了正确路径）：**
 - `outputs/<task_id>/judger.pkl` — 事件流（含 `metrics`）
-- `outputs/<task_id>/judger/` — 评测结果文件
+- `outputs/<task_id>/judger/<version_id>/` — 评测结果文件（每次运行独立目录）
 - Configer `state.judger` — 流水线进度和产出路径
 
 如果没有 `judger.pkl`，说明没有走正确路径。
@@ -316,7 +324,7 @@ Judger 在不同任务类型下产出的评测指标，均写入事件流（`jud
 | `pass@10` | 10 次采样通过率（需 `eval_case_num ≥ 10`） | `estimate_pass_at_k(n, c, 10)` |
 | `pass@100` | 100 次采样通过率（需 `eval_case_num ≥ 100`） | `estimate_pass_at_k(n, c, 100)` |
 
-- 输出位置：事件流 `data.metrics` + `outputs/<task_id>/judger/log.txt`
+- 输出位置：事件流 `data.metrics` + `outputs/<task_id>/judger/<version_id>/log.txt`
 - k 值列表：`[1, 10, 100]`，仅当 `total_samples ≥ k` 时对应 k 才会出现在结果中
 
 **事件示例：**
@@ -464,20 +472,20 @@ for e in events:
 ```
 outputs/<task_id>/
 ├── judger/
-│   ├── <name>_format.jsonl           # 格式化后的问题文件
-│   ├── <name>_sample.jsonl           # 生成的样本
-│   ├── <name>_result.jsonl           # 评测结果
-│   ├── log.txt                       # 评测日志（含 pass@k）
-│   ├── text_eval_summary_*.json      # general_text 摘要
-│   ├── general_text_dataset_cache_*.jsonl  # 缓存
-│   └── gsm8k_*_steps/               # One-Eval 中间产物
+│   └── <version_id>/                 # 每次运行独立目录
+│       ├── <name>_sample.jsonl       # 生成的样本
+│       ├── <name>_result.jsonl       # 评测结果
+│       ├── log.txt                   # 评测日志（含 pass@k）
+│       ├── text_eval_summary_*.json  # general_text 摘要
+│       ├── general_text_dataset_cache_*.jsonl  # 缓存
+│       └── gsm8k_*_steps/            # One-Eval 中间产物
 └── judger.pkl                        # 事件 pickle（load_events 读取）
 ```
 
 - **stdout** — 最终结果 JSON payload（`emit_success` / `emit_error`，Codex 消费）
 - **stderr** — `--print-result` / `--print-events` 的输出
 - **judger.pkl** — 所有进度事件，含步骤完成时的 `metrics`（pass@k 或 stats）
-- **log.txt** — 评测日志（`outputs/<task_id>/judger/log.txt`），含 pass@k 数值
+- **log.txt** — 评测日志（`outputs/<task_id>/judger/<version_id>/log.txt`），含 pass@k 数值
 
 ## State & Resume（Configer）
 

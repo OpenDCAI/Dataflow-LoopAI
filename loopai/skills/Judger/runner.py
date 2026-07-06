@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from loopai.common.event_tool import StreamEvent, get_event_writer
+from loopai.common.event_tool import StreamEvent
 from loopai.common.exception import emit_error, ErrorCode
 from loopai.logger import get_logger
 
@@ -513,7 +513,6 @@ def run_judger_pipeline(
     resume: bool = False,
     from_step: Optional[str] = None,
     writer: Any = None,
-    **kwargs: Any,
 ) -> Dict[str, Any]:
     """执行 Judger 独立函数流水线（无需 LangGraph）。
 
@@ -554,9 +553,9 @@ def run_judger_pipeline(
                 state["output_dir"] = defaults.get("output_dir", "./outputs")
 
     state.setdefault("judger", {})
-    resolve_judger_runtime_config(state, task_id=task_id, **kwargs)
+    resolve_judger_runtime_config(state, task_id=task_id)
 
-    # task_id 优先用 env/kwargs 解析后的 state["task_id"]，回退到显式传参
+    # task_id 优先用 state["task_id"]，回退到显式传参
     task_id = state.get("task_id") or task_id or ""
     if not task_id:
         emit_error(
@@ -568,13 +567,6 @@ def run_judger_pipeline(
 
     output_dir = state.get("output_dir", "./outputs")
 
-    # ---- 创建事件写入器（外部传入则复用） ----
-    if writer is None:
-        writer = get_event_writer(
-            name="judger",
-            context_id=task_id,
-            log_file_path=output_dir,
-        )
     writer(StreamEvent(
         current="judger", progress=0.0, message="Judger pipeline started",
         data={"task_id": task_id, "resume": resume,
@@ -625,7 +617,6 @@ def run_judger_pipeline(
             _save_task_progress(state, task_id)
             writer(StreamEvent(
                 current=state["current"], progress=1.0, message="流水线完成"))
-            writer.set_completed()
             logger.info(f"[Judger] pipeline finished")
             return state
 
@@ -635,5 +626,4 @@ def run_judger_pipeline(
 
         logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} done")
 
-    writer.set_completed()
     return state

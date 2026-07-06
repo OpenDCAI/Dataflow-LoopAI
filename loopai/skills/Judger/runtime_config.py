@@ -40,90 +40,63 @@ def _judger(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 def resolve_judger_runtime_config(
     state: Optional[Dict[str, Any]],
-    **kwargs: Any,
+    task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Resolve Judger runtime values from kwargs, env, state, defaults.
+    """Resolve Judger runtime values from env, state, defaults.
 
-    Priority: kwargs > env > state["judger"] > schema defaults.
-
-    Returns a flat dict with resolved keys suitable for the standalone runner.
+    Priority: env > state["judger"] > schema defaults.
     """
     judger = _judger(state)
     is_state_dict = isinstance(state, dict)
 
     # --- model / vllm ---
     model_path = _first_non_empty(
-        kwargs.get("judger_model_path"),
-        kwargs.get("model_path"),
         os.getenv("JUDGER_MODEL_PATH"),
         judger.get("eval_model_path"),
     )
     task_type = _first_non_empty(
-        kwargs.get("judger_task_type"),
-        kwargs.get("task_type"),
         os.getenv("JUDGER_TASK_TYPE"),
         judger.get("eval_task_type"),
         _SCHEMA_DEFAULTS["eval_task_type"],
     )
     temperature = _first_non_empty(
-        kwargs.get("judger_temperature"),
         os.getenv("JUDGER_TEMPERATURE"),
         judger.get("eval_temperature"),
         _SCHEMA_DEFAULTS["eval_temperature"],
     )
     top_p = _first_non_empty(
-        kwargs.get("judger_top_p"),
         os.getenv("JUDGER_TOP_P"),
         judger.get("eval_top_p"),
         _SCHEMA_DEFAULTS["eval_top_p"],
     )
     problem_path = _first_non_empty(
-        kwargs.get("judger_problem_path"),
-        kwargs.get("problem_path"),
         os.getenv("JUDGER_PROBLEM_PATH"),
         judger.get("eval_problem_path"),
     )
     batch_size = _first_non_empty(
-        kwargs.get("judger_batch_size"),
         os.getenv("JUDGER_BATCH_SIZE"),
         judger.get("eval_batch_size"),
         _SCHEMA_DEFAULTS["eval_batch_size"],
     )
     case_num = _first_non_empty(
-        kwargs.get("judger_case_num"),
         os.getenv("JUDGER_CASE_NUM"),
         judger.get("eval_case_num"),
         _SCHEMA_DEFAULTS["eval_case_num"],
     )
 
-    # --- optional: format / data ---
-    format_type = _first_non_empty(
-        kwargs.get("judger_format_type"),
-        os.getenv("JUDGER_FORMAT_TYPE"),
-        judger.get("eval_format_type"),
-    )
-    text2sql_dir = _first_non_empty(
-        kwargs.get("judger_text2sql_dir"),
-        os.getenv("JUDGER_TEXT2SQL_DIR"),
-        judger.get("eval_text2sql_dir"),
-    )
-
     # --- vllm local startup ---
     tensor_parallel_size = _first_non_empty(
-        kwargs.get("judger_tensor_parallel_size"),
         os.getenv("JUDGER_TENSOR_PARALLEL_SIZE"),
         judger.get("eval_vllm_tensor_parallel_size"),
         judger.get("tensor_parallel_size"),  # 兼容 starter.yaml 中的短键名
         _SCHEMA_DEFAULTS["eval_vllm_tensor_parallel_size"],
     )
     gpu_memory_utilization = _first_non_empty(
-        kwargs.get("judger_gpu_memory_utilization"),
         os.getenv("JUDGER_GPU_MEMORY_UTILIZATION"),
         judger.get("eval_vllm_gpu_memory_utilization"),
         _SCHEMA_DEFAULTS["eval_vllm_gpu_memory_utilization"],
     )
     cuda_visible_devices = _first_non_empty(
-        kwargs.get("cuda_visible_devices"),
         os.getenv("CUDA_VISIBLE_DEVICES"),
         judger.get("cuda_visible_devices"),
         _SCHEMA_DEFAULTS["cuda_visible_devices"],
@@ -131,19 +104,16 @@ def resolve_judger_runtime_config(
 
     # --- general_text ---
     bench_name = _first_non_empty(
-        kwargs.get("judger_bench_name"),
         os.getenv("JUDGER_BENCH_NAME"),
         judger.get("bench_name"),
         _SCHEMA_DEFAULTS["bench_name"],
     )
     bench_dataflow_eval_type = _first_non_empty(
-        kwargs.get("judger_bench_dataflow_eval_type"),
         os.getenv("JUDGER_BENCH_DATAFLOW_EVAL_TYPE"),
         judger.get("bench_dataflow_eval_type"),
         _SCHEMA_DEFAULTS["bench_dataflow_eval_type"],
     )
     key_mapping = _first_non_empty(
-        kwargs.get("judger_key_mapping"),
         judger.get("key_mapping"),
         _SCHEMA_DEFAULTS["key_mapping"],
     )
@@ -156,21 +126,16 @@ def resolve_judger_runtime_config(
 
     # --- global ---
     task_id = _first_non_empty(
-        kwargs.get("task_id"),
+        task_id,
         os.getenv("TASK_ID"),
         state.get("task_id") if is_state_dict else None,
-        # 不设兜底值：task_id 缺失时 _step_validate 会报 CONFIG_ERROR
     )
     output_dir = _first_non_empty(
-        kwargs.get("output_dir"),
         os.getenv("OUTPUT_DIR"),
         state.get("output_dir") if is_state_dict else None,
         _DEFAULT_OUTPUT_DIR,
     )
-    db_path = _first_non_empty(
-        kwargs.get("db_path"),
-        os.getenv("DB_PATH"),
-    )
+    db_path = os.getenv("DB_PATH")
 
     # --- type coercion ---
     try:
@@ -224,10 +189,6 @@ def resolve_judger_runtime_config(
         ):
             if val is not None:
                 state["judger"][key] = val
-        if format_type is not None:
-            state["judger"]["eval_format_type"] = format_type
-        if text2sql_dir is not None:
-            state["judger"]["eval_text2sql_dir"] = text2sql_dir
         if db_path:
             state["DB_PATH"] = db_path
 
@@ -242,8 +203,6 @@ def resolve_judger_runtime_config(
         "problem_path": problem_path,
         "batch_size": batch_size,
         "case_num": case_num,
-        "format_type": format_type,
-        "text2sql_dir": text2sql_dir,
         "tensor_parallel_size": tensor_parallel_size,
         "gpu_memory_utilization": gpu_memory_utilization,
         "cuda_visible_devices": str(cuda_visible_devices),
