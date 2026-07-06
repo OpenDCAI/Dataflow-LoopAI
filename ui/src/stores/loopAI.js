@@ -69,7 +69,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         waiting_llm: true,
         event_streaming: 'not_ready',
         current: null,
-        running_tasks: null,
+        node_status: null,
         interrupt_value: 'input the human query',
         state: null,
         custom_info: null,
