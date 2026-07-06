@@ -54,9 +54,12 @@ Codex 启动评测前，必须通过 **Configer skill** 检查并预填配置。
 ```
 1. configer_get_task(schema="states", section="judger", task_id="<task_id>")
      → 查看字段 schema 和当前 value，找出 value 为 null 的必填字段
-2. configer_update_task("judger", {缺失字段}, task_id="<task_id>")
+2. 将缺失字段列表和待写入的值告知用户，**必须征得用户确认后才能写入**
+3. configer_update_task("judger", {用户确认的字段}, task_id="<task_id>")
      → Configer 会校验字段名是否合法，不存在的字段直接报错
 ```
+
+**⚠️ 修改 state 前必须询问用户。** 不要自动覆盖已有配置字段，不要猜测 model_path、problem_path 等路径值。
 
 ### 运行环境
 
@@ -87,7 +90,7 @@ Codex 启动评测前，必须通过 **Configer skill** 检查并预填配置。
 | `eval_top_p` | `0.95` | 调整采样策略 |
 | `eval_batch_size` | `10` | GPU 显存不足时调小 |
 | `eval_case_num` | `10` | 提高 pass@k 精度 |
-| `eval_vllm_tensor_parallel_size` | `2` | 多 GPU 时调整 |
+| `eval_vllm_tensor_parallel_size` | `1` | 多 GPU 时调整 |
 | `eval_vllm_gpu_memory_utilization` | `0.9` | GPU 显存不足时调小 |
 | `cuda_visible_devices` | `"0"` | 指定 GPU |
 | `output_dir` | `"./outputs"` | 自定义输出路径 |
@@ -208,7 +211,7 @@ default_states:
     eval_case_num: 10                 # 每问题样本数（默认 10）
 
     # --- vLLM 参数 ---
-    eval_vllm_tensor_parallel_size: 1 # 张量并行数（默认 2）
+    eval_vllm_tensor_parallel_size: 1 # 张量并行数（默认 1）
     eval_vllm_gpu_memory_utilization: 0.9  # GPU 显存利用率
     cuda_visible_devices: "5"         # 可见 GPU
 
@@ -449,7 +452,7 @@ for e in events:
 | `JUDGER_CASE_NUM`                 | `eval_case_num`                    | `10`                |
 | `JUDGER_FORMAT_TYPE`              | `eval_format_type`                 | 可选                  |
 | `JUDGER_TEXT2SQL_DIR`             | `eval_text2sql_dir`                | text2sql 必填         |
-| `JUDGER_TENSOR_PARALLEL_SIZE`     | `eval_vllm_tensor_parallel_size`   | `2`                 |
+| `JUDGER_TENSOR_PARALLEL_SIZE`     | `eval_vllm_tensor_parallel_size`   | `1`                 |
 | `JUDGER_GPU_MEMORY_UTILIZATION`   | `eval_vllm_gpu_memory_utilization` | `0.9`               |
 | `CUDA_VISIBLE_DEVICES`            | `cuda_visible_devices`             | `0`                 |
 | `JUDGER_BENCH_NAME`               | `bench_name`                       | `general_text_eval` |
@@ -534,6 +537,19 @@ writer(StreamEvent(current="judger.generate", progress=0.5, message="样本生�
 - `progress` — 步骤内进度 0.0 ~ 1.0
 - `message` — 人类可读描述
 - `data` — 结构化数据（步骤完成时包含关键结果）
+- `status` — 仅终态事件：`"completed"`（成功）或 `"failed"`（失败）
+
+### 终态事件
+
+流水线结束时自动写入：
+
+```json
+// 成功 — writer.set_completed()
+{"current": "judger", "status": "completed", "message": "Sub-agent completed."}
+
+// 失败 — emit_error(stream_writer=writer) → writer.set_failed()
+{"current": "judger", "status": "failed", "message": "Sub-agent failed.", "error": {...}}
+```
 
 ### 步骤完成事件 data
 
@@ -580,18 +596,25 @@ for e in events:
 
 ## Error Handling
 
-所有错误通过 `loopai.common.exception.emit_error` 输出标准 JSON payload：
+每个步骤失败点直接调用 `emit_error(exc, stream_writer=writer)`，**三通道同时输出**：
 
+| 通道 | 机制 | 内容 |
+|---|---|---|
+| stdout | `print` error JSON | `{"ok": false, "error": {"code": "CONFIG_ERROR", ...}}` |
+| judger.pkl | `stream_writer.set_failed()` → `_append_status_event` | status="failed" 事件 |
+| DB | `stream_writer._sync_runtime(status="failed")` | taskruntime 表标记失败 |
 
-| ErrorCode                | 触发场景                             |
-| ------------------------ | -------------------------------- |
-| `CONFIG_ERROR`           | 缺少必填字段、模型路径未配置、task_id 缺失        |
-| `INVALID_INPUT`          | JSONL 字段不匹配、不支持的任务类型、未知步骤名       |
-| `NOT_FOUND`              | 问题文件不存在                          |
+成功时 pipeline 末尾调 `writer.set_completed()`，同样写 judger.pkl + DB。
+
+| ErrorCode | 触发场景 |
+|---|---|
+| `CONFIG_ERROR` | 缺少必填字段、模型路径未配置、task_id 缺失 |
+| `INVALID_INPUT` | JSONL 字段不匹配、不支持的任务类型、未知步骤名 |
+| `NOT_FOUND` | 问题文件不存在 |
 | `EXTERNAL_SERVICE_ERROR` | DataFlowEvalTool 子进程失败、vLLM 启动失败 |
+| `UNHANDLED_EXCEPTION` | 意外的未分类异常 |
 
-
-### 错误响应格式
+### 错误响应格式（stdout）
 
 ```json
 {
@@ -602,7 +625,7 @@ for e in events:
     "error": {
         "type": "ValueError",
         "code": "CONFIG_ERROR",
-        "detail": "Missing required fields: {\"missing_fields\": {\"judger\": [\"eval_problem_path\"]}}",
+        "detail": "Missing required fields: ...",
         "traceback": "...",
         "recoverable": true,
         "time": "2026-06-25T12:00:00Z"

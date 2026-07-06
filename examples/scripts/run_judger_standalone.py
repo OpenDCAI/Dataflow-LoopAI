@@ -286,70 +286,65 @@ def main():
 
     task_id = args.task_id or os.getenv("TASK_ID") or task_id_from_config
 
-    try:
-        result = run(
-            state=state,
-            task_id=task_id,
-            resume=args.resume,
-            from_step=args.from_step,
-            **kwargs,
-        )
+    # 提前读 state 获取 output_dir，再建 writer（保证和 pipeline 用同一个路径）
+    from loopai.common.event_tool import get_event_writer
+    from loopai.skills.Judger.runner import _load_task_state
 
-        if args.print_result:
-            _print_result(result)
+    if state is None and task_id:
+        state = _load_task_state(task_id)
+    output_dir = args.output_dir or (state or {}).get("output_dir") or "./outputs"
+    writer = get_event_writer(name="judger", context_id=task_id, log_file_path=output_dir)
 
-        if args.print_events:
-            task_id = result.get("task_id") or task_id
-            output_dir = result.get("output_dir") or args.output_dir or "./outputs"
-            from loopai.skills.Judger import load_events
-            events = load_events(task_id=task_id, output_dir=output_dir)
-            print(f"\n=== Events ({len(events)}) ===", file=sys.stderr)
-            for evt in events:
-                print(
-                    f"  [{evt.get('time', '?')}] "
-                    f"progress={evt.get('progress')} {evt.get('message', '')}",
-                    file=sys.stderr,
-                )
+    result = run(
+        state=state,
+        task_id=task_id,
+        resume=args.resume,
+        from_step=args.from_step,
+        writer=writer,
+        **kwargs,
+    )
 
-        # 最终结果用标准 payload 输出到 stdout（Codex 消费）
-        from loopai.common.exception import emit_success
+    if args.print_result:
+        _print_result(result)
 
-        judger = result.get("judger", {})
-        bench = judger.get("bench") or {}
+    if args.print_events:
+        task_id = result.get("task_id") or task_id
+        output_dir = result.get("output_dir") or args.output_dir or "./outputs"
+        from loopai.skills.Judger import load_events
+        events = load_events(task_id=task_id, output_dir=output_dir)
+        print(f"\n=== Events ({len(events)}) ===", file=sys.stderr)
+        for evt in events:
+            print(
+                f"  [{evt.get('time', '?')}] "
+                f"progress={evt.get('progress')} {evt.get('message', '')}",
+                file=sys.stderr,
+            )
 
-        # 统一指标：code/text2sql → pass_at_k，general_text → stats
-        metrics = judger.get("metrics") or {}
-        if not metrics:
-            metrics = (bench.get("meta") or {}).get("eval_result") or {}
-        metrics_str = json.dumps(metrics, ensure_ascii=False) if metrics else ""
+    # 最终结果用标准 payload 输出到 stdout（Codex 消费）
+    from loopai.common.exception import emit_success
 
-        emit_success(
-            data={
-                "task_type": judger.get("eval_task_type"),
-                "output_result_path": judger.get("output_result_path"),
-                "output_case_path": judger.get("output_case_path"),
-                "output_problem_path": judger.get("output_problem_path"),
-                "output_pred_path": judger.get("output_pred_path"),
-                "bench": bench,
-                "metrics": metrics_str,
-            },
-            message="Judger pipeline completed.",
-        )
+    judger = result.get("judger", {})
+    bench = judger.get("bench") or {}
 
-    except Exception as exc:
-        from loopai.common.exception import emit_error, ErrorCode
+    # 统一指标：code/text2sql → pass_at_k，general_text → stats
+    metrics = judger.get("metrics") or {}
+    if not metrics:
+        metrics = (bench.get("meta") or {}).get("eval_result") or {}
+    metrics_str = json.dumps(metrics, ensure_ascii=False) if metrics else ""
 
-        # 根据异常类型分派 ErrorCode
-        if isinstance(exc, ValueError):
-            code = ErrorCode.CONFIG_ERROR
-        elif isinstance(exc, FileNotFoundError):
-            code = ErrorCode.NOT_FOUND
-        elif isinstance(exc, RuntimeError):
-            code = ErrorCode.EXTERNAL_SERVICE_ERROR
-        else:
-            code = ErrorCode.UNHANDLED_EXCEPTION
-
-        emit_error(exc, code=code, recoverable=True, message="Judger pipeline failed.")
+    emit_success(
+        data={
+            "task_type": judger.get("eval_task_type"),
+            "output_result_path": judger.get("output_result_path"),
+            "output_case_path": judger.get("output_case_path"),
+            "output_problem_path": judger.get("output_problem_path"),
+            "output_pred_path": judger.get("output_pred_path"),
+            "bench": bench,
+            "metrics": metrics_str,
+        },
+        stream_writer=writer,
+        message="Judger pipeline completed.",
+    )
 
 
 if __name__ == "__main__":
