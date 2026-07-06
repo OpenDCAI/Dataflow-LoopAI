@@ -197,7 +197,7 @@ class PickleEventWriter:
         payload = payload or {}
         self._sync_runtime(status=status)
         event = _coerce_stream_event(payload)
-        event.message = payload.get("message", "Sub-agent failed.")
+        event.message = event.message or "Sub-agent failed."
         event.status = status
         event.version_id = self.version_id
         event.node = self.name
