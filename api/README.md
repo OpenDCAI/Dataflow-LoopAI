@@ -4,7 +4,7 @@ English | [简体中文](./README_zh.md)
 
 `api/` is the FastAPI backend for the LoopAI WebUI. It manages WebUI configuration, task records, data resources, hardware/runtime status, and starts the integrated `loopai` Starter workflow for a selected task.
 
-The Trainer is part of LoopAI's agent graph and is launched through `StarterAgent`, Codex/MCP tools, or `loopai.skills.Trainer`. The legacy standalone `/train/*` service has been removed; Trainer logs and metrics for the WebUI are read through task-scoped outputs such as `/task/train_status`.
+The Trainer is part of LoopAI's agent graph and is launched through `StarterAgent`, Codex tools, or `loopai.skills.Trainer`. The legacy standalone `/train/*` service has been removed; Trainer logs and metrics for the WebUI are read through task-scoped outputs such as `/task/train_status`.
 
 ## Overall API Framework
 

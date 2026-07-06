@@ -145,19 +145,11 @@ from loopai.skills.Trainer import load_events
 events = load_events(task_id="trainer_task_001", output_dir="./outputs")
 ```
 
-## MCP Tools
+## Invocation Guidance
 
-Trainer is exposed through the unified `loopai_mcp` server:
+Prefer calling the local Trainer skill or its script/runner entrypoints directly.
 
-- `trainer_run`
-- `trainer_load_events`
-
-In Codex these appear as:
-
-- `mcp__loopai_mcp__trainer_run`
-- `mcp__loopai_mcp__trainer_load_events`
-
-Prefer calling `configer_get_task(section_name="trainer", task_id=...)` before `trainer_run` when you need to inspect or confirm task config.
+When you need to inspect or confirm task config first, read the task-scoped trainer section through Configer before launching training.
 
 ## Errors
 

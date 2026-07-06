@@ -16,11 +16,11 @@ Judger Skill 用于在无 LangGraph（独立模式）下运行 LoopAI 评测流�
 
 | 方式 | 入口 | 适用场景 |
 |---|---|---|
-| **MCP tool（推荐）** | `mcp__loopai_mcp__judger_run` | Codex 编排，自动管理 lifecycle，`sys.exit` 被安全拦截 |
-| **CLI 子进程** | `python examples/scripts/run_judger_standalone.py` | 手动调试、脚本 |
+| **CLI 子进程（推荐）** | `python examples/scripts/run_judger_standalone.py` | Codex 编排、手动调试、脚本 |
+| **受控 Python 封装** | `loopai.skills.Judger.run(...)` 外包一层子进程/保护层 | 需要代码内集成时 |
 
 **禁止使用的路径：**
-- ❌ `loopai.agents.Judger.JudgerAgent` — **已硬拦截**，`import JudgerAgent` 会直接抛 `RuntimeError`。旧 LangGraph 实现不会产生 `judger.pkl` 事件流，state 不写入 Configer，Codex 无法读取评测指标。Codex 看到此错误不应尝试绕过，必须使用上方 MCP 或 CLI 路径
+- ❌ `loopai.agents.Judger.JudgerAgent` — **已硬拦截**，`import JudgerAgent` 会直接抛 `RuntimeError`。旧 LangGraph 实现不会产生 `judger.pkl` 事件流，state 不写入 Configer，Codex 无法读取评测指标。Codex 看到此错误不应尝试绕过，必须使用上方 CLI 或受控封装路径
 - ❌ Codex 进程内直接 `import loopai.skills.Judger.run()` — pipeline 内 `emit_error` 会 `sys.exit(1)`，杀死 Codex 自身进程
 
 **正确调用后的产物（用于判断是否走了正确路径）：**
@@ -254,7 +254,7 @@ from loopai.skills.Judger import run, load_events
 # 运行流水线
 result = run(
     state=None,             # dict with state["judger"] fields，None 时从 Configer 加载
-    thread_id="task_001",   # 必填，= task_id
+    task_id="task_001",   # 必填，= task_id
     resume=False,           # True = 从 Configer 恢复上次进度
     from_step=None,         # 强制起始步骤名
     **kwargs,               # 运行时覆盖（优先于 state）
@@ -692,7 +692,7 @@ try:
             "task_id": "codex_task_001",
             "output_dir": "./outputs",
         },
-        thread_id="codex_task_001",
+        task_id="codex_task_001",
     )
     # 成功：emit_success 输出到 stdout
     sys.exit(0)

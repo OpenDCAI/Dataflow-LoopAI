@@ -4,7 +4,7 @@
 
 `api/` 是 LoopAI WebUI 的 FastAPI 后端。它负责管理 WebUI 配置、任务记录、数据资源、硬件与运行状态，并为指定任务启动集成在 `loopai` 中的 Starter 工作流。
 
-Trainer 已经集成到 LoopAI 的 Agent 图中，常规情况下由 `StarterAgent`、Codex/MCP 工具或 `loopai.skills.Trainer` 启动。旧的独立 `/train/*` 服务已经移除；WebUI 训练日志和指标通过任务输出目录以及 `/task/train_status` 读取。
+Trainer 已经集成到 LoopAI 的 Agent 图中，常规情况下由 `StarterAgent`、Codex 工具或 `loopai.skills.Trainer` 启动。旧的独立 `/train/*` 服务已经移除；WebUI 训练日志和指标通过任务输出目录以及 `/task/train_status` 读取。
 
 ## 总体 API 框架
 

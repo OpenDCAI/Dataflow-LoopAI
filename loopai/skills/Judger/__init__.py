@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 def run(
     state: Optional[Dict[str, Any]] = None,
-    thread_id: Optional[str] = None,
+    task_id: Optional[str] = None,
     resume: bool = False,
     from_step: Optional[str] = None,
     **kwargs: Any,
@@ -18,7 +18,7 @@ def run(
 
     return run_judger_pipeline(
         state=state,
-        thread_id=thread_id,
+        task_id=task_id,
         resume=resume,
         from_step=from_step,
         **kwargs,
@@ -35,7 +35,7 @@ def load_events(
     执行完成后可调用此函数获取完整事件列表，用于前端展示或日志分析。
 
     Args:
-        task_id: 任务 ID（对应 run() 的 thread_id）。
+        task_id: 任务 ID。
         output_dir: 输出根目录，默认 ``"./outputs"``。
 
     Returns:

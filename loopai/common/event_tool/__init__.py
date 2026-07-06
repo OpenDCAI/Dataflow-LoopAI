@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
 import pickle
-import uuid
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +11,7 @@ import logging
 
 from loopai.common.db_tool.runtime import sync_task_runtime_sync
 from loopai.common.db_tool.base import require_db_path
+from loopai.common.db_tool.task import get_task_states_config_sync
 
 
 try:
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _new_version_id() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
 
 def _sanitize_path_component(value: str, fallback: str) -> str:
@@ -75,6 +80,7 @@ class StreamEvent:
     version_id: Optional[str] = None
     node: Optional[str] = None
     status: Optional[str] = None
+    # i.e. task_id
     context_id: Optional[str] = None
     error: Optional[Any] = None
 
@@ -182,82 +188,51 @@ class PickleEventWriter:
         self.version_id = version_id
 
     def __call__(self, payload: StreamEvent | dict[str, Any]) -> StreamEvent:
+        event = self.set_running(payload)
+        return event
+
+    def set_event(self, payload: StreamEvent | dict[str, Any], status: str = 'running') -> StreamEvent:
+        if self.version_id is None:
+            self.version_id = _new_version_id()
+        payload = payload or {}
+        self._sync_runtime(status=status)
         event = _coerce_stream_event(payload)
-        event.node = self.name
-        if event.context_id is None:
-            event.context_id = self.context_id
-        if self.version_id is None:
-            self.version_id = event.version_id or str(uuid.uuid4())
+        event.message = event.message or "Sub-agent failed."
+        event.status = status
         event.version_id = self.version_id
-        event.status = event.status or "running"
-        self._sync_runtime(status=event.status)
+        event.node = self.name
+        event.context_id = self.context_id
         self._append_event(event)
         return event
 
-    def set_running(self):
-        if self.version_id is None:
-            self.version_id = str(uuid.uuid4())
-        self._sync_runtime(status="running")
-    
+    def set_running(self, payload: dict[str, Any] | None = None):
+        return self.set_event(payload, status="running")
+
     def set_failed(self, payload: dict[str, Any] | None = None):
-        if self.version_id is None:
-            self.version_id = str(uuid.uuid4())
-        payload = payload or {}
-        self._sync_runtime(status="failed")
-        return self._append_status_event(
-            status="failed",
-            message=payload.get("message", "Sub-agent failed."),
-            data=payload.get("data"),
-            error=payload.get("error", payload),
-        )
-    
-    def set_completed(self, payload: dict[str, Any] | None = None):
-        if self.version_id is None:
-            self.version_id = str(uuid.uuid4())
-        payload = payload or {}
-        self._sync_runtime(status="completed")
-        return self._append_status_event(
-            status="completed",
-            message=payload.get("message", "Sub-agent completed."),
-            data=payload.get("data", payload),
-            error=None,
-        )
+        return self.set_event(payload, status="failed")
 
-    def _append_status_event(
-        self,
-        *,
-        status: str,
-        message: str,
-        data: Any = None,
-        error: Any = None,
-    ) -> StreamEvent:
-        event = StreamEvent(
-            current=self.name,
-            progress=1.0,
-            message=message,
-            data=data,
-            version_id=self.version_id,
-            node=self.name,
-            status=status,
-            context_id=self.context_id,
-            error=error,
-        )
-        event = _coerce_stream_event(event)
-        self._append_event(event)
-        return event
+    def set_completed(self, payload: dict[str, Any] | None = None):
+        return self.set_event(payload, status="completed")
 
     def _sync_runtime(self, *, status: str) -> None:
         try:
             db_path = require_db_path()
+            task_state = self._load_task_state(db_path)
             sync_task_runtime_sync(
                 db_path=db_path,
                 task_id=self.context_id,
                 node_name=self.name,
                 version=self.version_id,
                 status=status,
+                state=task_state,
             )
         except Exception as exc:  # pragma: no cover - runtime sync is best effort
-            logger.warning("Failed to sync task runtime for %s/%s: %s", self.context_id, self.name, exc)
+            logger.warning("Failed to sync task runtime for %s/%s: %s",
+                           self.context_id, self.name, exc)
+
+    def _load_task_state(self, db_path: str) -> str | None:
+        task_state = get_task_states_config_sync(db_path, self.context_id)
+        return json.dumps(task_state.get("config", {}), ensure_ascii=False)
 
     def _append_event(self, event: StreamEvent) -> None:
         self.event_path.parent.mkdir(parents=True, exist_ok=True)
