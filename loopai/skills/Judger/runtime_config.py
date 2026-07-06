@@ -12,7 +12,7 @@ _SCHEMA_DEFAULTS: Dict[str, Any] = {
     "eval_top_p": 0.95,
     "eval_batch_size": 10,
     "eval_case_num": 10,
-    "eval_vllm_tensor_parallel_size": 2,
+    "eval_vllm_tensor_parallel_size": 1,
     "eval_vllm_gpu_memory_utilization": 0.9,
     "cuda_visible_devices": "0",
     "bench_name": "general_text_eval",
@@ -190,9 +190,9 @@ def resolve_judger_runtime_config(
     except (TypeError, ValueError):
         case_num = 10
     try:
-        tensor_parallel_size = int(tensor_parallel_size) if tensor_parallel_size is not None else 2
+        tensor_parallel_size = int(tensor_parallel_size) if tensor_parallel_size is not None else 1
     except (TypeError, ValueError):
-        tensor_parallel_size = 2
+        tensor_parallel_size = 1
     try:
         gpu_memory_utilization = float(gpu_memory_utilization) if gpu_memory_utilization is not None else 0.9
     except (TypeError, ValueError):

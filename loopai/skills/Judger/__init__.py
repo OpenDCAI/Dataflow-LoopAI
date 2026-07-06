@@ -8,6 +8,7 @@ def run(
     task_id: Optional[str] = None,
     resume: bool = False,
     from_step: Optional[str] = None,
+    writer: Any = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Run Judger standalone (Codex / CLI entry point).
@@ -21,6 +22,7 @@ def run(
         task_id=task_id,
         resume=resume,
         from_step=from_step,
+        writer=writer,
         **kwargs,
     )
 

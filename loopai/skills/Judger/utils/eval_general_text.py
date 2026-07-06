@@ -254,12 +254,14 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         emit_error(
             ValueError("缺少评测输入路径：请提供 judger.eval_problem_path"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
             message="Missing judger.eval_problem_path for general_text evaluation.",
         )
     if not os.path.exists(eval_result_path):
         emit_error(
             FileNotFoundError(f"评测输入路径不存在：{eval_result_path}"),
             code=ErrorCode.NOT_FOUND, recoverable=True,
+            stream_writer=writer,
             message=f"Problem file not found: {eval_result_path}",
         )
 
@@ -268,6 +270,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         emit_error(
             ValueError("通用文本评测缺少 eval_type。请在 judger.bench_dataflow_eval_type 中提供"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
             message="Missing judger.bench_dataflow_eval_type for general_text evaluation.",
         )
 
@@ -329,12 +332,14 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         emit_error(
             ValueError(f"[{bench_name}] 缺少 dataset_cache"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
             message=f"Bench '{bench_name}' is missing dataset_cache.",
         )
     if not bench.bench_dataflow_eval_type:
         emit_error(
             ValueError(f"[{bench_name}] 缺少 eval_type"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
             message=f"Bench '{bench_name}' is missing bench_dataflow_eval_type.",
         )
 
@@ -382,6 +387,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
                 emit_error(
                     RuntimeError(f"[{bench_name}] run_eval 子进程未返回结果"),
                     code=ErrorCode.EXTERNAL_SERVICE_ERROR, recoverable=True,
+                    stream_writer=writer,
                     message=f"DataFlowEvalTool subprocess (pid={proc.pid}) exited without returning a result.",
                 )
         if not payload.get("ok"):
@@ -389,6 +395,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
                 RuntimeError(f"{payload.get('error', 'run_eval failed')}\n"
                              f"{payload.get('traceback', '')}"),
                 code=ErrorCode.EXTERNAL_SERVICE_ERROR, recoverable=True,
+                stream_writer=writer,
                 message=f"DataFlowEvalTool subprocess evaluation failed.",
             )
 

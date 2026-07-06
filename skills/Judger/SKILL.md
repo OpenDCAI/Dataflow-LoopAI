@@ -45,70 +45,80 @@ Judger Skill 用于在无 LangGraph（独立模式）下运行 LoopAI 评测流�
 - 训练、数据爬取、数据构造（走对应的 Agent/Skill）
 - 全局 `system` 配置修改（走 Configer）
 
-## Prerequisites / Input Contract
+## Configuration
 
-执行 Judger 的最小必要输入集合。缺少必填项会在 `validate` 步骤报 `CONFIG_ERROR`。
+Codex 启动评测前，必须通过 **Configer skill** 检查并预填配置。**不要手动拼字段**——用 `configer_get_task` 查缺，用 `configer_update_task` 补齐。
+
+### 预填写流程
+
+```
+1. configer_get_task(schema="states", section="judger", task_id="<task_id>")
+     → 查看字段 schema 和当前 value，找出 value 为 null 的必填字段
+2. 将缺失字段列表和待写入的值告知用户，**必须征得用户确认后才能写入**
+3. configer_update_task("judger", {用户确认的字段}, task_id="<task_id>")
+     → Configer 会校验字段名是否合法，不存在的字段直接报错
+```
+
+**⚠️ 修改 state 前必须询问用户。** 不要自动覆盖已有配置字段，不要猜测 model_path、problem_path 等路径值。
 
 ### 运行环境
 
 | 条件 | 说明 |
 |---|---|
-| `DB_PATH` 环境变量 | 指向 Configer SQLite 数据库（如 `api/db/db.sqlite3`） |
-| `TASK_ID` 环境变量 / `--task-id` | 任务唯一标识，用于读写 state 和定位输出目录 |
-| GPU | 需至少一张支持 CUDA 的 GPU（vLLM 本地推理） |
-| Port 8911 可用 | vLLM 本地服务端口 |
+| `DB_PATH` | Configer SQLite 数据库（MCP 自动注入） |
+| `TASK_ID` | 任务唯一标识（MCP 参数传入） |
+| GPU | 至少一张 CUDA GPU |
+| Port 8911 | code/text2sql 的 vLLM HTTP 端口 |
 
-### 必填配置字段
+### 必填字段
 
-以下字段必须在 **state["judger"]**（DB / YAML）或**环境变量**中提供其一：
+以下字段必须在 `state["judger"]` 中有非空值：
 
-| 字段 | 环境变量 | 说明 | 示例 |
-|---|---|---|---|
-| `eval_model_path` | `JUDGER_MODEL_PATH` | 本地模型路径（目录） | `/data/models/Qwen2.5-7B-Instruct` |
-| `eval_problem_path` | `JUDGER_PROBLEM_PATH` | 问题文件路径（JSONL） | `/data/benchmarks/human_eval.jsonl` |
-| `eval_task_type` | `JUDGER_TASK_TYPE` | 任务类型 | `code` / `text2sql` / `general_text` |
-
-### 按任务类型的额外必填字段
-
-| 任务类型 | 额外必填字段 | 说明 |
+| 字段 | 适用 task_type | 示例 |
 |---|---|---|
-| `text2sql` | `eval_text2sql_dir` | SQLite 数据库目录路径 |
-| `general_text` | `bench_dataflow_eval_type` | 评测类型（如 `key2_qa`） |
+| `eval_task_type` | 全部 | `"code"` / `"text2sql"` / `"general_text"` |
+| `eval_model_path` | 全部 | `"/data/models/Qwen2.5-7B-Instruct/"` |
+| `eval_problem_path` | 全部 | `"/data/.../dev_bird_for_oj_sampled.jsonl"` |
+| `eval_text2sql_dir` | text2sql | `"/data/.../dev_databases/"` |
+| `bench_dataflow_eval_type` | general_text | `"key2_qa"` |
 
-### 可选配置字段（带默认值）
+### 可选字段（有默认值，通常不需要改）
 
-| 字段 | 默认值 | 说明 |
+| 字段 | 默认值 | 何时需要修改 |
 |---|---|---|
-| `eval_temperature` | `0` | 生成温度 |
-| `eval_top_p` | `0.95` | nucleus sampling |
-| `eval_batch_size` | `10` | vLLM 推理批大小 |
-| `eval_case_num` | `10` | 每个问题的采样数 |
-| `eval_vllm_tensor_parallel_size` | `2` | 张量并行数 |
-| `eval_vllm_gpu_memory_utilization` | `0.9` | GPU 显存利用率 |
-| `cuda_visible_devices` | `"0"` | 可见 GPU 编号 |
-| `output_dir` | `"./outputs"` | 输出根目录 |
+| `eval_temperature` | `0` | 调整生成随机性 |
+| `eval_top_p` | `0.95` | 调整采样策略 |
+| `eval_batch_size` | `10` | GPU 显存不足时调小 |
+| `eval_case_num` | `10` | 提高 pass@k 精度 |
+| `eval_vllm_tensor_parallel_size` | `1` | 多 GPU 时调整 |
+| `eval_vllm_gpu_memory_utilization` | `0.9` | GPU 显存不足时调小 |
+| `cuda_visible_devices` | `"0"` | 指定 GPU |
+| `output_dir` | `"./outputs"` | 自定义输出路径 |
 | `bench_name` | `"general_text_eval"` | general_text 基准名 |
 | `key_mapping` | `{}` | general_text 字段映射（可自动推断） |
 
-### 调用方输入契约
+### general_text 评测类型
 
-调用方（Codex / CLI / Python API）须保证以下之一成立，否则流水线无法启动：
+| `bench_dataflow_eval_type` | 说明 |
+|---|---|
+| `key1_text_score` | 文本评分 |
+| `key2_qa` | 问答评测 |
+| `key2_q_ma` | 多答案评测 |
+| `key3_q_choices_a` | 选择题评测 |
+| `key3_q_choices_as` | 多选评测 |
+| `key3_q_a_rejected` | 对比评测 |
 
-1. **Configer 模式（推荐）**：task 已在 DB 中有 `state.judger` 配置（Codex 预写），设置 `DB_PATH` + `TASK_ID` 即可
-2. **YAML 模式**：提供 `--config-path starter.yaml`，YAML 中 `default_states.judger` 包含必填字段
-3. **环境变量模式**：所有必填字段通过 `JUDGER_*` 环境变量传入
+### 配置优先级
 
-优先级：`kwargs > 环境变量 > state["judger"]（DB/YAML）> schema 默认值`
+```
+kwargs > 环境变量 > state["judger"]（DB）> schema 默认值
+```
 
-### 输入验证
+### validate 自动检查
 
-`validate` 步骤自动检查：
-- 必填字段是否缺失
-- `eval_problem_path` 文件是否存在
-- JSONL 字段结构是否匹配 task_type（code 检查 `prompt`/`test` 等，text2sql 检查 `db_id`/`question` 等）
-- `task_id` 是否为空
-
-## Python Implementation
+- 必填字段是否缺失 → `CONFIG_ERROR`，detail 列出 `missing_fields`
+- `eval_problem_path` 文件是否存在 → `NOT_FOUND`
+- JSONL 字段结构是否匹配 task_type → `INVALID_INPUT`
 
 ```
 loopai/skills/Judger/          ← Skill 层（独立模式，无 LangGraph）
@@ -201,7 +211,7 @@ default_states:
     eval_case_num: 10                 # 每问题样本数（默认 10）
 
     # --- vLLM 参数 ---
-    eval_vllm_tensor_parallel_size: 1 # 张量并行数（默认 2）
+    eval_vllm_tensor_parallel_size: 1 # 张量并行数（默认 1）
     eval_vllm_gpu_memory_utilization: 0.9  # GPU 显存利用率
     cuda_visible_devices: "5"         # 可见 GPU
 
@@ -442,7 +452,7 @@ for e in events:
 | `JUDGER_CASE_NUM`                 | `eval_case_num`                    | `10`                |
 | `JUDGER_FORMAT_TYPE`              | `eval_format_type`                 | 可选                  |
 | `JUDGER_TEXT2SQL_DIR`             | `eval_text2sql_dir`                | text2sql 必填         |
-| `JUDGER_TENSOR_PARALLEL_SIZE`     | `eval_vllm_tensor_parallel_size`   | `2`                 |
+| `JUDGER_TENSOR_PARALLEL_SIZE`     | `eval_vllm_tensor_parallel_size`   | `1`                 |
 | `JUDGER_GPU_MEMORY_UTILIZATION`   | `eval_vllm_gpu_memory_utilization` | `0.9`               |
 | `CUDA_VISIBLE_DEVICES`            | `cuda_visible_devices`             | `0`                 |
 | `JUDGER_BENCH_NAME`               | `bench_name`                       | `general_text_eval` |
@@ -527,6 +537,19 @@ writer(StreamEvent(current="judger.generate", progress=0.5, message="样本生�
 - `progress` — 步骤内进度 0.0 ~ 1.0
 - `message` — 人类可读描述
 - `data` — 结构化数据（步骤完成时包含关键结果）
+- `status` — 仅终态事件：`"completed"`（成功）或 `"failed"`（失败）
+
+### 终态事件
+
+流水线结束时自动写入：
+
+```json
+// 成功 — writer.set_completed()
+{"current": "judger", "status": "completed", "message": "Sub-agent completed."}
+
+// 失败 — emit_error(stream_writer=writer) → writer.set_failed()
+{"current": "judger", "status": "failed", "message": "Sub-agent failed.", "error": {...}}
+```
 
 ### 步骤完成事件 data
 
@@ -573,18 +596,25 @@ for e in events:
 
 ## Error Handling
 
-所有错误通过 `loopai.common.exception.emit_error` 输出标准 JSON payload：
+每个步骤失败点直接调用 `emit_error(exc, stream_writer=writer)`，**三通道同时输出**：
 
+| 通道 | 机制 | 内容 |
+|---|---|---|
+| stdout | `print` error JSON | `{"ok": false, "error": {"code": "CONFIG_ERROR", ...}}` |
+| judger.pkl | `stream_writer.set_failed()` → `_append_status_event` | status="failed" 事件 |
+| DB | `stream_writer._sync_runtime(status="failed")` | taskruntime 表标记失败 |
 
-| ErrorCode                | 触发场景                             |
-| ------------------------ | -------------------------------- |
-| `CONFIG_ERROR`           | 缺少必填字段、模型路径未配置、task_id 缺失        |
-| `INVALID_INPUT`          | JSONL 字段不匹配、不支持的任务类型、未知步骤名       |
-| `NOT_FOUND`              | 问题文件不存在                          |
+成功时 pipeline 末尾调 `writer.set_completed()`，同样写 judger.pkl + DB。
+
+| ErrorCode | 触发场景 |
+|---|---|
+| `CONFIG_ERROR` | 缺少必填字段、模型路径未配置、task_id 缺失 |
+| `INVALID_INPUT` | JSONL 字段不匹配、不支持的任务类型、未知步骤名 |
+| `NOT_FOUND` | 问题文件不存在 |
 | `EXTERNAL_SERVICE_ERROR` | DataFlowEvalTool 子进程失败、vLLM 启动失败 |
+| `UNHANDLED_EXCEPTION` | 意外的未分类异常 |
 
-
-### 错误响应格式
+### 错误响应格式（stdout）
 
 ```json
 {
@@ -595,7 +625,7 @@ for e in events:
     "error": {
         "type": "ValueError",
         "code": "CONFIG_ERROR",
-        "detail": "Missing required fields: {\"missing_fields\": {\"judger\": [\"eval_problem_path\"]}}",
+        "detail": "Missing required fields: ...",
         "traceback": "...",
         "recoverable": true,
         "time": "2026-06-25T12:00:00Z"

@@ -274,6 +274,7 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
                        f"{json.dumps({'missing_fields': missing}, ensure_ascii=False)}"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
             message="Judger configuration is incomplete.",
+            stream_writer=writer,
         )
 
     # 5. JSONL 字段校验
@@ -291,6 +292,7 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
             emit_error(
                 ValueError(f"JSONL field validation failed: {json.dumps(details, ensure_ascii=False, indent=2)}"),
                 code=ErrorCode.INVALID_INPUT, recoverable=True,
+                stream_writer=writer,
                 message=f"Problem file {problem_path} has invalid fields for task type {task_type}.",
             )
     elif task_type == "text2sql":
@@ -301,6 +303,7 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
             emit_error(
                 ValueError(f"JSONL field validation failed: {json.dumps(details, ensure_ascii=False, indent=2)}"),
                 code=ErrorCode.INVALID_INPUT, recoverable=True,
+                stream_writer=writer,
                 message=f"Problem file {problem_path} has invalid fields for task type {task_type}.",
             )
 
@@ -345,6 +348,7 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
         emit_error(
             ValueError("eval_model_path is required for local vLLM startup"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
             message="Missing eval_model_path for vLLM startup.",
         )
 
@@ -360,13 +364,14 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
         data={"model_path": model_path, "tensor_parallel_size": tensor_parallel_size}))
     try:
         start_vllm_openai_api_server(env_configs, tensor_parallel_size, gpu_memory_utilization, model_path)
-    except Exception:
+    except Exception as exc:
         logger.exception(f"[Judger] vLLM 启动失败")
-        writer(StreamEvent(
-            current=state.get("current"), progress=1.0, message="vLLM 启动失败",
-            data={"error": "vLLM startup failed", "model_path": model_path,
-                  "tensor_parallel_size": tensor_parallel_size}))
-        raise
+        emit_error(
+            exc,
+            code=ErrorCode.EXTERNAL_SERVICE_ERROR, recoverable=True,
+            stream_writer=writer,
+            message=f"vLLM startup failed: model={model_path}, tp_size={tensor_parallel_size}",
+        )
     state["judger"]["eval_base_url"] = f"http://localhost:{DEFAULT_VLLM_PORT}/v1"
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="vLLM 服务已启动",
@@ -418,6 +423,7 @@ def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         emit_error(
             ValueError(f"Unsupported task type for generate step: {task_type}"),
             code=ErrorCode.INVALID_INPUT, recoverable=True,
+            stream_writer=writer,
             message=f"Task type '{task_type}' is not supported for sample generation.",
         )
 
@@ -446,6 +452,7 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         emit_error(
             ValueError(f"Unsupported task type for evaluate step: {task_type}"),
             code=ErrorCode.INVALID_INPUT, recoverable=True,
+            stream_writer=writer,
             message=f"Task type '{task_type}' is not supported for evaluation.",
         )
 
@@ -472,7 +479,7 @@ def _step_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 
 def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
-    """分发执行单个流水线步骤。"""
+    """分发执行单个流水线步骤。异常先写事件流再抛，确保错误不丢失。"""
     step = normalize_judger_step(step_name)
     dispatch = {
         "validate": _step_validate,
@@ -491,6 +498,7 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
     emit_error(
         ValueError(f"Unknown executable Judger step: {step_name}"),
         code=ErrorCode.INVALID_INPUT, recoverable=True,
+        stream_writer=writer,
         message=f"Step '{step_name}' is not a recognized Judger pipeline step.",
     )
 
@@ -504,6 +512,7 @@ def run_judger_pipeline(
     task_id: Optional[str] = None,
     resume: bool = False,
     from_step: Optional[str] = None,
+    writer: Any = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """执行 Judger 独立函数流水线（无需 LangGraph）。
@@ -553,17 +562,19 @@ def run_judger_pipeline(
         emit_error(
             ValueError("task_id is required but was not provided."),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
             message="Please provide --task-id or set TASK_ID env var.",
         )
 
     output_dir = state.get("output_dir", "./outputs")
 
-    # ---- 创建事件写入器 ----
-    writer = get_event_writer(
-        name="judger",
-        context_id=task_id,
-        log_file_path=output_dir,
-    )
+    # ---- 创建事件写入器（外部传入则复用） ----
+    if writer is None:
+        writer = get_event_writer(
+            name="judger",
+            context_id=task_id,
+            log_file_path=output_dir,
+        )
     writer(StreamEvent(
         current="judger", progress=0.0, message="Judger pipeline started",
         data={"task_id": task_id, "resume": resume,
@@ -614,6 +625,7 @@ def run_judger_pipeline(
             _save_task_progress(state, task_id)
             writer(StreamEvent(
                 current=state["current"], progress=1.0, message="流水线完成"))
+            writer.set_completed()
             logger.info(f"[Judger] pipeline finished")
             return state
 
@@ -623,4 +635,5 @@ def run_judger_pipeline(
 
         logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} done")
 
+    writer.set_completed()
     return state
