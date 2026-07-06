@@ -271,8 +271,10 @@ const customStatusPanel = computed(() => {
 
 const runningMe = computed(() => {
     try {
-        return loopAI.taskStatus.running_tasks.some((task) => {
-            return thisData.value.include_nodes.includes(task)
+        return loopAI.taskStatus.node_status.some((node) => {
+            return (
+                thisData.value.include_nodes.includes(node.node_name) && node.status === 'running'
+            )
         })
     } catch (e) {
         return false
