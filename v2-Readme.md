@@ -297,7 +297,7 @@ http://localhost:8855/docs
 例如当前仓库里已经能看到：
 
 - Python 实现目录：[loopai/skills/Configer](/home/lpc/repos/Dataflow-LoopAI/loopai/skills/Configer)
-- 技能说明文件：[skills/configer/SKILL.md](/home/lpc/repos/Dataflow-LoopAI/skills/configer/SKILL.md)
+- 技能说明文件：[skills/Configer/SKILL.md](/home/lpc/repos/Dataflow-LoopAI/skills/Configer/SKILL.md)
 
 ### 7.2 开发时如何理解这两个目录
 
