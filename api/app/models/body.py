@@ -55,6 +55,7 @@ class TaskRuntimeItem(BaseModel):
     task_id: str
     node_name: str
     version: str
+    state: Optional[str] = None
     status: str
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None

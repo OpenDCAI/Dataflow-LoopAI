@@ -16,7 +16,7 @@ from ..services.starter import (
     load_starter_system_config,
     parse_task_state,
 )
-from ..services.task import build_initial_task_state
+from ..services.task import build_initial_task_state, list_latest_task_runtimes
 from ..utils.monitor.hw_stat import get_nvidia_gpu_usage, get_huawei_npu_usage, get_cpu_usage, get_memory_usage
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -195,6 +195,7 @@ async def get_agent_status(task_id: str):
         return response_body(code=404, status='error', message='任务项不存在')()
 
     state = parse_task_state(task.state)
+    task_runtimes = await list_latest_task_runtimes(task_id)
 
     if not isinstance(state, dict):
         state = await build_initial_task_state(task_id)
@@ -208,7 +209,7 @@ async def get_agent_status(task_id: str):
         "event_streaming": "not_ready",
         "waiting_llm": False,
         "current": state.get("current"),
-        "running_tasks": [],
+        "node_status": task_runtimes,
         "interrupt_value": None,
         "state": state,
         "custom_info": custom_info,
