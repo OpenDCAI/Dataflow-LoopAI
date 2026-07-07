@@ -107,13 +107,30 @@ def main() -> None:
             message="Analyzer CLI input contract validation failed.",
         )
 
+    from loopai.skills.Analyzer.event_tool import get_analyzer_event_writer
     from loopai.skills.Analyzer.runner import run_analyzer_standalone
+    from loopai.skills.Analyzer.runtime_config import resolve_analyzer_runtime_config
 
+    writer = None
     try:
         state = None if args.resume else _load_state(args.config_path)
         if state is not None and args.baseline_result_path:
             state.setdefault("analyzer", {})["baseline_result_path"] = args.baseline_result_path
 
+        runtime_state = state if isinstance(state, dict) else {}
+        runtime = resolve_analyzer_runtime_config(
+            runtime_state,
+            thread_id=args.thread_id,
+            checkpoint_path=args.checkpoint_path,
+            version_id=args.version_id,
+        )
+        writer = get_analyzer_event_writer(
+            context_id=runtime["thread_id"],
+            log_file_path=runtime["output_dir"],
+            stdout=args.stream_stdout,
+            state=state if isinstance(state, dict) else None,
+            version_id=runtime["version_id"],
+        )
         result = run_analyzer_standalone(
             state=state,
             thread_id=args.thread_id,
@@ -123,6 +140,8 @@ def main() -> None:
             version_id=args.version_id,
             baseline_result_path=args.baseline_result_path,
             stream_stdout=args.stream_stdout,
+            writer=writer,
+            emit_status=False,
         )
     except (ValueError, TypeError) as exc:
         emit_error(
@@ -130,6 +149,7 @@ def main() -> None:
             code=ErrorCode.INVALID_INPUT,
             recoverable=False,
             message="Analyzer CLI input contract validation failed.",
+            stream_writer=writer,
         )
     except RuntimeError as exc:
         emit_error(
@@ -137,6 +157,7 @@ def main() -> None:
             code=ErrorCode.CONFIG_ERROR,
             recoverable=True,
             message="Analyzer runtime configuration is incomplete.",
+            stream_writer=writer,
         )
     except Exception as exc:
         emit_error(
@@ -144,6 +165,7 @@ def main() -> None:
             code=ErrorCode.UNHANDLED_EXCEPTION,
             recoverable=True,
             message="Analyzer crashed with an unhandled exception.",
+            stream_writer=writer,
         )
 
     if args.print_result:
@@ -156,6 +178,7 @@ def main() -> None:
             "last_completed": result.get("last_completed") if isinstance(result, dict) else None,
         },
         message="Analyzer CLI completed.",
+        stream_writer=writer,
     )
 
 

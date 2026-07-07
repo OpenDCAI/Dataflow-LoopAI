@@ -18,15 +18,12 @@ Do not move or rewrite `eval_model.py`, `analyze_result.py`, or `draw_conclusion
 ```python
 from loopai.skills.Analyzer import run
 
-result = run(
-    state=None,
-    resume=False,
-    from_node=None,
-    baseline_result_path=None,
-)
+run(state=None, resume=False, from_node=None, baseline_result_path=None)
 ```
 
-`run(...)` returns the unified LoopAI payload:
+`run(...)` is the Codex/sub-agent process entry. It emits the unified LoopAI
+payload to stdout and exits, matching the latest Judger skill pattern. For
+in-process calls use `run_analyzer_standalone(...)`.
 
 ```json
 {
@@ -76,6 +73,8 @@ Runtime configuration should come from environment/system runtime where possible
 - `ANALYZER_BASE_URL`
 - `TASK_ID`
 - `DB_PATH`
+- `ANALYZER_CHECKPOINT_PATH`
+- `ANALYZER_VERSION_ID` / `VERSION_ID`
 
 Config JSON should not store API keys. Runtime API key/model/base URL should be placed under the task/system config when available:
 
@@ -126,6 +125,12 @@ python examples/scripts/run_analyzer_standalone.py \
   --version-id version2
 ```
 
+Analyzer output files and event files are version-scoped:
+
+```text
+<output_dir>/<task_id>/analyzer/<version_id>/
+```
+
 Standalone function pipeline remains:
 
 `eval_model -> analyze_result -> draw_conclusion -> finish`
@@ -158,7 +163,7 @@ loopai/skills/Analyzer/event_tool.py
 Events are written to:
 
 ```text
-<output_dir>/<TASK_ID or thread_id>/analyzer.pkl
+<output_dir>/<TASK_ID or thread_id>/analyzer/<version_id>/analyzer.pkl
 ```
 
 The Analyzer skill writer supports `--stream-stdout` for JSONL stdout output and appends events to `state["messages"]`.
@@ -167,7 +172,9 @@ Analyzer node-level `StreamEvent` calls are still compatible with LangGraph runt
 
 Analyzer event payloads are JSON serializable and redact sensitive keys such as `api_key`, `analyze_api_key`, `token`, and `*_key`.
 
-Analyzer emits explicit terminal events:
+Analyzer uses `emit_success(..., stream_writer=writer)` and
+`emit_error(..., stream_writer=writer)` for terminal status updates. Analyzer
+emits explicit terminal events:
 
 - `analyzer.completed`
 - `analyzer.failed`
@@ -176,21 +183,20 @@ Analyzer emits explicit terminal events:
 Analyzer MCP exposure is currently disabled. Do not register `analyzer_run` or `analyzer_load_events` until the team re-enables Analyzer MCP routing.
 
 ## Success Response
-`from loopai.skills.Analyzer import run` returns:
+`from loopai.skills.Analyzer import run` emits:
 
 ```json
 {
   "ok": true,
   "status": "completed",
-  "message": "Analyzer completed.",
+  "message": "Analyzer pipeline completed.",
   "data": {
-    "result": {
-      "task_id": "",
-      "current": "finish",
-      "last_completed": "finish",
-      "insights": {},
-      "error_patterns": {}
-    },
+    "task_id": "",
+    "version_id": "default",
+    "current": "finish",
+    "last_completed": "finish",
+    "output_dir": "",
+    "historical_comparison": {},
     "state": {}
   },
   "error": null

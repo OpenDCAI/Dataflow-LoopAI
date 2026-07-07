@@ -69,8 +69,11 @@ def update_analyzer_state_via_configer(
     Non-schema runtime fields such as current/last_completed stay in memory and
     event stream; Configer intentionally rejects unknown fields.
     """
-    from loopai.schema.states import get_state_config_schema
-    from loopai.skills.Configer import update_configer_task_state_config
+    try:
+        from loopai.schema.states import get_state_config_schema
+        from loopai.skills.Configer import update_configer_task_state_config
+    except Exception as exc:
+        return build_config_error(exc, "Analyzer Configer sync is unavailable.")
 
     analyzer = state.get("analyzer") if isinstance(state, dict) else {}
     if not isinstance(analyzer, dict):

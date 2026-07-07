@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .state_bridge import load_system_runtime_config
@@ -138,6 +139,12 @@ def resolve_analyzer_runtime_config(
         analyzer.get("run_id"),
         _DEFAULT_VERSION_ID,
     )
+    output_dir = _first_non_empty(
+        kwargs.get("output_dir"),
+        analyzer.get("output_dir"),
+        state.get("output_dir") if isinstance(state, dict) else None,
+        "./outputs",
+    )
 
     require_api_key = kwargs.get("require_api_key")
     needs_llm = bool(require_api_key) if require_api_key is not None else bool(model or base_url)
@@ -147,6 +154,8 @@ def resolve_analyzer_runtime_config(
     if isinstance(state, dict):
         if task_id and not state.get("task_id"):
             state["task_id"] = task_id
+        if output_dir and not state.get("output_dir"):
+            state["output_dir"] = output_dir
         if db_path:
             state["DB_PATH"] = db_path
 
@@ -164,11 +173,21 @@ def resolve_analyzer_runtime_config(
         analyzer["version_id"] = str(version_id)
     if db_path:
         analyzer["db_path"] = db_path
+    if output_dir:
+        analyzer["output_dir"] = output_dir
+    if task_id and version_id and output_dir:
+        analyzer["runtime_output_dir"] = str(
+            Path(str(output_dir))
+            / str(task_id)
+            / "analyzer"
+            / str(version_id)
+        )
 
     return {
         "thread_id": str(task_id or _DEFAULT_THREAD_ID),
         "version_id": str(version_id or _DEFAULT_VERSION_ID),
         "checkpoint_path": str(checkpoint_path or _DEFAULT_CHECKPOINT_PATH),
+        "output_dir": str(output_dir or "./outputs"),
         "db_path": db_path,
         "analyzer_model": model,
         "analyzer_base_url": base_url,

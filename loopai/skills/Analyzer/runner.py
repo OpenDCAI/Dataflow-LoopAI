@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from loopai.common.exception import ErrorCode, build_error_payload, build_success_payload
+from loopai.common.exception import (
+    ErrorCode,
+    build_error_payload,
+    build_success_payload,
+    emit_error,
+    emit_success,
+)
 
-from .event_tool import StreamEvent, get_analyzer_event_writer
 from .pipeline_runner import (
     ANALYZER_PIPELINE_STEPS,
     load_analyzer_checkpoint,
@@ -44,6 +49,7 @@ def run_analyzer_standalone(
     from_node: Optional[str] = None,
     checkpoint_path: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
+    emit_status: bool = True,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Run Analyzer through the standalone function pipeline.
@@ -79,14 +85,18 @@ def run_analyzer_standalone(
     if state is None:
         state = load_analyzer_state_from_configer(task_id=runtime["thread_id"])
 
-    output_dir = state.get("output_dir") or (state.get("analyzer") or {}).get("output_dir") or "./outputs"
-    writer = get_analyzer_event_writer(
-        context_id=runtime["thread_id"],
-        log_file_path=output_dir,
-        stdout=kwargs.get("stream_stdout"),
-        state=state,
-        version_id=runtime["version_id"],
-    )
+    writer = kwargs.get("writer")
+    if writer is None:
+        from .event_tool import get_analyzer_event_writer
+
+        output_dir = runtime["output_dir"] or state.get("output_dir") or (state.get("analyzer") or {}).get("output_dir") or "./outputs"
+        writer = get_analyzer_event_writer(
+            context_id=runtime["thread_id"],
+            log_file_path=output_dir,
+            stdout=kwargs.get("stream_stdout"),
+            state=state,
+            version_id=runtime["version_id"],
+        )
     try:
         result = run_analyzer_pipeline(
             state=state,
@@ -99,30 +109,31 @@ def run_analyzer_standalone(
             writer=writer,
         )
     except Exception as exc:
-        writer(StreamEvent(
-            current="analyzer.failed",
-            progress=1.0,
-            message="Analyzer failed",
-            status="failed",
-            error={"type": type(exc).__name__, "detail": str(exc)},
-        ))
-        if hasattr(writer, "set_failed"):
-            writer.set_failed()
+        if emit_status:
+            emit_error(
+                exc,
+                code=ErrorCode.UNHANDLED_EXCEPTION,
+                recoverable=True,
+                message="Analyzer pipeline failed.",
+                stream_writer=writer,
+                exit_process=False,
+                print_payload=False,
+            )
         raise
 
-    writer(StreamEvent(
-        current="analyzer.completed",
-        progress=1.0,
-        message="Analyzer completed",
-        status="completed",
-        data={
-            "task_id": result.get("task_id") if isinstance(result, dict) else runtime["thread_id"],
-            "version_id": runtime["version_id"],
-            "current": result.get("current") if isinstance(result, dict) else None,
-        },
-    ))
-    if hasattr(writer, "set_completed"):
-        writer.set_completed()
+    if emit_status:
+        emit_success(
+            data={
+                "task_id": result.get("task_id") if isinstance(result, dict) else runtime["thread_id"],
+                "version_id": runtime["version_id"],
+                "current": result.get("current") if isinstance(result, dict) else None,
+                "last_completed": result.get("last_completed") if isinstance(result, dict) else None,
+            },
+            message="Analyzer pipeline completed.",
+            stream_writer=writer,
+            exit_process=False,
+            print_payload=False,
+        )
     return result
 
 

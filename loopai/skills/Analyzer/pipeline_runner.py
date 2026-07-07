@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
-from .event_tool import StreamEvent
+from loopai.schema.events import StreamEvent
 from .state_bridge import load_analyzer_state_from_configer, update_analyzer_state_via_configer
 
 
