@@ -523,6 +523,106 @@ export default {
         "en": "Probing",
         "zh": "探测中"
     },
+    "Model Pool": {
+        "en": "Model Pool",
+        "zh": "模型池"
+    },
+    "Default Model": {
+        "en": "Default Model",
+        "zh": "默认模型"
+    },
+    "Codex Model": {
+        "en": "Codex Model",
+        "zh": "Codex 模型"
+    },
+    "Default Tier": {
+        "en": "Default Tier",
+        "zh": "默认层级"
+    },
+    "Proxy URL": {
+        "en": "Proxy URL",
+        "zh": "代理地址"
+    },
+    "Registered Models": {
+        "en": "Registered Models",
+        "zh": "已注册模型"
+    },
+    "Add Model": {
+        "en": "Add Model",
+        "zh": "添加模型"
+    },
+    "Tier": {
+        "en": "Tier",
+        "zh": "层级"
+    },
+    "Name": {
+        "en": "Name",
+        "zh": "名称"
+    },
+    "Model Name": {
+        "en": "Model Name",
+        "zh": "模型名"
+    },
+    "Base URL": {
+        "en": "Base URL",
+        "zh": "接口地址"
+    },
+    "API Key": {
+        "en": "API Key",
+        "zh": "API 密钥"
+    },
+    "Max Worker": {
+        "en": "Max Worker",
+        "zh": "最大并发"
+    },
+    "Response API": {
+        "en": "Response API",
+        "zh": "响应接口"
+    },
+    "Response Format": {
+        "en": "Response Format",
+        "zh": "响应格式"
+    },
+    "Enabled": {
+        "en": "Enabled",
+        "zh": "启用"
+    },
+    "Disabled": {
+        "en": "Disabled",
+        "zh": "停用"
+    },
+    "Requests": {
+        "en": "Requests",
+        "zh": "请求数"
+    },
+    "Errors": {
+        "en": "Errors",
+        "zh": "错误数"
+    },
+    "Latency": {
+        "en": "Latency",
+        "zh": "延迟"
+    },
+    "Tokens": {
+        "en": "Tokens",
+        "zh": "Token 用量"
+    },
+    "Avg Latency": {
+        "en": "Avg Latency",
+        "zh": "平均延迟"
+    },
+    "Probing models...": {
+        "en": "Probing models...",
+        "zh": "正在探测模型…"
+    },
+    "Probe finished.": {
+        "en": "Probe finished.",
+        "zh": "探测完成。"
+    },
+    "Probe failed.": {
+        "en": "Probe failed.",
+        "zh": "探测失败。"
+    },
     "Health": {
         "en": "Health",
         "zh": "健康分"
