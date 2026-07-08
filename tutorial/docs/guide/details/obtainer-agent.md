@@ -1,6 +1,6 @@
-# Obtainer Agent 详细指南
+# ObtainerCLI/DataMixer 详细指南
 
-`ObtainerAgent` 负责根据已有问题诊断结果，获取更合适的数据。它更偏向“定向补数”，目标不是泛化抓取，而是围绕当前模型短板去补充更有效的候选样本。
+旧的 LangGraph `ObtainerAgent` 已退休。现在应使用 ObtainerCLI/DataMixer 根据已有问题诊断结果获取更合适的数据，并完成下载、入湖、dataset card 注册、派生字段校验和训练数据导出。
 
 ## 核心职责
 
@@ -17,7 +17,7 @@
 
 ## 关键配置
 
-Obtainer 的配置通常写在 `state.obtainer` 或 `starter.yaml` 的 `default_states.obtainer` 中。
+ObtainerCLI/DataMixer 的外层 worker 可以通过显式 `--model` 或运行时配置启动；SearchAgent 的检索决策模型默认优先读取 starter DB / `starter.yaml` 中注册的 `system.starter_*` 配置，不从 warehouse model pool 继承。只有显式传 `--model-name` / `--base-url` / `--api-key` 时才会覆盖 starter 默认值；`OBTAINER_*` 仅作为没有 starter 配置时的兜底。
 
 | 字段 | 作用 |
 | --- | --- |

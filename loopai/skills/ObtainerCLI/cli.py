@@ -394,6 +394,7 @@ def build_parser() -> argparse.ArgumentParser:
     searchagent.add_argument("--max-deep-queries", type=int, default=3)
     searchagent.add_argument("--max-deep-pages", type=int, default=3)
     searchagent.add_argument("--deep-context-chars", type=int, default=12000)
+    searchagent.add_argument("--parallelism", type=int, default=3)
     searchagent.add_argument("--tavily-api-key", default=os.getenv("TAVILY_API_KEY", ""))
     searchagent.add_argument("--kaggle-username", default=os.getenv("KAGGLE_USERNAME", ""))
     searchagent.add_argument("--kaggle-key", default=os.getenv("KAGGLE_KEY", ""))
@@ -484,6 +485,7 @@ def run(argv: list[str] | None = None) -> int:
                 max_deep_queries=args.max_deep_queries,
                 max_deep_pages=args.max_deep_pages,
                 deep_context_chars=args.deep_context_chars,
+                parallelism=args.parallelism,
                 debug=args.debug,
             )
         elif args.command == "download" and args.download_command == "manifest":

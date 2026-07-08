@@ -456,7 +456,7 @@ def mapping_node(state: LoopAIState) -> LoopAIState:
     向后兼容的 mapping_node 函数
     
     注意: 这个函数只是一个入口点，实际的映射逻辑在子图中实现。
-    在 ObtainerAgent 中应该使用 MappingSubgraph 作为子图。
+    旧调用方应使用 MappingSubgraph 作为子图。
     
     如果直接调用这个函数（不在子图上下文中），它会检查状态并返回。
     """
@@ -479,4 +479,3 @@ def mapping_node(state: LoopAIState) -> LoopAIState:
     # 如果直接调用，提示用户使用子图
     logger.info("To use full mapping functionality, please use MappingSubgraph")
     return state
-

@@ -7,7 +7,7 @@ loopai-obtainercli dm --root /path/to/warehouse <datamixer-command> --json
 loopai-obtainercli dm --lake .loopai/lake.yaml <datamixer-command> --json
 ```
 
-`searchagent` 和 `download manifest` 是 Obtainer 的数据采集桥，用于发现和下载候选数据集。下载完成后，初始化、入湖、处理、索引、召回、配比、出湖、snapshot 和 lineage 都必须回到 `loopai-obtainercli dm ...`。
+`searchagent` 和 `download manifest` 是 acquisition worker 内部的数据采集桥，用于发现和下载候选数据集。正常产品流程中，外层 Codex 不应直接调用它们，而应启动 `dataset-acquisition-agent`。下载完成后，初始化、入湖、处理、索引、召回、配比、出湖、snapshot 和 lineage 都必须回到 `loopai-obtainercli dm ...`。
 
 ## 1. 环境与事件
 
@@ -138,33 +138,19 @@ Worker 内部策略会要求：先把报告解析成明确搜集意图，候选�
 校对并写 rejections，再下载；单数据集最多 100000 行；下载后规范 JSONL；
 入湖必须走 DataMixer `ingest` 或 `agent-ingest`；最终写 `final_report.json`。
 
-底层 SearchAgent 与下载命令仍保留为采集桥，主要供 worker 内部调用或人工调试。
-手工使用时，不要只把整份报告丢给搜索。
-
-```bash
-loopai-obtainercli searchagent \
-  --query-file ./outputs/analyzer_report.md \
-  --objective "collect buggy and fixed Python code-pair datasets covering syntax, logic, runtime, and assertion failures for SFT training" \
-  --keywords "program repair dataset, buggy fixed code pairs, Python SyntaxError fix, runtime exception repair, assertion failure repair" \
-  --output-root ./outputs \
-  --max-deep-queries 3 \
-  --max-deep-pages 3 \
-  --json
-```
+底层 SearchAgent 与下载命令仍保留为采集桥，但只供 worker 内部调用或人工调试。
+外层 Codex 在正常工作流中不要创建 task JSON、不要直接调用 `searchagent`，也不要直接调用 `download manifest`。
 
 检查 `searchagent_manifest.json` 后，先剔除不相关数据集并写 filtered manifest
 和 rejection report，再下载候选数据集。采集桥对单个数据集最多写出 100000 行：
 
 ```bash
-loopai-obtainercli download manifest \
-  --manifest ./outputs/searchagent_manifest.json \
-  --output-root ./outputs/downloads \
-  --split train \
-  --max-rows 100000 \
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent status \
+  --run ./outputs/acquisition_run \
   --json
 ```
 
-`download manifest` 会强制执行单数据集 100000 行上限；即使传 `--max-rows 0` 或更大的值，也会按该上限写出。生产 SFT 的最终规模、配比和出湖必须继续通过 DataMixer recipe 完成，不能把下载阶段的多个文件拼接为最终训练集。
+worker 内部的 `download manifest` 会强制执行单数据集 100000 行上限；即使传 `--max-rows 0` 或更大的值，也会按该上限写出。生产 SFT 的最终规模、配比和出湖必须继续通过 DataMixer recipe 完成，不能把下载阶段的多个文件拼接为最终训练集。
 
 ## 4. 入湖
 

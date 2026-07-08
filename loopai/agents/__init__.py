@@ -4,7 +4,6 @@ __all__ = [
     "JudgerAgent",
     "AnalyzerAgent",
     "run_analyzer_standalone",
-    "ObtainerAgent",
     "TrainerAgent",
 ]
 
@@ -25,9 +24,6 @@ def __getattr__(name):
     if name == "run_analyzer_standalone":
         from .Analyzer.standalone import run_analyzer_standalone
         return run_analyzer_standalone
-    if name == "ObtainerAgent":
-        from .Obtainer.obtainer_agent import ObtainerAgent
-        return ObtainerAgent
     if name == "TrainerAgent":
         from .Trainer.trainer_agent import TrainerAgent
         return TrainerAgent

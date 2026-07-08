@@ -27,6 +27,7 @@ from api.app.controllers.obtainer import (
     delete_datamixer_lake,
     get_lake_monitor,
     get_datamixer_lake_current,
+    get_datamixer_commands,
     load_datamixer_lake,
     run_datamixer_cli,
     scan_datamixer_lakes,
@@ -232,6 +233,12 @@ def test_auto_embed_commits_completed_batches_and_updates_monitor_delta(tmp_path
         assert monitor["embedding"]["indexed_records"] == 3
         assert monitor["embedding"]["pending_records"] == 0
         assert monitor["tables"]["embeddings"]["count"] == 3
+        cluster_files = list((warehouse / "clusters").glob("*.json"))
+        assert len(cluster_files) == 1
+        cluster_state = json.loads(cluster_files[0].read_text(encoding="utf-8"))
+        assert cluster_state["dataset_id"].startswith("ds_")
+        assert len(cluster_state["assignments"]) == 3
+        assert cluster_state["centroids"]
         assert [call["model"] for call in _EmbeddingHandler.calls[-2:]] == [
             "test-embedding-model",
             "test-embedding-model",
@@ -281,6 +288,54 @@ def test_datamixer_cli_endpoint_uses_warehouse_from_lake_pointer(tmp_path: Path)
     assert response["code"] == 200
     assert response["data"]["exit"] == 0
     assert response["data"]["output"]["warehouse"] == str(lake_root / "warehouse")
+
+
+def test_datamixer_cli_endpoint_accepts_ingest_validation_args(tmp_path: Path) -> None:
+    lake_root = tmp_path / "lake"
+    warehouse = lake_root / "warehouse"
+    init_lake(root=lake_root, if_not_exists=True)
+    input_path = tmp_path / "input.jsonl"
+    card_path = tmp_path / "dataset.md"
+    _write_jsonl(
+        input_path,
+        [
+            {"id": 1, "question": "1+1?", "answer": "2", "reasoning": "addition"},
+            {"id": 2, "question": "2+2?", "answer": "4", "reasoning": "addition"},
+        ],
+    )
+    card_path.write_text("# frontend_ingest_check\n\nTest dataset card.\n", encoding="utf-8")
+
+    response = asyncio.run(
+        run_datamixer_cli(
+            DataMixerCliRequest(
+                root=str(warehouse),
+                line=(
+                    f"ingest frontend_ingest_check --file {input_path} "
+                    f"--dataset-card {card_path} --source-row-count 2 --derived-field reasoning"
+                ),
+            )
+        )
+    )
+
+    assert response["code"] == 200
+    assert response["data"]["exit"] == 0
+    assert response["data"]["output"]["ingested"] == 2
+    assert response["data"]["output"]["validated_rows"] == 2
+    assert response["data"]["output"]["derived_fields"] == ["reasoning"]
+    assert (warehouse / "dataset_cards" / "frontend_ingest_check.md").exists()
+
+
+def test_datamixer_command_payload_exposes_ingest_validation_args() -> None:
+    response = asyncio.run(get_datamixer_commands())
+    commands = "\n".join(
+        command
+        for group in response["data"]["groups"]
+        for command in group.get("commands", [])
+    )
+
+    assert "--dataset-card" in commands
+    assert "--source-row-count" in commands
+    assert "--derived-field" in commands
 
 
 def test_datamixer_lake_management_endpoints_load_and_unload_pointer(tmp_path: Path) -> None:

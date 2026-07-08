@@ -190,29 +190,43 @@
                 </section>
 
                 <template v-else>
-                <section class="status-strip">
-                    <div class="health-score" :class="healthLevel">
-                        <span>{{ summary.health_score ?? 0 }}</span>
-                        <p>{{ local('Health') }}</p>
+                <section class="lake-runtime-panel" :class="runtimeLevel">
+                    <div class="runtime-primary">
+                        <div class="runtime-icon">
+                            <i class="ms-Icon" :class="`ms-Icon--${runtimeIcon}`"></i>
+                        </div>
+                        <div class="runtime-copy">
+                            <p class="runtime-title">{{ runtimeTitle }}</p>
+                            <p class="runtime-subtitle" :title="runtimeSubtitle">{{ runtimeSubtitle }}</p>
+                        </div>
                     </div>
-                    <div class="status-meta">
-                        <p class="status-title">{{ statusTitle }}</p>
-                        <p class="status-subtitle" :title="statusSubtitle">{{ statusSubtitle }}</p>
+                    <div class="runtime-states">
+                        <button
+                            v-for="item in runtimeCards"
+                            :key="item.key"
+                            type="button"
+                            class="runtime-state"
+                            :class="item.level"
+                            @click="setDetail(item.label, item.payload)"
+                        >
+                            <span>{{ item.label }}</span>
+                            <strong>{{ item.value }}</strong>
+                            <small>{{ item.note }}</small>
+                        </button>
                     </div>
-                    <div class="status-badges">
-                        <button type="button" class="status-badge" @click="setDetail('DataMixer Config', monitor?.config)">
-                            <i class="ms-Icon ms-Icon--Database"></i>
-                            <span>{{ catalogLabel }}</span>
+                    <div class="runtime-actions">
+                        <button type="button" class="secondary" @click="setDetail('Lake Runtime', runtimeDetail)">
+                            <i class="ms-Icon ms-Icon--Info"></i>
+                            <span>{{ local('Details') }}</span>
                         </button>
                         <button
                             type="button"
-                            class="status-badge warning"
-                            :class="{ active: warnings.length > 0 }"
-                            :title="local('Warnings')"
-                            @click="setDetail(local('Warnings'), warnings)"
+                            :disabled="loading || rebuilding"
+                            :class="{ attention: cacheActionRequired }"
+                            @click="rebuildMonitorCache"
                         >
-                            <i class="ms-Icon ms-Icon--Warning"></i>
-                            <span>{{ warnings.length }}</span>
+                            <i class="ms-Icon ms-Icon--Sync"></i>
+                            <span>{{ rebuilding ? local('Rebuilding') : local('Rebuild Cache') }}</span>
                         </button>
                     </div>
                 </section>
@@ -258,7 +272,7 @@
                             <textarea
                                 v-model="commandLine"
                                 spellcheck="false"
-                                placeholder="status"
+                                placeholder="lake current"
                                 @keydown.ctrl.enter.prevent="runCommand"
                             ></textarea>
                             <div class="command-actions">
@@ -266,8 +280,8 @@
                                     <i class="ms-Icon ms-Icon--Play"></i>
                                     <span>{{ commandRunning ? local('Running') : local('Run') }}</span>
                                 </button>
-                                <button type="button" class="secondary" @click="applyCommandTemplate('status')">
-                                    status
+                                <button type="button" class="secondary" @click="applyCommandTemplate('lake current')">
+                                    lake current
                                 </button>
                                 <button type="button" class="secondary" @click="applyCommandTemplate('lineage list')">
                                     lineage
@@ -497,7 +511,7 @@ export default {
             detail: null,
             commandGroups: [],
             commandEndpoint: 'loopai-obtainercli dm',
-            commandLine: 'status',
+            commandLine: 'lake current',
             commandRunning: false,
             commandResult: null,
             lakeActionRunning: false,
@@ -533,28 +547,138 @@ export default {
             if (this.monitor?.lake_root) return `${this.monitor.lake_root} - ${this.monitor.lake_config || this.lakePath}`
             return this.lakePath
         },
-        statusTitle() {
-            if (!this.monitor) return this.local('No DataMixer warehouse loaded')
-            if (this.monitor.cache_status === 'cache_missing') return this.local('Monitor cache is missing')
-            if (this.monitor.cache_status === 'rebuilding') return this.local('Monitor cache is rebuilding')
-            if (this.monitor.stale) return this.local('Monitor cache is stale')
-            if (this.warnings.length > 0) return this.local('DataMixer warehouse needs attention')
-            return this.local('DataMixer warehouse is healthy')
+        activeWarehouse() {
+            return this.monitor?.warehouse || this.monitor?.config?.warehouse || this.lakeState?.warehouse || this.activeLake?.warehouse || ''
         },
-        statusSubtitle() {
-            if (!this.monitor) return this.local('Waiting for monitor response')
-            if (this.monitor.stale_reason) return `${this.local('Cache')} ${this.monitor.cache_status || 'stale'} · ${this.monitor.stale_reason}`
-            if (this.monitor.cache_status) return `${this.local('Cache')} ${this.monitor.cache_status} · ${this.local('Last refresh')} ${this.formatTime(this.monitor.refreshed_at)}`
-            return `${this.local('Last refresh')} ${this.formatTime(this.monitor.refreshed_at)}`
+        cacheStatus() {
+            return this.monitor?.cache_status || (this.monitor ? 'fresh' : 'missing')
         },
-        catalogLabel() {
-            return this.monitor?.config?.catalog || 'datamixer'
+        cacheLevel() {
+            const status = this.cacheStatus
+            if (status === 'fresh') return 'good'
+            if (status === 'rebuilding') return 'running'
+            if (status === 'cache_missing' || status === 'stale') return 'warn'
+            if (status === 'error') return 'bad'
+            return 'missing'
         },
-        healthLevel() {
-            const score = Number(this.summary.health_score || 0)
-            if (score >= 85) return 'good'
-            if (score >= 60) return 'warn'
-            return 'bad'
+        rebuildState() {
+            return this.monitor?.rebuild || { status: 'idle', job_id: '', message: '' }
+        },
+        rebuildLevel() {
+            const status = String(this.rebuildState.status || 'idle').toLowerCase()
+            if (['queued', 'running', 'rebuilding'].includes(status)) return 'running'
+            if (status === 'error') return 'bad'
+            return 'good'
+        },
+        lakePointerLevel() {
+            if (!this.monitor && this.activeLakeLabel === 'missing') return 'missing'
+            if (!this.activeWarehouse) return 'missing'
+            if (this.monitor?.stale && this.cacheStatus !== 'rebuilding') return 'warn'
+            return 'good'
+        },
+        embeddingLevel() {
+            const probeStatus = String(this.embedding?.probe?.status || '').toLowerCase()
+            if (probeStatus.includes('error') || probeStatus.includes('fail')) return 'bad'
+            if (Number(this.embedding.pending_records || 0) > 0) return 'running'
+            if (this.embedding?.auto_embed === 'true' || this.embedding?.embedding_model) return 'good'
+            return 'missing'
+        },
+        runtimeLevel() {
+            if (!this.monitor && this.activeLakeLabel === 'missing') return 'missing'
+            if (this.cacheLevel === 'bad' || this.rebuildLevel === 'bad') return 'bad'
+            if (this.cacheLevel === 'running' || this.rebuildLevel === 'running') return 'running'
+            if (this.cacheLevel === 'warn' || this.lakePointerLevel === 'warn') return 'warn'
+            return 'good'
+        },
+        runtimeIcon() {
+            if (this.runtimeLevel === 'bad') return 'ErrorBadge'
+            if (this.runtimeLevel === 'running') return 'Sync'
+            if (this.runtimeLevel === 'warn') return 'Warning'
+            if (this.runtimeLevel === 'missing') return 'PlugDisconnected'
+            return 'Database'
+        },
+        runtimeTitle() {
+            if (!this.monitor && this.activeLakeLabel === 'missing') return this.local('No DataMixer lake loaded')
+            if (this.cacheStatus === 'cache_missing') return this.local('Lake monitor cache is missing')
+            if (this.cacheStatus === 'rebuilding') return this.local('Lake monitor cache is rebuilding')
+            if (this.cacheStatus === 'error') return this.local('Lake monitor cache failed')
+            if (this.monitor?.stale) return this.local('Lake monitor cache is stale')
+            if (this.warnings.length > 0) return this.local('Lake runtime has warnings')
+            return this.local('Lake runtime is ready')
+        },
+        runtimeSubtitle() {
+            if (!this.monitor) return this.local('Load a DataMixer lake or scan available warehouses.')
+            const parts = [
+                `${this.local('Lake')} ${this.monitor.lake_config || this.lakePath}`,
+                `${this.local('Cache')} ${this.cacheStatus}`,
+                `${this.local('Updated')} ${this.formatTime(this.monitor.updated_at || this.monitor.refreshed_at)}`
+            ]
+            if (this.monitor.stale_reason) parts.push(this.monitor.stale_reason)
+            return parts.join(' · ')
+        },
+        cacheActionRequired() {
+            return ['cache_missing', 'stale', 'error'].includes(this.cacheStatus)
+        },
+        runtimeCards() {
+            return [
+                {
+                    key: 'lake',
+                    label: this.local('Lake'),
+                    value: this.activeLakeLabel,
+                    note: this.shortPath(this.activeWarehouse || this.lakePath),
+                    level: this.lakePointerLevel,
+                    payload: {
+                        lake_config: this.monitor?.lake_config || this.lakePath,
+                        lake_root: this.monitor?.lake_root || this.activeLake?.lake_root || '',
+                        warehouse: this.activeWarehouse,
+                        state: this.lakeState,
+                        active: this.activeLake
+                    }
+                },
+                {
+                    key: 'cache',
+                    label: this.local('Cache'),
+                    value: this.cacheStatus,
+                    note: this.monitor?.stale_reason || this.formatTime(this.monitor?.updated_at || this.monitor?.refreshed_at),
+                    level: this.cacheLevel,
+                    payload: {
+                        cache_status: this.cacheStatus,
+                        stale: Boolean(this.monitor?.stale),
+                        stale_reason: this.monitor?.stale_reason || '',
+                        signature: this.monitor?.signature || {},
+                        catalog_db_size: this.monitor?.catalog_db_size,
+                        catalog_db_wal_size: this.monitor?.catalog_db_wal_size,
+                        audit_signature: this.monitor?.audit_signature || {}
+                    }
+                },
+                {
+                    key: 'rebuild',
+                    label: this.local('Rebuild'),
+                    value: this.rebuildState.status || 'idle',
+                    note: this.rebuildState.message || this.rebuildState.job_id || '-',
+                    level: this.rebuildLevel,
+                    payload: this.rebuildState
+                },
+                {
+                    key: 'embedding',
+                    label: this.local('Embedding'),
+                    value: this.formatPercent(this.embedding.coverage || 0),
+                    note: `${this.formatNumber(this.embedding.pending_records || 0)} ${this.local('pending')}`,
+                    level: this.embeddingLevel,
+                    payload: this.embedding
+                }
+            ]
+        },
+        runtimeDetail() {
+            return {
+                title: this.runtimeTitle,
+                lake: this.runtimeCards[0]?.payload,
+                cache: this.runtimeCards[1]?.payload,
+                rebuild: this.rebuildState,
+                embedding: this.embedding,
+                summary: this.summary,
+                warnings: this.warnings
+            }
         },
         operationSurface() {
             return [
@@ -563,7 +687,7 @@ export default {
                     label: this.local('Monitor'),
                     note: 'GET /obtainer/lake/monitor',
                     state: 'available',
-                    command: 'status'
+                    command: 'lake current'
                 },
                 {
                     key: 'embedding',
@@ -577,7 +701,7 @@ export default {
                     label: this.local('Ingest / Agent Ingest'),
                     note: 'POST /obtainer/datamixer/cli',
                     state: 'available',
-                    command: 'agent-ingest /path/to/file --engine builtin'
+                    command: 'ingest DATASET --file /path/to/input.jsonl --dataset-card /path/to/DATASET.md --source-row-count N --derived-field FIELD'
                 },
                 {
                     key: 'recipe',
@@ -1229,6 +1353,13 @@ export default {
             if (!value) return '-'
             return String(value).replace('T', ' ').slice(0, 19)
         },
+        shortPath(value) {
+            const text = String(value || '')
+            if (!text) return '-'
+            const parts = text.split('/').filter(Boolean)
+            if (parts.length <= 3) return text
+            return `.../${parts.slice(-3).join('/')}`
+        },
         formatCell(value) {
             if (value === undefined || value === null || value === '') return '-'
             if (typeof value === 'object') return JSON.stringify(value)
@@ -1341,7 +1472,7 @@ export default {
 }
 
 .error-banner,
-.status-strip,
+.lake-runtime-panel,
 .surface-panel,
 .dm-panel,
 .kpi-card {
@@ -1417,94 +1548,187 @@ export default {
     }
 }
 
-.status-strip {
-    @include Vcenter;
-
+.lake-runtime-panel {
+    display: grid;
+    grid-template-columns: minmax(260px, 0.9fr) minmax(420px, 1.45fr) auto;
+    align-items: stretch;
     gap: 12px;
-    min-height: 72px;
+    min-height: 112px;
     padding: 12px;
 
-    .health-score {
-        @include HcenterVcenterC;
+    &.good {
+        border-color: rgba(20, 145, 116, 0.2);
+    }
+
+    &.running {
+        border-color: rgba(64, 99, 170, 0.26);
+    }
+
+    &.warn {
+        border-color: rgba(203, 101, 36, 0.3);
+    }
+
+    &.bad {
+        border-color: rgba(185, 72, 83, 0.3);
+    }
+
+    &.missing {
+        border-color: rgba(104, 121, 141, 0.22);
+    }
+
+    .runtime-primary {
+        @include Vcenter;
+
+        gap: 12px;
+        min-width: 0;
+    }
+
+    .runtime-icon {
+        @include HcenterVcenter;
 
         width: 52px;
         height: 52px;
         flex-shrink: 0;
-        border-radius: 50%;
+        border-radius: 8px;
         color: white;
+        background: rgba(64, 99, 170, 1);
+        font-size: 20px;
+    }
 
-        &.good {
-            background: rgba(20, 145, 116, 1);
-        }
+    &.good .runtime-icon {
+        background: rgba(20, 145, 116, 1);
+    }
 
-        &.warn {
-            background: rgba(203, 101, 36, 1);
-        }
+    &.warn .runtime-icon {
+        background: rgba(203, 101, 36, 1);
+    }
 
-        &.bad {
-            background: rgba(185, 72, 83, 1);
+    &.bad .runtime-icon {
+        background: rgba(185, 72, 83, 1);
+    }
+
+    &.missing .runtime-icon {
+        background: rgba(104, 121, 141, 1);
+    }
+
+    .runtime-copy {
+        min-width: 0;
+    }
+
+    .runtime-title {
+        color: rgba(34, 38, 46, 1);
+        font-size: 17px;
+        font-weight: 700;
+    }
+
+    .runtime-subtitle {
+        @include nowrap;
+
+        margin-top: 7px;
+        color: rgba(90, 96, 108, 1);
+        font-size: 12px;
+    }
+
+    .runtime-states {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .runtime-state {
+        min-width: 0;
+        min-height: 84px;
+        padding: 10px;
+        border: 1px solid rgba(48, 55, 67, 0.08);
+        border-radius: 6px;
+        background: rgba(247, 248, 251, 1);
+        cursor: pointer;
+        text-align: left;
+
+        span,
+        strong,
+        small {
+            @include nowrap;
+
+            display: block;
         }
 
         span {
-            font-size: 18px;
+            color: rgba(94, 100, 112, 1);
+            font-size: 11px;
+        }
+
+        strong {
+            margin-top: 7px;
+            color: rgba(34, 38, 46, 1);
+            font-size: 15px;
             font-weight: 700;
-            line-height: 1;
         }
 
-        p {
-            margin-top: 3px;
-            font-size: 10px;
-            line-height: 1;
+        small {
+            margin-top: 7px;
+            color: rgba(105, 111, 123, 1);
+            font-size: 11px;
+        }
+
+        &.good {
+            border-color: rgba(20, 145, 116, 0.18);
+            background: rgba(241, 250, 247, 1);
+        }
+
+        &.running {
+            border-color: rgba(64, 99, 170, 0.22);
+            background: rgba(242, 246, 255, 1);
+        }
+
+        &.warn {
+            border-color: rgba(203, 101, 36, 0.22);
+            background: rgba(255, 248, 241, 1);
+        }
+
+        &.bad {
+            border-color: rgba(185, 72, 83, 0.24);
+            background: rgba(255, 247, 247, 1);
+        }
+
+        &.missing {
+            background: rgba(246, 247, 249, 1);
         }
     }
 
-    .status-meta {
-        flex: 1;
-        min-width: 0;
-
-        .status-title {
-            font-size: 17px;
-            font-weight: 600;
-            color: rgba(35, 38, 45, 1);
-        }
-
-        .status-subtitle {
-            @include nowrap;
-
-            margin-top: 5px;
-            color: rgba(92, 97, 107, 1);
-            font-size: 13px;
-        }
-    }
-
-    .status-badges {
-        @include HendVcenter;
-
+    .runtime-actions {
+        display: grid;
+        align-content: center;
         gap: 8px;
-        flex-wrap: wrap;
-    }
+        min-width: 132px;
 
-    .status-badge {
-        @include HcenterVcenter;
+        button {
+            @include HcenterVcenter;
 
-        gap: 6px;
-        min-width: 58px;
-        height: 36px;
-        padding: 0 12px;
-        border: none;
-        border-radius: 18px;
-        color: rgba(64, 99, 170, 1);
-        background: rgba(64, 99, 170, 0.1);
-        cursor: pointer;
+            gap: 6px;
+            min-height: 34px;
+            padding: 0 12px;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            background: rgba(64, 99, 170, 1);
+            cursor: pointer;
+            white-space: nowrap;
 
-        &.warning {
-            color: rgba(20, 120, 96, 1);
-            background: rgba(20, 145, 116, 0.12);
-        }
+            &:disabled {
+                opacity: 0.55;
+                cursor: default;
+            }
 
-        &.warning.active {
-            color: rgba(181, 83, 20, 1);
-            background: rgba(203, 101, 36, 0.14);
+            &.secondary {
+                color: rgba(64, 99, 170, 1);
+                background: rgba(64, 99, 170, 0.1);
+            }
+
+            &.attention {
+                background: rgba(203, 101, 36, 1);
+            }
         }
     }
 }
@@ -2265,6 +2489,14 @@ export default {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .lake-runtime-panel {
+        grid-template-columns: minmax(0, 1fr);
+
+        .runtime-actions {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+
     .main-grid,
     .detail-grid,
     .command-panel .command-layout,
@@ -2329,9 +2561,16 @@ export default {
         }
     }
 
-    .status-strip {
-        align-items: flex-start;
-        flex-direction: column;
+    .lake-runtime-panel {
+        grid-template-columns: minmax(0, 1fr);
+
+        .runtime-states {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .runtime-actions {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
     }
 
     .warehouse-panel {

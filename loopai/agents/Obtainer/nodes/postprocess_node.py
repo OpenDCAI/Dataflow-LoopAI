@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional, Tuple, Set
 from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState
-from loopai.agents import BaseAgent
+from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
 from loopai.agents.Obtainer.utils.data_convertor import DataConvertor, _ensure_hf_cache_env

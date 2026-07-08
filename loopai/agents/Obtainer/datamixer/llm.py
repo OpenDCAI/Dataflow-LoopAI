@@ -18,7 +18,14 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from dataclasses import replace
 
+from loopai.utils.model_pool import (
+    StarterModelPool,
+    chat_completions_url,
+    load_starter_system_config_sync,
+    responses_url,
+)
 from .models import ModelSpec
 
 
@@ -84,6 +91,7 @@ def _extract_responses(resp: dict) -> str:
 
 
 def _call(spec: ModelSpec, messages, json_mode: bool) -> str:
+    spec = _proxy_spec_if_available(spec)
     if spec.response_format == "openaichat":
         resp = _post(spec.api_url, _chat_payload(spec, messages, json_mode),
                      spec.resolved_key(), spec.timeout)
@@ -93,6 +101,27 @@ def _call(spec: ModelSpec, messages, json_mode: bool) -> str:
                      spec.resolved_key(), spec.timeout)
         return _extract_responses(resp)
     raise ValueError(f"unknown response_format: {spec.response_format!r}")
+
+
+def _proxy_spec_if_available(spec: ModelSpec) -> ModelSpec:
+    system = load_starter_system_config_sync(prefer_db=True)
+    model_value = system.get("model")
+    has_explicit_pool = (
+        isinstance(model_value, list)
+        or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
+    )
+    if not has_explicit_pool:
+        return spec
+    provider = StarterModelPool(system).resolve_proxy_provider(spec.name or spec.model)
+    if provider is None:
+        return spec
+    api_url = responses_url(provider.base_url) if spec.response_format == "response" else chat_completions_url(provider.base_url)
+    return replace(
+        spec,
+        api_url=api_url,
+        api_key=provider.api_key,
+        model=provider.model,
+    )
 
 
 def _retryable(msg: str) -> bool:

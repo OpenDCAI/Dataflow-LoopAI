@@ -790,11 +790,20 @@ def _commit_embedding_batch(
         store.index.fulltext.commit()
         append_audit_rows(lake_root, "embeddings", rows)
     try:
+        from loopai.agents.Obtainer.datamixer.clusters import update_dataset_clusters
         from .monitor_state import update_monitor_delta
 
+        clustered = 0
+        for dataset_id in sorted({str(row.get("dataset_id") or "") for row in rows if row.get("dataset_id")}):
+            cluster_result = update_dataset_clusters(
+                warehouse_root(lake),
+                dataset_id=dataset_id,
+                embeddings=[row for row in rows if row.get("dataset_id") == dataset_id],
+            )
+            clustered += int(cluster_result.get("updated") or 0)
         update_monitor_delta(
             warehouse_root(lake),
-            {"summary_delta": {"embeddings": len(rows)}},
+            {"summary_delta": {"embeddings": len(rows)}, "latest": {"embedding_clusters": [{"updated": clustered}]}},
             operation_id=f"index_embed_{sha256_text(str(lake_root) + utc_now())[:12]}",
             trigger_background=False,
             lake=lake,
@@ -902,6 +911,18 @@ def index_datamixer_embeddings(
     if not commit_per_batch:
         append_audit_rows(lake_root, "embeddings", rows)
         indexed_count = len(rows)
+        try:
+            from loopai.agents.Obtainer.datamixer.clusters import update_dataset_clusters
+
+            warehouse = warehouse_root(lake)
+            for dataset_id in sorted({str(row.get("dataset_id") or "") for row in rows if row.get("dataset_id")}):
+                update_dataset_clusters(
+                    warehouse,
+                    dataset_id=dataset_id,
+                    embeddings=[row for row in rows if row.get("dataset_id") == dataset_id],
+                )
+        except Exception:
+            pass
     payload = {
         "ok": True,
         "command": "index embed",

@@ -6,6 +6,7 @@ from loopai.agents import StarterAgent
 from loopai.memory import checkpointer, store
 from loopai.agents.Starter.tools.check_motivation import check_motivation
 from loopai.logger import get_logger, add_file_handler
+from loopai.utils.model_pool import StarterModelPool
 
 from rich.console import Console
 from rich.live import Live
@@ -17,9 +18,20 @@ cfg = OmegaConf.load("./starter.yaml")
 system_config = cfg.get('system', {})
 
 # Read starter configuration
-starter_model_name = system_config.get('starter_model_name', 'deepseek-chat')
-starter_base_url = system_config.get('starter_base_url', 'https://api.deepseek.com')
-starter_api_key = system_config.get('starter_api_key', '')
+model_value = system_config.get("model")
+has_explicit_pool = (
+    isinstance(model_value, list)
+    or (isinstance(model_value, dict) and isinstance((model_value.get("pool") or model_value.get("models")), list))
+)
+if has_explicit_pool:
+    provider = StarterModelPool(dict(system_config)).resolve_proxy_provider(tier=StarterModelPool(dict(system_config)).default_tier)
+    starter_model_name = provider.model if provider else system_config.get('starter_model_name', 'deepseek-chat')
+    starter_base_url = provider.base_url if provider else system_config.get('starter_base_url', 'https://api.deepseek.com')
+    starter_api_key = provider.api_key if provider else system_config.get('starter_api_key', '')
+else:
+    starter_model_name = system_config.get('starter_model_name', 'deepseek-chat')
+    starter_base_url = system_config.get('starter_base_url', 'https://api.deepseek.com')
+    starter_api_key = system_config.get('starter_api_key', '')
 starter_tavily_api_key = system_config.get('tavily_api_key', '')
 starter_kaggle_username = system_config.get('kaggle_username', '')
 starter_kaggle_key = system_config.get('kaggle_key', '')
@@ -45,7 +57,7 @@ if hasattr(cfg.default_states, 'obtainer') and cfg.default_states.obtainer:
     obtainer_cfg = cfg.default_states.obtainer
     merged_states_dict['obtainer'] = OmegaConf.to_container(obtainer_cfg, resolve=True) or {}
 
-# Inject starter-level tavily_api_key into obtainer state (config-first, env/txt fallback in ObtainerAgent)
+# Inject starter-level tavily_api_key into obtainer state for compatibility.
 if starter_tavily_api_key:
     merged_states_dict.setdefault('obtainer', {})['tavily_api_key'] = starter_tavily_api_key
 

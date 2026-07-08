@@ -43,7 +43,12 @@ class TransformersEmbedder:
         if self._loaded:
             return
         import torch
-        from transformers import AutoModel, AutoTokenizer
+
+        try:
+            from transformers import AutoModel, AutoTokenizer
+        except ImportError:
+            from transformers.models.auto.modeling_auto import AutoModel
+            from transformers.models.auto.tokenization_auto import AutoTokenizer
 
         device = self.device_name
         if device == "auto":
@@ -61,7 +66,12 @@ class TransformersEmbedder:
             raise ValueError(f"Unsupported dtype: {self.dtype_name}")
 
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_path, local_files_only=True)
-        model = AutoModel.from_pretrained(self.model_path, local_files_only=True)
+        model = AutoModel.from_pretrained(
+            self.model_path,
+            local_files_only=True,
+            torch_dtype=dtype if device != "cpu" else torch.float32,
+            low_cpu_mem_usage=False,
+        )
         if device != "cpu":
             model = model.to(dtype=dtype)
         self._model = model.to(device).eval()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -11,6 +12,7 @@ from typing import Any
 
 from loopai.agents.Obtainer.datamixer import codex
 from loopai.agents.Obtainer.datamixer.models import ModelPool
+from loopai.utils.model_pool import StarterModelPool
 
 from .errors import ObtainerCliError
 
@@ -36,34 +38,268 @@ def _workspace() -> Path:
     return runner.parent if runner else Path.cwd()
 
 
-def _resolve_provider(root: Path, model: str | None) -> tuple[dict, dict]:
-    if model:
-        spec = ModelPool(root).get(model)
-        prov = codex.provider_from_model(spec)
-        return prov, {
-            "source": "model_pool",
-            "model_pool_name": model,
-            "base_url": prov["base_url"],
-            "model": prov["model"],
-            "api_key_source": "model_pool",
+def _first_non_empty(*values: Any) -> Any:
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _starter_config_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    explicit = os.getenv("STARTER_CONFIG") or os.getenv("STARTER_CONFIG_PATH")
+    if explicit:
+        candidates.append(Path(explicit))
+    workspace = _workspace()
+    candidates.extend([
+        Path.cwd() / "starter.yaml",
+        workspace / "starter.yaml",
+        workspace / "examples" / "config" / "starter.yaml",
+    ])
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path.expanduser().resolve()) if path.exists() else str(path)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(path)
+    return deduped
+
+
+def _load_yaml_config(path: Path) -> dict[str, Any]:
+    try:
+        try:
+            from omegaconf import OmegaConf
+
+            loaded = OmegaConf.to_container(OmegaConf.load(str(path)), resolve=True)
+        except ImportError:
+            import yaml
+
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _load_starter_system_from_db() -> dict[str, Any]:
+    db_path = _workspace() / "api" / "db" / "db.sqlite3"
+    if not db_path.exists():
+        return {}
+    try:
+        con = sqlite3.connect(str(db_path))
+        try:
+            row = con.execute(
+                "select config from starterconfig where name=?",
+                ("starter",),
+            ).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return {}
+    if not row or not row[0]:
+        return {}
+    try:
+        payload = json.loads(row[0])
+    except json.JSONDecodeError:
+        return {}
+    system = payload.get("system", {}) if isinstance(payload, dict) else {}
+    return system if isinstance(system, dict) else {}
+
+
+def _load_starter_system_from_yaml() -> dict[str, Any]:
+    for path in _starter_config_candidates():
+        if not path.exists():
+            continue
+        loaded = _load_yaml_config(path)
+        system = loaded.get("system", {}) if isinstance(loaded, dict) else {}
+        if isinstance(system, dict) and system:
+            return system
+    return {}
+
+
+def _explicit_starter_config_set() -> bool:
+    return bool(os.getenv("STARTER_CONFIG") or os.getenv("STARTER_CONFIG_PATH"))
+
+
+def _starter_system_sources(*, model_pool: bool = False) -> list[tuple[str, dict[str, Any]]]:
+    db_source = "starter_db:system.model" if model_pool else "starter_db:system"
+    yaml_source = "starter_yaml:system.model" if model_pool else "starter_yaml:system"
+    db_item = (db_source, _load_starter_system_from_db())
+    yaml_item = (yaml_source, _load_starter_system_from_yaml())
+    return [yaml_item] if _explicit_starter_config_set() else [db_item, yaml_item]
+
+
+def _runtime_provider_options() -> list[dict[str, Any]]:
+    options: list[dict[str, Any]] = []
+
+    def add_option(*, source: str, base_url: Any, model: Any, api_key: Any) -> None:
+        if not base_url or not model:
+            return
+        options.append({
+            "source": source,
+            "base_url": str(base_url),
+            "model": str(model),
+            "api_key": str(api_key or ""),
+            "api_key_source": source if api_key else "empty",
+        })
+
+    add_option(
+        source="env:CODEX",
+        base_url=os.environ.get("CODEX_BASE_URL"),
+        model=os.environ.get("CODEX_MODEL"),
+        api_key=os.environ.get("CODEX_API_KEY"),
+    )
+    add_option(
+        source="env:DEEPSEEK",
+        base_url=os.environ.get("DEEPSEEK_BASE_URL"),
+        model=os.environ.get("DEEPSEEK_MODEL"),
+        api_key=os.environ.get("DEEPSEEK_API_KEY"),
+    )
+
+    for source, system in _starter_system_sources():
+        add_option(
+            source=f"{source}.codex",
+            base_url=system.get("codex_base_url"),
+            model=system.get("codex_model"),
+            api_key=system.get("codex_api_key"),
+        )
+        add_option(
+            source=f"{source}.starter",
+            base_url=system.get("starter_base_url"),
+            model=_first_non_empty(
+                system.get("starter_model_path"),
+                system.get("starter_model_name"),
+            ),
+            api_key=system.get("starter_api_key"),
+        )
+
+    return options
+
+
+def _has_explicit_starter_pool(system: dict[str, Any]) -> bool:
+    model_value = system.get("model")
+    return (
+        isinstance(model_value, list)
+        or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
+    )
+
+
+def _provider_from_starter_model_pool(model: str | None) -> tuple[dict, dict] | None:
+    for source, system in _starter_system_sources(model_pool=True):
+        if not _has_explicit_starter_pool(system):
+            continue
+        pool = StarterModelPool(system)
+        provider = pool.resolve_proxy_provider(model, tier=pool.default_tier)
+        if provider is None:
+            continue
+        return provider.as_provider(), {
+            **provider.meta(),
+            "source": source,
+            "requested_model": model or "",
         }
-    base_url = os.environ.get("CODEX_BASE_URL") or os.environ.get("DEEPSEEK_BASE_URL")
-    model_name = os.environ.get("CODEX_MODEL") or os.environ.get("DEEPSEEK_MODEL")
-    api_key = os.environ.get("CODEX_API_KEY") or os.environ.get("DEEPSEEK_API_KEY") or ""
-    if not base_url or not model_name:
+    return None
+
+
+def _provider_from_runtime(model: str | None) -> tuple[dict, dict] | None:
+    pooled = _provider_from_starter_model_pool(model)
+    if pooled is not None:
+        return pooled
+
+    options = _runtime_provider_options()
+    if model:
+        for option in options:
+            if option["model"] == model:
+                prov = {
+                    "base_url": option["base_url"],
+                    "api_key": option["api_key"],
+                    "model": option["model"],
+                }
+                return prov, {
+                    "source": option["source"],
+                    "requested_model": model,
+                    "model_pool_name": model,
+                    "base_url": option["base_url"],
+                    "model": option["model"],
+                    "api_key_source": option["api_key_source"],
+                }
+        for option in options:
+            prov = {
+                "base_url": option["base_url"],
+                "api_key": option["api_key"],
+                "model": model,
+            }
+            return prov, {
+                "source": f"{option['source']}:requested_model",
+                "requested_model": model,
+                "model_pool_name": model,
+                "base_url": option["base_url"],
+                "model": model,
+                "api_key_source": option["api_key_source"],
+            }
+        return None
+
+    if not options:
+        return None
+    option = options[0]
+    prov = {
+        "base_url": option["base_url"],
+        "api_key": option["api_key"],
+        "model": option["model"],
+    }
+    return prov, {
+        "source": option["source"],
+        "base_url": option["base_url"],
+        "model": option["model"],
+        "api_key_source": option["api_key_source"],
+    }
+
+
+def _resolve_provider(root: Path, model: str | None) -> tuple[dict, dict]:
+    pooled = _provider_from_starter_model_pool(model)
+    if pooled is not None:
+        return pooled
+
+    if model:
+        try:
+            spec = ModelPool(root).get(model)
+        except KeyError:
+            runtime = _provider_from_runtime(model)
+            if runtime is not None:
+                return runtime
+        else:
+            prov = codex.provider_from_model(spec)
+            return prov, {
+                "source": "model_pool",
+                "model_pool_name": model,
+                "base_url": prov["base_url"],
+                "model": prov["model"],
+                "api_key_source": "model_pool",
+            }
+    else:
+        runtime = _provider_from_runtime(None)
+        if runtime is not None:
+            return runtime
+
+    if model:
         raise ObtainerCliError(
-            "SFT_EXPORT_AGENT_MODEL_REQUIRED",
-            "sft-export-agent requires --model or CODEX_BASE_URL/CODEX_MODEL in the environment",
-            hint="Register a model with `dm model add` and pass --model, or export CODEX_BASE_URL/CODEX_MODEL.",
+            "OBTAINERCLI_MODEL_NOT_FOUND",
+            f"model {model!r} is not registered in this warehouse model pool or runtime config",
+            hint=(
+                "Register it with `dm model add`, or set CODEX_BASE_URL/CODEX_MODEL, "
+                "or configure system.codex_* / system.starter_* in starter.yaml."
+            ),
             exit_code=2,
         )
-    prov = {"base_url": base_url, "api_key": api_key, "model": model_name}
-    return prov, {
-        "source": "env",
-        "base_url": base_url,
-        "model": model_name,
-        "api_key_source": "env" if api_key else "empty",
-    }
+    else:
+        raise ObtainerCliError(
+            "OBTAINERCLI_MODEL_REQUIRED",
+            "ObtainerCLI worker requires a model provider",
+            hint=(
+                "Register a model with `dm model add`, export CODEX_BASE_URL/CODEX_MODEL, "
+                "or configure system.codex_* / system.starter_* in starter.yaml."
+            ),
+            exit_code=2,
+        )
 
 
 def _policy_text() -> str:
@@ -82,6 +318,10 @@ Hard rules:
    No `_dm`, `source_uri`, `source_dataset_id`, `split`, `question`, `answer`, `text`, or other training-row keys.
    Provenance belongs in the manifest/final_report, not in the training JSONL rows.
 5. The recipe must declare `recipe.export.schema.fields`.
+   Prefer per-bucket schemas (`recipe.buckets[].schema.fields` or
+   `recipe.buckets[].export.schema.fields`) whenever buckets come from
+   different datasets or source field conventions. Do not force one global
+   fallback order across heterogeneous datasets.
 6. For Alpaca output mapping:
    - `instruction.sources` may include instruction, INSTRUCTION, question, prompt.
    - `input` is optional and may default to "".
@@ -92,11 +332,21 @@ Hard rules:
 7. If records store a conversation or Q/A pair inside one text field, normalize
    them first with DataMixer/DataFlow into explicit instruction/output keys, or
    exclude that bucket. Do not use the whole text as output.
-8. Before export, run status, stats, dataset list, sample/key inspection,
+8. Schema fields may be composed with templates. Use this when the final
+   training field needs multiple original fields, for example:
+   - math reasoning output: `template: "<think>{{reasoning}}</think>{{answer}}"`
+     or `template: "<think>{{chain}}</think>{{answer}}"`
+   - text2sql instruction: `template: "{{question}}"`
+   - text2sql input: `template: "{{evidence}}\n{{sql_schema}}\n{{sql_block}}"`
+   Inspect the exact source keys per dataset before choosing templates. For
+   datasets like AlphaMath where `answer` is the gold scalar answer and `output`
+   is a noisy trace, do not globally prefer `output` over `answer`; define that
+   bucket's schema explicitly.
+9. Before export, run status, stats, dataset list, sample/key inspection,
    recipe validate, recipe plan, and recipe preview.
-9. If no explicit SFT size is provided, target at least 100000 records.
-10. Export with `recipe export --snapshot`.
-11. After export, independently validate all JSONL shards:
+10. If no explicit SFT size is provided, target at least 100000 records.
+11. Export with `recipe export --snapshot`.
+12. After export, independently validate all JSONL shards:
     - total record count
     - every row has non-empty instruction and output
     - every row has input as a string
@@ -104,9 +354,9 @@ Hard rules:
     - instruction != output for every row
     - output was not sourced from text/raw_content/content fallback
     - manifest has snapshot_id, dataset_digest, recipe_fingerprint, export_schema
-12. If validation fails, do not mark ok=true. Patch the recipe, normalize data,
+13. If validation fails, do not mark ok=true. Patch the recipe, normalize data,
     exclude invalid buckets, or write a blocker final_report with exact reasons.
-13. Do not read or print secret/key files.
+14. Do not read or print secret/key files.
 """
 
 

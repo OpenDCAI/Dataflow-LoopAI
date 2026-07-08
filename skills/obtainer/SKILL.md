@@ -1,6 +1,6 @@
 ---
 name: obtainer
-description: Use this skill when LoopAI needs dataset discovery, acquisition, DataMixer lakehouse operations, data processing, indexing, recipe planning, or production training-data export. In long-running Codex SDK loops, when Analyzer produces an analysis report or failure taxonomy that implies new training data is needed, Codex must activate this Obtainer skill, interpret the data need, run SearchAgent for source discovery, download selected sources, and perform all lake operations through the integrated DataMixer command surface.
+description: Use this skill when LoopAI needs dataset discovery, acquisition, DataMixer lakehouse operations, data processing, indexing, recipe planning, or production training-data export. In long-running Codex SDK loops, when Analyzer produces an analysis report, failure taxonomy, or user request that implies new training data is needed, Codex must activate this Obtainer skill, interpret the data need, and start the managed dataset-acquisition-agent worker. The outer Codex context must not run SearchAgent, download manifest, or ingest directly for normal acquisition.
 ---
 
 # Obtainer Skill
@@ -37,6 +37,14 @@ Obtainer and must be invoked through `loopai-obtainercli dm ...`.
   table sampling, compatibility shims, or hand-written tiny fixtures for lake
   operations. If a DataMixer command cannot satisfy the request, stop and report
   the blocker.
+- **Outer Codex must delegate acquisition.** For any normal dataset discovery,
+  download, normalization, or ingest request, the outer Codex context must start
+  the CLI wrapper `loopai-obtainercli dm ... dataset-acquisition-agent start`
+  or `python3 -m loopai.skills.ObtainerCLI.cli dm ... dataset-acquisition-agent
+  start`, then poll/resume that worker. Do not use a generic `spawn_agent`
+  worker for data acquisition. Do not create a SearchAgent task JSON, call
+  `searchagent`, call `download manifest`, normalize files, or ingest rows from
+  the outer Codex context. Those operations belong inside the CLI worker policy.
 - **DataMixer is the only lake command surface.** Use
   `loopai-obtainercli dm ...` for initialization, schema inspection, dataset
   registry, ingest, query, processing operators, indexing, recall, recipes,
@@ -49,35 +57,39 @@ Obtainer and must be invoked through `loopai-obtainercli dm ...`.
   --yes` is explicitly supplied. Prefer `dm lake scan` before choosing a
   warehouse, so the agent sees project and cache candidates instead of guessing
   paths.
-- **Search before acquiring from a report.** First recognize the
+- **Prepare worker intent before acquiring from a report.** First recognize the
   dataset-acquisition intent: target sample shape, task types, domains, source
   hints, proportions, quality gates, and concrete search objectives. Pass that
-  intent to `searchagent` via `--objective` / `--keywords` or a `--task-json`
-  file. Never pass the raw Analyzer report as the only search target.
+  intent to `dataset-acquisition-agent start` via `--objective`, `--keywords`,
+  `--target-datasets`, and `--message`. The worker may then use SearchAgent
+  internally. Never pass the raw Analyzer report as the only search target.
 - **Objectives describe dataset shape, not only error keywords.** Use objectives
   like "buggy and fixed Python code pairs for syntax error repair", not only
   "SyntaxError" or "missing".
-- **Search order:** deepsearch/research context first, then provider search such
-  as Hugging Face and Kaggle. The final download list must be grounded in current
-  external sources.
-- **Inspect `searchagent_manifest.json` before downloading.** If errors are
-  non-empty, the download list is empty, candidates are unrelated to the
-  interpreted intent, or sources cannot satisfy the requested sample shape,
-  refine the search once. If still unsuitable, stop and report the mismatch.
-- **Prune unrelated candidates before download.** After SearchAgent returns a
-  download list, compare every candidate against the original user request and
-  interpreted dataset intent. Remove datasets that are clearly unrelated in
-  domain, task type, language, source family, target label shape, or training
-  purpose before running `download manifest`. Write a filtered manifest and a
-  rejection list with explicit reasons; do not download the raw manifest when it
-  contains unrelated candidates.
-- **Stop on download failure.** If `download manifest` fails, is interrupted, or
-  creates partial/empty files for selected datasets, stop before ingest. Report
-  the command, exit code, produced files, and blocker.
-- **Acquisition download cap.** `download manifest` writes at most 100,000 rows
-  per dataset, even if `--max-rows 0` or a larger value is supplied. Treat this
-  as the bounded acquisition bridge into DataMixer, not as final production SFT
-  output.
+- **Worker search order:** inside the acquisition worker, use
+  deepsearch/research context first, then provider search such as Hugging Face
+  and Kaggle. The final download list must be grounded in current external
+  sources.
+- **Worker must inspect `searchagent_manifest.json` before downloading.** If
+  errors are non-empty, the download list is empty, candidates are unrelated to
+  the interpreted intent, or sources cannot satisfy the requested sample shape,
+  the worker refines the search once. If still unsuitable, stop and report the
+  mismatch.
+- **Worker must prune unrelated candidates before download.** After internal
+  SearchAgent returns a download list, the worker compares every candidate
+  against the original user request and interpreted dataset intent. Remove
+  datasets that are clearly unrelated in domain, task type, language, source
+  family, target label shape, or training purpose before the worker runs
+  `download manifest`. Write a filtered manifest and a rejection list with
+  explicit reasons; do not download the raw manifest when it contains unrelated
+  candidates.
+- **Worker stops on download failure.** If internal `download manifest` fails,
+  is interrupted, or creates partial/empty files for selected datasets, stop
+  before ingest. Report the command, exit code, produced files, and blocker.
+- **Acquisition download cap.** Internal `download manifest` writes at most
+  100,000 rows per dataset, even if `--max-rows 0` or a larger value is
+  supplied. Treat this as the bounded acquisition bridge into DataMixer, not as
+  final production SFT output.
 - **Production SFT budget.** If the Analyzer report or user gives no explicit
   SFT target, set and report a production default before export: at least
   100,000 total records, or an explicit token budget when token counts are
@@ -94,6 +106,15 @@ Obtainer and must be invoked through `loopai-obtainercli dm ...`.
   id/name, source URI, license, language, domain, task type, processing level,
   source kind, split, loop UUID, and version id. Unknown values must be explicit,
   for example `license=unknown`; do not silently omit required provenance.
+- **Dataset cards and additive derivation on ingest.** For every acquired
+  dataset, the acquisition worker must write and register a Markdown dataset
+  card describing source, license, split, row count, original fields, derived
+  fields, derivation rules, validation checks, intended training use, and known
+  risks. Dataset-specific derived fields are allowed for embedded complex
+  formats such as step traces, multi-turn conversations, or question+options,
+  but derivation must be additive: preserve every original field, keep the row
+  count unchanged, and validate that every declared derived field is non-empty
+  before ingest succeeds.
 - **Never overwrite or hide provenance.** Keep dataset lineage, loop/version
   tags, recipe fingerprints, export manifests, and snapshots.
 
@@ -123,26 +144,22 @@ loopai-obtainercli dm lake delete --link .loopai/lake.yaml
 `--delete-warehouse --yes` only when the actual reusable warehouse should be
 removed.
 
-Search and provider download are Obtainer acquisition bridges. Outer Codex
-normally reaches them through `dataset-acquisition-agent`; call these low-level
-commands directly only for debugging or a deliberately manual acquisition run:
-
-```bash
-loopai-obtainercli searchagent ...
-loopai-obtainercli download manifest ...
-```
-
-After download, all lake work returns to `loopai-obtainercli dm ...`.
+SearchAgent and provider download are internal acquisition bridges. In the
+normal product workflow, outer Codex reaches them only by starting
+`dataset-acquisition-agent`. Do not call low-level `searchagent` or
+`download manifest` from the outer Codex context.
 
 ## Dataset Acquisition Worker
 
 For dataset discovery, candidate pruning, download, normalization, and DataMixer
-ingest, outer Codex should use the managed acquisition worker wrapper.
+ingest, outer Codex must use the managed acquisition worker CLI wrapper. Here
+"worker" means the `dataset-acquisition-agent start` command below, not a
+generic spawned Codex worker.
 
 Start a new worker:
 
 ```bash
-loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent start \
+python3 -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent start \
   --run ./outputs/acquisition_run \
   --analysis-report ./outputs/analyzer_report.md \
   --objective "collect general-domain instruction and QA datasets" \
@@ -155,19 +172,20 @@ loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent start 
 
 `start` runs the inner Codex SDK worker in the background by default and returns
 PID plus log paths. Use `--foreground` only when the caller intentionally wants
-to block.
+to block. If `loopai-obtainercli` is not installed as a console script, use the
+`python3 -m loopai.skills.ObtainerCLI.cli ...` form.
 
 Poll status:
 
 ```bash
-loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent status \
+python3 -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent status \
   --run ./outputs/acquisition_run
 ```
 
 Resume the same worker:
 
 ```bash
-loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent resume \
+python3 -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent resume \
   --run ./outputs/acquisition_run \
   --message "Remove unrelated datasets from the filtered manifest, then continue ingest." \
   --model deepseek-codex
@@ -204,6 +222,9 @@ loopai-obtainercli dm --root /path/to/warehouse dataset add \
 loopai-obtainercli dm --root /path/to/warehouse ingest code_repair_mix \
   --file ./downloads/records/dataset.train.jsonl \
   --content-key content \
+  --dataset-card ./manifest/dataset_cards/code_repair_mix.md \
+  --derived-field train_output \
+  --source-row-count 100000 \
   --stage sft \
   --domain code \
   --lang python \
@@ -292,61 +313,37 @@ loopai-obtainercli dm --root /path/to/warehouse snapshot create --name sft_mix_v
 loopai-obtainercli dm --root /path/to/warehouse lineage list --json
 ```
 
-## SearchAgent Dataset Collection
+## Internal SearchAgent Bridge
 
-This is the low-level discovery bridge used by the acquisition worker. For
-manual debugging, do not call `searchagent` with only `--query-file`; first turn
-the report into explicit acquisition intents.
+This low-level discovery bridge is for the isolated acquisition worker and for
+human debugging only. If you are the outer Codex agent responding to a user
+workflow request, skip this section and start `dataset-acquisition-agent`
+instead. Do not create task JSON or run this command from the outer Codex
+context.
 
 ```bash
-loopai-obtainercli searchagent \
-  --query-file ./outputs/analyzer_report.md \
-  --objective "collect buggy and fixed Python code-pair datasets covering syntax, logic, runtime, and assertion failures for SFT/DPO/RL training" \
-  --keywords "program repair dataset, buggy fixed code pairs, Python bug fix dataset, runtime exception repair, assertion failure repair" \
-  --output-root ./outputs \
-  --max-deep-queries 3 \
-  --max-deep-pages 3 \
+loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent start \
+  --run ./outputs/acquisition_run \
+  --objective "collect buggy and fixed Python code-pair datasets covering syntax, logic, runtime, and assertion failures for SFT training" \
+  --keywords "program repair dataset, buggy fixed code pairs, Python SyntaxError fix, runtime exception repair" \
+  --target-datasets 8 \
+  --max-rows-per-dataset 100000 \
+  --discovery-mode auto \
+  --model deepseek-codex \
   --json
 ```
 
-For multi-part reports, prefer `--task-json` so each acquisition need has its
-own objective and keywords:
-
-```json
-{
-  "tasks": [
-    {
-      "type": "download",
-      "objective": "collect buggy and fixed code-pair datasets for syntax error repair",
-      "search_keywords": ["program repair dataset", "buggy fixed code", "Python SyntaxError fix"]
-    },
-    {
-      "type": "download",
-      "objective": "collect code-pair datasets for logic bug fixes and failing tests",
-      "search_keywords": ["software bug fix dataset", "failing test fixed code", "program repair"]
-    }
-  ]
-}
-```
-
-Then run:
-
-```bash
-loopai-obtainercli searchagent \
-  --query-file ./outputs/analyzer_report.md \
-  --task-json ./outputs/search_intent_tasks.json \
-  --output-root ./outputs \
-  --json
-```
-
-SearchAgent reads model defaults from `starter.yaml` unless CLI flags override
-them. The manifest contains deepsearch summaries, discovered URLs, enriched
-keywords, and unranked provider download candidates.
+For multi-domain requests such as text2sql + math + code, describe the domain
+split in `--objective` / `--keywords` / `--message`; the worker policy will
+create isolated SearchAgent tasks internally and use parallelism where
+appropriate. 尽量使用镜像源；当 Hugging Face/Kaggle 等主站访问慢或不稳定时，
+优先选择可用镜像或缓存源，并在 manifest/report 里记录实际来源。
 
 ## Manifest Download
 
-This is the low-level download bridge used by the acquisition worker. Use
-`download manifest` only to materialize SearchAgent candidates into local
+This is the low-level download bridge used by the acquisition worker. Outer
+Codex must not call `download manifest` during a normal workflow. Let
+`dataset-acquisition-agent` materialize SearchAgent candidates into local
 lake-ready files. It is not a lake operation.
 
 Before downloading, compare the manifest against the original user request and
@@ -357,14 +354,8 @@ dimension. Examples of rejection reasons: wrong domain, wrong task type, wrong
 language, unrelated source family, missing target label shape, license blocker,
 or provider failure risk.
 
-```bash
-loopai-obtainercli download manifest \
-  --manifest ./outputs/searchagent_manifest.filtered.json \
-  --output-root ./outputs/downloads \
-  --split train \
-  --max-rows 100000 \
-  --json
-```
+For human debugging only, use `loopai-obtainercli download manifest ...` after
+writing a filtered manifest and rejection report.
 
 The downloader enforces a 100,000-row cap per dataset. `--max-rows 0` is also
 capped to 100,000 rows per dataset for safety. Production SFT sizing and final
@@ -377,6 +368,16 @@ wrapper instead of manually driving `recipe validate/plan/preview/export`.
 The wrapper starts an isolated Codex SDK worker and injects the detailed
 DataMixer recipe, schema, validation, snapshot, and failure-handling policy into
 that worker's context.
+
+For heterogeneous SFT exports, schema mapping must be dataset/bucket-aware.
+Do not use one global `output.sources` fallback order across datasets whose
+fields have different semantics. Prefer bucket-level schema blocks such as
+`recipe.buckets[].schema.fields` or `recipe.buckets[].export.schema.fields`.
+Fields may be composed with templates when the final training row needs several
+source fields, for example `output.template: "<think>{chain}</think>{answer}"`
+for reasoning + answer, or for text2sql:
+`instruction.template: "{question}"` and
+`input.template: "{evidence}\n{sql_schema}\n{sql_block}"`.
 
 Start a new isolated worker:
 
@@ -426,7 +427,9 @@ it requires final rows to contain exactly `instruction`, `input`, and `output`,
 forbids `output` fallback to whole-record text fields, rejects
 `instruction == output`, requires DataMixer recipe export with snapshot, and
 writes `final_report.json` with manifest, snapshot, digest, validation evidence,
-and blockers.
+and blockers. For datasets where a field like `output` is a noisy trace and
+`answer` is the gold label, the worker must define that bucket's schema
+explicitly instead of letting a global mapping choose the wrong source.
 
 ## End-To-End Agent Workflow
 

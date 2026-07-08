@@ -74,6 +74,9 @@
 - `judge` 优先使用 Judger Skill 或 `examples/scripts/run_judger_standalone.py`
 - 用户要求查看 Judger 过程或评测明细时，优先读取 `judger.pkl` 事件流
 - `train` 优先使用 Trainer Skill
+- `obtain`、训练前数据获取、SFT 数据集构造、能力定向提升数据规划，优先读取 Obtainer Skill：`skills/obtainer/SKILL.md`
+- 涉及 DataMixer、数据湖入湖、SFT recipe/export、按 math/code/text2sql/reasoning 域找数据时，先按 `skills/obtainer/SKILL.md` 和其中的 ObtainerCLI 流程执行，不要从 `outputs/` 里的旧 run 或旧 recipe 反推当前流程
+- 执行数据搜集/下载/入湖时，starter 外层只能通过 CLI wrapper 启动 `dataset-acquisition-agent`：`python3 -m loopai.skills.ObtainerCLI.cli dm ... dataset-acquisition-agent start`，然后轮询/续跑；不要使用通用 `spawn_agent` worker，不要在外层自己创建 SearchAgent task JSON、调用 `searchagent`、调用 `download manifest` 或直接入湖
 - 用户要求查看 Trainer 过程或训练事件时，优先读取 Trainer 事件输出
 
 注意：

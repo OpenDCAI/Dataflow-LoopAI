@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import subprocess
 import sys
@@ -21,8 +22,10 @@ STATE_FILE = "thread.json"
 def _policy_text() -> str:
     return """# Dataset acquisition worker policy
 
-You are the isolated inner Codex SDK worker for an Obtainer dataset acquisition,
-download, and DataMixer ingest task.
+You are LoopAI's dataset acquisition agent. Your job is to discover relevant
+dataset candidates, prune unrelated sources, download selected datasets,
+normalize records, write dataset cards, validate derived fields, ingest accepted
+datasets into DataMixer, and write final_report.json.
 
 Hard rules:
 
@@ -33,6 +36,11 @@ Hard rules:
    bridge when appropriate:
    python3 -m loopai.skills.ObtainerCLI.cli searchagent ...
    python3 -m loopai.skills.ObtainerCLI.cli download manifest ...
+   For multi-domain acquisition requests, first write a task JSON with one
+   isolated task per capability domain (for example text2sql, math, code), then
+   call SearchAgent once with `--task-json <path> --parallelism <n>`. Keep each
+   task's objective and search_keywords domain-specific so one domain cannot
+   crowd out another.
 4. If direct web/Hugging Face/Kaggle discovery is more appropriate for the
    caller's instruction, write an equivalent manifest yourself and continue.
 5. Before downloading, compare the candidate list against the original user
@@ -44,19 +52,112 @@ Hard rules:
 7. Normalize each downloaded dataset to JSONL before ingest. Each row must
    preserve source_uri, source_dataset/source_dataset_id, split, and enough
    payload fields for later SFT/PT processing.
-8. Ingest every accepted dataset through DataMixer `ingest` or `agent-ingest`
+8. For every accepted dataset, write a Markdown dataset card before ingest and
+   register it during ingest with `--dataset-card <path>`. The card must live in
+   this run's manifest directory first and describe source, license, split,
+   row count, original fields, derived fields, derivation rules, validation
+   checks, intended training use, and known risks.
+9. You may add dataset-specific derived fields during normalization, but only
+   by adding fields. Never drop, overwrite, or rename original payload fields.
+   The normalized JSONL must preserve the same row count as the selected source
+   rows. For complex embedded formats, derive explicit training-ready fields:
+   parse step traces into reasoning fields, flatten multi-turn conversations
+   into messages/dialogue/instruction-response fields, combine question with
+   options/evidence/schema blocks into prompt/input fields, and keep gold
+   labels/answers as separate fields.
+10. If derived fields are added, every derived field must be non-empty for every
+   row. Pass `--derived-field <name>` for each derived field and
+   `--source-row-count <n>` to `dm ingest` so DataMixer validates this before
+   writing. If validation fails, fix the normalizer or reject the dataset; do
+   not ingest partial rows.
+11. Ingest every accepted dataset through DataMixer `ingest` or `agent-ingest`
    with complete tags: source platform, source dataset id, source URL or URI,
    license if known, language if known, domain, task_type, processing_level,
    source_kind, split, loop_uuid/version_id when provided, and acquisition_run.
-9. After ingest, run DataMixer status, dataset list, stats, representative query,
+12. After ingest, run DataMixer status, dataset list, stats, representative query,
    and index build when useful for downstream recall.
-10. Write final_report.json with candidates, filtered list, rejections,
-    downloads, ingests, DataMixer command summaries, before/after counts,
-    lineage/manifest paths, and blockers.
-11. Do not mark ok=true if no dataset was ingested, if accepted datasets are
-    unrelated to the request, or if required source/provenance tags are missing.
-12. Do not read or print secret/key files.
+13. Write final_report.json with candidates, filtered list, rejections,
+    downloads, dataset card paths, derived field specs, validation outcomes,
+    ingests, DataMixer command summaries, before/after counts, lineage/manifest
+    paths, and blockers.
+14. Do not mark ok=true if no dataset was ingested, if accepted datasets are
+    unrelated to the request, if any accepted dataset lacks a registered md
+    dataset card, if derived field validation failed, if row count changed
+    during derivation, or if required source/provenance tags are missing.
+15. Do not read or print secret/key files.
 """
+
+
+def _worker_codex_home() -> Path:
+    return _workspace() / "codex_home_worker"
+
+
+def _worker_env(base: dict[str, str] | None = None, prov: dict | None = None) -> dict[str, str]:
+    env = dict(base or os.environ)
+    for key in (
+        "CODEX_THREAD_ID",
+        "CODEX_USE_PROJECT_CONFIG",
+        "TASK_ID",
+        "task_id",
+        "DB_PATH",
+    ):
+        env.pop(key, None)
+    env["CODEX_HOME"] = str(_worker_codex_home())
+    env["LOOPAI_WORKER_KIND"] = "dataset-acquisition-agent"
+    env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    env.setdefault("HF_HUB_ENDPOINT", env["HF_ENDPOINT"])
+    env.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    return env
+
+
+@contextlib.contextmanager
+def _worker_environ(prov: dict | None = None):
+    previous = os.environ.copy()
+    os.environ.clear()
+    os.environ.update(_worker_env(previous, prov=prov))
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(previous)
+
+
+def _pid_alive(pid: object) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _active_run_status(run_dir: Path) -> dict | None:
+    status = _json_read(run_dir / STATUS_FILE)
+    if isinstance(status, dict) and _pid_alive(status.get("pid")):
+        return status
+    return None
+
+
+def _record_thread_started(run_dir: Path, payload: dict) -> None:
+    if payload.get("type") != "event":
+        return
+    event = payload.get("event")
+    if not isinstance(event, dict):
+        return
+    if event.get("type") != "thread.started" or not event.get("thread_id"):
+        return
+    thread_id = str(event["thread_id"])
+    state = _json_read(run_dir / STATE_FILE)
+    if state.get("thread_id") != thread_id:
+        state["thread_id"] = thread_id
+        state["updated_at"] = time.time()
+        _json_write(run_dir / STATE_FILE, state)
+    status = _json_read(run_dir / STATUS_FILE)
+    status["thread_id"] = thread_id
+    status["updated_at"] = time.time()
+    status.setdefault("state", "running")
+    _json_write(run_dir / STATUS_FILE, status)
 
 
 def _analysis_block(paths: list[str]) -> str:
@@ -117,6 +218,8 @@ Required artifacts:
 - candidates manifest: {run_dir}/manifest/candidates.json
 - filtered manifest: {run_dir}/manifest/filtered_manifest.json
 - rejections: {run_dir}/manifest/rejections.json
+- dataset cards: {run_dir}/manifest/dataset_cards/*.md
+- derived-field specs/validation: {run_dir}/manifest/derived_fields.json
 - downloads: {run_dir}/downloads/
 - ingest report: {run_dir}/manifest/ingest_results.json
 - final report: {run_dir}/final_report.json
@@ -196,11 +299,7 @@ def _status_payload(run_dir: Path) -> dict:
     final_report = _json_read(run_dir / "final_report.json")
     pid = status.get("pid") if isinstance(status, dict) else None
     if pid:
-        try:
-            os.kill(int(pid), 0)
-            status["process_alive"] = True
-        except OSError:
-            status["process_alive"] = False
+        status["process_alive"] = _pid_alive(pid)
     return {
         "ok": True,
         "command": "dm.dataset-acquisition-agent.status",
@@ -245,9 +344,7 @@ def _spawn_background(
         cmd.extend(["--model", model])
     if thread_id:
         cmd.extend(["--thread-id", thread_id])
-    env = os.environ.copy()
-    env.pop("CODEX_THREAD_ID", None)
-    env.pop("CODEX_USE_PROJECT_CONFIG", None)
+    env = _worker_env()
     with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
         proc = subprocess.Popen(
             cmd,
@@ -314,20 +411,33 @@ def _run_worker(
             "provider": provider_meta,
         }
 
-    _json_write(run_dir / STATUS_FILE, {
+    status = _json_read(run_dir / STATUS_FILE)
+    status.update({
         "state": "running",
         "updated_at": time.time(),
         "prompt_path": str(prompt_path),
         "thread_id": thread_id or None,
     })
+    _json_write(run_dir / STATUS_FILE, status)
     try:
-        result = codex.run_via_sdk(
-            prompt,
-            prov,
-            cwd=str(_workspace()),
-            timeout=timeout,
-            thread_id=thread_id or None,
-        )
+        with _worker_environ(prov):
+            result = codex.run_via_sdk(
+                prompt,
+                prov,
+                cwd=str(_workspace()),
+                timeout=timeout,
+                thread_id=thread_id or None,
+                on_event=lambda payload: _record_thread_started(run_dir, payload),
+            )
+    except KeyboardInterrupt:
+        _json_write(run_dir / STATUS_FILE, {
+            "state": "interrupted",
+            "updated_at": time.time(),
+            "error": "KeyboardInterrupt",
+            "thread_id": thread_id or None,
+            "prompt_path": str(prompt_path),
+        })
+        raise
     except Exception as exc:
         _json_write(run_dir / STATUS_FILE, {
             "state": "failed",
@@ -406,6 +516,15 @@ def run_agent(argv: list[str], *, root: str) -> dict:
         return _status_payload(run_dir)
 
     if args.agent_command == "start":
+        if not args.dry_run:
+            active = _active_run_status(run_dir)
+            if active:
+                raise ObtainerCliError(
+                    "DATASET_ACQUISITION_AGENT_RUN_ACTIVE",
+                    f"dataset-acquisition-agent run is already active: {run_dir}",
+                    hint="Poll status or stop the active worker before starting another worker for the same run.",
+                    exit_code=2,
+                )
         if not root:
             raise ObtainerCliError(
                 "DATASET_ACQUISITION_AGENT_ROOT_REQUIRED",
@@ -476,6 +595,15 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             )
         warehouse = Path(state.get("warehouse") or root or "").expanduser().resolve()
         prov, provider_meta = _resolve_provider(warehouse, args.model or state.get("provider", {}).get("model_pool_name"))
+        if not args.dry_run:
+            active = _active_run_status(run_dir)
+            if active:
+                raise ObtainerCliError(
+                    "DATASET_ACQUISITION_AGENT_RUN_ACTIVE",
+                    f"dataset-acquisition-agent run is already active: {run_dir}",
+                    hint="Poll status or stop the active worker before resuming this run.",
+                    exit_code=2,
+                )
         thread_id = str(state.get("thread_id") or "")
         if not thread_id and not args.dry_run:
             raise ObtainerCliError(

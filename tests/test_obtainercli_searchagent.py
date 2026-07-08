@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -62,6 +63,9 @@ def test_searchagent_returns_download_candidates(tmp_path, monkeypatch):
 def test_searchagent_uses_starter_model_defaults(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import searchagent
 
+    monkeypatch.delenv("OBTAINER_MODEL", raising=False)
+    monkeypatch.delenv("OBTAINER_BASE_URL", raising=False)
+    monkeypatch.delenv("OBTAINER_API_KEY", raising=False)
     starter = tmp_path / "starter.yaml"
     starter.write_text(
         """
@@ -100,6 +104,68 @@ default_states:
     assert captured["api_key"] == "starter-key"
     assert captured["search_engine"] == "duckduckgo"
     assert captured["max_urls"] == 4
+
+
+def test_searchagent_starter_model_overrides_env_defaults(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import searchagent
+
+    starter = tmp_path / "starter.yaml"
+    starter.write_text(
+        """
+system:
+  starter_model_path: starter-model
+  starter_base_url: http://starter.example/v1
+  starter_api_key: starter-key
+""",
+        encoding="utf-8",
+    )
+    captured = {}
+
+    async def fake_run_async(**kwargs):
+        captured.update(kwargs)
+        return [{"objective": "x", "search_keywords": ["x"], "decision": {}, "candidates": [], "errors": []}]
+
+    monkeypatch.setenv("OBTAINER_MODEL", "deepseek-v4-pro")
+    monkeypatch.setenv("OBTAINER_BASE_URL", "http://proxy.example/v1")
+    monkeypatch.setenv("OBTAINER_API_KEY", "proxy-key")
+    monkeypatch.setattr(searchagent, "_run_searchagent_async", fake_run_async)
+
+    searchagent.run_searchagent(
+        query="collect reasoning data",
+        output_root=tmp_path,
+        starter_config=starter,
+        deepsearch=False,
+    )
+
+    assert captured["model_name"] == "starter-model"
+    assert captured["base_url"] == "http://starter.example/v1"
+    assert captured["api_key"] == "starter-key"
+
+
+def test_searchagent_env_model_is_only_fallback_without_starter(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import searchagent
+
+    monkeypatch.chdir(tmp_path)
+    captured = {}
+
+    async def fake_run_async(**kwargs):
+        captured.update(kwargs)
+        return [{"objective": "x", "search_keywords": ["x"], "decision": {}, "candidates": [], "errors": []}]
+
+    monkeypatch.setenv("OBTAINER_MODEL", "deepseek-v4-pro")
+    monkeypatch.setenv("OBTAINER_BASE_URL", "http://proxy.example/v1")
+    monkeypatch.setenv("OBTAINER_API_KEY", "proxy-key")
+    monkeypatch.setattr(searchagent, "_run_searchagent_async", fake_run_async)
+
+    searchagent.run_searchagent(
+        query="collect reasoning data",
+        output_root=tmp_path,
+        deepsearch=False,
+    )
+
+    assert captured["model_name"] == "deepseek-v4-pro"
+    assert captured["base_url"] == "http://proxy.example/v1"
+    assert captured["api_key"] == "proxy-key"
 
 
 def test_searchagent_deepsearch_enriches_provider_keywords(tmp_path, monkeypatch):
@@ -165,6 +231,92 @@ def test_searchagent_deepsearch_enriches_provider_keywords(tmp_path, monkeypatch
     assert task["deepsearch"]["summary"].startswith("GSM8K")
     assert "gsm8k benchmark" in task["enriched_search_keywords"]
     assert result["download_list"][0]["dataset_id"] == "openai/gsm8k"
+
+
+def test_searchagent_runs_task_json_in_parallel_and_keeps_domain_metadata(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import searchagent
+
+    task_json = tmp_path / "tasks.json"
+    task_json.write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "text2sql",
+                        "domain": "text2sql",
+                        "objective": "collect text2sql datasets",
+                        "search_keywords": ["text2sql dataset"],
+                    },
+                    {
+                        "id": "math",
+                        "domain": "math",
+                        "objective": "collect math reasoning datasets",
+                        "search_keywords": ["math reasoning dataset"],
+                    },
+                    {
+                        "id": "code",
+                        "domain": "code",
+                        "objective": "collect code repair datasets",
+                        "search_keywords": ["code repair dataset"],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    active = 0
+    max_active = 0
+
+    async def fake_search_single_task(**kwargs):
+        nonlocal active, max_active
+        task = kwargs["task"]
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        domain = task["domain"]
+        return {
+            "domain": domain,
+            "objective": task["objective"],
+            "search_keywords": task["search_keywords"],
+            "enriched_search_keywords": task["search_keywords"],
+            "deepsearch": {"enabled": False, "errors": []},
+            "decision": {"method_order": ["huggingface"]},
+            "candidates": [
+                {
+                    "source": "huggingface",
+                    "dataset_id": f"fixture/{domain}",
+                    "download": {"method": "huggingface", "dataset_id": f"fixture/{domain}"},
+                }
+            ],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(searchagent, "_search_single_task", fake_search_single_task)
+
+    result = searchagent.run_searchagent(
+        query="collect text2sql math and code datasets",
+        task_json=task_json,
+        output_root=tmp_path,
+        model_name="test-model",
+        base_url="http://127.0.0.1:8000/v1",
+        api_key="test-key",
+        deepsearch=False,
+        parallelism=3,
+    )
+
+    assert max_active == 3
+    assert [task["domain"] for task in result["tasks"]] == ["text2sql", "math", "code"]
+    assert [candidate["task_domain"] for candidate in result["download_list"]] == [
+        "text2sql",
+        "math",
+        "code",
+    ]
+    assert [candidate["task_id"] for candidate in result["download_list"]] == [
+        "text2sql",
+        "math",
+        "code",
+    ]
 
 
 def test_cli_searchagent_emits_json(tmp_path, monkeypatch, capsys):

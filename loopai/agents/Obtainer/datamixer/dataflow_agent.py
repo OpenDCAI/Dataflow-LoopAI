@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from loopai.utils.model_pool import StarterModelPool, chat_completions_url
 from . import utils
 from .codex import CodexError, provider_from_model, run_via_sdk
 from .models import ModelPool
@@ -88,6 +89,21 @@ def operator_llm_config_from_starter() -> dict[str, str]:
         return {}
     system = doc.get("system") or {}
     obtainer = (doc.get("default_states") or {}).get("obtainer") or {}
+    model_value = system.get("model")
+    has_explicit_pool = (
+        isinstance(model_value, list)
+        or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
+    )
+    if has_explicit_pool:
+        pool = StarterModelPool(system)
+        provider = pool.resolve_proxy_provider(obtainer.get("model_path") or None, tier=pool.default_tier)
+        if provider is not None:
+            return {
+                "api_url": chat_completions_url(provider.base_url),
+                "model_name": provider.model,
+                "api_key_env": "DF_API_KEY",
+                "api_key": provider.api_key,
+            }
     base_url = system.get("starter_base_url") or obtainer.get("base_url") or ""
     model = (
         system.get("starter_model_name")

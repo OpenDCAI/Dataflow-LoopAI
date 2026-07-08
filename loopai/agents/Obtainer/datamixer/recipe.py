@@ -58,12 +58,16 @@ class Bucket:
     min_quality: float | None = None      # hard floor folded into the filter
     quality_grade: bool = False           # draw best-quality-first
     quality_tiers: list = field(default_factory=list)  # [QualityTier, ...]
+    export_fields: dict[str, "ExportField"] = field(default_factory=dict)
+    export_keep: list[str] = field(default_factory=list)
+    export_include_dm: bool | None = None
 
 
 @dataclass
 class ExportField:
     name: str
     sources: list[str] = field(default_factory=list)
+    template: str | None = None
     required: bool = True
     default: Any = None
 
@@ -125,6 +129,7 @@ def parse_recipe(doc: dict) -> Recipe:
         raise ValueError(f"invalid export format {fmt!r}; choose {VALID_FORMATS}")
     buckets = []
     for b in r.get("buckets", []):
+        b_export_fields, b_export_keep, b_export_include_dm = _parse_bucket_export_schema(b)
         tiers = [
             QualityTier(float(qt.get("min", 0.0)), float(qt.get("weight", 0.0)),
                         qt.get("label", ""))
@@ -141,6 +146,9 @@ def parse_recipe(doc: dict) -> Recipe:
                          else None),
             quality_grade=bool(b.get("quality_grade", False)),
             quality_tiers=tiers,
+            export_fields=b_export_fields,
+            export_keep=b_export_keep,
+            export_include_dm=b_export_include_dm,
         ))
     total_tokens = _num(r.get("total_tokens"))
     total_samples = _int(r.get("total_samples"))
@@ -186,16 +194,41 @@ def _parse_export_schema(export: dict) -> tuple[dict[str, ExportField], list[str
         schema_doc = {"fields": export.get("mapping")}
     if not schema_doc:
         return {}, [], True
+    fields, keep, include_dm = _parse_export_schema_doc(schema_doc, include_dm_default=True)
+    return fields, keep, bool(include_dm)
+
+
+def _parse_bucket_export_schema(bucket: dict) -> tuple[dict[str, ExportField], list[str], bool | None]:
+    schema_doc = bucket.get("schema") or bucket.get("export_schema") or {}
+    export = bucket.get("export") or {}
+    if not schema_doc:
+        schema_doc = export.get("schema") or {}
+    if not schema_doc and export.get("mapping"):
+        schema_doc = {"fields": export.get("mapping")}
+    if not schema_doc:
+        return {}, [], None
+    return _parse_export_schema_doc(schema_doc, include_dm_default=None)
+
+
+def _parse_export_schema_doc(
+    schema_doc: dict,
+    *,
+    include_dm_default: bool | None,
+) -> tuple[dict[str, ExportField], list[str], bool | None]:
     fields_doc = schema_doc.get("fields") or schema_doc.get("mapping") or {}
     fields: dict[str, ExportField] = {}
     for name, spec in fields_doc.items():
         required = True
         default = None
+        template = None
         if isinstance(spec, str):
             sources = [spec]
         elif isinstance(spec, list):
             sources = [str(x) for x in spec]
         elif isinstance(spec, dict):
+            raw_template = spec.get("template", spec.get("format"))
+            if raw_template is not None:
+                template = str(raw_template)
             raw_sources = spec.get("sources", spec.get("source", []))
             if isinstance(raw_sources, str):
                 sources = [raw_sources]
@@ -205,9 +238,11 @@ def _parse_export_schema(export: dict) -> tuple[dict[str, ExportField], list[str
             default = spec.get("default")
         else:
             raise ValueError(f"bad export schema field {name!r}: {spec!r}")
-        fields[str(name)] = ExportField(str(name), sources, required, default)
+        fields[str(name)] = ExportField(str(name), sources, template, required, default)
     keep = [str(x) for x in (schema_doc.get("keep") or [])]
-    include_dm = bool(schema_doc.get("include_dm", True))
+    include_dm = schema_doc.get("include_dm", include_dm_default)
+    if include_dm is not None:
+        include_dm = bool(include_dm)
     return fields, keep, include_dm
 
 
@@ -277,7 +312,7 @@ def _validate_failure_taxonomy_filter(bucket: Bucket) -> None:
 
 
 # columns carried on each candidate (also surfaced in export provenance)
-_CAND_COLS = "sample_id,cid,n_tokens,domain,lang,stage,quality_score"
+_CAND_COLS = "sample_id,dataset_id,cid,n_tokens,domain,lang,stage,quality_score"
 
 
 def _bucket_candidates(store: DataStore, recipe: Recipe, bucket: Bucket) -> list[dict]:
@@ -305,6 +340,98 @@ def _bucket_candidates(store: DataStore, recipe: Recipe, bucket: Bucket) -> list
 
 def _is_ranked(bucket: Bucket) -> bool:
     return bool(bucket.semantic_query or bucket.keyword)
+
+
+def _weighted_round_robin(groups: list[list[dict]]) -> list[dict]:
+    groups = [list(group) for group in groups if group]
+    totals = [len(group) for group in groups]
+    emitted = [0 for _ in groups]
+    out: list[dict] = []
+    while groups:
+        best = min(
+            range(len(groups)),
+            key=lambda i: (emitted[i] / max(totals[i], 1), i),
+        )
+        out.append(groups[best].pop(0))
+        emitted[best] += 1
+        if not groups[best]:
+            groups.pop(best)
+            totals.pop(best)
+            emitted.pop(best)
+    return out
+
+
+def _clustered_dataset_order(rows: list[dict], rng: random.Random) -> list[dict]:
+    clustered: dict[str, list[dict]] = {}
+    random_pool: list[dict] = []
+    for row in rows:
+        if row.get("cluster_id"):
+            clustered.setdefault(str(row["cluster_id"]), []).append(row)
+        else:
+            random_pool.append(row)
+    cluster_groups = []
+    for cluster_id in sorted(clustered):
+        group = sorted(
+            clustered[cluster_id],
+            key=lambda r: (float(r.get("cluster_similarity") or 0.0), str(r.get("sample_id") or "")),
+            reverse=True,
+        )
+        cluster_groups.append(group)
+    rng.shuffle(random_pool)
+    clustered_order = _weighted_round_robin(cluster_groups)
+    return _weighted_round_robin([clustered_order, random_pool])
+
+
+def _attach_cluster_metadata(store: DataStore, candidates: list[dict]) -> list[dict]:
+    from .clusters import cluster_assignments
+
+    assignments = cluster_assignments(store.root, {c["sample_id"] for c in candidates})
+    rows: list[dict] = []
+    for candidate in candidates:
+        row = dict(candidate)
+        assignment = assignments.get(row["sample_id"])
+        if assignment:
+            row.update(
+                {
+                    "cluster_id": assignment.get("cluster_id", ""),
+                    "cluster_similarity": assignment.get("cluster_similarity"),
+                    "embedding_model": assignment.get("embedding_model", ""),
+                }
+            )
+        rows.append(row)
+    return rows
+
+
+def _cluster_aware_order(store: DataStore, candidates: list[dict], rng: random.Random) -> list[dict]:
+    """Default recipe sampling order.
+
+    Dataset proportions come from the recalled candidate pool. Within each
+    dataset, clustered samples are drawn cluster-by-cluster, preferring records
+    closest to their centroid. Unclustered samples stay random. If a dataset is
+    only partially embedded, clustered and random pools are interleaved in their
+    available ratio.
+    """
+    if not candidates:
+        return []
+    by_dataset: dict[str, list[dict]] = {}
+    for row in _attach_cluster_metadata(store, candidates):
+        by_dataset.setdefault(str(row.get("dataset_id") or ""), []).append(row)
+    dataset_orders = [
+        _clustered_dataset_order(by_dataset[dataset_id], rng)
+        for dataset_id in sorted(by_dataset)
+    ]
+    return _weighted_round_robin(dataset_orders)
+
+
+def _sampling_stats(candidates: list[dict]) -> dict:
+    total = len(candidates)
+    clustered = sum(1 for c in candidates if c.get("cluster_id"))
+    return {
+        "strategy": "cluster_similarity" if clustered else "random",
+        "clustered_candidates": clustered,
+        "random_candidates": total - clustered,
+        "clustered_ratio": round(clustered / total, 6) if total else 0.0,
+    }
 
 
 def _effective_weights(recipe: Recipe) -> dict[str, float]:
@@ -432,7 +559,7 @@ def preview(store: DataStore, recipe: Recipe, per_bucket: int = 3) -> dict:
     for b in recipe.buckets:
         cands = _bucket_candidates(store, recipe, b)
         if not _is_ranked(b):
-            rng.shuffle(cands)
+            cands = _cluster_aware_order(store, cands, rng)
         previews = []
         for c in cands[:per_bucket]:
             smp = store.catalog.get_sample(c["sample_id"]) or {}
@@ -442,6 +569,9 @@ def preview(store: DataStore, recipe: Recipe, per_bucket: int = 3) -> dict:
                 "quality_score": smp.get("quality_score"),
                 "n_tokens": smp.get("n_tokens"),
             }
+            if c.get("cluster_id"):
+                row["cluster_id"] = c.get("cluster_id")
+                row["cluster_similarity"] = c.get("cluster_similarity")
             try:
                 row["preview"] = utils.extract_text(store.get_content(c["cid"]))[:160]
             except KeyError:
@@ -456,7 +586,16 @@ def preview(store: DataStore, recipe: Recipe, per_bucket: int = 3) -> dict:
 # Selection
 # ---------------------------------------------------------------------------
 
-_META_KEYS = ("domain", "lang", "stage", "quality_score", "n_tokens")
+_META_KEYS = (
+    "domain",
+    "lang",
+    "stage",
+    "quality_score",
+    "n_tokens",
+    "cluster_id",
+    "cluster_similarity",
+    "embedding_model",
+)
 
 
 @dataclass
@@ -484,9 +623,10 @@ def _select_bucket(
     bucket_name: str,
     preserve_order: bool = False,
     tier: str = "",
+    already_ordered: bool = False,
 ) -> tuple[list[Selected], int, int, str]:
     pool = candidates[:]
-    if not preserve_order:
+    if not preserve_order and not already_ordered:
         rng.shuffle(pool)
     if dedup_across:
         pool = [c for c in pool if c["cid"] not in used_cids]
@@ -522,7 +662,7 @@ def _select_bucket(
 
 
 def _select_tiered(candidates, bucket, budget_kind, target, rng, max_repeat,
-                   used, dedup_across):
+                   used, dedup_across, store):
     """Quality-graded recall: split the bucket budget across quality tiers and
     draw from each tier's quality band. Tiers are sorted high->low by ``min``."""
     col = bucket.quality_column
@@ -541,9 +681,12 @@ def _select_tiered(candidates, bucket, budget_kind, target, rng, max_repeat,
         prev_hi = t.min
         label = t.label or f">={t.min}"
         sub = target * (t.weight / tw)
+        if not bucket.quality_grade:
+            band = _cluster_aware_order(store, band, rng)
         sel, st, sc, status = _select_bucket(
             band, budget_kind, sub, rng, max_repeat, used, dedup_across,
-            bucket.name, preserve_order=bucket.quality_grade, tier=label)
+            bucket.name, preserve_order=bucket.quality_grade, tier=label,
+            already_ordered=not bucket.quality_grade)
         all_sel.extend(sel)
         rtok += st
         rcnt += sc
@@ -613,12 +756,19 @@ def select(store: DataStore, recipe: Recipe) -> tuple[list[Selected], dict]:
         if b.quality_tiers:
             sel, rtok, rcnt, status, tiers = _select_tiered(
                 cands, b, budget_kind, target, rng, recipe.max_repeat, used,
-                recipe.dedup_across_buckets)
+                recipe.dedup_across_buckets, store)
+            sampling = _sampling_stats(_attach_cluster_metadata(store, cands))
         else:
+            already_ordered = False
+            if not _is_ranked(b):
+                cands = _cluster_aware_order(store, cands, rng)
+                already_ordered = True
             sel, rtok, rcnt, status = _select_bucket(
                 cands, budget_kind, target, rng, recipe.max_repeat, used,
-                recipe.dedup_across_buckets, b.name, preserve_order=_is_ranked(b))
+                recipe.dedup_across_buckets, b.name, preserve_order=_is_ranked(b),
+                already_ordered=already_ordered)
             tiers = None
+            sampling = _sampling_stats(cands)
         all_selected.extend(sel)
         entry = {
             "bucket": b.name,
@@ -627,6 +777,7 @@ def select(store: DataStore, recipe: Recipe) -> tuple[list[Selected], dict]:
             "realized_samples": rcnt,
             "realized_tokens": rtok,
             "status": status,
+            "sampling": sampling,
         }
         if tiers is not None:
             entry["tiers"] = tiers
@@ -724,22 +875,35 @@ def _requires_export_schema(recipe: Recipe) -> bool:
 
 
 def _export_schema_config_report(recipe: Recipe) -> dict:
+    def fields_report(fields: dict[str, ExportField]) -> dict:
+        return {
+            name: {
+                "sources": list(field_spec.sources),
+                "template": field_spec.template,
+                "required": field_spec.required,
+                "default": field_spec.default,
+            }
+            for name, field_spec in fields.items()
+        }
+
     return {
-        "enabled": bool(recipe.export_fields),
+        "enabled": bool(recipe.export_fields or any(b.export_fields for b in recipe.buckets)),
         "required": _requires_export_schema(recipe),
         "recipe_name": recipe.name,
         "recipe_stage": recipe.stage,
         "format": recipe.export_format,
-        "fields": {
-            name: {
-                "sources": list(field_spec.sources),
-                "required": field_spec.required,
-                "default": field_spec.default,
-            }
-            for name, field_spec in recipe.export_fields.items()
-        },
+        "fields": fields_report(recipe.export_fields),
         "keep": list(recipe.export_keep),
         "include_dm": recipe.export_include_dm,
+        "bucket_fields": {
+            b.name: {
+                "fields": fields_report(b.export_fields),
+                "keep": list(b.export_keep),
+                "include_dm": b.export_include_dm,
+            }
+            for b in recipe.buckets
+            if b.export_fields
+        },
     }
 
 
@@ -782,40 +946,50 @@ def _export_schema_diagnostic(
 def _validate_export_schema_config(recipe: Recipe) -> None:
     if not _requires_export_schema(recipe):
         return
-    if not recipe.export_fields:
+    missing_buckets = [b.name for b in recipe.buckets if not recipe.export_fields and not b.export_fields]
+    if not recipe.export_fields and missing_buckets:
         raise ExportSchemaError(_export_schema_diagnostic(
             recipe,
             code="missing_export_schema_mapping",
             message=(
-                "SFT recipe export needs recipe.export.schema.fields. DataMixer will not "
-                "write final training data from heterogeneous source keys without an "
-                "explicit YAML mapping."
+                "SFT recipe export needs recipe.export.schema.fields or per-bucket "
+                "schema.fields. DataMixer will not write final training data from "
+                "heterogeneous source keys without an explicit YAML mapping."
             ),
             problems=[
                 {
-                    "path": "recipe.export.schema.fields",
+                    "path": "recipe.export.schema.fields or recipe.buckets[].schema.fields",
                     "reason": "missing",
+                    "missing_buckets": missing_buckets,
                     "repair": "Add a mapping from source keys to the final SFT keys.",
                 }
             ],
         ))
-    field_names = set(recipe.export_fields)
-    if "messages" not in field_names and not {"instruction", "output"} <= field_names:
+    problems = []
+    configs: list[tuple[str, dict[str, ExportField]]] = []
+    if recipe.export_fields:
+        configs.append(("recipe.export.schema.fields", recipe.export_fields))
+    for b in recipe.buckets:
+        if b.export_fields:
+            configs.append((f"recipe.buckets[{b.name}].schema.fields", b.export_fields))
+    for path, fields in configs:
+        field_names = set(fields)
+        if "messages" not in field_names and not {"instruction", "output"} <= field_names:
+            problems.append({
+                "path": path,
+                "reason": "required SFT output keys are incomplete",
+                "present_fields": sorted(field_names),
+                "repair": "Map either messages, or map both instruction and output.",
+            })
+    if problems:
         raise ExportSchemaError(_export_schema_diagnostic(
             recipe,
             code="missing_required_sft_fields",
             message=(
                 "SFT recipe export schema must define either `messages` or both "
-                "`instruction` and `output`."
+                "`instruction` and `output` for every active mapping."
             ),
-            problems=[
-                {
-                    "path": "recipe.export.schema.fields",
-                    "reason": "required SFT output keys are incomplete",
-                    "present_fields": sorted(field_names),
-                    "repair": "Map either messages, or map both instruction and output.",
-                }
-            ],
+            problems=problems,
         ))
 
 
@@ -839,18 +1013,70 @@ def _present(value: Any) -> bool:
     return True
 
 
-def _mapped_record(rec: dict, recipe: Recipe) -> tuple[dict, list[str]]:
-    if not recipe.export_fields:
+_TEMPLATE_FIELD_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_.]*)\}")
+
+
+def _stringify_template_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list, tuple, set)):
+        return utils.canonical_json(value).decode("utf-8")
+    return str(value)
+
+
+def _render_template(rec: dict, template: str) -> tuple[str, list[str]]:
+    missing: list[str] = []
+
+    def replace(match: re.Match) -> str:
+        key = match.group(1)
+        value = _lookup_path(rec, key)
+        if not _present(value):
+            missing.append(key)
+            return ""
+        return _stringify_template_value(value)
+
+    return _TEMPLATE_FIELD_RE.sub(replace, template), missing
+
+
+def _bucket_for_recipe(recipe: Recipe, bucket_name: str | None) -> Bucket | None:
+    if not bucket_name:
+        return None
+    for bucket in recipe.buckets:
+        if bucket.name == bucket_name:
+            return bucket
+    return None
+
+
+def _mapping_for_bucket(
+    recipe: Recipe,
+    bucket_name: str | None,
+) -> tuple[dict[str, ExportField], list[str], bool]:
+    bucket = _bucket_for_recipe(recipe, bucket_name)
+    if bucket and bucket.export_fields:
+        include_dm = recipe.export_include_dm
+        if bucket.export_include_dm is not None:
+            include_dm = bucket.export_include_dm
+        return bucket.export_fields, bucket.export_keep, include_dm
+    return recipe.export_fields, recipe.export_keep, recipe.export_include_dm
+
+
+def _mapped_record(rec: dict, recipe: Recipe, bucket_name: str | None = None) -> tuple[dict, list[str]]:
+    export_fields, export_keep, export_include_dm = _mapping_for_bucket(recipe, bucket_name)
+    if not export_fields:
         return rec, []
     out: dict[str, Any] = {}
     missing: list[str] = []
-    for name, field_spec in recipe.export_fields.items():
+    for name, field_spec in export_fields.items():
         value = None
-        for source in field_spec.sources:
-            candidate = _lookup_path(rec, source)
-            if _present(candidate):
-                value = candidate
-                break
+        template_missing: list[str] = []
+        if field_spec.template is not None:
+            value, template_missing = _render_template(rec, field_spec.template)
+        else:
+            for source in field_spec.sources:
+                candidate = _lookup_path(rec, source)
+                if _present(candidate):
+                    value = candidate
+                    break
         if not _present(value):
             if field_spec.default is not None:
                 value = field_spec.default
@@ -859,19 +1085,25 @@ def _mapped_record(rec: dict, recipe: Recipe) -> tuple[dict, list[str]]:
                 continue
             else:
                 value = ""
+        if template_missing and field_spec.required:
+            if field_spec.default is not None:
+                value = field_spec.default
+            else:
+                missing.append(name)
+                continue
         out[name] = value
-    for key in recipe.export_keep:
+    for key in export_keep:
         value = _lookup_path(rec, key)
         if _present(value):
             out[key] = value
-    if recipe.export_include_dm and "_dm" in rec:
+    if export_include_dm and "_dm" in rec:
         out["_dm"] = rec["_dm"]
     return out, missing
 
 
 def _assert_export_schema(store: DataStore, selected: list[Selected], recipe: Recipe) -> dict:
     _validate_export_schema_config(recipe)
-    if not recipe.export_fields:
+    if not recipe.export_fields and not any(b.export_fields for b in recipe.buckets):
         return {"enabled": False}
     checked = 0
     failures = []
@@ -879,7 +1111,7 @@ def _assert_export_schema(store: DataStore, selected: list[Selected], recipe: Re
     shape_mismatch = []
     for sel in selected:
         rec = _record(store, sel)
-        mapped, missing = _mapped_record(rec, recipe)
+        mapped, missing = _mapped_record(rec, recipe, sel.bucket)
         checked += 1
         keys = tuple(sorted(mapped.keys()))
         if shape is None:
@@ -933,6 +1165,11 @@ def _assert_export_schema(store: DataStore, selected: list[Selected], recipe: Re
         "enabled": True,
         "checked": checked,
         "fields": list(recipe.export_fields),
+        "bucket_fields": {
+            b.name: list(b.export_fields)
+            for b in recipe.buckets
+            if b.export_fields
+        },
         "keep": list(recipe.export_keep),
         "include_dm": recipe.export_include_dm,
         "keys": list(shape or ()),
@@ -1116,7 +1353,7 @@ def _export_jsonl(store, selected, out: Path, recipe: Recipe, shard_bytes, gz: b
         written = 0
 
     for sel in selected:
-        rec, _missing = _mapped_record(_record(store, sel), recipe)
+        rec, _missing = _mapped_record(_record(store, sel), recipe, sel.bucket)
         line = utils.canonical_json(rec) + b"\n"
         buf.write(line)
         written += 1
@@ -1140,7 +1377,7 @@ def _export_webdataset(store, selected, out: Path, recipe: Recipe, shard_bytes) 
 
     name = open_shard()
     for sel in selected:
-        rec, _missing = _mapped_record(_record(store, sel), recipe)
+        rec, _missing = _mapped_record(_record(store, sel), recipe, sel.bucket)
         payload = utils.canonical_json(rec)
         info = tarfile.TarInfo(name=f"{sel.sample_id}.json")
         info.size = len(payload)

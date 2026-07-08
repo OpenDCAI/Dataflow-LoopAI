@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ import tomlkit
 
 from tortoise.expressions import Q
 
+from loopai.utils.model_pool import StarterModelPool
 from ...models.db_models import StarterConfig, TaskModel, ThreadHistory
 from ...utils.config.config import check_config_from_db
 
@@ -238,6 +240,7 @@ def _sync_codex_home_config(
 ) -> Path:
     codex_home = _resolved_codex_home(system_config)
     codex_home.mkdir(parents=True, exist_ok=True)
+    _ensure_codex_home_seed_files(codex_home)
 
     config_path = codex_home / "config.toml"
     workspace = str(system_config.get("codex_workspace") or PROJECT_ROOT).strip() or str(PROJECT_ROOT)
@@ -281,6 +284,21 @@ def _sync_codex_home_config(
     return codex_home
 
 
+def _ensure_codex_home_seed_files(codex_home: Path) -> None:
+    if not EXAMPLE_CODEX_HOME.exists():
+        return
+    for source_path in EXAMPLE_CODEX_HOME.iterdir():
+        if source_path.name == "config.toml":
+            continue
+        target_path = codex_home / source_path.name
+        if target_path.exists():
+            continue
+        if source_path.is_dir() and not source_path.is_symlink():
+            shutil.copytree(source_path, target_path)
+        else:
+            shutil.copy2(source_path, target_path)
+
+
 def _resolved_codex_sandbox_mode(system_config: dict[str, Any]) -> str:
     configured = str(system_config.get("codex_sandbox_mode") or "").strip()
     if configured in ALLOWED_CODEX_SANDBOX_MODES:
@@ -301,6 +319,24 @@ async def load_starter_system_config() -> dict[str, Any]:
 
     system_config = config.get("system", {})
     if isinstance(system_config, dict):
+        system_config = dict(system_config)
+        model_value = system_config.get("model")
+        has_explicit_pool = (
+            isinstance(model_value, list)
+            or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
+        )
+        if has_explicit_pool:
+            pool = StarterModelPool(system_config)
+            provider = pool.resolve_proxy_provider(system_config.get("codex_model") or None, tier=pool.default_tier)
+            if provider is not None:
+                system_config["codex_base_url"] = provider.base_url
+                system_config["codex_api_key"] = provider.api_key
+                system_config["codex_model"] = provider.model
+                system_config["codex_wire_api"] = "responses"
+                system_config.setdefault("codex_model_provider", "loopai_model_pool_proxy")
+                system_config.setdefault("codex_provider_name", "LoopAI Model Pool Proxy")
+                system_config.setdefault("codex_api_key_env_key", "CODEX_API_KEY")
+                system_config.setdefault("codex_supports_websockets", False)
         return system_config
     return {}
 

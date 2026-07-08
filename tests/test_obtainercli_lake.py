@@ -15,6 +15,8 @@ sys.modules.setdefault("colorlog", types.SimpleNamespace(ColoredFormatter=loggin
 from loopai.skills.ObtainerCLI.cli import run
 from loopai.skills.ObtainerCLI.config import write_lake_config
 from loopai.skills.ObtainerCLI.monitor_state import monitor_state_path
+from loopai.agents.Obtainer.datamixer.clusters import update_dataset_clusters
+from loopai.agents.Obtainer.datamixer.store import DataStore
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -205,6 +207,240 @@ def test_obtainercli_dm_init_ingest_query_index_and_recipe_export(tmp_path: Path
     }
 
 
+def test_dm_ingest_registers_dataset_card_and_validates_derived_fields(tmp_path: Path, capsys) -> None:
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "alphamath_normalized.jsonl"
+    card = tmp_path / "manifest" / "dataset_cards" / "alphamath_sft.md"
+    card.parent.mkdir(parents=True, exist_ok=True)
+    card.write_text(
+        "# AlphaMath SFT\n\nOriginal fields are preserved. train_output is derived from reasoning + answer.\n",
+        encoding="utf-8",
+    )
+    _write_jsonl(
+        records,
+        [
+            {
+                "content": {
+                    "instruction": "<question>1+1?</question>",
+                    "output": '[{"step":"<step>1+1=2</step>","P":1,"Q":1,"depth":1}]',
+                    "answer": "2",
+                    "train_output": "<think>1+1=2</think>\n2",
+                },
+                "source_uri": "hf://alpha/0",
+            },
+            {
+                "content": {
+                    "instruction": "<question>2+2?</question>",
+                    "output": '[{"step":"<step>2+2=4</step>","P":1,"Q":1,"depth":1}]',
+                    "answer": "4",
+                    "train_output": "<think>2+2=4</think>\n4",
+                },
+                "source_uri": "hf://alpha/1",
+            },
+        ],
+    )
+    _dm(warehouse, ["init"], capsys)
+
+    ingest = _dm(
+        warehouse,
+        [
+            "ingest",
+            "alphamath_trainset_sft_v1",
+            "--file",
+            str(records),
+            "--content-key",
+            "content",
+            "--dataset-card",
+            str(card),
+            "--derived-field",
+            "train_output",
+            "--source-row-count",
+            "2",
+            "--stage",
+            "sft",
+            "--domain",
+            "math",
+            "--source",
+            "huggingface",
+            "--license",
+            "MIT",
+            "--task-type",
+            "SFT",
+        ],
+        capsys,
+    )
+
+    assert ingest["written"] == 2
+    assert ingest["derived_fields"] == ["train_output"]
+    registered_card = Path(ingest["dataset_card"])
+    assert registered_card == warehouse / "dataset_cards" / "alphamath_trainset_sft_v1.md"
+    assert registered_card.read_text(encoding="utf-8").startswith("# AlphaMath SFT")
+    lineage = json.loads(Path(ingest["lineage"]).read_text(encoding="utf-8"))
+    assert lineage["dataset_card"] == str(registered_card)
+    assert lineage["validation"]["rows"] == 2
+
+    store = DataStore.open(warehouse)
+    ds_id = store.catalog.resolve_dataset("alphamath_trainset_sft_v1")
+    row = store.catalog.query(dataset_id=ds_id, columns="sample_id,cid", limit=1)[0]
+    content = store.get_content(row["cid"])
+    store.close()
+    assert content["output"].startswith("[")
+    assert content["answer"] == "2"
+    assert content["train_output"].endswith("\n2")
+
+
+def test_dm_ingest_rejects_empty_declared_derived_field(tmp_path: Path, capsys) -> None:
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "bad.jsonl"
+    card = tmp_path / "card.md"
+    card.write_text("# Bad\n\nMissing derived field.\n", encoding="utf-8")
+    _write_jsonl(
+        records,
+        [
+            {"content": {"instruction": "q", "answer": "a", "train_output": "a"}},
+            {"content": {"instruction": "q2", "answer": "b", "train_output": ""}},
+        ],
+    )
+    _dm(warehouse, ["init"], capsys)
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "ingest",
+            "bad_sft",
+            "--file",
+            str(records),
+            "--content-key",
+            "content",
+            "--dataset-card",
+            str(card),
+            "--derived-field",
+            "train_output",
+            "--source-row-count",
+            "2",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code != 0
+    assert "derived fields must be non-empty" in json.dumps(payload)
+    assert not (warehouse / "dataset_cards" / "bad_sft.md").exists()
+
+
+def test_recipe_export_defaults_to_cluster_similarity_sampling_with_random_fallback(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "mixed.jsonl"
+    recipe_path = tmp_path / "recipe.yaml"
+    export_dir = tmp_path / "export"
+    _write_jsonl(
+        records,
+        [
+            {"content": {"instruction": "i0", "output": "o0"}, "source_uri": "hf://mix/0"},
+            {"content": {"instruction": "i1", "output": "o1"}, "source_uri": "hf://mix/1"},
+            {"content": {"instruction": "i2", "output": "o2"}, "source_uri": "hf://mix/2"},
+            {"content": {"instruction": "i3", "output": "o3"}, "source_uri": "hf://mix/3"},
+        ],
+    )
+    recipe_path.write_text(
+        yaml.safe_dump(
+            {
+                "recipe": {
+                    "name": "clustered_mix",
+                    "stage": "sft",
+                    "total_samples": 4,
+                    "sampling": {"strategy": "weighted_sample", "seed": 11},
+                    "export": {
+                        "format": "jsonl",
+                        "schema": {
+                            "fields": {
+                                "instruction": {"sources": ["instruction"]},
+                                "input": {"sources": ["input"], "required": False, "default": ""},
+                                "output": {"sources": ["output"]},
+                            },
+                            "include_dm": True,
+                        },
+                    },
+                    "buckets": [
+                        {
+                            "name": "all_sft",
+                            "weight": 1,
+                            "filter": "domain = 'general' AND task_type = 'SFT'",
+                        }
+                    ],
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _dm(warehouse, ["init"], capsys)
+    _dm(
+        warehouse,
+        [
+            "ingest",
+            "mixed_sft",
+            "--file",
+            str(records),
+            "--stage",
+            "sft",
+            "--domain",
+            "general",
+            "--task-type",
+            "SFT",
+        ],
+        capsys,
+    )
+
+    store = DataStore.open(warehouse)
+    samples = store.catalog.query(order="sample_id")
+    dataset_id = samples[0]["dataset_id"]
+    update_dataset_clusters(
+        warehouse,
+        dataset_id=dataset_id,
+        embeddings=[
+            {
+                "record_id": samples[0]["sample_id"],
+                "dataset_id": dataset_id,
+                "embedding_model": "test-embed",
+                "embedding_dim": 2,
+                "vector": [1.0, 0.0],
+            },
+            {
+                "record_id": samples[1]["sample_id"],
+                "dataset_id": dataset_id,
+                "embedding_model": "test-embed",
+                "embedding_dim": 2,
+                "vector": [0.99, 0.01],
+            },
+        ],
+        max_clusters=1,
+    )
+    store.close()
+
+    result = _dm(warehouse, ["recipe", "export", str(recipe_path), "--out", str(export_dir)], capsys)
+    manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
+    sampling = manifest["summary"]["buckets"][0]["sampling"]
+    assert result["selected_samples"] == 4
+    assert sampling["strategy"] == "cluster_similarity"
+    assert sampling["clustered_candidates"] == 2
+    assert sampling["random_candidates"] == 2
+
+    rows = [
+        json.loads(line)
+        for line in (export_dir / "part-00000.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    clustered_rows = [row for row in rows if row["_dm"].get("cluster_id")]
+    random_rows = [row for row in rows if not row["_dm"].get("cluster_id")]
+    assert len(clustered_rows) == 2
+    assert len(random_rows) == 2
+    assert all(row["_dm"]["cluster_similarity"] is not None for row in clustered_rows)
+
+
 def test_sft_recipe_export_requires_explicit_schema_mapping(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "warehouse"
     records = tmp_path / "input" / "math.jsonl"
@@ -356,6 +592,153 @@ def test_sft_recipe_export_mapping_normalizes_heterogeneous_keys(
     assert {row["output"] for row in rows} == {"2", "4"}
 
 
+def test_sft_recipe_export_supports_bucket_schema_templates(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"
+    math_records = tmp_path / "input" / "math.jsonl"
+    sql_records = tmp_path / "input" / "sql.jsonl"
+    recipe_path = tmp_path / "recipe.yaml"
+    export_dir = tmp_path / "export"
+    _write_jsonl(
+        math_records,
+        [
+            {
+                "instruction": "What is 2+2?",
+                "reasoning": "2 plus 2 combines two pairs.",
+                "answer": "4",
+                "output": "bad fallback",
+            },
+        ],
+    )
+    _write_jsonl(
+        sql_records,
+        [
+            {
+                "question": "List active user ids.",
+                "evidence": "Only active users should be returned.",
+                "sql_schema": "users(id INT, active BOOL)",
+                "sql_block": "Use the users table.",
+                "sql": "SELECT id FROM users WHERE active = TRUE;",
+            },
+        ],
+    )
+    recipe_path.write_text(
+        yaml.safe_dump(
+            {
+                "recipe": {
+                    "name": "bucket_templates",
+                    "stage": "sft",
+                    "total_samples": 2,
+                    "sampling": {"strategy": "weighted_sample", "seed": 7},
+                    "export": {"format": "jsonl"},
+                    "buckets": [
+                        {
+                            "name": "math",
+                            "weight": 0.5,
+                            "filter": "domain = 'math' AND task_type = 'SFT'",
+                            "schema": {
+                                "fields": {
+                                    "instruction": {"sources": ["instruction"]},
+                                    "input": {
+                                        "sources": ["input"],
+                                        "required": False,
+                                        "default": "",
+                                    },
+                                    "output": {
+                                        "template": "<think>{reasoning}</think>{answer}",
+                                    },
+                                },
+                                "include_dm": False,
+                            },
+                        },
+                        {
+                            "name": "text2sql",
+                            "weight": 0.5,
+                            "filter": "domain = 'sql' AND task_type = 'SFT'",
+                            "schema": {
+                                "fields": {
+                                    "instruction": {"template": "{question}"},
+                                    "input": {
+                                        "template": (
+                                            "Evidence:\n{evidence}\n"
+                                            "Schema:\n{sql_schema}\n"
+                                            "SQL block:\n{sql_block}"
+                                        ),
+                                    },
+                                    "output": {"sources": ["sql"]},
+                                },
+                                "include_dm": False,
+                            },
+                        },
+                    ],
+                }
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _dm(warehouse, ["init"], capsys)
+    _dm(
+        warehouse,
+        [
+            "ingest",
+            "math_sft",
+            "--file",
+            str(math_records),
+            "--stage",
+            "sft",
+            "--domain",
+            "math",
+            "--task-type",
+            "SFT",
+        ],
+        capsys,
+    )
+    _dm(
+        warehouse,
+        [
+            "ingest",
+            "sql_sft",
+            "--file",
+            str(sql_records),
+            "--stage",
+            "sft",
+            "--domain",
+            "sql",
+            "--task-type",
+            "SFT",
+        ],
+        capsys,
+    )
+
+    result = _dm(warehouse, ["recipe", "export", str(recipe_path), "--out", str(export_dir)], capsys)
+    assert result["selected_samples"] == 2
+    manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["export_schema"]["bucket_fields"] == {
+        "math": ["instruction", "input", "output"],
+        "text2sql": ["instruction", "input", "output"],
+    }
+    rows = [
+        json.loads(line)
+        for line in (export_dir / "part-00000.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert {tuple(sorted(row)) for row in rows} == {("input", "instruction", "output")}
+    by_instruction = {row["instruction"]: row for row in rows}
+    assert by_instruction["What is 2+2?"]["output"] == (
+        "<think>2 plus 2 combines two pairs.</think>4"
+    )
+    assert by_instruction["List active user ids."]["input"] == (
+        "Evidence:\nOnly active users should be returned.\n"
+        "Schema:\nusers(id INT, active BOOL)\n"
+        "SQL block:\nUse the users table."
+    )
+    assert by_instruction["List active user ids."]["output"] == (
+        "SELECT id FROM users WHERE active = TRUE;"
+    )
+
+
 def test_sft_recipe_export_reports_mapping_failures_for_agent_repair(
     tmp_path: Path,
     capsys,
@@ -468,7 +851,7 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
 
     captured: dict[str, str] = {}
 
-    def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True):
+    def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True, **kwargs):
         captured["prompt"] = prompt
         captured["base_url"] = prov["base_url"]
         sample_line = next(line for line in prompt.splitlines() if line.startswith("- Sample JSONL file:"))
@@ -846,7 +1229,7 @@ def test_sft_export_agent_resume_reuses_saved_thread_id(
     monkeypatch.setenv("CODEX_API_KEY", "dummy")
     captured: dict[str, object] = {}
 
-    def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True, thread_id=None):
+    def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True, thread_id=None, **kwargs):
         captured["prompt"] = prompt
         captured["thread_id"] = thread_id
         captured["prov"] = prov
@@ -979,9 +1362,67 @@ def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
     assert "compare the candidate list against the original user" in prompt
     assert "Each single dataset is capped at 100000 rows" in prompt
     assert "DataMixer `ingest` or `agent-ingest`" in prompt
+    assert "register it during ingest with `--dataset-card <path>`" in prompt
+    assert "Pass `--derived-field <name>` for each derived field" in prompt
+    assert "dataset_cards/*.md" in prompt
     state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
     assert state["target_datasets"] == 30
     assert state["max_rows_per_dataset"] == 100000
+
+
+def test_dataset_acquisition_agent_model_falls_back_to_starter_yaml(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"
+    run_dir = tmp_path / "acquisition_run"
+    starter_config = tmp_path / "starter.yaml"
+    starter_config.write_text(
+        yaml.safe_dump(
+            {
+                "system": {
+                    "starter_model_name": "yaml-model",
+                    "starter_model_path": "yaml-model",
+                    "starter_base_url": "http://yaml.example/v1",
+                    "starter_api_key": "dummy",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CODEX_BASE_URL", raising=False)
+    monkeypatch.delenv("CODEX_MODEL", raising=False)
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("STARTER_CONFIG", str(starter_config))
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "dataset-acquisition-agent",
+            "start",
+            "--run",
+            str(run_dir),
+            "--objective",
+            "ingest reasoning datasets",
+            "--model",
+            "yaml-model",
+            "--dry-run",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 0
+    assert payload["status"] == "dry_run"
+    assert payload["provider"]["source"] == "starter_yaml:system.starter"
+    assert payload["provider"]["model_pool_name"] == "yaml-model"
+    state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
+    assert state["provider"]["model"] == "yaml-model"
 
 
 def test_dataset_acquisition_agent_start_defaults_to_background(
@@ -1061,7 +1502,7 @@ def test_dataset_acquisition_agent_resume_reuses_saved_thread_id(
     monkeypatch.setenv("CODEX_API_KEY", "dummy")
     captured: dict[str, object] = {}
 
-    def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True, thread_id=None):
+    def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True, thread_id=None, **kwargs):
         captured["prompt"] = prompt
         captured["thread_id"] = thread_id
         (run_dir / "final_report.json").write_text(
@@ -1095,3 +1536,141 @@ def test_dataset_acquisition_agent_resume_reuses_saved_thread_id(
     status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "completed"
     assert status["worker_ok"] is True
+
+
+def test_dataset_acquisition_worker_env_isolates_outer_task_context(
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    monkeypatch.setenv("TASK_ID", "outer-task")
+    monkeypatch.setenv("task_id", "outer-task-lower")
+    monkeypatch.setenv("DB_PATH", "/tmp/outer.db")
+    monkeypatch.setenv("CODEX_THREAD_ID", "outer-thread")
+    monkeypatch.setenv("CODEX_USE_PROJECT_CONFIG", "1")
+
+    env = dataset_acquisition_agent._worker_env(
+        prov={"model": "deepseek-v4-pro", "base_url": "http://proxy/v1", "api_key": "dummy"}
+    )
+
+    assert "TASK_ID" not in env
+    assert "task_id" not in env
+    assert "DB_PATH" not in env
+    assert "CODEX_THREAD_ID" not in env
+    assert "CODEX_USE_PROJECT_CONFIG" not in env
+    assert env["CODEX_HOME"].endswith("codex_home_worker")
+    assert env["LOOPAI_WORKER_KIND"] == "dataset-acquisition-agent"
+    assert env["HF_ENDPOINT"] == "https://hf-mirror.com"
+    assert env["HF_HUB_ENDPOINT"] == "https://hf-mirror.com"
+    assert env["HF_HUB_DISABLE_TELEMETRY"] == "1"
+    assert "OBTAINER_MODEL" not in env
+    assert "OBTAINER_BASE_URL" not in env
+    assert "OBTAINER_API_KEY" not in env
+
+
+def test_dataset_acquisition_worker_preserves_custom_hf_endpoint(
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    monkeypatch.setenv("HF_ENDPOINT", "https://hf.internal.example")
+
+    env = dataset_acquisition_agent._worker_env()
+
+    assert env["HF_ENDPOINT"] == "https://hf.internal.example"
+    assert env["HF_HUB_ENDPOINT"] == "https://hf.internal.example"
+
+
+def test_dataset_acquisition_worker_records_thread_started_event(
+    tmp_path: Path,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    run_dir = tmp_path / "acquisition_run"
+    run_dir.mkdir()
+    (run_dir / "thread.json").write_text(json.dumps({"warehouse": "/tmp/warehouse"}), encoding="utf-8")
+    (run_dir / "status.json").write_text(json.dumps({"state": "running"}), encoding="utf-8")
+
+    dataset_acquisition_agent._record_thread_started(
+        run_dir,
+        {"type": "event", "event": {"type": "thread.started", "thread_id": "thread-acq-new"}},
+    )
+
+    state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
+    status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+    assert state["thread_id"] == "thread-acq-new"
+    assert status["thread_id"] == "thread-acq-new"
+    assert status["state"] == "running"
+
+
+def test_dataset_acquisition_agent_resume_refuses_active_run(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"
+    run_dir = tmp_path / "acquisition_run"
+    run_dir.mkdir()
+    (run_dir / "thread.json").write_text(
+        json.dumps({"warehouse": str(warehouse), "thread_id": "thread-acq-123"}),
+        encoding="utf-8",
+    )
+    (run_dir / "status.json").write_text(
+        json.dumps({"state": "running", "pid": 12345}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("loopai.skills.ObtainerCLI.dataset_acquisition_agent._pid_alive", lambda pid: True)
+    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
+    monkeypatch.setenv("CODEX_API_KEY", "dummy")
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "dataset-acquisition-agent",
+            "resume",
+            "--run",
+            str(run_dir),
+            "--message",
+            "continue",
+            "--foreground",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 2
+    assert payload["error_code"] == "DATASET_ACQUISITION_AGENT_RUN_ACTIVE"
+
+
+def test_dataset_acquisition_worker_marks_status_interrupted_on_keyboard_interrupt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    run_dir = tmp_path / "acquisition_run"
+
+    def raise_keyboard_interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(dataset_acquisition_agent.codex, "run_via_sdk", raise_keyboard_interrupt, raising=False)
+
+    try:
+        dataset_acquisition_agent._run_worker(
+            run_dir=run_dir,
+            prompt="test prompt",
+            prov={"base_url": "http://127.0.0.1:15721/v1", "api_key": "dummy", "model": "deepseek-chat"},
+            provider_meta={"source": "test", "model": "deepseek-chat"},
+            timeout=1,
+        )
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("expected KeyboardInterrupt")
+
+    status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "interrupted"
+    assert status["error"] == "KeyboardInterrupt"
+    assert status["prompt_path"].endswith("worker_prompt.md")

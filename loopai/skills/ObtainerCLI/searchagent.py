@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any
 
+from loopai.utils.model_pool import StarterModelPool
 from .errors import ObtainerCliError
 from .models import utc_now
 
@@ -38,7 +40,52 @@ def _starter_config_candidates(starter_config: str | Path | None = None) -> list
     return deduped
 
 
+def _starter_db_candidates() -> list[Path]:
+    candidates = [
+        Path("api") / "db" / "db.sqlite3",
+        Path.cwd() / "api" / "db" / "db.sqlite3",
+    ]
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path.expanduser().resolve()) if path.exists() else str(path)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(path)
+    return deduped
+
+
+def _load_starter_config_from_db() -> dict[str, Any]:
+    for path in _starter_db_candidates():
+        if not path.exists():
+            continue
+        try:
+            con = sqlite3.connect(str(path))
+            try:
+                row = con.execute(
+                    "select config from starterconfig where name=?",
+                    ("starter",),
+                ).fetchone()
+            finally:
+                con.close()
+        except sqlite3.Error:
+            continue
+        if not row or not row[0]:
+            continue
+        try:
+            loaded = json.loads(row[0])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(loaded, dict):
+            return loaded
+    return {}
+
+
 def _load_starter_config(starter_config: str | Path | None = None) -> dict[str, Any]:
+    if starter_config is None:
+        db_config = _load_starter_config_from_db()
+        if db_config:
+            return db_config
     for path in _starter_config_candidates(starter_config):
         if not path.exists():
             continue
@@ -69,13 +116,25 @@ def _resolve_runtime_defaults(starter_config: str | Path | None = None) -> dict[
     system = cfg.get("system", {}) if isinstance(cfg.get("system"), dict) else {}
     default_states = cfg.get("default_states", {}) if isinstance(cfg.get("default_states"), dict) else {}
     obtainer = default_states.get("obtainer", {}) if isinstance(default_states.get("obtainer"), dict) else {}
+    model_value = system.get("model")
+    has_explicit_pool = (
+        isinstance(model_value, list)
+        or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
+    )
+    provider = None
+    if has_explicit_pool:
+        pool = StarterModelPool(system)
+        provider = pool.resolve_proxy_provider(
+            _first_non_empty(obtainer.get("model_path"), system.get("starter_model_path"), system.get("starter_model_name")),
+            tier=pool.default_tier,
+        )
     return {
-        "model_name": _first_non_empty(
+        "model_name": provider.model if provider is not None else _first_non_empty(
             system.get("starter_model_path"),
             system.get("starter_model_name"),
         ),
-        "base_url": system.get("starter_base_url"),
-        "api_key": system.get("starter_api_key"),
+        "base_url": provider.base_url if provider is not None else system.get("starter_base_url"),
+        "api_key": provider.api_key if provider is not None else system.get("starter_api_key"),
         "temperature": obtainer.get("temperature"),
         "prompt_template_dir": default_states.get("prompt_template_dir"),
         "search_engine": obtainer.get("search_engine"),
@@ -538,6 +597,7 @@ async def _search_single_task(
     deep_context_chars: int,
 ) -> dict[str, Any]:
     objective = str(task.get("objective") or query_text)
+    task_domain = str(task.get("domain") or task.get("capability_domain") or "").strip()
     search_keywords = task.get("search_keywords") or objective
     keyword_list = _normalize_keywords(search_keywords, objective)
 
@@ -623,7 +683,13 @@ async def _search_single_task(
             except Exception as exc:
                 errors.append({"method": method, "error": str(exc)})
 
+    for candidate in candidates:
+        if task_domain:
+            candidate.setdefault("task_domain", task_domain)
+        candidate.setdefault("task_objective", objective)
+
     return {
+        "domain": task_domain or None,
         "objective": objective,
         "search_keywords": keyword_list,
         "enriched_search_keywords": enriched_keywords,
@@ -653,12 +719,18 @@ async def _run_searchagent_async(
     max_deep_queries: int,
     max_deep_pages: int,
     deep_context_chars: int,
+    parallelism: int = 3,
 ) -> list[dict[str, Any]]:
-    results: list[dict[str, Any]] = []
-    for task in tasks:
-        results.append(
-            await _search_single_task(
-                task=task,
+    import asyncio
+
+    semaphore = asyncio.Semaphore(max(1, int(parallelism or 1)))
+
+    async def _run_one(index: int, task: dict[str, Any]) -> dict[str, Any]:
+        isolated_task = dict(task)
+        isolated_task.setdefault("task_index", index)
+        async with semaphore:
+            result = await _search_single_task(
+                task=isolated_task,
                 query_text=query_text,
                 model_name=model_name,
                 base_url=base_url,
@@ -676,8 +748,24 @@ async def _run_searchagent_async(
                 max_deep_pages=max_deep_pages,
                 deep_context_chars=deep_context_chars,
             )
+        result["task_index"] = index
+        task_id = isolated_task.get("id") or isolated_task.get("name")
+        task_domain = isolated_task.get("domain") or isolated_task.get("capability_domain")
+        if task_id:
+            result["task_id"] = str(task_id)
+        for candidate in result.get("candidates", []) or []:
+            candidate.setdefault("task_index", index)
+            if task_id:
+                candidate.setdefault("task_id", str(task_id))
+            if task_domain:
+                candidate.setdefault("task_domain", str(task_domain))
+        return result
+
+    return list(
+        await asyncio.gather(
+            *[_run_one(index, task) for index, task in enumerate(tasks)]
         )
-    return results
+    )
 
 
 def run_searchagent(
@@ -704,6 +792,7 @@ def run_searchagent(
     max_deep_queries: int = 3,
     max_deep_pages: int = 3,
     deep_context_chars: int = 12000,
+    parallelism: int = 3,
     debug: bool = False,
 ) -> dict[str, Any]:
     needs_starter = bool(starter_config) or not (model_name and base_url and api_key)
@@ -752,6 +841,7 @@ def run_searchagent(
             max_deep_queries=max_deep_queries,
             max_deep_pages=max_deep_pages,
             deep_context_chars=deep_context_chars,
+            parallelism=parallelism,
         )
     )
     candidates = []

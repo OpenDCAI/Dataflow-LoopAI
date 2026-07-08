@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +16,6 @@ from pydantic import BaseModel
 from ..models.body import response_body
 from ..utils.obtainer.monitor import probe_embedding_health
 from loopai.skills.ObtainerCLI.monitor_state import read_monitor_state, start_background_rebuild
-from loopai.agents.Obtainer.datamixer.console import run_cli as run_datamixer_console_cli
 from loopai.skills.ObtainerCLI.datamixer_adapter import warehouse_root
 from loopai.skills.ObtainerCLI.lake_manager import (
     current_lake_pointer,
@@ -29,6 +35,7 @@ class DataMixerCliRequest(BaseModel):
     files: dict[str, str] | None = None
     lake: str | None = None
     root: str | None = None
+    timeout_seconds: float | None = 20.0
 
 
 class DataMixerLakeLoadRequest(BaseModel):
@@ -68,38 +75,73 @@ def _resolve_datamixer_root(*, lake: str | None = None, root: str | None = None)
 
 def _datamixer_command_payload() -> dict[str, Any]:
     return {
-        "entrypoint": "loopai-obtainercli dm",
+        "entrypoint": "loopai-obtainercli dm --lake .loopai/lake.yaml",
         "backend": "datamixer",
         "groups": [
             {
                 "key": "lake",
                 "label": "Lake Management",
-                "commands": ["lake scan", "lake current", "lake load --warehouse /path/to/warehouse", "lake delete"],
+                "commands": [
+                    "lake scan",
+                    "lake current",
+                    "lake load --warehouse /path/to/warehouse",
+                    "lake delete",
+                    "lake monitor rebuild",
+                ],
             },
             {
                 "key": "catalog",
                 "label": "Catalog",
-                "commands": ["status", "stats", "schema", "columns", "dataset list", "query"],
+                "commands": [
+                    "dataset list",
+                    "query --limit 20",
+                    "columns",
+                    "schema",
+                    "index stats",
+                    "status",
+                    "stats",
+                ],
             },
             {
                 "key": "ingest",
                 "label": "Ingest",
-                "commands": ["ingest", "agent-ingest", "dataset-acquisition-agent start"],
+                "commands": [
+                    "ingest DATASET --file /path/to/input.jsonl --dataset-card /path/to/DATASET.md --source-row-count N --derived-field FIELD",
+                    "agent-ingest /path/to/input.jsonl --dataset DATASET --dataset-card /path/to/DATASET.md",
+                    "dataset-acquisition-agent start --run outputs/obtainer_dataset_run --analysis-report outputs/analyzer_report.md",
+                    "dataset-acquisition-agent status --run outputs/obtainer_dataset_run",
+                ],
             },
             {
                 "key": "operators",
                 "label": "Processing",
-                "commands": ["op list", "op run", "pipeline run", "dataflow agent-run"],
+                "commands": [
+                    "op list",
+                    "op run OPERATOR --dataset DATASET",
+                    "pipeline run /path/to/pipeline.yaml",
+                    "dataflow agent-run --target \"clean and enrich records\" --model MODEL --dataset DATASET",
+                ],
             },
             {
                 "key": "index",
                 "label": "Index & Recall",
-                "commands": ["index stats", "index build", "recall"],
+                "commands": [
+                    "index stats",
+                    "recall --query \"example\" --limit 10",
+                    "index build",
+                ],
             },
             {
                 "key": "recipe",
                 "label": "Recipe Export",
-                "commands": ["recipe validate", "recipe plan", "recipe preview", "recipe export --snapshot"],
+                "commands": [
+                    "recipe validate /path/to/recipe.yaml",
+                    "recipe plan /path/to/recipe.yaml",
+                    "recipe preview /path/to/recipe.yaml",
+                    "recipe export /path/to/recipe.yaml --snapshot",
+                    "sft-export-agent start --run outputs/obtainer_sft_export --analysis-report outputs/analyzer_report.md",
+                    "sft-export-agent status --run outputs/obtainer_sft_export",
+                ],
             },
             {
                 "key": "lineage",
@@ -107,6 +149,118 @@ def _datamixer_command_payload() -> dict[str, Any]:
                 "commands": ["snapshot list", "snapshot create", "lineage list"],
             },
         ],
+    }
+
+
+def _normalize_obtainercli_dm_args(*, argv: list[str] | None = None, line: str | None = None) -> list[str]:
+    args = list(argv or shlex.split(line or ""))
+    if args[:1] == ["loopai-obtainercli"]:
+        args = args[1:]
+    if args[:3] == ["python", "-m", "loopai.skills.ObtainerCLI.cli"]:
+        args = args[3:]
+    if args[:1] == ["dm"]:
+        args = args[1:]
+    if args[:1] == ["--"]:
+        args = args[1:]
+    return args
+
+
+def _run_obtainercli_dm_for_webui(request: DataMixerCliRequest) -> dict[str, Any]:
+    args = _normalize_obtainercli_dm_args(argv=request.argv, line=request.line)
+    tmp_paths: list[str] = []
+    files = request.files or {}
+    if files:
+        for index, item in enumerate(args):
+            if item not in files:
+                continue
+            fd, path = tempfile.mkstemp(suffix=".tmp", prefix="obtainercli-webui-")
+            os.close(fd)
+            Path(path).write_text(files[item], encoding="utf-8")
+            tmp_paths.append(path)
+            args[index] = path
+    lake = request.lake or ".loopai/lake.yaml"
+    cli_argv = ["dm", "--lake", lake]
+    if request.root:
+        cli_argv.extend(["--root", request.root])
+    cli_argv.extend(args)
+    display = "loopai-obtainercli " + " ".join(shlex.quote(item) for item in cli_argv)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in [str(REPO_ROOT), env.get("PYTHONPATH", "")] if part
+    )
+    process_argv = [sys.executable, "-m", "loopai.skills.ObtainerCLI.cli", *cli_argv]
+    timeout = max(1.0, min(float(request.timeout_seconds or 20.0), 300.0))
+    try:
+        completed = subprocess.run(
+            process_argv,
+            cwd=str(REPO_ROOT),
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+        exit_code = completed.returncode
+        raw = (completed.stdout or "").strip()
+        err = (completed.stderr or "").strip()
+    except subprocess.TimeoutExpired as exc:
+        raw = (exc.stdout or "").strip() if isinstance(exc.stdout, str) else ""
+        err = (exc.stderr or "").strip() if isinstance(exc.stderr, str) else ""
+        message = f"ObtainerCLI command timed out after {timeout:g}s"
+        return {
+            "command": display,
+            "exit": 124,
+            "output": {"error": message},
+            "raw": "\n".join(part for part in [raw, err, message] if part),
+            "argv": cli_argv,
+            "timed_out": True,
+        }
+    except Exception as exc:
+        raw_error = str(exc)
+        return {
+            "command": display,
+            "exit": 1,
+            "output": {"error": raw_error},
+            "raw": raw_error,
+            "argv": cli_argv,
+        }
+    finally:
+        for path in tmp_paths:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    parsed: Any = None
+    if raw:
+        for line in reversed(raw.splitlines()):
+            if not line.strip():
+                continue
+            try:
+                parsed = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+    if isinstance(parsed, dict) and "result" in parsed:
+        output = parsed.get("result")
+    elif isinstance(parsed, dict) and parsed.get("ok") is False:
+        output = {
+            "error": parsed.get("message") or parsed.get("error_code") or err or raw,
+            "error_code": parsed.get("error_code"),
+            "hint": parsed.get("hint"),
+            "details": parsed.get("details"),
+        }
+    else:
+        output = parsed
+    if output is None:
+        output = {"error": err or raw or f"command exited with code {exit_code}"}
+    return {
+        "command": display,
+        "exit": exit_code,
+        "output": output,
+        "raw": "\n".join(part for part in [raw, err] if part),
+        "argv": cli_argv,
+        "obtainercli": parsed,
     }
 
 
@@ -219,13 +373,7 @@ async def get_datamixer_commands():
 )
 async def run_datamixer_cli(request: DataMixerCliRequest):
     try:
-        root = _resolve_datamixer_root(lake=request.lake, root=request.root)
-        result = run_datamixer_console_cli(
-            root,
-            argv=request.argv,
-            line=request.line,
-            files=request.files,
-        )
+        result = await asyncio.to_thread(_run_obtainercli_dm_for_webui, request)
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=result)()

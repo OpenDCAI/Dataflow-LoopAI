@@ -16,11 +16,15 @@ from __future__ import annotations
 
 import json
 import os
+import selectors
 import shutil
 import subprocess
+import time
 from functools import lru_cache
 from pathlib import Path
+from typing import Callable
 
+from loopai.utils.model_pool import StarterModelPool, load_starter_system_config_sync
 from .models import ModelPool, ModelSpec
 
 
@@ -119,6 +123,16 @@ def _base_url(api_url: str) -> str:
 
 def provider_from_model(spec: ModelSpec) -> dict:
     """Map a model-pool entry onto the shared Codex runner environment."""
+    system = load_starter_system_config_sync(_project_root(), prefer_db=True)
+    model_value = system.get("model")
+    has_explicit_pool = (
+        isinstance(model_value, list)
+        or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
+    )
+    if has_explicit_pool:
+        provider = StarterModelPool(system).resolve_proxy_provider(spec.name or spec.model)
+        if provider is not None:
+            return provider.as_provider()
     return {
         "base_url": _base_url(spec.api_url),
         "api_key": spec.resolved_key(),
@@ -140,7 +154,8 @@ def build_prompt(file_path: str, dataset: str, root: str) -> str:
         "blobs directly.\n\n"
         f"FILE={file_path}\nDATASET={dataset}\nROOT={root}\nDM={dm}\n\n"
         "When done, return the structured JSON result (summary, format, stage, "
-        "tags, records_ingested, dataset).\n\n"
+        "tags, records_ingested, dataset, dataset_card, derived_fields, "
+        "validation).\n\n"
         + (f"--- ingest instructions ---\n{body}\n" if body else "")
     )
 
@@ -149,22 +164,68 @@ def build_prompt(file_path: str, dataset: str, root: str) -> str:
 # execution
 # ---------------------------------------------------------------------------
 
-def _run_loopai_codex_runner(env: dict, prompt: str, timeout: int) -> tuple[int, str, str]:
+def _run_loopai_codex_runner(
+    env: dict,
+    prompt: str,
+    timeout: int,
+    on_stdout_payload: Callable[[dict], None] | None = None,
+) -> tuple[int, str, str]:
     runner = runner_dir()
     corepack = corepack_path()
     if not runner:
         raise CodexError("LoopAI codex-runner not found")
     if not corepack:
         raise CodexError("corepack not found; install Node.js with Corepack to use the Codex engine")
-    proc = subprocess.run(
-        [corepack, "yarn", "dev", prompt],
+    cmd = [corepack, "yarn", "dev", prompt]
+    proc = subprocess.Popen(
+        cmd,
         cwd=runner,
         env={**os.environ, **env},
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout,
+        bufsize=1,
     )
-    return proc.returncode, proc.stdout, proc.stderr
+
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    selector = selectors.DefaultSelector()
+    assert proc.stdout is not None
+    assert proc.stderr is not None
+    selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
+    deadline = time.monotonic() + max(timeout, 1)
+
+    try:
+        while selector.get_map():
+            if time.monotonic() > deadline:
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                raise subprocess.TimeoutExpired(cmd, timeout, output="".join(stdout_lines), stderr="".join(stderr_lines))
+
+            for key, _ in selector.select(timeout=0.2):
+                line = key.fileobj.readline()
+                if line == "":
+                    selector.unregister(key.fileobj)
+                    continue
+                if key.data == "stdout":
+                    stdout_lines.append(line)
+                    if on_stdout_payload:
+                        try:
+                            payload = json.loads(line)
+                        except json.JSONDecodeError:
+                            payload = None
+                        if isinstance(payload, dict):
+                            on_stdout_payload(payload)
+                else:
+                    stderr_lines.append(line)
+    finally:
+        selector.close()
+
+    return proc.wait(), "".join(stdout_lines), "".join(stderr_lines)
 
 
 def _parse_json_object(text: str) -> dict | None:
@@ -208,7 +269,7 @@ def _parse_runner_output(stdout: str, stderr: str, exit_code: int) -> dict:
         if payload.get("type") == "completed" and isinstance(payload.get("result"), dict):
             completed = payload["result"]
     if exit_code != 0:
-        message = stderr or stdout or f"codex-runner exited with {exit_code}"
+        message = _runner_error_message(stdout=stdout, stderr=stderr, exit_code=exit_code)
         raise CodexError(message.strip())
     if completed is None:
         raise CodexError(f"could not parse codex-runner completion: {stderr or stdout}")
@@ -222,8 +283,30 @@ def _parse_runner_output(stdout: str, stderr: str, exit_code: int) -> dict:
     return structured
 
 
+def _runner_error_message(*, stdout: str, stderr: str, exit_code: int) -> str:
+    messages: list[str] = []
+    for line in (stderr or "").splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            if line.strip():
+                messages.append(line.strip())
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("type") == "runner.started":
+            continue
+        text = payload.get("message") or payload.get("error")
+        if text:
+            messages.append(str(text))
+    if messages:
+        return "\n".join(messages)
+    return stdout or stderr or f"codex-runner exited with {exit_code}"
+
+
 def run_via_sdk(prompt: str, prov: dict, cwd: str, timeout: int = 600,
-                network: bool = True, thread_id: str | None = None) -> dict:
+                network: bool = True, thread_id: str | None = None,
+                on_event: Callable[[dict], None] | None = None) -> dict:
     home = codex_home()
     env = {
         "CODEX_API_KEY": prov["api_key"] or "",
@@ -236,7 +319,7 @@ def run_via_sdk(prompt: str, prov: dict, cwd: str, timeout: int = 600,
     if home:
         env["CODEX_HOME"] = str(home)
     env["CODEX_THREAD_ID"] = thread_id or ""
-    code, out, err = _run_loopai_codex_runner(env, prompt, timeout)
+    code, out, err = _run_loopai_codex_runner(env, prompt, timeout, on_stdout_payload=on_event)
     return _parse_runner_output(out, err, code)
 
 

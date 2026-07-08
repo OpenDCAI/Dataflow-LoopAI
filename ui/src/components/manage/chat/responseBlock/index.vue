@@ -75,7 +75,10 @@ export default {
                 if (['item.completed', 'item.started'].includes(msg?.event?.type)) {
                     if (['agent_message', 'mcp_tool_call', 'todo_list'].includes(event.item?.type))
                         return msgBlock
-                    if (['command_execution', 'file_change'].includes(event.item?.type))
+                    if (
+                        msg?.event?.type === 'item.completed' &&
+                        ['command_execution', 'file_change'].includes(event.item?.type)
+                    )
                         return simpleText
                 }
             }
@@ -143,18 +146,22 @@ export default {
                             }
                         }
                     }
-                    if (event.item?.type === 'command_execution')
+                    if (event.item?.type === 'command_execution') {
+                        if (event.type !== 'item.completed') return { default: true }
                         return {
                             icon: 'CommandPrompt',
                             title: this.local('Command Execution'),
                             content: event.item?.command
                         }
-                    if (event.item?.type === 'file_change')
+                    }
+                    if (event.item?.type === 'file_change') {
+                        if (event.type !== 'item.completed') return { default: true }
                         return {
                             icon: 'RepeatAll',
                             title: this.local('File Change'),
                             content: event.item?.changes?.[0]?.path
                         }
+                    }
                 }
                 if (['error'].includes(event.type))
                     return {

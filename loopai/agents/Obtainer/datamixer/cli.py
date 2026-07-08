@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -72,6 +73,84 @@ def _write_lineage(root: Path, doc: dict) -> str:
     path = lineage / f"{run_id}.json"
     path.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     return str(path)
+
+
+def _safe_dataset_doc_name(dataset: str) -> str:
+    keep = []
+    for ch in dataset:
+        keep.append(ch if ch.isalnum() or ch in ("-", "_", ".") else "_")
+    name = "".join(keep).strip("._") or "dataset"
+    return f"{name}.md"
+
+
+def _register_dataset_card(root: Path, dataset: str, card: str | None) -> str | None:
+    if not card:
+        return None
+    src = Path(card).expanduser()
+    if not src.exists() or not src.is_file():
+        raise ValueError(f"dataset card not found: {card}")
+    if src.suffix.lower() != ".md":
+        raise ValueError(f"dataset card must be a Markdown .md file: {card}")
+    body = src.read_text(encoding="utf-8").strip()
+    if not body:
+        raise ValueError(f"dataset card is empty: {card}")
+    out_dir = root / "dataset_cards"
+    out_dir.mkdir(exist_ok=True)
+    dst = out_dir / _safe_dataset_doc_name(dataset)
+    if src.resolve() != dst.resolve():
+        shutil.copyfile(src, dst)
+    return str(dst)
+
+
+def _is_empty_value(value) -> bool:
+    return value is None or value == "" or value == [] or value == {}
+
+
+def _nested_value(obj, path: str):
+    cur = obj
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def _record_field_value(record: dict, field: str, content_key: str):
+    direct = _nested_value(record, field)
+    if direct is not None:
+        return direct
+    content = record.get(content_key)
+    if isinstance(content, dict):
+        return _nested_value(content, field)
+    return None
+
+
+def _validate_ingest_payload(
+    *,
+    file_path: str,
+    content_key: str,
+    derived_fields: list[str],
+    source_row_count: int | None,
+) -> dict:
+    if not derived_fields and source_row_count is None:
+        return {"rows": None, "derived_fields": []}
+    rows = 0
+    missing: dict[str, list[int]] = {field: [] for field in derived_fields}
+    for idx, rec in enumerate(read_jsonl(file_path), start=1):
+        rows += 1
+        for field in derived_fields:
+            if _is_empty_value(_record_field_value(rec, field, content_key)):
+                if len(missing[field]) < 10:
+                    missing[field].append(idx)
+    if source_row_count is not None and rows != source_row_count:
+        raise ValueError(
+            f"normalized row count changed: expected {source_row_count}, got {rows}"
+        )
+    bad = {k: v for k, v in missing.items() if v}
+    if bad:
+        details = "; ".join(f"{k} empty/missing at rows {v}" for k, v in bad.items())
+        raise ValueError(f"derived fields must be non-empty: {details}")
+    return {"rows": rows, "derived_fields": derived_fields}
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +220,23 @@ def cmd_ingest(args) -> int:
     import time
 
     s = _open(args)
+    try:
+        validation = _validate_ingest_payload(
+            file_path=args.file,
+            content_key=args.content_key,
+            derived_fields=args.derived_field or [],
+            source_row_count=args.source_row_count,
+        )
+        dataset_card = _register_dataset_card(s.root, args.dataset, args.dataset_card)
+    except FileNotFoundError:
+        s.close()
+        return _fail(args, f"file not found: {args.file}")
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        s.close()
+        return _fail(args, f"invalid JSONL in {args.file}: {e}")
+    except (ValueError, OSError) as e:
+        s.close()
+        return _fail(args, str(e))
     ds_id = s.catalog.resolve_dataset(args.dataset)
     if ds_id is None:
         ds_id = s.catalog.add_dataset(
@@ -191,6 +287,11 @@ def cmd_ingest(args) -> int:
         "written": res.written, "merged": res.merged,
         "new_blobs": res.new_blobs, "deduped_blobs": res.deduped_blobs,
     }
+    if dataset_card:
+        out["dataset_card"] = dataset_card
+    if validation.get("derived_fields"):
+        out["derived_fields"] = validation["derived_fields"]
+        out["validated_rows"] = validation["rows"]
     run_id = "ingest-" + __import__("hashlib").sha256(
         f"{ds_id}:{args.file}:{started}".encode("utf-8")
     ).hexdigest()[:16]
@@ -205,6 +306,8 @@ def cmd_ingest(args) -> int:
             "dataset": args.dataset,
             "input_uri": args.file,
             "defaults": defaults,
+            "dataset_card": dataset_card,
+            "validation": validation,
             "result": out,
         },
     )
@@ -1248,6 +1351,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("dataset", help="dataset name or id (created if missing)")
     sp.add_argument("--file", required=True)
     sp.add_argument("--content-key", default="content")
+    sp.add_argument("--dataset-card", dest="dataset_card", default=None,
+                    help="Markdown dataset card to register under dataset_cards/ before ingest")
+    sp.add_argument("--derived-field", dest="derived_field", action="append", default=[],
+                    help="derived field that must exist and be non-empty in every normalized row; repeatable")
+    sp.add_argument("--source-row-count", dest="source_row_count", type=int, default=None,
+                    help="expected normalized row count, used to ensure derivation did not drop rows")
     sp.add_argument("--allow-duplicates", dest="allow_duplicates",
                     action="store_true",
                     help="keep every record as its own sample (preserve "
