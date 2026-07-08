@@ -75,6 +75,7 @@
                                         :options="modelSelectOptions"
                                         border-radius="6"
                                         :is-box-shadow="true"
+                                        style="width: 100%"
                                     ></fv-combobox>
                                 </div>
                                 <div class="model-setting-row">
@@ -84,6 +85,7 @@
                                         :options="modelSelectOptions"
                                         border-radius="6"
                                         :is-box-shadow="true"
+                                        style="width: 100%"
                                     ></fv-combobox>
                                 </div>
                                 <div class="model-setting-row">
@@ -99,6 +101,7 @@
                                         border-radius="6"
                                         :reveal-border="true"
                                         :is-box-shadow="true"
+                                        style="width: 100%"
                                     ></fv-text-box>
                                 </div>
                             </div>
@@ -115,6 +118,27 @@
                             </div>
                             <div class="model-register-list">
                                 <div class="model-register-row" v-for="(model, index) in editableModelPool" :key="index">
+                                    <div class="model-register-topbar">
+                                        <span class="model-tier-badge" :class="model.tier">{{ model.tier }}</span>
+                                        <p class="model-register-name">{{ model.name || local('Model Name') }}</p>
+                                        <div class="model-register-controls">
+                                            <fv-toggle-switch
+                                                v-model="model.enabled"
+                                                :on="local('Enabled')"
+                                                :off="local('Disabled')"
+                                                :width="65"
+                                                :height="22"
+                                            ></fv-toggle-switch>
+                                            <fv-button
+                                                border-radius="6"
+                                                :title="local('Remove')"
+                                                style="width: 32px; height: 32px"
+                                                @click="removeModelPoolEntry(index)"
+                                            >
+                                                <i class="ms-Icon ms-Icon--Delete"></i>
+                                            </fv-button>
+                                        </div>
+                                    </div>
                                     <div class="model-register-fields">
                                         <label>
                                             <span>{{ local('Tier') }}</span>
@@ -131,6 +155,7 @@
                                                 border-radius="6"
                                                 :reveal-border="true"
                                                 :is-box-shadow="true"
+                                                style="width: 100%"
                                             ></fv-text-box>
                                         </label>
                                         <label>
@@ -140,6 +165,7 @@
                                                 border-radius="6"
                                                 :reveal-border="true"
                                                 :is-box-shadow="true"
+                                                style="width: 100%"
                                             ></fv-text-box>
                                         </label>
                                         <label class="wide">
@@ -149,6 +175,7 @@
                                                 border-radius="6"
                                                 :reveal-border="true"
                                                 :is-box-shadow="true"
+                                                style="width: 100%"
                                             ></fv-text-box>
                                         </label>
                                         <label class="wide">
@@ -158,6 +185,7 @@
                                                 border-radius="6"
                                                 :reveal-border="true"
                                                 :is-box-shadow="true"
+                                                style="width: 100%"
                                             ></fv-text-box>
                                         </label>
                                         <label>
@@ -167,6 +195,7 @@
                                                 border-radius="6"
                                                 :reveal-border="true"
                                                 :is-box-shadow="true"
+                                                style="width: 100%"
                                             ></fv-text-box>
                                         </label>
                                         <label>
@@ -189,20 +218,6 @@
                                                 </option>
                                             </select>
                                         </label>
-                                    </div>
-                                    <div class="model-register-actions">
-                                        <label class="model-enabled-toggle">
-                                            <input v-model="model.enabled" type="checkbox" />
-                                            <span>{{ local('Enabled') }}</span>
-                                        </label>
-                                        <fv-button
-                                            icon="Delete"
-                                            border-radius="6"
-                                            style="width: 92px"
-                                            @click="removeModelPoolEntry(index)"
-                                        >
-                                            {{ local('Remove') }}
-                                        </fv-button>
                                     </div>
                                 </div>
                             </div>
@@ -969,29 +984,76 @@ export default {
 
                 .model-register-row {
                     width: 100%;
-                    padding: 10px;
+                    padding: 12px;
                     box-sizing: border-box;
                     border: 1px solid rgba(224, 226, 232, 1);
-                    border-radius: 6px;
+                    border-radius: 8px;
                     background: rgba(249, 250, 252, 1);
                     display: flex;
                     flex-direction: column;
+                    gap: 12px;
+                }
+
+                .model-register-topbar {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                .model-register-name {
+                    flex: 1;
+                    min-width: 0;
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: rgba(44, 48, 60, 1);
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                .model-register-controls {
+                    display: flex;
+                    align-items: center;
                     gap: 10px;
+                    flex-shrink: 0;
+                }
+
+                .model-tier-badge {
+                    flex-shrink: 0;
+                    padding: 2px 8px;
+                    border-radius: 10px;
+                    font-size: 11px;
+                    font-weight: 600;
+                    line-height: 16px;
+                    text-transform: uppercase;
+                    background: rgba(240, 240, 244, 1);
+                    color: rgba(96, 102, 120, 1);
+
+                    &.high {
+                        background: rgba(224, 242, 233, 1);
+                        color: rgba(28, 116, 86, 1);
+                    }
+
+                    &.medium {
+                        background: rgba(230, 238, 252, 1);
+                        color: rgba(44, 90, 168, 1);
+                    }
                 }
 
                 .model-register-fields {
                     display: grid;
-                    grid-template-columns: repeat(4, minmax(0, 1fr));
-                    gap: 10px;
+                    grid-template-columns: repeat(6, minmax(0, 1fr));
+                    gap: 10px 12px;
 
                     label {
+                        grid-column: span 2;
                         min-width: 0;
                         display: flex;
                         flex-direction: column;
-                        gap: 5px;
+                        gap: 4px;
 
                         &.wide {
-                            grid-column: span 2;
+                            grid-column: span 3;
                         }
                     }
 
@@ -1001,25 +1063,10 @@ export default {
                     }
                 }
 
-                .model-register-actions {
-                    @include HbetweenVcenter;
-
-                    gap: 8px;
-                }
-
-                .model-enabled-toggle {
-                    display: inline-flex;
-                    align-items: center;
-                    gap: 6px;
-                    font-size: 12px;
-                    color: rgba(76, 83, 105, 1);
-                    user-select: none;
-                }
-
                 .model-select-native {
                     width: 100%;
                     height: 32px;
-                    padding: 0 8px;
+                    padding: 0 26px 0 8px;
                     box-sizing: border-box;
                     border: 1px solid rgba(210, 213, 222, 1);
                     border-radius: 6px;
@@ -1027,6 +1074,19 @@ export default {
                     color: rgba(44, 48, 60, 1);
                     font-size: 13px;
                     outline: none;
+                    appearance: none;
+                    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23616161' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+                    background-repeat: no-repeat;
+                    background-position: right 9px center;
+                    cursor: pointer;
+
+                    &:hover {
+                        border-color: rgba(160, 166, 180, 1);
+                    }
+
+                    &:focus {
+                        border-color: rgba(123, 139, 209, 1);
+                    }
                 }
 
                 .model-probe-message {
@@ -1307,6 +1367,7 @@ export default {
         grid-template-columns: 1fr;
     }
 
+    .lp-serving-container .major-container .content-block .model-pool-panel .model-register-fields label,
     .lp-serving-container .major-container .content-block .model-pool-panel .model-register-fields label.wide {
         grid-column: span 1;
     }
