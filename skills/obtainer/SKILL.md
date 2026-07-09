@@ -40,8 +40,11 @@ Obtainer and must be invoked through `loopai-obtainercli dm ...`.
 - **Outer Codex must delegate acquisition.** For any normal dataset discovery,
   download, normalization, or ingest request, the outer Codex context must start
   the CLI wrapper `loopai-obtainercli dm ... dataset-acquisition-agent start`
-  or `python3 -m loopai.skills.ObtainerCLI.cli dm ... dataset-acquisition-agent
-  start`, then poll/resume that worker. Do not use a generic `spawn_agent`
+  or run `${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm ... dataset-acquisition-agent
+  start`. If the outer shell is not using the LoopAI environment, set
+  `LOOPAI_PYTHON_EXECUTABLE=/path/to/loopai-env/bin/python` or pass
+  `--python-executable /path/to/loopai-env/bin/python`, then poll/resume that worker.
+  Do not use a generic `spawn_agent`
   worker for data acquisition. Do not create a SearchAgent task JSON, call
   `searchagent`, call `download manifest`, normalize files, or ingest rows from
   the outer Codex context. Those operations belong inside the CLI worker policy.
@@ -159,7 +162,7 @@ generic spawned Codex worker.
 Start a new worker:
 
 ```bash
-python3 -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent start \
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent start \
   --run ./outputs/acquisition_run \
   --analysis-report ./outputs/analyzer_report.md \
   --objective "collect general-domain instruction and QA datasets" \
@@ -167,25 +170,26 @@ python3 -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-ac
   --target-datasets 30 \
   --max-rows-per-dataset 100000 \
   --discovery-mode auto \
+  --python-executable /path/to/loopai-env/bin/python \
   --model deepseek-codex
 ```
 
 `start` runs the inner Codex SDK worker in the background by default and returns
 PID plus log paths. Use `--foreground` only when the caller intentionally wants
 to block. If `loopai-obtainercli` is not installed as a console script, use the
-`python3 -m loopai.skills.ObtainerCLI.cli ...` form.
+`${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli ...` form.
 
 Poll status:
 
 ```bash
-python3 -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent status \
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent status \
   --run ./outputs/acquisition_run
 ```
 
 Resume the same worker:
 
 ```bash
-python3 -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent resume \
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent resume \
   --run ./outputs/acquisition_run \
   --message "Remove unrelated datasets from the filtered manifest, then continue ingest." \
   --model deepseek-codex

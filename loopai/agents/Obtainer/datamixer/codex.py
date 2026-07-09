@@ -19,6 +19,7 @@ import os
 import selectors
 import shutil
 import subprocess
+import sys
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -62,7 +63,38 @@ def codex_home() -> Path | None:
 
 
 def corepack_path() -> str | None:
+    explicit = os.environ.get("COREPACK_PATH")
+    if explicit and Path(explicit).exists():
+        return explicit
     return shutil.which("corepack")
+
+
+def loopai_python_executable() -> str:
+    explicit = os.environ.get("LOOPAI_PYTHON_EXECUTABLE")
+    if explicit and os.access(explicit, os.X_OK):
+        return explicit
+
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        candidate = Path(conda_prefix) / "bin" / "python"
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return sys.executable
+
+
+def runner_process_path(python_executable: str | None = None, base_path: str | None = None) -> str:
+    entries: list[str] = []
+    python_executable = python_executable or loopai_python_executable()
+    python_bin = str(Path(python_executable).resolve().parent)
+    node_bin_dir = os.environ.get("LOOPAI_NODE_BIN_DIR")
+    python_path_candidate = "" if python_bin in {"/usr/bin", "/bin"} else python_bin
+    for candidate in (node_bin_dir, python_path_candidate):
+        if candidate and Path(candidate).exists() and candidate not in entries:
+            entries.append(candidate)
+    for item in (base_path or os.environ.get("PATH") or "").split(os.pathsep):
+        if item and item not in entries:
+            entries.append(item)
+    return os.pathsep.join(entries)
 
 
 @lru_cache(maxsize=1)
@@ -76,6 +108,7 @@ def sdk_available() -> bool:
         r = subprocess.run(
             [corepack, "yarn", "--version"],
             cwd=runner,
+            env={**os.environ, "PATH": runner_process_path()},
             capture_output=True,
             timeout=20,
         )
@@ -145,7 +178,8 @@ def provider_from_model(spec: ModelSpec) -> dict:
 # ---------------------------------------------------------------------------
 
 def build_prompt(file_path: str, dataset: str, root: str) -> str:
-    dm = f"python3 -m loopai.agents.Obtainer.datamixer --root {root}"
+    python_executable = loopai_python_executable()
+    dm = f"{python_executable} -m loopai.agents.Obtainer.datamixer --root {root}"
     instructions = ingest_instructions_path()
     body = instructions.read_text() if instructions else ""
     return (
@@ -177,10 +211,14 @@ def _run_loopai_codex_runner(
     if not corepack:
         raise CodexError("corepack not found; install Node.js with Corepack to use the Codex engine")
     cmd = [corepack, "yarn", "dev", prompt]
+    merged_env = {**os.environ, **env}
+    python_executable = loopai_python_executable()
+    merged_env["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
+    merged_env["PATH"] = runner_process_path(python_executable, merged_env.get("PATH"))
     proc = subprocess.Popen(
         cmd,
         cwd=runner,
-        env={**os.environ, **env},
+        env=merged_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -315,6 +353,7 @@ def run_via_sdk(prompt: str, prov: dict, cwd: str, timeout: int = 600,
         "CODEX_WORKSPACE": cwd,
         "CODEX_RUN_TIMEOUT_MS": str(max(timeout, 1) * 1000),
         "CODEX_SANDBOX_MODE": "danger-full-access",
+        "LOOPAI_PYTHON_EXECUTABLE": loopai_python_executable(),
     }
     if home:
         env["CODEX_HOME"] = str(home)

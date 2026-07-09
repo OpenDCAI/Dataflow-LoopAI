@@ -527,6 +527,26 @@ export default {
         "en": "Model Pool",
         "zh": "模型池"
     },
+    "Online": {
+        "en": "Online",
+        "zh": "在线"
+    },
+    "All Online": {
+        "en": "All Online",
+        "zh": "全部在线"
+    },
+    "Partial Online": {
+        "en": "Partial Online",
+        "zh": "部分在线"
+    },
+    "Unavailable": {
+        "en": "Unavailable",
+        "zh": "不可用"
+    },
+    "Not Probed": {
+        "en": "Not Probed",
+        "zh": "未探测"
+    },
     "Default Model": {
         "en": "Default Model",
         "zh": "默认模型"

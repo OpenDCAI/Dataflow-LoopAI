@@ -68,6 +68,20 @@ def test_download_manifest_exports_huggingface_rows(tmp_path, monkeypatch):
     assert rows[1]["output"] == "4"
 
 
+def test_download_huggingface_sets_hub_endpoint_from_existing_mirror(monkeypatch):
+    from loopai.skills.ObtainerCLI import download
+
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    monkeypatch.setenv("HF_HUB_ENDPOINT", "https://hf.internal.example")
+    monkeypatch.delenv("HF_HUB_DISABLE_TELEMETRY", raising=False)
+
+    download._ensure_hf_mirror_env()
+
+    assert download.os.environ["HF_ENDPOINT"] == "https://hf.internal.example"
+    assert download.os.environ["HF_HUB_ENDPOINT"] == "https://hf.internal.example"
+    assert download.os.environ["HF_HUB_DISABLE_TELEMETRY"] == "1"
+
+
 def test_download_manifest_caps_zero_max_rows_per_dataset(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import download
 

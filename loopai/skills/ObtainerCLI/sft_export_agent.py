@@ -38,6 +38,13 @@ def _workspace() -> Path:
     return runner.parent if runner else Path.cwd()
 
 
+def _apply_runtime_env(*, python_executable: str = "", node_bin_dir: str = "") -> None:
+    if python_executable:
+        os.environ["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
+    if node_bin_dir:
+        os.environ["LOOPAI_NODE_BIN_DIR"] = node_bin_dir
+
+
 def _first_non_empty(*values: Any) -> Any:
     for value in values:
         if value is not None and value != "":
@@ -310,7 +317,7 @@ You are the isolated inner Codex SDK worker for an Obtainer DataMixer SFT export
 Hard rules:
 
 1. All lakehouse operations must use this command surface only:
-   python3 -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} <datamixer-command> --json
+   {python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} <datamixer-command> --json
 2. Do not use legacy Obtainer lake/table/sample/index commands.
 3. Final training data must be produced by DataMixer `recipe export`; never concatenate samples manually.
 4. For Alpaca SFT, final JSONL training rows must contain exactly:
@@ -376,7 +383,7 @@ def build_start_prompt(
     export_out: Path,
     extra_message: str,
 ) -> str:
-    policy = _policy_text().format(warehouse=str(warehouse))
+    policy = _policy_text().format(warehouse=str(warehouse), python_executable=codex.loopai_python_executable())
     return f"""{policy}
 
 # Task
@@ -416,7 +423,7 @@ ok, final_report, export_path, snapshot_id, dataset_digest, and blockers.
 
 
 def build_resume_prompt(*, run_dir: Path, message: str) -> str:
-    return f"""{_policy_text().format(warehouse='the warehouse recorded in thread.json')}
+    return f"""{_policy_text().format(warehouse='the warehouse recorded in thread.json', python_executable=codex.loopai_python_executable())}
 
 # Resume task
 
@@ -447,6 +454,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     start.add_argument("--model", default="")
     start.add_argument("--timeout", type=int, default=1800)
     start.add_argument("--message", default="")
+    start.add_argument("--python-executable", default="", help="Python executable for the isolated worker")
+    start.add_argument("--node-bin-dir", default="", help="Directory containing node/corepack for codex-runner")
     start.add_argument("--dry-run", action="store_true", help="write prompt/state only; do not launch Codex SDK")
     start.add_argument("--foreground", action="store_true", help="run the inner Codex worker synchronously")
     start.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
@@ -456,6 +465,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     resume.add_argument("--message", required=True)
     resume.add_argument("--model", default="")
     resume.add_argument("--timeout", type=int, default=1800)
+    resume.add_argument("--python-executable", default="", help="Python executable for the isolated worker")
+    resume.add_argument("--node-bin-dir", default="", help="Directory containing node/corepack for codex-runner")
     resume.add_argument("--dry-run", action="store_true")
     resume.add_argument("--foreground", action="store_true", help="run the inner Codex worker synchronously")
     resume.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
@@ -470,6 +481,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     worker.add_argument("--timeout", type=int, default=1800)
     worker.add_argument("--thread-id", default="")
     worker.add_argument("--model", default="")
+    worker.add_argument("--python-executable", default="", help=argparse.SUPPRESS)
+    worker.add_argument("--node-bin-dir", default="", help=argparse.SUPPRESS)
     worker.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
 
     return parser.parse_args(argv)
@@ -508,13 +521,15 @@ def _spawn_background(
     timeout: int,
     model: str,
     thread_id: str = "",
+    python_executable: str = "",
+    node_bin_dir: str = "",
 ) -> dict:
     logs = run_dir / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     stdout_path = logs / "worker_stdout.ndjson"
     stderr_path = logs / "worker_stderr.log"
     cmd = [
-        sys.executable,
+        codex.loopai_python_executable(),
         "-m",
         "loopai.skills.ObtainerCLI.cli",
         "dm",
@@ -534,9 +549,16 @@ def _spawn_background(
         cmd.extend(["--model", model])
     if thread_id:
         cmd.extend(["--thread-id", thread_id])
+    if python_executable:
+        cmd.extend(["--python-executable", python_executable])
+    if node_bin_dir:
+        cmd.extend(["--node-bin-dir", node_bin_dir])
     env = os.environ.copy()
     env.pop("CODEX_THREAD_ID", None)
     env.pop("CODEX_USE_PROJECT_CONFIG", None)
+    python_executable = codex.loopai_python_executable()
+    env["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
+    env["PATH"] = codex.runner_process_path(python_executable, env.get("PATH"))
     with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
         proc = subprocess.Popen(
             cmd,
@@ -577,6 +599,8 @@ def _save_initial_state(
     export_format: str,
     provider_meta: dict,
     mode: str,
+    python_executable: str = "",
+    node_bin_dir: str = "",
 ) -> None:
     now = time.time()
     state = _json_read(run_dir / STATE_FILE)
@@ -590,6 +614,10 @@ def _save_initial_state(
         "target_records": target_records,
         "format": export_format,
         "provider": provider_meta,
+        "runtime": {
+            "python_executable": python_executable,
+            "node_bin_dir": node_bin_dir,
+        },
     })
     _json_write(run_dir / STATE_FILE, state)
     _json_write(run_dir / STATUS_FILE, {
@@ -614,7 +642,10 @@ def _run_worker(
     (run_dir / "logs").mkdir(exist_ok=True)
     prompt_path = run_dir / ("resume_prompt.md" if thread_id else "worker_prompt.md")
     prompt_path.write_text(prompt, encoding="utf-8")
-    (run_dir / "policy.md").write_text(_policy_text().format(warehouse="see thread.json"), encoding="utf-8")
+    (run_dir / "policy.md").write_text(
+        _policy_text().format(warehouse="see thread.json", python_executable=codex.loopai_python_executable()),
+        encoding="utf-8",
+    )
 
     if dry_run:
         _json_write(run_dir / STATUS_FILE, {
@@ -687,6 +718,11 @@ def _run_worker(
 def run_agent(argv: list[str], *, root: str) -> dict:
     args = _parse(argv)
     run_dir = Path(args.run).expanduser().resolve()
+    if getattr(args, "python_executable", "") or getattr(args, "node_bin_dir", ""):
+        _apply_runtime_env(
+            python_executable=getattr(args, "python_executable", ""),
+            node_bin_dir=getattr(args, "node_bin_dir", ""),
+        )
 
     if args.agent_command == "status":
         return _status_payload(run_dir)
@@ -701,6 +737,8 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             )
         warehouse = Path(root).expanduser().resolve()
         export_out = Path(args.out).expanduser().resolve() if args.out else (run_dir / "export")
+        python_executable = args.python_executable or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
+        node_bin_dir = args.node_bin_dir or os.environ.get("LOOPAI_NODE_BIN_DIR", "")
         prov, provider_meta = _resolve_provider(warehouse, args.model or None)
         _save_initial_state(
             run_dir=run_dir,
@@ -711,6 +749,8 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             export_format=args.format,
             provider_meta=provider_meta,
             mode="start",
+            python_executable=python_executable,
+            node_bin_dir=node_bin_dir,
         )
         prompt = build_start_prompt(
             warehouse=warehouse,
@@ -724,7 +764,10 @@ def run_agent(argv: list[str], *, root: str) -> dict:
         if not args.dry_run:
             prompt_path = run_dir / "worker_prompt.md"
             prompt_path.write_text(prompt, encoding="utf-8")
-            (run_dir / "policy.md").write_text(_policy_text().format(warehouse=str(warehouse)), encoding="utf-8")
+            (run_dir / "policy.md").write_text(
+                _policy_text().format(warehouse=str(warehouse), python_executable=codex.loopai_python_executable()),
+                encoding="utf-8",
+            )
             if not args.foreground:
                 return _spawn_background(
                     run_dir=run_dir,
@@ -732,6 +775,8 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                     prompt_path=prompt_path,
                     timeout=args.timeout,
                     model=args.model or "",
+                    python_executable=python_executable,
+                    node_bin_dir=node_bin_dir,
                 )
         return _run_worker(
             run_dir=run_dir,
@@ -752,6 +797,10 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 exit_code=2,
             )
         warehouse = Path(state.get("warehouse") or root or "").expanduser().resolve()
+        runtime = state.get("runtime") if isinstance(state.get("runtime"), dict) else {}
+        python_executable = args.python_executable or runtime.get("python_executable") or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
+        node_bin_dir = args.node_bin_dir or runtime.get("node_bin_dir") or os.environ.get("LOOPAI_NODE_BIN_DIR", "")
+        _apply_runtime_env(python_executable=python_executable, node_bin_dir=node_bin_dir)
         prov, provider_meta = _resolve_provider(warehouse, args.model or state.get("provider", {}).get("model_pool_name"))
         thread_id = str(state.get("thread_id") or "")
         if not thread_id and not args.dry_run:
@@ -765,7 +814,10 @@ def run_agent(argv: list[str], *, root: str) -> dict:
         if not args.dry_run:
             prompt_path = run_dir / "resume_prompt.md"
             prompt_path.write_text(prompt, encoding="utf-8")
-            (run_dir / "policy.md").write_text(_policy_text().format(warehouse=str(warehouse)), encoding="utf-8")
+            (run_dir / "policy.md").write_text(
+                _policy_text().format(warehouse=str(warehouse), python_executable=codex.loopai_python_executable()),
+                encoding="utf-8",
+            )
             if not args.foreground:
                 return _spawn_background(
                     run_dir=run_dir,
@@ -774,6 +826,8 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                     timeout=args.timeout,
                     model=args.model or state.get("provider", {}).get("model_pool_name", ""),
                     thread_id=thread_id,
+                    python_executable=python_executable,
+                    node_bin_dir=node_bin_dir,
                 )
         return _run_worker(
             run_dir=run_dir,

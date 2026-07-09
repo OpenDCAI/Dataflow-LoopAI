@@ -47,6 +47,10 @@
                                         {{ modelPoolStatus.proxy_base_url || modelPoolProxyBaseUrl || '-' }}
                                     </p>
                                 </div>
+                                <div class="model-pool-overview-pill" :class="modelPoolOverview.statusClass">
+                                    <span></span>
+                                    <p>{{ modelPoolOverview.statusText }}</p>
+                                </div>
                                 <div class="model-pool-actions">
                                     <fv-button
                                         icon="Refresh"
@@ -65,6 +69,72 @@
                                     >
                                         {{ local('Details') }}
                                     </fv-button>
+                                </div>
+                            </div>
+                            <div class="model-pool-dashboard">
+                                <div class="model-pool-metric">
+                                    <span>{{ local('Online') }}</span>
+                                    <p>{{ modelPoolOverview.online }}/{{ modelPoolOverview.total }}</p>
+                                </div>
+                                <div class="model-pool-metric">
+                                    <span>{{ local('Requests') }}</span>
+                                    <p>{{ formatCompact(modelPoolOverview.requests) }}</p>
+                                </div>
+                                <div class="model-pool-metric">
+                                    <span>{{ local('Tokens') }}</span>
+                                    <p>{{ formatCompact(modelPoolOverview.tokens) }}</p>
+                                </div>
+                                <div class="model-pool-metric">
+                                    <span>{{ local('Avg Latency') }}</span>
+                                    <p>{{ modelPoolOverview.avgLatency || '-' }} ms</p>
+                                </div>
+                            </div>
+                            <div class="model-tier-strip">
+                                <div
+                                    class="model-tier-card"
+                                    v-for="tier in modelPoolTiers"
+                                    :key="tier.name"
+                                    :class="tier.name"
+                                >
+                                    <div class="tier-card-top">
+                                        <span class="tier-dot"></span>
+                                        <p class="tier-name">{{ tier.name }}</p>
+                                        <span class="tier-badge">{{ tier.healthy }}/{{ tier.total }}</span>
+                                    </div>
+                                    <div class="tier-bar">
+                                        <span :style="{ width: tier.rate + '%' }"></span>
+                                    </div>
+                                    <div class="tier-card-foot">
+                                        <span>{{ formatCompact(tier.requests) }} req</span>
+                                        <span>{{ tier.errors }} err</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="model-node-grid" v-if="modelNodeRows.length">
+                                <div
+                                    class="model-node-card"
+                                    v-for="node in modelNodeRows"
+                                    :key="node.key"
+                                    :class="[node.healthClass, node.tier]"
+                                >
+                                    <div class="node-main">
+                                        <div class="node-status-dot"></div>
+                                        <div class="node-name-block">
+                                            <p>{{ node.name }}</p>
+                                            <span>{{ node.modelName }}</span>
+                                        </div>
+                                        <span class="node-tier">{{ node.tier }}</span>
+                                    </div>
+                                    <div class="node-line">
+                                        <span>{{ node.statusText }}</span>
+                                        <span>{{ node.api }}</span>
+                                        <span>{{ node.latency }}</span>
+                                    </div>
+                                    <div class="node-usage">
+                                        <span>{{ formatCompact(node.requests) }} req</span>
+                                        <span>{{ formatCompact(node.tokens) }} tok</span>
+                                        <span>{{ node.errors }} err</span>
+                                    </div>
                                 </div>
                             </div>
                             <div class="model-setting-grid">
@@ -224,16 +294,6 @@
                             <p v-if="modelPoolProbeMessage" class="model-probe-message">
                                 {{ modelPoolProbeMessage }}
                             </p>
-                            <div class="model-pool-summary">
-                                <div class="model-tier-card" v-for="tier in modelPoolTiers" :key="tier.name">
-                                    <p class="tier-name">{{ tier.name }}</p>
-                                    <p class="tier-count">{{ tier.healthy }}/{{ tier.total }}</p>
-                                    <div class="tier-bar">
-                                        <span :style="{ width: tier.rate + '%' }"></span>
-                                    </div>
-                                    <p class="tier-meta">{{ tier.requests }} req · {{ tier.errors }} err</p>
-                                </div>
-                            </div>
                         </div>
                         <hr v-if="modelPoolAvailable" />
                         <div v-if="config.system" v-for="entry in systemConfigEntries" :key="entry[0]">
@@ -336,7 +396,10 @@
                     </div>
                     <div class="model-detail-row" v-for="model in modelPoolModels" :key="model.name">
                         <div class="model-detail-main">
-                            <p class="model-detail-title">{{ model.tier }} · {{ model.name }}</p>
+                            <p class="model-detail-title">
+                                <span class="model-detail-dot" :class="healthClass(model)"></span>
+                                {{ model.tier }} · {{ model.name }}
+                            </p>
                             <p class="model-detail-sub">{{ model.model_name }} · {{ model.wire_api }}</p>
                             <p class="model-detail-sub">{{ model.base_url }}</p>
                         </div>
@@ -451,6 +514,54 @@ export default {
         },
         modelPoolModels() {
             return this.statusModelPool.length ? this.statusModelPool : this.editableModelPool
+        },
+        modelPoolOverview() {
+            const total = this.modelPoolModels.length
+            const online = this.modelPoolModels.filter((model) => this.healthClass(model) === 'healthy').length
+            const unhealthy = this.modelPoolModels.filter((model) => this.healthClass(model) === 'unhealthy').length
+            const requests = this.modelPoolModels.reduce((sum, model) => sum + (model.stats?.requests || 0), 0)
+            const errors = this.modelPoolModels.reduce((sum, model) => sum + (model.stats?.errors || 0), 0)
+            const tokens = this.modelPoolModels.reduce((sum, model) => sum + (model.stats?.usage?.total_tokens || 0), 0)
+            const latencyItems = this.modelPoolModels
+                .map((model) => Number(model.stats?.avg_latency_ms || 0))
+                .filter((value) => value > 0)
+            const avgLatency = latencyItems.length
+                ? Math.round(latencyItems.reduce((sum, value) => sum + value, 0) / latencyItems.length)
+                : 0
+            let statusClass = 'unknown'
+            let statusText = this.local('Not Probed')
+            if (total && online === total) {
+                statusClass = 'healthy'
+                statusText = this.local('All Online')
+            } else if (online > 0) {
+                statusClass = 'warning'
+                statusText = this.local('Partial Online')
+            } else if (unhealthy > 0) {
+                statusClass = 'unhealthy'
+                statusText = this.local('Unavailable')
+            }
+            return { total, online, unhealthy, requests, errors, tokens, avgLatency, statusClass, statusText }
+        },
+        modelNodeRows() {
+            return this.modelPoolModels.map((model, index) => {
+                const healthClass = this.healthClass(model)
+                const selected = model.probe?.selected_wire_api
+                const api = selected || model.wire_api || 'auto'
+                const latency = model.stats?.avg_latency_ms ? `${model.stats.avg_latency_ms} ms` : '- ms'
+                return {
+                    key: model.name || model.model_name || index,
+                    name: model.name || model.model_name || 'model',
+                    modelName: model.model_name || model.name || '-',
+                    tier: model.tier || 'medium',
+                    healthClass,
+                    statusText: this.healthText(model),
+                    api,
+                    latency,
+                    requests: model.stats?.requests || 0,
+                    errors: model.stats?.errors || 0,
+                    tokens: model.stats?.usage?.total_tokens || 0
+                }
+            })
         },
         modelSelectOptions() {
             const source = this.editableModelPool.length ? this.editableModelPool : this.modelPoolModels
@@ -778,11 +889,24 @@ export default {
         },
         healthText(model) {
             const selected = model.probe?.selected_wire_api
-            if (selected) return `healthy: ${selected}`
-            if (model.probe?.chat?.ok) return 'healthy: chat'
-            if (model.probe?.responses?.ok) return 'healthy: responses'
+            if (selected) return `${this.local('Online')} · ${selected}`
+            if (model.probe?.chat?.ok) return `${this.local('Online')} · chat`
+            if (model.probe?.responses?.ok) return `${this.local('Online')} · responses`
+            if (model.probe?.error) return this.local('Unavailable')
+            return this.local('Not Probed')
+        },
+        healthClass(model) {
+            const selected = model.probe?.selected_wire_api
+            if (selected || model.probe?.chat?.ok || model.probe?.responses?.ok) return 'healthy'
             if (model.probe?.error) return 'unhealthy'
+            if (model.enabled === false) return 'disabled'
             return 'unknown'
+        },
+        formatCompact(value) {
+            const number = Number(value || 0)
+            if (number >= 1000000) return `${(number / 1000000).toFixed(1)}m`
+            if (number >= 1000) return `${(number / 1000).toFixed(1)}k`
+            return String(number)
         },
         async updateConfig() {
             if (!this.lock.update) return
@@ -949,6 +1073,279 @@ export default {
                     flex-shrink: 0;
                 }
 
+                .model-pool-overview-pill {
+                    height: 30px;
+                    padding: 0 10px;
+                    border: 1px solid rgba(218, 221, 230, 1);
+                    border-radius: 6px;
+                    background: rgba(248, 249, 251, 1);
+                    display: flex;
+                    align-items: center;
+                    gap: 7px;
+                    flex-shrink: 0;
+
+                    span {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 50%;
+                        background: rgba(142, 148, 164, 1);
+                    }
+
+                    p {
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: rgba(58, 64, 78, 1);
+                        white-space: nowrap;
+                    }
+
+                    &.healthy span {
+                        background: rgba(38, 166, 112, 1);
+                    }
+
+                    &.warning span {
+                        background: rgba(229, 154, 64, 1);
+                    }
+
+                    &.unhealthy span {
+                        background: rgba(205, 76, 76, 1);
+                    }
+                }
+
+                .model-pool-dashboard {
+                    display: grid;
+                    grid-template-columns: repeat(4, minmax(0, 1fr));
+                    gap: 10px;
+                }
+
+                .model-pool-metric {
+                    min-width: 0;
+                    padding: 10px 12px;
+                    border: 1px solid rgba(224, 226, 232, 1);
+                    border-radius: 8px;
+                    background: rgba(250, 251, 253, 1);
+
+                    span {
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: rgba(102, 108, 124, 1);
+                        text-transform: uppercase;
+                    }
+
+                    p {
+                        margin-top: 6px;
+                        font-size: 20px;
+                        font-weight: 700;
+                        color: rgba(31, 38, 55, 1);
+                        white-space: nowrap;
+                    }
+                }
+
+                .model-tier-strip {
+                    display: grid;
+                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                    gap: 10px;
+                }
+
+                .model-tier-card {
+                    min-width: 0;
+                    padding: 10px;
+                    border: 1px solid rgba(224, 226, 232, 1);
+                    border-radius: 8px;
+                    background: rgba(255, 255, 255, 0.96);
+
+                    &.high {
+                        border-top: 3px solid rgba(38, 166, 112, 1);
+                    }
+
+                    &.medium {
+                        border-top: 3px solid rgba(45, 125, 210, 1);
+                    }
+
+                    &.low {
+                        border-top: 3px solid rgba(229, 154, 64, 1);
+                    }
+                }
+
+                .tier-card-top {
+                    display: flex;
+                    align-items: center;
+                    gap: 7px;
+                }
+
+                .tier-dot {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 50%;
+                    background: rgba(45, 125, 210, 1);
+                    flex-shrink: 0;
+                }
+
+                .model-tier-card.high .tier-dot {
+                    background: rgba(38, 166, 112, 1);
+                }
+
+                .model-tier-card.low .tier-dot {
+                    background: rgba(229, 154, 64, 1);
+                }
+
+                .tier-name {
+                    flex: 1;
+                    min-width: 0;
+                    font-size: 12px;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    color: rgba(45, 51, 68, 1);
+                }
+
+                .tier-badge {
+                    padding: 2px 7px;
+                    border-radius: 999px;
+                    background: rgba(242, 244, 248, 1);
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: rgba(74, 80, 96, 1);
+                }
+
+                .tier-bar {
+                    width: 100%;
+                    height: 5px;
+                    margin: 10px 0 8px;
+                    border-radius: 4px;
+                    background: rgba(225, 229, 235, 1);
+                    overflow: hidden;
+
+                    span {
+                        display: block;
+                        height: 100%;
+                        background: rgba(38, 166, 112, 1);
+                    }
+                }
+
+                .tier-card-foot {
+                    display: flex;
+                    justify-content: space-between;
+                    gap: 8px;
+
+                    span {
+                        min-width: 0;
+                        font-size: 12px;
+                        color: rgba(101, 107, 122, 1);
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                    }
+                }
+
+                .model-node-grid {
+                    display: grid;
+                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                    gap: 10px;
+                }
+
+                .model-node-card {
+                    min-width: 0;
+                    padding: 10px;
+                    border: 1px solid rgba(224, 226, 232, 1);
+                    border-left: 4px solid rgba(142, 148, 164, 1);
+                    border-radius: 8px;
+                    background: rgba(255, 255, 255, 0.98);
+                    display: flex;
+                    flex-direction: column;
+                    gap: 9px;
+
+                    &.healthy {
+                        border-left-color: rgba(38, 166, 112, 1);
+                    }
+
+                    &.unhealthy {
+                        border-left-color: rgba(205, 76, 76, 1);
+                    }
+
+                    &.disabled {
+                        opacity: 0.66;
+                    }
+                }
+
+                .node-main {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    min-width: 0;
+                }
+
+                .node-status-dot {
+                    width: 9px;
+                    height: 9px;
+                    border-radius: 50%;
+                    background: rgba(142, 148, 164, 1);
+                    flex-shrink: 0;
+                }
+
+                .model-node-card.healthy .node-status-dot {
+                    background: rgba(38, 166, 112, 1);
+                    box-shadow: 0 0 0 3px rgba(38, 166, 112, 0.14);
+                }
+
+                .model-node-card.unhealthy .node-status-dot {
+                    background: rgba(205, 76, 76, 1);
+                    box-shadow: 0 0 0 3px rgba(205, 76, 76, 0.12);
+                }
+
+                .node-name-block {
+                    flex: 1;
+                    min-width: 0;
+
+                    p {
+                        font-size: 13px;
+                        font-weight: 700;
+                        color: rgba(35, 40, 55, 1);
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                    }
+
+                    span {
+                        display: block;
+                        margin-top: 2px;
+                        font-size: 11px;
+                        color: rgba(103, 108, 123, 1);
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                    }
+                }
+
+                .node-tier {
+                    padding: 2px 7px;
+                    border-radius: 999px;
+                    background: rgba(242, 244, 248, 1);
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: rgba(75, 82, 98, 1);
+                    text-transform: uppercase;
+                    flex-shrink: 0;
+                }
+
+                .node-line,
+                .node-usage {
+                    display: grid;
+                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                    gap: 6px;
+
+                    span {
+                        min-width: 0;
+                        padding: 5px 6px;
+                        border-radius: 6px;
+                        background: rgba(245, 247, 250, 1);
+                        font-size: 11px;
+                        color: rgba(66, 72, 88, 1);
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                        text-align: center;
+                    }
+                }
+
                 .model-setting-grid {
                     width: 100%;
                     display: grid;
@@ -1097,53 +1494,6 @@ export default {
                     font-size: 12px;
                 }
 
-                .model-pool-summary {
-                    display: grid;
-                    grid-template-columns: repeat(3, minmax(0, 1fr));
-                    gap: 10px;
-                }
-
-                .model-tier-card {
-                    min-width: 0;
-                    padding: 10px;
-                    border: 1px solid rgba(224, 226, 232, 1);
-                    border-radius: 6px;
-                    background: rgba(249, 250, 252, 1);
-                }
-
-                .tier-name {
-                    font-size: 12px;
-                    font-weight: 600;
-                    text-transform: uppercase;
-                    color: rgba(76, 83, 105, 1);
-                }
-
-                .tier-count {
-                    margin-top: 4px;
-                    font-size: 22px;
-                    font-weight: 600;
-                    color: rgba(34, 41, 61, 1);
-                }
-
-                .tier-bar {
-                    width: 100%;
-                    height: 5px;
-                    margin: 8px 0;
-                    border-radius: 4px;
-                    background: rgba(225, 229, 235, 1);
-                    overflow: hidden;
-
-                    span {
-                        display: block;
-                        height: 100%;
-                        background: rgba(40, 150, 112, 1);
-                    }
-                }
-
-                .tier-meta {
-                    font-size: 12px;
-                    color: rgba(105, 105, 105, 1);
-                }
             }
 
             .serving-item {
@@ -1320,6 +1670,31 @@ export default {
     font-size: 14px;
     font-weight: 600;
     color: rgba(35, 35, 35, 1);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.model-detail-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: rgba(142, 148, 164, 1);
+    flex-shrink: 0;
+
+    &.healthy {
+        background: rgba(38, 166, 112, 1);
+        box-shadow: 0 0 0 3px rgba(38, 166, 112, 0.14);
+    }
+
+    &.unhealthy {
+        background: rgba(205, 76, 76, 1);
+        box-shadow: 0 0 0 3px rgba(205, 76, 76, 0.12);
+    }
+
+    &.disabled {
+        background: rgba(180, 184, 194, 1);
+    }
 }
 
 .model-detail-sub {
@@ -1358,7 +1733,19 @@ export default {
 }
 
 @media (max-width: 760px) {
-    .lp-serving-container .major-container .content-block .model-pool-panel .model-pool-summary {
+    .lp-serving-container .major-container .content-block .model-pool-panel .model-pool-head {
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
+    .lp-serving-container .major-container .content-block .model-pool-panel .model-pool-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .lp-serving-container .major-container .content-block .model-pool-panel .model-pool-dashboard,
+    .lp-serving-container .major-container .content-block .model-pool-panel .model-tier-strip,
+    .lp-serving-container .major-container .content-block .model-pool-panel .model-node-grid {
         grid-template-columns: 1fr;
     }
 

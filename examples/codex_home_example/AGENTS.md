@@ -76,7 +76,7 @@
 - `train` 优先使用 Trainer Skill
 - `obtain`、训练前数据获取、SFT 数据集构造、能力定向提升数据规划，优先读取 Obtainer Skill：`skills/obtainer/SKILL.md`
 - 涉及 DataMixer、数据湖入湖、SFT recipe/export、按 math/code/text2sql/reasoning 域找数据时，先按 `skills/obtainer/SKILL.md` 和其中的 ObtainerCLI 流程执行，不要从 `outputs/` 里的旧 run 或旧 recipe 反推当前流程
-- 执行数据搜集/下载/入湖时，starter 外层只能通过 CLI wrapper 启动 `dataset-acquisition-agent`：`python3 -m loopai.skills.ObtainerCLI.cli dm ... dataset-acquisition-agent start`，然后轮询/续跑；不要使用通用 `spawn_agent` worker，不要在外层自己创建 SearchAgent task JSON、调用 `searchagent`、调用 `download manifest` 或直接入湖
+- 执行数据搜集/下载/入湖时，starter 外层只能通过 CLI wrapper 启动 `dataset-acquisition-agent`；如果运行环境不是当前 shell 的 Python，先设置 `LOOPAI_PYTHON_EXECUTABLE=/path/to/loopai-env/bin/python`，再用 `${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm ... dataset-acquisition-agent start`，或在 start 命令上显式传 `--python-executable /path/to/loopai-env/bin/python`；然后轮询/续跑。不要使用通用 `spawn_agent` worker，不要在外层自己创建 SearchAgent task JSON、调用 `searchagent`、调用 `download manifest` 或直接入湖
 - 用户要求查看 Trainer 过程或训练事件时，优先读取 Trainer 事件输出
 
 注意：

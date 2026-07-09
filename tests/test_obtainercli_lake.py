@@ -1194,6 +1194,7 @@ def test_sft_export_agent_start_dry_run_writes_isolated_worker_prompt(
     assert "Final training data must be produced by DataMixer `recipe export`" in prompt
     assert "output.sources` must not include text, raw_content, content" in prompt
     assert "instruction != output" in prompt
+    assert f"{sys.executable} -m loopai.skills.ObtainerCLI.cli" in prompt
     state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
     assert state["target_records"] == 100000
     assert state["format"] == "alpaca"
@@ -1365,6 +1366,7 @@ def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
     assert "register it during ingest with `--dataset-card <path>`" in prompt
     assert "Pass `--derived-field <name>` for each derived field" in prompt
     assert "dataset_cards/*.md" in prompt
+    assert f"{sys.executable} -m loopai.skills.ObtainerCLI.cli" in prompt
     state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
     assert state["target_datasets"] == 30
     assert state["max_rows_per_dataset"] == 100000
@@ -1542,6 +1544,7 @@ def test_dataset_acquisition_worker_env_isolates_outer_task_context(
     monkeypatch,
 ) -> None:
     from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+    from loopai.agents.Obtainer.datamixer import codex
 
     monkeypatch.setenv("TASK_ID", "outer-task")
     monkeypatch.setenv("task_id", "outer-task-lower")
@@ -1560,6 +1563,9 @@ def test_dataset_acquisition_worker_env_isolates_outer_task_context(
     assert "CODEX_USE_PROJECT_CONFIG" not in env
     assert env["CODEX_HOME"].endswith("codex_home_worker")
     assert env["LOOPAI_WORKER_KIND"] == "dataset-acquisition-agent"
+    python_executable = codex.loopai_python_executable()
+    assert env["LOOPAI_PYTHON_EXECUTABLE"] == python_executable
+    assert env["PATH"].split(":")[0] == str(Path(python_executable).resolve().parent)
     assert env["HF_ENDPOINT"] == "https://hf-mirror.com"
     assert env["HF_HUB_ENDPOINT"] == "https://hf-mirror.com"
     assert env["HF_HUB_DISABLE_TELEMETRY"] == "1"
@@ -1574,6 +1580,59 @@ def test_dataset_acquisition_worker_preserves_custom_hf_endpoint(
     from loopai.skills.ObtainerCLI import dataset_acquisition_agent
 
     monkeypatch.setenv("HF_ENDPOINT", "https://hf.internal.example")
+
+    env = dataset_acquisition_agent._worker_env()
+
+    assert env["HF_ENDPOINT"] == "https://hf.internal.example"
+    assert env["HF_HUB_ENDPOINT"] == "https://hf.internal.example"
+
+
+def test_datamixer_codex_prompt_uses_current_python_executable(
+    monkeypatch,
+) -> None:
+    from loopai.agents.Obtainer.datamixer import codex
+
+    monkeypatch.delenv("LOOPAI_PYTHON_EXECUTABLE", raising=False)
+
+    prompt = codex.build_prompt("/tmp/data.jsonl", "demo", "/tmp/warehouse")
+
+    assert f"DM={codex.loopai_python_executable()} -m loopai.agents.Obtainer.datamixer" in prompt
+
+
+def test_codex_runner_path_uses_configured_node_bin_dir(tmp_path: Path, monkeypatch) -> None:
+    from loopai.agents.Obtainer.datamixer import codex
+
+    env_bin = tmp_path / "env" / "bin"
+    node_bin = tmp_path / "node" / "bin"
+    env_bin.mkdir(parents=True)
+    node_bin.mkdir(parents=True)
+    python_executable = env_bin / "python"
+    python_executable.write_text("", encoding="utf-8")
+    python_executable.chmod(0o755)
+    monkeypatch.setenv("LOOPAI_NODE_BIN_DIR", str(node_bin))
+
+    path = codex.runner_process_path(str(python_executable), "/usr/bin:/bin")
+
+    assert path.split(":")[:2] == [str(node_bin), str(env_bin)]
+
+
+def test_codex_runner_path_does_not_prepend_system_python_bin(monkeypatch) -> None:
+    from loopai.agents.Obtainer.datamixer import codex
+
+    monkeypatch.delenv("LOOPAI_NODE_BIN_DIR", raising=False)
+
+    path = codex.runner_process_path("/usr/bin/python3", "/opt/node/bin:/usr/bin:/bin")
+
+    assert path.split(":")[:3] == ["/opt/node/bin", "/usr/bin", "/bin"]
+
+
+def test_dataset_acquisition_worker_preserves_custom_hf_hub_endpoint(
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    monkeypatch.setenv("HF_HUB_ENDPOINT", "https://hf.internal.example")
 
     env = dataset_acquisition_agent._worker_env()
 

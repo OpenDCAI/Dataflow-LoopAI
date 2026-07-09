@@ -30,12 +30,12 @@ datasets into DataMixer, and write final_report.json.
 Hard rules:
 
 1. All lakehouse operations after downloaded files exist must use:
-   python3 -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} <datamixer-command> --json
+   {python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} <datamixer-command> --json
 2. Do not use legacy Obtainer lake/table/sample/index commands.
 3. You may use Obtainer SearchAgent and `download manifest` as the acquisition
    bridge when appropriate:
-   python3 -m loopai.skills.ObtainerCLI.cli searchagent ...
-   python3 -m loopai.skills.ObtainerCLI.cli download manifest ...
+   {python_executable} -m loopai.skills.ObtainerCLI.cli searchagent ...
+   {python_executable} -m loopai.skills.ObtainerCLI.cli download manifest ...
    For multi-domain acquisition requests, first write a task JSON with one
    isolated task per capability domain (for example text2sql, math, code), then
    call SearchAgent once with `--task-json <path> --parallelism <n>`. Keep each
@@ -92,6 +92,13 @@ def _worker_codex_home() -> Path:
     return _workspace() / "codex_home_worker"
 
 
+def _apply_runtime_env(*, python_executable: str = "", node_bin_dir: str = "") -> None:
+    if python_executable:
+        os.environ["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
+    if node_bin_dir:
+        os.environ["LOOPAI_NODE_BIN_DIR"] = node_bin_dir
+
+
 def _worker_env(base: dict[str, str] | None = None, prov: dict | None = None) -> dict[str, str]:
     env = dict(base or os.environ)
     for key in (
@@ -104,8 +111,12 @@ def _worker_env(base: dict[str, str] | None = None, prov: dict | None = None) ->
         env.pop(key, None)
     env["CODEX_HOME"] = str(_worker_codex_home())
     env["LOOPAI_WORKER_KIND"] = "dataset-acquisition-agent"
-    env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-    env.setdefault("HF_HUB_ENDPOINT", env["HF_ENDPOINT"])
+    python_executable = codex.loopai_python_executable()
+    env["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
+    env["PATH"] = codex.runner_process_path(python_executable, env.get("PATH"))
+    hf_endpoint = env.get("HF_ENDPOINT") or env.get("HF_HUB_ENDPOINT") or "https://hf-mirror.com"
+    env["HF_ENDPOINT"] = hf_endpoint
+    env["HF_HUB_ENDPOINT"] = hf_endpoint
     env.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     return env
 
@@ -181,6 +192,7 @@ def build_start_prompt(
     policy = _policy_text().format(
         warehouse=str(warehouse),
         max_rows_per_dataset=max_rows_per_dataset,
+        python_executable=codex.loopai_python_executable(),
     )
     return f"""{policy}
 
@@ -233,7 +245,7 @@ warehouse, and blockers.
 
 
 def build_resume_prompt(*, run_dir: Path, message: str) -> str:
-    return f"""{_policy_text().format(warehouse='the warehouse recorded in thread.json', max_rows_per_dataset=DEFAULT_MAX_ROWS_PER_DATASET)}
+    return f"""{_policy_text().format(warehouse='the warehouse recorded in thread.json', max_rows_per_dataset=DEFAULT_MAX_ROWS_PER_DATASET, python_executable=codex.loopai_python_executable())}
 
 # Resume task
 
@@ -266,6 +278,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     start.add_argument("--model", default="")
     start.add_argument("--timeout", type=int, default=3600)
     start.add_argument("--message", default="")
+    start.add_argument("--python-executable", default="", help="Python executable for the isolated worker")
+    start.add_argument("--node-bin-dir", default="", help="Directory containing node/corepack for codex-runner")
     start.add_argument("--dry-run", action="store_true")
     start.add_argument("--foreground", action="store_true")
     start.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
@@ -275,6 +289,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     resume.add_argument("--message", required=True)
     resume.add_argument("--model", default="")
     resume.add_argument("--timeout", type=int, default=3600)
+    resume.add_argument("--python-executable", default="", help="Python executable for the isolated worker")
+    resume.add_argument("--node-bin-dir", default="", help="Directory containing node/corepack for codex-runner")
     resume.add_argument("--dry-run", action="store_true")
     resume.add_argument("--foreground", action="store_true")
     resume.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
@@ -289,6 +305,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     worker.add_argument("--timeout", type=int, default=3600)
     worker.add_argument("--thread-id", default="")
     worker.add_argument("--model", default="")
+    worker.add_argument("--python-executable", default="", help=argparse.SUPPRESS)
+    worker.add_argument("--node-bin-dir", default="", help=argparse.SUPPRESS)
     worker.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
@@ -318,13 +336,15 @@ def _spawn_background(
     timeout: int,
     model: str,
     thread_id: str = "",
+    python_executable: str = "",
+    node_bin_dir: str = "",
 ) -> dict:
     logs = run_dir / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     stdout_path = logs / "worker_stdout.ndjson"
     stderr_path = logs / "worker_stderr.log"
     cmd = [
-        sys.executable,
+        codex.loopai_python_executable(),
         "-m",
         "loopai.skills.ObtainerCLI.cli",
         "dm",
@@ -344,6 +364,10 @@ def _spawn_background(
         cmd.extend(["--model", model])
     if thread_id:
         cmd.extend(["--thread-id", thread_id])
+    if python_executable:
+        cmd.extend(["--python-executable", python_executable])
+    if node_bin_dir:
+        cmd.extend(["--node-bin-dir", node_bin_dir])
     env = _worker_env()
     with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
         proc = subprocess.Popen(
@@ -393,6 +417,7 @@ def _run_worker(
         _policy_text().format(
             warehouse="see thread.json",
             max_rows_per_dataset=DEFAULT_MAX_ROWS_PER_DATASET,
+            python_executable=codex.loopai_python_executable(),
         ),
         encoding="utf-8",
     )
@@ -483,6 +508,8 @@ def _save_initial_state(
     keywords: str,
     discovery_mode: str,
     provider_meta: dict,
+    python_executable: str = "",
+    node_bin_dir: str = "",
 ) -> None:
     now = time.time()
     state = _json_read(run_dir / STATE_FILE)
@@ -498,6 +525,10 @@ def _save_initial_state(
         "keywords": keywords,
         "discovery_mode": discovery_mode,
         "provider": provider_meta,
+        "runtime": {
+            "python_executable": python_executable,
+            "node_bin_dir": node_bin_dir,
+        },
     })
     _json_write(run_dir / STATE_FILE, state)
     _json_write(run_dir / STATUS_FILE, {
@@ -511,6 +542,11 @@ def _save_initial_state(
 def run_agent(argv: list[str], *, root: str) -> dict:
     args = _parse(argv)
     run_dir = Path(args.run).expanduser().resolve()
+    if getattr(args, "python_executable", "") or getattr(args, "node_bin_dir", ""):
+        _apply_runtime_env(
+            python_executable=getattr(args, "python_executable", ""),
+            node_bin_dir=getattr(args, "node_bin_dir", ""),
+        )
 
     if args.agent_command == "status":
         return _status_payload(run_dir)
@@ -537,6 +573,8 @@ def run_agent(argv: list[str], *, root: str) -> dict:
         if max_rows <= 0 or max_rows > DEFAULT_MAX_ROWS_PER_DATASET:
             max_rows = DEFAULT_MAX_ROWS_PER_DATASET
         target_datasets = max(args.target_datasets, DEFAULT_TARGET_DATASETS)
+        python_executable = args.python_executable or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
+        node_bin_dir = args.node_bin_dir or os.environ.get("LOOPAI_NODE_BIN_DIR", "")
         prov, provider_meta = _resolve_provider(warehouse, args.model or None)
         _save_initial_state(
             run_dir=run_dir,
@@ -548,6 +586,8 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             keywords=args.keywords,
             discovery_mode=args.discovery_mode,
             provider_meta=provider_meta,
+            python_executable=python_executable,
+            node_bin_dir=node_bin_dir,
         )
         prompt = build_start_prompt(
             warehouse=warehouse,
@@ -564,7 +604,11 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             prompt_path = run_dir / "worker_prompt.md"
             prompt_path.write_text(prompt, encoding="utf-8")
             (run_dir / "policy.md").write_text(
-                _policy_text().format(warehouse=str(warehouse), max_rows_per_dataset=max_rows),
+                _policy_text().format(
+                    warehouse=str(warehouse),
+                    max_rows_per_dataset=max_rows,
+                    python_executable=codex.loopai_python_executable(),
+                ),
                 encoding="utf-8",
             )
             if not args.foreground:
@@ -574,6 +618,8 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                     prompt_path=prompt_path,
                     timeout=args.timeout,
                     model=args.model or "",
+                    python_executable=python_executable,
+                    node_bin_dir=node_bin_dir,
                 )
         return _run_worker(
             run_dir=run_dir,
@@ -594,6 +640,10 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 exit_code=2,
             )
         warehouse = Path(state.get("warehouse") or root or "").expanduser().resolve()
+        runtime = state.get("runtime") if isinstance(state.get("runtime"), dict) else {}
+        python_executable = args.python_executable or runtime.get("python_executable") or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
+        node_bin_dir = args.node_bin_dir or runtime.get("node_bin_dir") or os.environ.get("LOOPAI_NODE_BIN_DIR", "")
+        _apply_runtime_env(python_executable=python_executable, node_bin_dir=node_bin_dir)
         prov, provider_meta = _resolve_provider(warehouse, args.model or state.get("provider", {}).get("model_pool_name"))
         if not args.dry_run:
             active = _active_run_status(run_dir)
@@ -620,6 +670,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 _policy_text().format(
                     warehouse=str(warehouse),
                     max_rows_per_dataset=state.get("max_rows_per_dataset") or DEFAULT_MAX_ROWS_PER_DATASET,
+                    python_executable=codex.loopai_python_executable(),
                 ),
                 encoding="utf-8",
             )
@@ -631,6 +682,8 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                     timeout=args.timeout,
                     model=args.model or state.get("provider", {}).get("model_pool_name", ""),
                     thread_id=thread_id,
+                    python_executable=python_executable,
+                    node_bin_dir=node_bin_dir,
                 )
         return _run_worker(
             run_dir=run_dir,

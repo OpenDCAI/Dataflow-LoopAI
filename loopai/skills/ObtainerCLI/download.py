@@ -14,6 +14,17 @@ from .models import canonical_json, utc_now
 MAX_ROWS_PER_DATASET = 100_000
 
 
+def _ensure_hf_mirror_env() -> None:
+    endpoint = (
+        os.environ.get("HF_ENDPOINT")
+        or os.environ.get("HF_HUB_ENDPOINT")
+        or "https://hf-mirror.com"
+    )
+    os.environ.setdefault("HF_ENDPOINT", endpoint)
+    os.environ.setdefault("HF_HUB_ENDPOINT", endpoint)
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
+
 def _safe_name(value: str) -> str:
     name = re.sub(r"[^A-Za-z0-9._-]+", "__", value.strip())
     return name.strip("._-") or "dataset"
@@ -85,6 +96,7 @@ def _write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> int:
 
 
 def _load_hf_dataset(dataset_id: str, *, split: str, streaming: bool) -> Any:
+    _ensure_hf_mirror_env()
     from datasets import get_dataset_config_names, load_dataset
 
     try:
@@ -121,7 +133,7 @@ def _export_huggingface_jsonl(
             "candidate": item,
         }
 
-    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    _ensure_hf_mirror_env()
     dataset = _load_hf_dataset(dataset_id, split=split, streaming=streaming)
     effective_max_rows = _effective_max_rows(max_rows)
     selected_rows = islice(dataset, effective_max_rows)
