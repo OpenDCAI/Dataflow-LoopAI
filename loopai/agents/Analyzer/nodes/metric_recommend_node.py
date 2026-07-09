@@ -13,7 +13,7 @@ logger = get_logger()
 def _emit(writer, message: str, *, progress=None, data=None):
     if writer:
         writer(StreamEvent(
-            current="AnalyzerAgent.metric_recommend_node",
+            current="analyzer.metric_recommend",
             message=message,
             progress=progress,
             data=data

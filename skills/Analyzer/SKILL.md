@@ -1,7 +1,7 @@
 # Analyzer Skill
 
 ## Purpose
-Analyzer Skill is the Codex/Agent-facing capability for running LoopAI Analyzer independently. It analyzes evaluation outputs, writes Analyzer reports, supports checkpoint resume, and can compare current results with a historical baseline.
+Analyzer Skill is the Codex/Agent-facing capability for running LoopAI Analyzer independently. It analyzes evaluation outputs, writes Analyzer reports, emits stream events, returns unified success/error payloads, and can compare current results with a historical baseline.
 
 ## Python Implementation
 The Python skill layer lives in:
@@ -18,12 +18,21 @@ Do not move or rewrite `eval_model.py`, `analyze_result.py`, or `draw_conclusion
 ```python
 from loopai.skills.Analyzer import run
 
-result = run(
-    state=state,
-    resume=False,
-    from_node=None,
-    baseline_result_path=None,
-)
+run(state=None, resume=False, from_node=None, baseline_result_path=None)
+```
+
+`run(...)` is the Codex/sub-agent process entry. It emits the unified LoopAI
+payload to stdout and exits, matching the latest Judger skill pattern. For
+in-process calls use `run_analyzer_standalone(...)`.
+
+```json
+{
+  "ok": true,
+  "status": "completed",
+  "message": "Analyzer completed.",
+  "data": {},
+  "error": null
+}
 ```
 
 Direct runner:
@@ -31,6 +40,8 @@ Direct runner:
 ```python
 from loopai.skills.Analyzer.runner import run_analyzer_standalone
 ```
+
+`run_analyzer_standalone(...)` keeps the legacy behavior and returns the final state directly.
 
 Legacy import remains valid:
 
@@ -63,37 +74,73 @@ Runtime configuration should come from environment/system runtime where possible
 - `TASK_ID`
 - `DB_PATH`
 - `ANALYZER_CHECKPOINT_PATH`
+- `ANALYZER_VERSION_ID` / `VERSION_ID`
 
-Config JSON should not store API keys. If legacy config contains `analyze_api_key`, it is only a fallback and print-result must redact it.
+Config JSON should not store API keys. Runtime API key/model/base URL should be placed under the task/system config when available:
+
+- `system.analyzer_api_key`
+- `system.analyzer_model`
+- `system.analyzer_base_url`
+
+If those are absent, Analyzer can fall back to:
+
+- `system.starter_api_key`
+- `system.starter_model_name` / `system.starter_model_path`
+- `system.starter_base_url`
+- `ANALYZER_API_KEY` / `ANALYZER_MODEL` / `ANALYZER_BASE_URL`
+- legacy `state["analyzer"]["analyze_api_key"]`
 
 ## Priority
 General runtime priority:
 
-`kwargs > env > state["analyzer"] > default`
+`kwargs > system runtime > env > state["analyzer"] > default`
 
-API key priority is env-first by design:
+API key priority:
 
-`ANALYZER_API_KEY > legacy state["analyzer"]["analyze_api_key"]`
+`kwargs > system analyzer/starter key > ANALYZER_API_KEY > legacy analyzer.analyze_api_key`
 
 Thread id priority:
 
 `CLI --thread-id > TASK_ID env > state/default`
 
-Checkpoint path priority:
+## State And Configer
 
-`CLI --checkpoint-path > ANALYZER_CHECKPOINT_PATH env > outputs/analyzer_checkpoints.sqlite`
+Analyzer runtime state should be read and updated through Configer when `DB_PATH` and `TASK_ID` are available:
 
-## Checkpoint And Resume
-Standalone Analyzer uses a function-level pipeline:
+```python
+from loopai.skills.Configer import (
+    get_configer_task_state_config,
+    update_configer_task_state_config,
+)
+```
+
+Analyzer keeps a lightweight version-scoped checkpoint for standalone resume. The checkpoint key is `(task_id/thread_id, version_id)`, so a completed version1 run will not cause version2 of the same task to be skipped.
+
+Use a new version id for a new attempt:
+
+```bash
+python examples/scripts/run_analyzer_standalone.py \
+  --config-path examples/config/starter.yaml \
+  --thread-id task-001 \
+  --version-id version2
+```
+
+Analyzer output files and event files are version-scoped:
+
+```text
+<output_dir>/<task_id>/analyzer/<version_id>/
+```
+
+Standalone function pipeline remains:
 
 `eval_model -> analyze_result -> draw_conclusion -> finish`
 
-The runner stores:
+The in-memory state still carries:
 
 - `state["current"]`
 - `state["last_completed"]`
 
-`--resume` continues from the checkpoint step and does not rerun completed steps. `--from-node` forces a specific Analyzer step.
+`--from-node` forces a specific Analyzer step. `--resume` loads the matching version-scoped checkpoint first, then falls back to Configer task state if no checkpoint exists.
 
 ## Historical Comparison
 Set `baseline_result_path` to enable Historical Comparison. Current results come from `analyzer.eval_result_path`; baseline results come from `baseline_result_path`.
@@ -116,7 +163,7 @@ loopai/skills/Analyzer/event_tool.py
 Events are written to:
 
 ```text
-<output_dir>/<TASK_ID or thread_id>/analyzer.pkl
+<output_dir>/<TASK_ID or thread_id>/analyzer/<version_id>/analyzer.pkl
 ```
 
 The Analyzer skill writer supports `--stream-stdout` for JSONL stdout output and appends events to `state["messages"]`.
@@ -125,10 +172,38 @@ Analyzer node-level `StreamEvent` calls are still compatible with LangGraph runt
 
 Analyzer event payloads are JSON serializable and redact sensitive keys such as `api_key`, `analyze_api_key`, `token`, and `*_key`.
 
+Analyzer uses `emit_success(..., stream_writer=writer)` and
+`emit_error(..., stream_writer=writer)` for terminal status updates. Analyzer
+emits explicit terminal events:
+
+- `analyzer.completed`
+- `analyzer.failed`
+
+## MCP Tools
+Analyzer MCP exposure is currently disabled. Do not register `analyzer_run` or `analyzer_load_events` until the team re-enables Analyzer MCP routing.
+
 ## Success Response
-Return the Analyzer final state/result directly.
+`from loopai.skills.Analyzer import run` emits:
+
+```json
+{
+  "ok": true,
+  "status": "completed",
+  "message": "Analyzer pipeline completed.",
+  "data": {
+    "task_id": "",
+    "version_id": "default",
+    "current": "finish",
+    "last_completed": "finish",
+    "output_dir": "",
+    "historical_comparison": {},
+    "state": {}
+  },
+  "error": null
+}
+```
 
 ## Error Response
-Runtime configuration errors should be clear. If Analyzer needs an LLM key and no key is available, raise:
+Analyzer returns the unified error payload. Runtime configuration errors are recoverable. If Analyzer needs an LLM key and no key is available, the error detail is:
 
 `missing required env: ANALYZER_API_KEY`
