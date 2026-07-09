@@ -27,10 +27,6 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _new_version_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-
-
 def _sanitize_path_component(value: str, fallback: str) -> str:
     cleaned = (value or "").strip().replace("\\", "_").replace("/", "_")
     return cleaned or fallback
@@ -193,7 +189,7 @@ class PickleEventWriter:
 
     def set_event(self, payload: StreamEvent | dict[str, Any], status: str = 'running') -> StreamEvent:
         if self.version_id is None:
-            self.version_id = _new_version_id()
+            self.version_id = self.new_version_id()
         payload = payload or {}
         self._sync_runtime(status=status)
         event = _coerce_stream_event(payload)
@@ -213,6 +209,9 @@ class PickleEventWriter:
 
     def set_completed(self, payload: dict[str, Any] | None = None):
         return self.set_event(payload, status="completed")
+    
+    def new_version_id(self) -> str:
+        return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
     def _sync_runtime(self, *, status: str) -> None:
         try:
