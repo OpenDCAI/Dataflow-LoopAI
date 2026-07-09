@@ -23,6 +23,11 @@ def _analyzer(state: LoopAIState) -> dict:
 
 def _ensure_analyzer_outdir(state: LoopAIState) -> str:
     cfg = _analyzer(state)
+    runtime_outdir = cfg.get("runtime_output_dir")
+    if runtime_outdir:
+        outdir = Path(runtime_outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        return str(outdir)
     base_outdir = Path(cfg.get("output_dir") or state.get("output_dir") or "./outputs")
     task_id = state.get("task_id") or "default_task"
     outdir = base_outdir / task_id / "analyzer"
@@ -166,7 +171,7 @@ def analyze_result_node(state: LoopAIState):
     def _emit(message, *, progress=None, data=None):
         if writer:
             writer(StreamEvent(
-                current="AnalyzerAgent.analyze_result_node",
+                current="analyzer.analyze_result",
                 message=message,
                 progress=progress,
                 data=data

@@ -15,7 +15,7 @@
 
 - Codex 如何作为 `starter` 调度 sub-agent
 - 如何理解 `task_id` 上下文
-- 如何在配置类请求中调用工作区里的 `skills/configer/SKILL.md`
+- 如何在配置类请求中调用工作区里的 `skills/Configer/SKILL.md`
 - 如何统一解析 LoopAI 的 success / error 返回
 
 ## 推荐用法
@@ -24,7 +24,7 @@
 
 项目专用 skill 建议直接维护在工作区：
 
-- [skills/configer/SKILL.md](/home/lpc/repos/Dataflow-LoopAI/skills/configer/SKILL.md)
+- [skills/Configer/SKILL.md](/home/lpc/repos/Dataflow-LoopAI/skills/Configer/SKILL.md)
 - [codex_home/hooks/check_config_write.py](/home/lpc/repos/Dataflow-LoopAI/codex_home/hooks/check_config_write.py)
   一个 `PreToolUse` 示例，在 `configer_update*` 前做写入拦截
 

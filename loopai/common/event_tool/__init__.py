@@ -27,10 +27,6 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _new_version_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-
-
 def _sanitize_path_component(value: str, fallback: str) -> str:
     cleaned = (value or "").strip().replace("\\", "_").replace("/", "_")
     return cleaned or fallback
@@ -193,7 +189,7 @@ class PickleEventWriter:
 
     def set_event(self, payload: StreamEvent | dict[str, Any], status: str = 'running') -> StreamEvent:
         if self.version_id is None:
-            self.version_id = _new_version_id()
+            self.version_id = self.new_version_id()
         payload = payload or {}
         self._sync_runtime(status=status)
         event = _coerce_stream_event(payload)
@@ -213,6 +209,13 @@ class PickleEventWriter:
 
     def set_completed(self, payload: dict[str, Any] | None = None):
         return self.set_event(payload, status="completed")
+    
+    def refresh_version_id(self):
+        self.version_id = self.new_version_id()
+        return self.version_id
+    
+    def new_version_id(self) -> str:
+        return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
     def _sync_runtime(self, *, status: str) -> None:
         try:
@@ -265,11 +268,15 @@ def get_event_writer(
     log_file_path: str = "./outputs",
     *,
     version_id: str | None = None,
+    event_dir: str | os.PathLike[str] | None = None,
 ) -> PickleEventWriter:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
     base_path = Path(log_file_path)
-    event_path = base_path / context_value / f"{agent_name}.pkl"
+    if event_dir is not None:
+        event_path = Path(event_dir) / f"{agent_name}.pkl"
+    else:
+        event_path = base_path / context_value / f"{agent_name}.pkl"
     return PickleEventWriter(
         name=agent_name,
         context_id=context_value,
@@ -282,8 +289,15 @@ def load_stream_events(
     name: str,
     context_id: str,
     log_file_path: str = "./outputs",
+    *,
+    event_dir: str | os.PathLike[str] | None = None,
 ) -> list[StreamEvent]:
-    grouped_events = load_stream_event_groups(name, context_id, log_file_path)
+    grouped_events = load_stream_event_groups(
+        name,
+        context_id,
+        log_file_path,
+        event_dir=event_dir,
+    )
     flattened_events: list[StreamEvent] = []
     for events in grouped_events.values():
         flattened_events.extend(events)
@@ -295,10 +309,15 @@ def load_stream_event_groups(
     name: str,
     context_id: str,
     log_file_path: str = "./outputs",
+    *,
+    event_dir: str | os.PathLike[str] | None = None,
 ) -> dict[str, list[StreamEvent]]:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
-    event_path = Path(log_file_path) / context_value / f"{agent_name}.pkl"
+    if event_dir is not None:
+        event_path = Path(event_dir) / f"{agent_name}.pkl"
+    else:
+        event_path = Path(log_file_path) / context_value / f"{agent_name}.pkl"
     if not event_path.exists():
         return {}
 
@@ -312,7 +331,21 @@ def dump_stream_events_json(
     name: str,
     context_id: str,
     log_file_path: str = "./outputs",
+    *,
+    event_dir: str | os.PathLike[str] | None = None,
 ) -> list[dict[str, Any]]:
+    if event_dir is not None:
+        grouped_events = load_stream_event_groups(
+            name,
+            context_id,
+            log_file_path,
+            event_dir=event_dir,
+        )
+        flattened_events: list[StreamEvent] = []
+        for events in grouped_events.values():
+            flattened_events.extend(events)
+        flattened_events.sort(key=lambda item: item.time or "")
+        return [item.json() for item in flattened_events]
     return [item.json() for item in load_stream_events(name, context_id, log_file_path)]
 
 
