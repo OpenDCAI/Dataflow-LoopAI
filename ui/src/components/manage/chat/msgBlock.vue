@@ -328,6 +328,12 @@ export default {
     display: flex;
     overflow: hidden;
 
+    * {
+        td {
+            overflow: overlay;
+        }
+    }
+
     &:last-child {
         margin-bottom: 100px;
     }
