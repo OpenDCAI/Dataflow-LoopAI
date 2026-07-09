@@ -30,12 +30,14 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
     logger.info("开始执行数据检查节点")
     # 生成一个task_id,更新到state中，供后续节点使用
     import uuid
-    task_id = str(uuid.uuid4())
+    task_id = state.get('trainer', {}).get('trainer_version_id') or str(uuid.uuid4())
     state['trainer']['trainer_task_id'] = task_id
+    state['trainer']['trainer_version_id'] = task_id
     global_task_id = state.get('task_id') or 'default'
     global_output_dir = os.path.abspath(state.get('output_dir') or './outputs')
     trainer_task_id = state.get('trainer', {}).get('trainer_task_id')
     training_output_dir = os.path.join(global_output_dir, global_task_id, 'trainer', trainer_task_id)
+    state['trainer']['trainer_output_dir'] = training_output_dir
     state['trainer']['output_dir'] = training_output_dir
     
     try:
