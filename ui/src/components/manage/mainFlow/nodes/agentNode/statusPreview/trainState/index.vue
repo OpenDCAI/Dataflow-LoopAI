@@ -97,8 +97,7 @@ export default {
             try {
                 let task_id = this.state.task_id
                 let output_dir = this.state.output_dir
-                let trainer_task_id =
-                    this.custom_info['TrainerAgent.training_execution_node_wrapper'].data.task_id
+                let trainer_task_id = this.custom_info['trainer.trainer.run']?.version_id || ''
                 this.$api.task
                     .getTrainStatus(output_dir, task_id, trainer_task_id)
                     .then((res) => {
