@@ -189,6 +189,11 @@ def _analyzer(state: LoopAIState) -> dict:
 
 def _ensure_analyzer_outdir(state: LoopAIState) -> Path:
     cfg = _analyzer(state)
+    runtime_outdir = cfg.get("runtime_output_dir")
+    if runtime_outdir:
+        outdir = Path(runtime_outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        return outdir
     base_outdir = Path(cfg.get("output_dir") or state.get("output_dir") or "./outputs")
     task_id = state.get("task_id") or "default_task"
     outdir = base_outdir / task_id / "analyzer"
@@ -737,7 +742,7 @@ def eval_model_node(state: LoopAIState):
     writer = get_safe_stream_writer()
     if writer:
        writer(StreamEvent(
-        current="AnalyzerAgent.eval_model_node",
+        current="analyzer.eval_model",
         progress=0.0,
         message="常规任务评测样本开始",
         data={"task_type": task_type}
@@ -786,7 +791,7 @@ def eval_model_node(state: LoopAIState):
 
         if writer:
            writer(StreamEvent(
-               current="AnalyzerAgent.eval_model_node",
+               current="analyzer.eval_model",
                progress=round(progress, 3),
                message=f"判因分析中 ({processed}/{total_failed})",
                data={
@@ -808,7 +813,7 @@ def eval_model_node(state: LoopAIState):
         overall_start = time.time()
         if writer:
            writer(StreamEvent(
-        current="AnalyzerAgent.eval_model_node",
+        current="analyzer.eval_model",
         progress=None,
         message="正在调用分析模型",
         data={"batch_size": len(batch)}
@@ -838,7 +843,7 @@ def eval_model_node(state: LoopAIState):
         limit = int(cfg.get("quick_brief_limit", 20))
         if writer:
            writer(StreamEvent(
-        current="AnalyzerAgent.eval_model_node",
+        current="analyzer.eval_model",
         progress=0.70,
         message="开始生成失败样本中文短评",
         data={"limit": limit, "failed_samples": len(failed_results)}
@@ -921,7 +926,7 @@ def eval_model_node(state: LoopAIState):
             if writer and total_brief > 0:
                progress = 0.70 + 0.15 * (i / total_brief)
                writer(StreamEvent(
-               current="AnalyzerAgent.eval_model_node",
+               current="analyzer.eval_model",
                progress=round(progress, 3),
                message=f"生成短评中 ({i}/{total_brief})",
                data=None
@@ -941,7 +946,7 @@ def eval_model_node(state: LoopAIState):
     logger.info(" 完成：V2 评测 + 每条样本 LLMaJ（启发式/模型融合）" + (" + 中文短评" if cfg.get('quick_brief', False) else ""))
     if writer:
        writer(StreamEvent(
-        current="AnalyzerAgent.eval_model_node",
+        current="analyzer.eval_model",
         progress=0.85,
         message="已写入增强评测结果",
         data={"output_path": str(out_jsonl_path)}
@@ -959,7 +964,7 @@ def eval_model_node(state: LoopAIState):
         logger.info(f" 已在 {state['output_dir']} 生成 summary，路径：{summary_json_path} / {summary_txt_path}")
         if writer:
            writer(StreamEvent(
-        current="AnalyzerAgent.eval_model_node",
+        current="analyzer.eval_model",
         progress=0.90,
         message="已生成评测摘要",
         data={ 
@@ -974,7 +979,7 @@ def eval_model_node(state: LoopAIState):
         logger.warning(f"[WARN] 生成 summary 时发生错误：{e}")
     if writer:
        writer(StreamEvent(
-        current="AnalyzerAgent.eval_model_node",
+        current="analyzer.eval_model",
         progress=1.0,
         message="评测流程完成",
         data=None
