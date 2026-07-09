@@ -227,6 +227,7 @@ def run_trainer_standalone(
             event_dir=fallback_output_dir,
         )
         fallback_writer.set_running({
+            "current": "trainer.run",
             "message": "Trainer skill started.",
             "data": {
                 "task_id": fallback_task_id,
@@ -270,6 +271,7 @@ def run_trainer_standalone(
         event_dir=trainer_output_dir,
     )
     event_writer.set_running({
+        "current": "trainer.run",
         "message": "Trainer skill started.",
         "data": {
             "task_id": runtime["thread_id"],
