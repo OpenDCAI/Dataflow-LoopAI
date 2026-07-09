@@ -210,6 +210,9 @@ class PickleEventWriter:
     def set_completed(self, payload: dict[str, Any] | None = None):
         return self.set_event(payload, status="completed")
     
+    def refresh_version_id(self):
+        self.version_id = self.new_version_id()
+    
     def new_version_id(self) -> str:
         return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
