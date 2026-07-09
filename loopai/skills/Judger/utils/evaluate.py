@@ -15,9 +15,9 @@ from typing import Any, Dict, List, Union
 import numpy as np
 import tqdm
 
-from loopai.agents.Judger.utils.oj.data import write_jsonl, stream_jsonl, read_problems
-from loopai.agents.Judger.utils.oj.execution import check_correctness
-from loopai.agents.Judger.utils.oj.execution_sql import compare_sql_wrapper
+from loopai.skills.Judger.utils.data import write_jsonl, stream_jsonl, read_problems
+from loopai.skills.Judger.utils.execution import check_correctness
+from loopai.skills.Judger.utils.execution_sql import compare_sql_wrapper
 from loopai.common.event_tool import StreamEvent
 from loopai.logger import get_logger
 

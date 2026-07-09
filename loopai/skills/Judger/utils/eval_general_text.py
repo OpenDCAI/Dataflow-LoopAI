@@ -17,12 +17,27 @@ from typing import Any, Dict, List, Optional
 
 from one_eval.toolkits.dataflow_eval_tool import DataFlowEvalTool
 from one_eval.core.state import ModelConfig
-from loopai.agents.Judger.utils.oj.const import field_mapping
 from loopai.common.event_tool import StreamEvent
 from loopai.common.exception import emit_error, ErrorCode
 from loopai.logger import get_logger
 
 logger = get_logger()
+
+
+# field_mapping 内联（原 loopai.agents.Judger.utils.oj.const）
+field_mapping = {
+    "question": ["question", "prompt", "query", "input", "problem", "instruction", "题目", "问题", "输入", "提示"],
+    "target": ["target", "answer", "reference", "gold", "gold_answer", "gt", "chosen", "label", "expected", "标准答案", "答案", "参考答案", "标签"],
+    "targets": ["targets", "answers", "references", "gold_answers", "候选答案", "参考答案列表"],
+    "prediction": ["generated_ans", "prediction", "pred", "response", "output", "model_output", "generated", "预测", "模型输出", "生成答案", "回答"],
+    "choices": ["choices", "options", "candidates", "选项", "候选项"],
+    "label": ["label", "answer", "target", "correct_option", "正确选项", "标签"],
+    "labels": ["labels", "answers", "targets", "正确选项列表", "标签列表"],
+    "better": ["better", "preferred", "winner", "更优答案", "偏好", "更好"],
+    "answer": ["chosen", "selected", "preferred", "positive", "pos", "human", "good", "helpful", "harmless", "correct", "accepted", "response_chosen", "output_good", "优", "选中", "正样本"],
+    "rejected": ["rejected", "unselected", "unpreferred", "loser", "negative", "neg", "machine", "bad", "harmful", "helpless", "incorrect", "ignored", "response_rejected", "output_bad", "差", "拒绝", "负样本"],
+    "text": ["text", "content", "essay", "article", "response", "output", "文本", "内容", "文章", "回答"],
+}
 
 
 @dataclass
