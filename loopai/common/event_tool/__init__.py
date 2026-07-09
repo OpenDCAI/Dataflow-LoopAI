@@ -212,6 +212,7 @@ class PickleEventWriter:
     
     def refresh_version_id(self):
         self.version_id = self.new_version_id()
+        return self.version_id
     
     def new_version_id(self) -> str:
         return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
