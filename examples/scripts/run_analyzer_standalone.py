@@ -107,9 +107,7 @@ def main() -> None:
             message="Analyzer CLI input contract validation failed.",
         )
 
-    from loopai.skills.Analyzer.event_tool import get_analyzer_event_writer
     from loopai.skills.Analyzer.runner import run_analyzer_standalone
-    from loopai.skills.Analyzer.runtime_config import resolve_analyzer_runtime_config
 
     writer = None
     try:
@@ -117,20 +115,6 @@ def main() -> None:
         if state is not None and args.baseline_result_path:
             state.setdefault("analyzer", {})["baseline_result_path"] = args.baseline_result_path
 
-        runtime_state = state if isinstance(state, dict) else {}
-        runtime = resolve_analyzer_runtime_config(
-            runtime_state,
-            thread_id=args.thread_id,
-            checkpoint_path=args.checkpoint_path,
-            version_id=args.version_id,
-        )
-        writer = get_analyzer_event_writer(
-            context_id=runtime["thread_id"],
-            log_file_path=runtime["output_dir"],
-            stdout=args.stream_stdout,
-            state=state if isinstance(state, dict) else None,
-            version_id=runtime["version_id"],
-        )
         result = run_analyzer_standalone(
             state=state,
             thread_id=args.thread_id,
@@ -140,7 +124,6 @@ def main() -> None:
             version_id=args.version_id,
             baseline_result_path=args.baseline_result_path,
             stream_stdout=args.stream_stdout,
-            writer=writer,
             emit_status=False,
         )
     except (ValueError, TypeError) as exc:

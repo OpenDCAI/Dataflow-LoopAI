@@ -53,7 +53,7 @@ def run(
         )
         explicit_version = kwargs.get("version_id") or kwargs.get("run_id")
         writer_version_id = runtime["version_id"]
-        if writer_version_id == "default" and not explicit_version:
+        if writer_version_id in ("", "default") and not explicit_version:
             writer_version_id = None
         writer = get_analyzer_event_writer(
             context_id=runtime["thread_id"],

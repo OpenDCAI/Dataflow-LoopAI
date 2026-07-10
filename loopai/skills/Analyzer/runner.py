@@ -83,7 +83,7 @@ def run_analyzer_standalone(
     )
 
     explicit_version = kwargs.get("version_id") or kwargs.get("run_id")
-    if resume and not explicit_version and runtime.get("version_id") == "default":
+    if resume and not explicit_version and runtime.get("version_id") in ("", "default"):
         latest_version = _latest_runtime_version(runtime["thread_id"])
         if latest_version:
             runtime["version_id"] = latest_version
@@ -114,7 +114,7 @@ def run_analyzer_standalone(
 
         output_dir = runtime["output_dir"] or state.get("output_dir") or (state.get("analyzer") or {}).get("output_dir") or "./outputs"
         writer_version_id = runtime["version_id"]
-        if writer_version_id == "default" and not explicit_version:
+        if writer_version_id in ("", "default") and not explicit_version:
             writer_version_id = None
         writer = get_analyzer_event_writer(
             context_id=runtime["thread_id"],
