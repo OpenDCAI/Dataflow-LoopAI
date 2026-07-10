@@ -34,6 +34,16 @@ def _ensure_analyzer_outdir(state: LoopAIState) -> str:
     outdir.mkdir(parents=True, exist_ok=True)
     return str(outdir)
 
+def _runtime_api_key(cfg: dict) -> str:
+    return (
+        cfg.get("analyze_api_key")
+        or os.getenv("_LOOPAI_ANALYZER_RUNTIME_API_KEY")
+        or os.getenv("ANALYZER_API_KEY")
+        or os.getenv("analyzer_api_key")
+        or os.getenv("DEEPSEEK_API_KEY")
+        or "EMPTY"
+    )
+
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     使用标准 vLLM(OpenAI 兼容) 客户端
@@ -42,7 +52,7 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     cfg = _analyzer(state)
     model = ChatOpenAI(
         model=cfg['analyze_model_path'],
-        api_key=cfg['analyze_api_key'],
+        api_key=_runtime_api_key(cfg),
         base_url=cfg['analyze_base_url'],
         temperature=cfg.get('analyze_temperature', 0.0),
         top_p=cfg.get('analyze_top_p', 0.95),

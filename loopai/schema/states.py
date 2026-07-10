@@ -1208,18 +1208,9 @@ class AnalyzerState(BaseModel):
         description="分析模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
-    analyze_base_url: str = Field(
-        default="",
-        title="分析模型 Base URL",
-        description="分析模型 Base URL",
-        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
-    )
-    analyze_api_key: str = Field(
-        default="",
-        title="分析模型 API Key",
-        description="分析模型 API Key",
-        json_schema_extra={"ui_type": "password", "ui_group": "分析模型"}
-    )
+    # Analyzer API endpoint and API key are runtime-only values. Keeping them
+    # out of the public state schema prevents Configer/UI/model prompts from
+    # seeing or copying credentials out of system config.
     analyze_temperature: float = Field(
         default=0,
         title="分析模型温度",
@@ -1890,8 +1881,6 @@ class LoopAIState(MessagesState):
     # analyze_task_type: str = 'code'
     # analyze_batch_size: int = 20
     # analyze_model_path: str
-    # analyze_base_url: str
-    # analyze_api_key: str
     # analyze_temperature: float = 0
     # analyze_top_p: float = 0.95
     # output_brief: bool

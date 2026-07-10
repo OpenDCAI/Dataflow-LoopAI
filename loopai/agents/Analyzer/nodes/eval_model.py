@@ -200,6 +200,16 @@ def _ensure_analyzer_outdir(state: LoopAIState) -> Path:
     outdir.mkdir(parents=True, exist_ok=True)
     return outdir
 
+def _runtime_api_key(cfg: dict) -> str:
+    return (
+        cfg.get("analyze_api_key")
+        or os.getenv("_LOOPAI_ANALYZER_RUNTIME_API_KEY")
+        or os.getenv("ANALYZER_API_KEY")
+        or os.getenv("analyzer_api_key")
+        or os.getenv("DEEPSEEK_API_KEY")
+        or "EMPTY"
+    )
+
 def init_model(state: LoopAIState) -> BaseChatModel:
     """
     初始化用于判因 / 短评的 LLM 模型（OpenAI 兼容接口）
@@ -212,7 +222,7 @@ def init_model(state: LoopAIState) -> BaseChatModel:
     return OpenAICompatChat(
         model=cfg["analyze_model_path"],        
         base_url=cfg["analyze_base_url"],      
-        api_key=cfg["analyze_api_key"],        
+        api_key=_runtime_api_key(cfg),
         max_tokens=cfg.get("analyze_max_tokens", 512),   
         temperature=cfg.get("analyze_temperature", 0.0), 
         top_p=cfg.get("analyze_top_p", 0.95),           

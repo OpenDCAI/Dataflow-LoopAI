@@ -195,7 +195,7 @@ def get_analyzer_event_writer(
 ) -> Callable[[StreamEvent | dict[str, Any] | Any], StreamEvent]:
     version = _safe_path_component(version_id, "default")
     context = _safe_path_component(context_id, "default")
-    event_path = Path(log_file_path) / context / "analyzer" / version / "analyzer.pkl"
+    event_path = Path(log_file_path) / context / "analyzer.pkl"
     try:
         from loopai.common.event_tool import PickleEventWriter
 
@@ -280,8 +280,6 @@ def load_analyzer_events(
         event_path = (
             Path(output_dir)
             / _safe_path_component(task_id, "default")
-            / "analyzer"
-            / _safe_path_component(version_id, "default")
             / "analyzer.pkl"
         )
         if not event_path.exists():
@@ -296,14 +294,15 @@ def load_analyzer_events(
         return rows
 
     rows: list[dict[str, Any]] = []
-    base_dir = Path(output_dir) / _safe_path_component(task_id, "default") / "analyzer"
-    for event_path in sorted(base_dir.glob("*/analyzer.pkl")):
-        with event_path.open("rb") as file_obj:
-            events = pickle.load(file_obj)
-        if isinstance(events, dict):
-            for group in events.values():
-                for event in group or []:
-                    rows.append(_to_event_dict(event))
+    event_path = Path(output_dir) / _safe_path_component(task_id, "default") / "analyzer.pkl"
+    if not event_path.exists():
+        return rows
+    with event_path.open("rb") as file_obj:
+        events = pickle.load(file_obj)
+    if isinstance(events, dict):
+        for group in events.values():
+            for event in group or []:
+                rows.append(_to_event_dict(event))
     return rows
 
 
