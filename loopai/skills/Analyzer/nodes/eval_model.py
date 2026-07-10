@@ -5,7 +5,7 @@ import json
 import time
 from pathlib import Path
 from collections import defaultdict, Counter
-from typing import Dict, Any, List
+from typing import Callable, Dict, Any, List, Optional
 from tqdm import tqdm
 from langchain_core.language_models import BaseChatModel
 from loopai.common.prompts.prompt_loader import PromptLoader
@@ -285,6 +285,7 @@ def call_llm_with_control(
     prompts: List[str],
     max_concurrency: int = 4,
     chunk_size: int = 8,
+    on_chunk_done: Optional[Callable[[int, int], None]] = None,
 ):
     """
     带并发上限的批量调用封装，避免一次性开太多并发把引擎打挂。
@@ -301,6 +302,8 @@ def call_llm_with_control(
             config={"max_concurrency": max_concurrency}
         )
         all_results.extend(sub_results)
+        if on_chunk_done:
+            on_chunk_done(min(start + len(sub_prompts), n), n)
     return all_results
 def summarize_brief(
     task_id: str,
@@ -791,28 +794,43 @@ def eval_model_node(state: LoopAIState):
     start_p = 0.05   # 判因阶段起点
     end_p = 0.70     # 判因阶段终点
     span = end_p - start_p
+    completed_failed = 0
+
+    def _emit_judge_progress(done: int, total: int, *, batch_no: int, total_batches: int) -> None:
+        if not writer:
+            return
+        ratio = 1.0 if total == 0 else done / max(total, 1)
+        progress = start_p + span * ratio
+        writer(StreamEvent(
+            current="analyzer.eval_model",
+            progress=round(progress, 3),
+            message=f"判因分析完成 ({done}/{total})",
+            data={
+                "current_batch": batch_no,
+                "total_batches": total_batches,
+                "processed_samples": done,
+                "total_failed_samples": total,
+            },
+        ).json())
+
+    if writer:
+        writer(StreamEvent(
+            current="analyzer.eval_model",
+            progress=start_p,
+            message="开始判因分析",
+            data={
+                "total_batches": total_batches,
+                "total_failed_samples": total_failed,
+                "batch_size": batch_size,
+            },
+        ).json())
+
+    if total_failed == 0:
+        _emit_judge_progress(0, 0, batch_no=0, total_batches=0)
 
     for i in tqdm(range(0, total_failed, batch_size)):
-        processed = min(i + batch_size, total_failed)
-        ratio = processed / max(total_failed, 1)
-
-        # 🟢 动态真实进度
-        progress = start_p + span * ratio
-
-        if writer:
-           writer(StreamEvent(
-               current="analyzer.eval_model",
-               progress=round(progress, 3),
-               message=f"判因分析中 ({processed}/{total_failed})",
-               data={
-                "current_batch": i // batch_size + 1,
-                "total_batches": total_batches,
-                "processed_samples": processed,
-                "total_failed_samples": total_failed,
-                }
-            ).json())
-
         batch = failed_results[i:i + batch_size]
+        batch_no = i // batch_size + 1
 
         evidences: List[Dict[str, Any]] = []
         prompts: List[str] = []
@@ -820,14 +838,21 @@ def eval_model_node(state: LoopAIState):
             evidence = build_evidence_for_record(rec, task_type)
             evidences.append(evidence)
             prompts.append(build_judge_prompt_generic(task_type, evidence))
-        overall_start = time.time()
         if writer:
            writer(StreamEvent(
         current="analyzer.eval_model",
         progress=None,
-        message="正在调用分析模型",
-        data={"batch_size": len(batch)}
+        message=f"正在调用分析模型 ({batch_no}/{total_batches})",
+        data={"batch_size": len(batch), "current_batch": batch_no, "total_batches": total_batches}
            ).json())
+
+        def _on_chunk_done(done_in_batch: int, total_in_batch: int) -> None:
+            _emit_judge_progress(
+                completed_failed + done_in_batch,
+                total_failed,
+                batch_no=batch_no,
+                total_batches=total_batches,
+            )
 
         # 模型批处理
                 # 模型批处理（带并发上限 + 分块）
@@ -835,7 +860,8 @@ def eval_model_node(state: LoopAIState):
             llm,
             prompts,
             max_concurrency=int(cfg.get("analyze_max_concurrency", 4)), 
-            chunk_size=int(cfg.get("analyze_chunk_size", 8)),          
+            chunk_size=int(cfg.get("analyze_chunk_size", 8)),
+            on_chunk_done=_on_chunk_done,
         )
 
         # 合并判因
@@ -847,6 +873,13 @@ def eval_model_node(state: LoopAIState):
                     rec["judge"] = judge.analyze(evidences[j], model_result=model_json)
                 except Exception as e:
                     rec["judge"] = {"stage": "other", "reason": f"LLMaJ 运行异常：{e}", "evidence": {}}
+        completed_failed += len(batch)
+        _emit_judge_progress(
+            completed_failed,
+            total_failed,
+            batch_no=batch_no,
+            total_batches=total_batches,
+        )
 
     # ===== quick_brief：仅对失败样本生成短评（失败<=20全量；失败>20抽样20条覆盖错误类型）=====
     if cfg.get("quick_brief", False) and len(failed_results) > 0:
