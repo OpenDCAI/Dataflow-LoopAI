@@ -2,6 +2,7 @@
 import os
 import json
 import time
+import threading
 from pathlib import Path
 from typing import List, Dict, Any
 from loopai.schema.events import StreamEvent
@@ -58,6 +59,43 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
         top_p=cfg.get('analyze_top_p', 0.95),
     )
     return model
+
+
+def _batch_one_with_heartbeat(
+    llm: ChatOpenAI,
+    prompt: str,
+    *,
+    emit,
+    message: str,
+    start_progress: float,
+    end_progress: float,
+    data: Dict[str, Any] | None = None,
+) -> str:
+    stop_event = threading.Event()
+
+    def _heartbeat() -> None:
+        tick = 0
+        while not stop_event.wait(1.0):
+            tick += 1
+            wait_fraction = min(0.85, tick / 20)
+            progress = start_progress + (end_progress - start_progress) * wait_fraction
+            emit(
+                message,
+                progress=round(progress, 3),
+                data={
+                    **(data or {}),
+                    "waiting_seconds": tick,
+                    "heartbeat": True,
+                },
+            )
+
+    heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+    heartbeat_thread.start()
+    try:
+        return llm.batch([prompt])[0].content
+    finally:
+        stop_event.set()
+        heartbeat_thread.join(timeout=0.2)
 
 
 def pick_failure_examples(oj_records: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
@@ -247,7 +285,18 @@ def analyze_result_node(state: LoopAIState):
        },
     )
     # ChatOpenAI 支持 .batch，返回 BaseMessage，取第一个的 content
-    response = llm.batch([prompt])[0].content
+    response = _batch_one_with_heartbeat(
+        llm,
+        prompt,
+        emit=_emit,
+        message="等待模型生成分析",
+        start_progress=0.60,
+        end_progress=0.75,
+        data={
+            "model": cfg.get("analyze_model_path"),
+            "base_url": cfg.get("analyze_base_url"),
+        },
+    )
     _emit(
         "模型分析生成完成",
         progress=0.75,

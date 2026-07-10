@@ -121,7 +121,7 @@ def _emit_pipeline_progress(
 
 
 class _AnalyzerProgressWriter:
-    """Forward node events and emit one continuous 0-100 pipeline progress."""
+    """Forward node events and update pipeline progress from real work counts."""
 
     def __init__(
         self,
@@ -143,9 +143,22 @@ class _AnalyzerProgressWriter:
         if str(event_dict.get("current") or "") == "analyzer.pipeline":
             return result
 
-        progress = event_dict.get("progress")
-        if isinstance(progress, (int, float)):
-            overall_progress = _map_step_progress(self._step_name, float(progress))
+        data = event_dict.get("data") if isinstance(event_dict.get("data"), dict) else {}
+        processed_samples = data.get("processed_samples")
+        total_failed_samples = data.get("total_failed_samples")
+        is_heartbeat = bool(data.get("heartbeat"))
+
+        # Do not convert arbitrary local node progress into global progress.
+        # It caused jumps such as 4% -> 63% when a node reported "local 60%".
+        # Only real completed work units should move the global bar.
+        if (
+            not is_heartbeat
+            and isinstance(processed_samples, (int, float))
+            and isinstance(total_failed_samples, (int, float))
+            and total_failed_samples >= 0
+        ):
+            ratio = 1.0 if total_failed_samples == 0 else processed_samples / max(total_failed_samples, 1)
+            overall_progress = _map_step_progress(self._step_name, ratio)
             percent = _progress_percent(overall_progress)
             _emit_pipeline_progress(
                 self._writer,
@@ -154,7 +167,8 @@ class _AnalyzerProgressWriter:
                 data={
                     "step": self._step_name,
                     "step_current": event_dict.get("current"),
-                    "step_progress": round(float(progress), 4),
+                    "processed_samples": processed_samples,
+                    "total_failed_samples": total_failed_samples,
                     "progress_percent": percent,
                 },
                 progress_state=self._progress_state,
