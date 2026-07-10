@@ -13,11 +13,11 @@ from langchain_openai import ChatOpenAI
 from ..utils.llmaj import LLMJudge
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
-from loopai.agents.Analyzer.utils.openai_compat_llm import OpenAICompatChat
+from loopai.skills.Analyzer.utils.openai_compat_llm import OpenAICompatChat
 logger = get_logger()
 from types import SimpleNamespace  
 from loopai.schema.events import StreamEvent
-from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
 # ===== PromptLoader 单例 & 模板缓存 =====
 _PROMPT_LOADER: PromptLoader | None = None
 _TEMPLATE_CACHE: dict[tuple[str, str], str] = {}

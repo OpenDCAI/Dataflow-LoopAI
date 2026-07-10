@@ -162,7 +162,7 @@ def _is_finished(state: Dict[str, Any]) -> bool:
 
 
 def _run_step(step_name: str, state: Dict[str, Any], writer: Optional[Callable] = None) -> Dict[str, Any]:
-    from loopai.agents.Analyzer.utils.stream import (
+    from loopai.skills.Analyzer.utils.stream import (
         reset_analyzer_stream_writer,
         set_analyzer_stream_writer,
     )
@@ -170,13 +170,13 @@ def _run_step(step_name: str, state: Dict[str, Any], writer: Optional[Callable] 
     token = set_analyzer_stream_writer(writer)
     try:
         if step_name == "eval_model":
-            from loopai.agents.Analyzer.nodes.eval_model import eval_model_node
+            from loopai.skills.Analyzer.nodes.eval_model import eval_model_node
             return eval_model_node(state)
         if step_name == "analyze_result":
-            from loopai.agents.Analyzer.nodes.analyze_result import analyze_result_node
+            from loopai.skills.Analyzer.nodes.analyze_result import analyze_result_node
             return analyze_result_node(state)
         if step_name == "draw_conclusion":
-            from loopai.agents.Analyzer.nodes.draw_conclusion import draw_conclusion_node
+            from loopai.skills.Analyzer.nodes.draw_conclusion import draw_conclusion_node
             return draw_conclusion_node(state)
         raise ValueError(f"Unknown executable Analyzer step: {step_name}")
     finally:

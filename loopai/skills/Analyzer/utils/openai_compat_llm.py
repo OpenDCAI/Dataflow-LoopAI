@@ -1,4 +1,4 @@
-# loopai/agents/Analyzer/utils/openai_compat_llm.py
+# loopai/skills/Analyzer/utils/openai_compat_llm.py
 
 import requests
 from typing import Any, List, Optional

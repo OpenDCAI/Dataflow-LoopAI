@@ -4,15 +4,13 @@
 Analyzer Skill is the Codex/Agent-facing capability for running LoopAI Analyzer independently. It analyzes evaluation outputs, writes Analyzer reports, emits stream events, returns unified success/error payloads, and can compare current results with a historical baseline.
 
 ## Python Implementation
-The Python skill layer lives in:
+The Python skill layer and Analyzer business implementation live in:
 
 `loopai/skills/Analyzer`
 
-Core Analyzer business nodes remain in:
-
-`loopai/agents/Analyzer`
-
-Do not move or rewrite `eval_model.py`, `analyze_result.py`, or `draw_conclusion.py` for normal skill usage. The agent-side standalone files are compatibility wrappers.
+Analyzer no longer depends on `loopai/agents/Analyzer`. The legacy agents-side
+Analyzer directory has been removed; Codex and WebUI should call the skill
+entry directly.
 
 ## Runtime Entry
 ```python
@@ -43,10 +41,10 @@ from loopai.skills.Analyzer.runner import run_analyzer_standalone
 
 `run_analyzer_standalone(...)` keeps the legacy behavior and returns the final state directly.
 
-Legacy import remains valid:
+LangGraph-compatible class import:
 
 ```python
-from loopai.agents.Analyzer.standalone import run_analyzer_standalone
+from loopai.skills.Analyzer.analyzer_agent import AnalyzerAgent
 ```
 
 ## CLI

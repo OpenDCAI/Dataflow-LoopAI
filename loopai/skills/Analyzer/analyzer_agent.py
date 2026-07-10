@@ -6,7 +6,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import interrupt, Command
 
 from loopai.schema.states import LoopAIState, RuntimeContext
-from loopai.agents import BaseAgent
+from loopai.agents.BaseAgent.base_agent import BaseAgent
 from .nodes import (
     eval_model_node,
     metric_recommend_node,
