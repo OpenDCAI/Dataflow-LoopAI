@@ -51,6 +51,16 @@ def _safe_get_writer():
     """
     return get_safe_stream_writer()
 
+def _runtime_api_key(cfg: dict) -> str:
+    return (
+        cfg.get("analyze_api_key")
+        or os.getenv("_LOOPAI_ANALYZER_RUNTIME_API_KEY")
+        or os.getenv("ANALYZER_API_KEY")
+        or os.getenv("analyzer_api_key")
+        or os.getenv("DEEPSEEK_API_KEY")
+        or "EMPTY"
+    )
+
 
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
@@ -60,7 +70,7 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     cfg = _analyzer(state)
     model = ChatOpenAI(
         model=cfg["analyze_model_path"],
-        api_key=cfg.get("analyze_api_key", "EMPTY"),
+        api_key=_runtime_api_key(cfg),
         base_url=cfg.get("analyze_base_url"),
         temperature=cfg.get("analyze_temperature", 0.0),
         top_p=cfg.get("analyze_top_p", 0.95),

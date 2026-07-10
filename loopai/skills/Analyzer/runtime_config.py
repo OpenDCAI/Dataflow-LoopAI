@@ -163,8 +163,10 @@ def resolve_analyzer_runtime_config(
         analyzer["analyze_model_path"] = model
     if base_url:
         analyzer["analyze_base_url"] = base_url
+    analyzer.pop("analyze_api_key", None)
+    analyzer.pop("api_key", None)
     if api_key:
-        analyzer["analyze_api_key"] = api_key
+        os.environ["_LOOPAI_ANALYZER_RUNTIME_API_KEY"] = str(api_key)
     if checkpoint_path:
         analyzer["checkpoint_path"] = checkpoint_path
     if version_id:
