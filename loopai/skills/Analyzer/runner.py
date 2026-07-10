@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from loopai.common.exception import (
@@ -21,6 +22,22 @@ from .runtime_config import resolve_analyzer_runtime_config
 from .state_bridge import load_analyzer_state_from_configer
 
 ANALYZER_NODE_NAMES = ANALYZER_PIPELINE_STEPS
+
+
+def _latest_runtime_version(task_id: str, node_name: str = "analyzer") -> Optional[str]:
+    try:
+        import os
+        from loopai.common.db_tool.runtime import get_latest_task_runtime_sync
+
+        db_path = os.getenv("DB_PATH")
+        if not db_path or not task_id:
+            return None
+        runtime = get_latest_task_runtime_sync(db_path, task_id, node_name)
+        if runtime and runtime.get("version"):
+            return str(runtime["version"])
+    except Exception:
+        return None
+    return None
 
 
 def get_analyzer_checkpoint_state(
@@ -65,6 +82,12 @@ def run_analyzer_standalone(
         **kwargs,
     )
 
+    explicit_version = kwargs.get("version_id") or kwargs.get("run_id")
+    if resume and not explicit_version and runtime.get("version_id") == "default":
+        latest_version = _latest_runtime_version(runtime["thread_id"])
+        if latest_version:
+            runtime["version_id"] = latest_version
+
     start_node = normalize_analyzer_step(from_node) if from_node else None
     if resume:
         state = load_analyzer_checkpoint(
@@ -90,12 +113,29 @@ def run_analyzer_standalone(
         from .event_tool import get_analyzer_event_writer
 
         output_dir = runtime["output_dir"] or state.get("output_dir") or (state.get("analyzer") or {}).get("output_dir") or "./outputs"
+        writer_version_id = runtime["version_id"]
+        if writer_version_id == "default" and not explicit_version:
+            writer_version_id = None
         writer = get_analyzer_event_writer(
             context_id=runtime["thread_id"],
             log_file_path=output_dir,
             stdout=kwargs.get("stream_stdout"),
             state=state,
-            version_id=runtime["version_id"],
+            version_id=writer_version_id,
+        )
+        writer.set_running({
+            "current": "analyzer.initializing",
+            "progress": 0.0,
+            "message": "Analyzer initializing.",
+        })
+        runtime["version_id"] = str(writer.version_id)
+        state["version_id"] = runtime["version_id"]
+        state.setdefault("analyzer", {})["version_id"] = runtime["version_id"]
+        state["analyzer"]["runtime_output_dir"] = str(
+            Path(output_dir)
+            / runtime["thread_id"]
+            / "analyzer"
+            / runtime["version_id"]
         )
     try:
         result = run_analyzer_pipeline(
