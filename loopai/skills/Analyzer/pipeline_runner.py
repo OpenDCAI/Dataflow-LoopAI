@@ -89,12 +89,64 @@ def _map_step_progress(step_name: str, step_progress: Optional[float]) -> float:
     return start + (end - start) * step_progress
 
 
+def _emit_pipeline_progress(
+    writer: Optional[Callable],
+    progress: float,
+    message: str,
+    *,
+    data: Optional[Dict[str, Any]] = None,
+    progress_state: Optional[Dict[str, int]] = None,
+) -> None:
+    if writer is None:
+        return
+
+    progress = max(0.0, min(1.0, float(progress)))
+    target_percent = _progress_percent(progress)
+    last_percent = progress_state.get("last_percent", -1) if progress_state is not None else -1
+
+    if target_percent > last_percent + 1:
+        for percent in range(last_percent + 1, target_percent):
+            writer(StreamEvent(
+                current="analyzer.pipeline",
+                progress=round(percent / 100, 4),
+                progress_num=percent,
+                total=100,
+                message=f"整体进度 {percent}%：{message}",
+                data={
+                    **(data or {}),
+                    "progress_percent": percent,
+                    "interpolated": True,
+                },
+            ))
+
+    if target_percent >= last_percent:
+        writer(StreamEvent(
+            current="analyzer.pipeline",
+            progress=round(progress, 4),
+            progress_num=target_percent,
+            total=100,
+            message=f"整体进度 {target_percent}%：{message}",
+            data={
+                **(data or {}),
+                "progress_percent": target_percent,
+            },
+        ))
+        if progress_state is not None:
+            progress_state["last_percent"] = target_percent
+
+
 class _AnalyzerProgressWriter:
     """Forward node events and emit one continuous 0-100 pipeline progress."""
 
-    def __init__(self, writer: Optional[Callable], step_name: str) -> None:
+    def __init__(
+        self,
+        writer: Optional[Callable],
+        step_name: str,
+        progress_state: Optional[Dict[str, int]] = None,
+    ) -> None:
         self._writer = writer
         self._step_name = step_name
+        self._progress_state = progress_state
 
     def __call__(self, payload: StreamEvent | Dict[str, Any] | Any):
         if self._writer is None:
@@ -110,19 +162,18 @@ class _AnalyzerProgressWriter:
         if isinstance(progress, (int, float)):
             overall_progress = _map_step_progress(self._step_name, float(progress))
             percent = _progress_percent(overall_progress)
-            self._writer(StreamEvent(
-                current="analyzer.pipeline",
-                progress=round(overall_progress, 4),
-                progress_num=percent,
-                total=100,
-                message=f"整体进度 {percent}%：{event_dict.get('message') or self._step_name}",
+            _emit_pipeline_progress(
+                self._writer,
+                overall_progress,
+                event_dict.get("message") or self._step_name,
                 data={
                     "step": self._step_name,
                     "step_current": event_dict.get("current"),
                     "step_progress": round(float(progress), 4),
                     "progress_percent": percent,
                 },
-            ))
+                progress_state=self._progress_state,
+            )
         return result
 
     def __getattr__(self, name: str) -> Any:
@@ -281,30 +332,29 @@ def run_analyzer_pipeline(
     if start_step is None:
         start_step = ANALYZER_PIPELINE_STEPS[0]
     start_at = _start_index(start_step)
+    progress_state = {"last_percent": -1}
 
     if writer:
-        writer(StreamEvent(
-            current="analyzer.pipeline",
-            progress=0.0,
-            progress_num=0,
-            total=100,
-            message="Analyzer pipeline started",
+        _emit_pipeline_progress(
+            writer,
+            0.0,
+            "Analyzer pipeline started",
             data={
                 "task_id": thread_id,
                 "resume": resume,
                 "analyze_task_type": (state.get("analyzer") or {}).get("analyze_task_type"),
             },
-        ))
+            progress_state=progress_state,
+        )
 
     if resume and from_node is None and _is_finished(state):
         if writer:
-            writer(StreamEvent(
-                current="analyzer.pipeline",
-                progress=1.0,
-                progress_num=100,
-                total=100,
-                message="Analyzer pipeline already finished",
-            ))
+            _emit_pipeline_progress(
+                writer,
+                1.0,
+                "Analyzer pipeline already finished",
+                progress_state=progress_state,
+            )
         return state
 
     for step_name in ANALYZER_PIPELINE_STEPS[start_at:]:
@@ -320,14 +370,13 @@ def run_analyzer_pipeline(
                 message=f"步骤开始: {step_name}",
                 data={"step": step_name},
             ))
-            writer(StreamEvent(
-                current="analyzer.pipeline",
-                progress=round(_STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0], 4),
-                progress_num=_progress_percent(_STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0]),
-                total=100,
-                message=f"整体进度 {_progress_percent(_STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0])}%：开始 {step_name}",
-                data={"step": step_name, "progress_percent": _progress_percent(_STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0])},
-            ))
+            _emit_pipeline_progress(
+                writer,
+                _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                f"开始 {step_name}",
+                data={"step": step_name},
+                progress_state=progress_state,
+            )
 
         if step_name == "finish":
             state["last_completed"] = "finish"
@@ -340,17 +389,20 @@ def run_analyzer_pipeline(
                     total=100,
                     message="流水线完成",
                 ))
-                writer(StreamEvent(
-                    current="analyzer.pipeline",
-                    progress=1.0,
-                    progress_num=100,
-                    total=100,
-                    message="整体进度 100%：Analyzer 完成",
-                    data={"step": "finish", "progress_percent": 100},
-                ))
+                _emit_pipeline_progress(
+                    writer,
+                    1.0,
+                    "Analyzer 完成",
+                    data={"step": "finish"},
+                    progress_state=progress_state,
+                )
             return state
 
-        state = _run_step(step_name, state, writer=_AnalyzerProgressWriter(writer, step_name))
+        state = _run_step(
+            step_name,
+            state,
+            writer=_AnalyzerProgressWriter(writer, step_name, progress_state),
+        )
         state["last_completed"] = step_name
         save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
 
@@ -365,13 +417,12 @@ def run_analyzer_pipeline(
                 message=f"步骤完成: {step_name}",
                 data={"step": step_name, "progress_percent": step_percent},
             ))
-            writer(StreamEvent(
-                current="analyzer.pipeline",
-                progress=round(step_end, 4),
-                progress_num=step_percent,
-                total=100,
-                message=f"整体进度 {step_percent}%：完成 {step_name}",
-                data={"step": step_name, "progress_percent": step_percent},
-            ))
+            _emit_pipeline_progress(
+                writer,
+                step_end,
+                f"完成 {step_name}",
+                data={"step": step_name},
+                progress_state=progress_state,
+            )
 
     return state
