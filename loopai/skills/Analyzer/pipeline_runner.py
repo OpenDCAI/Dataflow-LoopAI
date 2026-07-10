@@ -104,21 +104,6 @@ def _emit_pipeline_progress(
     target_percent = _progress_percent(progress)
     last_percent = progress_state.get("last_percent", -1) if progress_state is not None else -1
 
-    if target_percent > last_percent + 1:
-        for percent in range(last_percent + 1, target_percent):
-            writer(StreamEvent(
-                current="analyzer.pipeline",
-                progress=round(percent / 100, 4),
-                progress_num=percent,
-                total=100,
-                message=f"整体进度 {percent}%：{message}",
-                data={
-                    **(data or {}),
-                    "progress_percent": percent,
-                    "interpolated": True,
-                },
-            ))
-
     if target_percent >= last_percent:
         writer(StreamEvent(
             current="analyzer.pipeline",

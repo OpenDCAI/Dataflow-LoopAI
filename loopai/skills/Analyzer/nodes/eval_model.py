@@ -3,6 +3,7 @@ import os
 import re
 import json
 import time
+import threading
 from pathlib import Path
 from collections import defaultdict, Counter
 from typing import Callable, Dict, Any, List, Optional
@@ -286,6 +287,8 @@ def call_llm_with_control(
     max_concurrency: int = 4,
     chunk_size: int = 8,
     on_chunk_done: Optional[Callable[[int, int], None]] = None,
+    on_chunk_wait: Optional[Callable[[int, int, int, int], None]] = None,
+    wait_interval: float = 1.0,
 ):
     """
     带并发上限的批量调用封装，避免一次性开太多并发把引擎打挂。
@@ -296,11 +299,30 @@ def call_llm_with_control(
     n = len(prompts)
     for start in range(0, n, chunk_size):
         sub_prompts = prompts[start:start + chunk_size]
+        stop_event = threading.Event()
+
+        def _heartbeat() -> None:
+            tick = 0
+            while not stop_event.wait(wait_interval):
+                tick += 1
+                if on_chunk_wait:
+                    on_chunk_wait(start, len(sub_prompts), n, tick)
+
+        heartbeat_thread = None
+        if on_chunk_wait:
+            heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+            heartbeat_thread.start()
+
         # LangChain 的 ChatOpenAI.batch 支持 config，里面可以设置 max_concurrency
-        sub_results = llm.batch(
-            sub_prompts,
-            config={"max_concurrency": max_concurrency}
-        )
+        try:
+            sub_results = llm.batch(
+                sub_prompts,
+                config={"max_concurrency": max_concurrency}
+            )
+        finally:
+            stop_event.set()
+            if heartbeat_thread is not None:
+                heartbeat_thread.join(timeout=0.2)
         all_results.extend(sub_results)
         if on_chunk_done:
             on_chunk_done(min(start + len(sub_prompts), n), n)
@@ -854,6 +876,33 @@ def eval_model_node(state: LoopAIState):
                 total_batches=total_batches,
             )
 
+        def _on_chunk_wait(start_in_batch: int, chunk_len: int, total_in_batch: int, tick: int) -> None:
+            if not writer:
+                return
+            chunk_start_done = completed_failed + start_in_batch
+            chunk_end_done = completed_failed + min(start_in_batch + chunk_len, total_in_batch)
+            chunk_start_ratio = 1.0 if total_failed == 0 else chunk_start_done / max(total_failed, 1)
+            chunk_end_ratio = 1.0 if total_failed == 0 else chunk_end_done / max(total_failed, 1)
+            # Smoothly move inside the current chunk while waiting, but never
+            # claim the chunk is complete until the API actually returns.
+            wait_fraction = min(0.85, tick / 20)
+            ratio = chunk_start_ratio + (chunk_end_ratio - chunk_start_ratio) * wait_fraction
+            progress = start_p + span * ratio
+            writer(StreamEvent(
+                current="analyzer.eval_model",
+                progress=round(progress, 3),
+                message=f"等待分析模型返回 ({batch_no}/{total_batches})",
+                data={
+                    "current_batch": batch_no,
+                    "total_batches": total_batches,
+                    "processed_samples": completed_failed,
+                    "estimated_samples": round(total_failed * ratio, 2),
+                    "total_failed_samples": total_failed,
+                    "waiting_seconds": tick,
+                    "heartbeat": True,
+                },
+            ).json())
+
         # 模型批处理
                 # 模型批处理（带并发上限 + 分块）
         batch_responses = call_llm_with_control(
@@ -862,6 +911,7 @@ def eval_model_node(state: LoopAIState):
             max_concurrency=int(cfg.get("analyze_max_concurrency", 4)), 
             chunk_size=int(cfg.get("analyze_chunk_size", 8)),
             on_chunk_done=_on_chunk_done,
+            on_chunk_wait=_on_chunk_wait,
         )
 
         # 合并判因
