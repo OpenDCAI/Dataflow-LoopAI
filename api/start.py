@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-启动LLaMA Factory训练服务的脚本
+Start LoopAI Server
 """
 
 import os
@@ -68,19 +68,7 @@ def main():
     if not os.path.exists(llamafactory_dir):
         print(f"❌ LLaMA Factory directory not found: {llamafactory_dir}")
         return 1
-        
-    # 检查是否安装了LLaMA Factory
-    try:
-        result = subprocess.run([os.path.join(llamafactory_env_path, "llamafactory-cli"), "help"], 
-                              capture_output=True, text=True, timeout=300)
-        if result.returncode == 0:
-            print("✅ LLaMA Factory CLI found")
-        else:
-            print("❌ LLaMA Factory CLI not working properly")
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        print("❌ LLaMA Factory CLI not found. Please install LLaMA Factory")
-        return 1
-    
+
     # 保存当前工作目录
     current_dir = os.getcwd()
     print(f"📂 Current directory: {current_dir}")
