@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
 from loopai.schema.events import StreamEvent
-from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
 from loopai.common.prompts.prompt_loader import PromptLoader
 from langchain_openai import ChatOpenAI
 from loopai.schema.states import LoopAIState

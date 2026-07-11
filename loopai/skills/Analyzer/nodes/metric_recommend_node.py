@@ -4,7 +4,7 @@ from typing import Dict, Any, List
 from loopai.schema.events import StreamEvent
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
-from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
 from ..eval_metrics.metrics.dispatcher import metric_dispatcher
 
 logger = get_logger()

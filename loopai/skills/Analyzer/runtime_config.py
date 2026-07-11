@@ -8,7 +8,6 @@ from .state_bridge import load_system_runtime_config
 
 _DEFAULT_CHECKPOINT_PATH = "outputs/analyzer_checkpoints.sqlite"
 _DEFAULT_THREAD_ID = "analyzer-default"
-_DEFAULT_VERSION_ID = "default"
 
 
 def _first_non_empty(*values: Any) -> Any:
@@ -16,6 +15,12 @@ def _first_non_empty(*values: Any) -> Any:
         if value is not None and value != "":
             return value
     return None
+
+
+def _clean_version_id(value: Any) -> Any:
+    if value in (None, "", "default"):
+        return None
+    return value
 
 
 def _analyzer(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -130,14 +135,13 @@ def resolve_analyzer_runtime_config(
         _DEFAULT_CHECKPOINT_PATH,
     )
     version_id = _first_non_empty(
-        kwargs.get("version_id"),
-        kwargs.get("run_id"),
-        os.getenv("ANALYZER_VERSION_ID"),
-        os.getenv("VERSION_ID"),
-        state.get("version_id") if isinstance(state, dict) else None,
-        analyzer.get("version_id"),
-        analyzer.get("run_id"),
-        _DEFAULT_VERSION_ID,
+        _clean_version_id(kwargs.get("version_id")),
+        _clean_version_id(kwargs.get("run_id")),
+        _clean_version_id(os.getenv("ANALYZER_VERSION_ID")),
+        _clean_version_id(os.getenv("VERSION_ID")),
+        _clean_version_id(state.get("version_id") if isinstance(state, dict) else None),
+        _clean_version_id(analyzer.get("version_id")),
+        _clean_version_id(analyzer.get("run_id")),
     )
     output_dir = _first_non_empty(
         kwargs.get("output_dir"),
@@ -184,10 +188,12 @@ def resolve_analyzer_runtime_config(
             / "analyzer"
             / str(version_id)
         )
+    elif analyzer.get("runtime_output_dir", "").endswith("/default"):
+        analyzer.pop("runtime_output_dir", None)
 
     return {
         "thread_id": str(task_id or _DEFAULT_THREAD_ID),
-        "version_id": str(version_id or _DEFAULT_VERSION_ID),
+        "version_id": str(version_id) if version_id else "",
         "checkpoint_path": str(checkpoint_path or _DEFAULT_CHECKPOINT_PATH),
         "output_dir": str(output_dir or "./outputs"),
         "db_path": db_path,

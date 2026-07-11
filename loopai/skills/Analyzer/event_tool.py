@@ -193,7 +193,6 @@ def get_analyzer_event_writer(
     state: Optional[dict[str, Any]] = None,
     version_id: Optional[str] = None,
 ) -> Callable[[StreamEvent | dict[str, Any] | Any], StreamEvent]:
-    version = _safe_path_component(version_id, "default")
     context = _safe_path_component(context_id, "default")
     event_path = Path(log_file_path) / context / "analyzer.pkl"
     try:
@@ -203,9 +202,10 @@ def get_analyzer_event_writer(
             name="analyzer",
             context_id=context,
             event_path=event_path,
-            version_id=version,
+            version_id=_safe_path_component(version_id, "default") if version_id else None,
         )
     except Exception:
+        version = _safe_path_component(version_id, _utc_now_iso().replace(":", "").replace("-", ""))
         base_writer = LocalAnalyzerPickleEventWriter(
             name="analyzer",
             context_id=context,

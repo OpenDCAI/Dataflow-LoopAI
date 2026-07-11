@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from loopai.common.exception import ErrorCode, emit_error, emit_success
@@ -50,12 +51,33 @@ def run(
             baseline_result_path=baseline_result_path,
             **kwargs,
         )
+        explicit_version = kwargs.get("version_id") or kwargs.get("run_id")
+        writer_version_id = runtime["version_id"]
+        if writer_version_id in ("", "default") and not explicit_version:
+            writer_version_id = None
         writer = get_analyzer_event_writer(
             context_id=runtime["thread_id"],
             log_file_path=runtime["output_dir"],
             state=state,
-            version_id=runtime["version_id"],
+            version_id=writer_version_id,
         )
+        writer.set_running({
+            "current": "analyzer.initializing",
+            "progress": 0.0,
+            "message": "Analyzer initializing.",
+        })
+        runtime["version_id"] = str(writer.version_id)
+        state["version_id"] = runtime["version_id"]
+        state.setdefault("analyzer", {})["version_id"] = runtime["version_id"]
+        state["analyzer"]["runtime_output_dir"] = str(
+            Path(runtime["output_dir"])
+            / runtime["thread_id"]
+            / "analyzer"
+            / runtime["version_id"]
+        )
+        runner_kwargs = dict(kwargs)
+        runner_kwargs.pop("version_id", None)
+        runner_kwargs.pop("run_id", None)
         final_state = run_analyzer_standalone(
             state=state,
             thread_id=runtime["thread_id"],
@@ -64,7 +86,8 @@ def run(
             baseline_result_path=baseline_result_path,
             writer=writer,
             emit_status=False,
-            **kwargs,
+            version_id=runtime["version_id"],
+            **runner_kwargs,
         )
     except (ValueError, TypeError) as exc:
         emit_error(

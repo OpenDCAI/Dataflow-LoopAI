@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
@@ -16,6 +17,13 @@ ANALYZER_PIPELINE_STEPS = (
     "draw_conclusion",
     "finish",
 )
+
+_STEP_PROGRESS_RANGES = {
+    "eval_model": (0.00, 0.45),
+    "analyze_result": (0.45, 0.75),
+    "draw_conclusion": (0.75, 0.95),
+    "finish": (0.95, 1.00),
+}
 
 
 _STEP_ALIASES = {
@@ -57,6 +65,165 @@ def _json_safe(value: Any) -> Any:
         if isinstance(value, (list, tuple)):
             return [_json_safe(item) for item in value]
         return str(value)
+
+
+def _event_to_dict(payload: StreamEvent | Dict[str, Any] | Any) -> Dict[str, Any]:
+    if isinstance(payload, StreamEvent):
+        return payload.json()
+    if isinstance(payload, dict):
+        return dict(payload)
+    if hasattr(payload, "json") and callable(payload.json):
+        raw = payload.json()
+        return dict(raw) if isinstance(raw, dict) else {"message": str(raw)}
+    return {"message": str(payload)}
+
+
+def _progress_percent(progress: float) -> int:
+    return max(0, min(100, int(round(progress * 100))))
+
+
+def _map_step_progress(step_name: str, step_progress: Optional[float]) -> float:
+    start, end = _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))
+    if step_progress is None:
+        step_progress = 0.0
+    step_progress = max(0.0, min(1.0, float(step_progress)))
+    return start + (end - start) * step_progress
+
+
+def _emit_pipeline_progress(
+    writer: Optional[Callable],
+    progress: float,
+    message: str,
+    *,
+    data: Optional[Dict[str, Any]] = None,
+    progress_state: Optional[Dict[str, Any]] = None,
+) -> None:
+    if writer is None:
+        return
+
+    progress = max(0.0, min(1.0, float(progress)))
+    target_percent = _progress_percent(progress)
+    last_percent = progress_state.get("last_percent", -1) if progress_state is not None else -1
+
+    if target_percent >= last_percent:
+        writer(StreamEvent(
+            current="analyzer.pipeline",
+            progress=round(progress, 4),
+            progress_num=target_percent,
+            total=100,
+            message=f"整体进度 {target_percent}%：{message}",
+            data={
+                **(data or {}),
+                "progress_percent": target_percent,
+            },
+        ))
+        if progress_state is not None:
+            progress_state["last_percent"] = target_percent
+
+
+def _set_pipeline_step_cap(
+    progress_state: Dict[str, Any],
+    step_name: str,
+    *,
+    message: Optional[str] = None,
+) -> None:
+    start, end = _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))
+    start_percent = _progress_percent(start)
+    end_percent = _progress_percent(end)
+    progress_state["step"] = step_name
+    progress_state["cap_percent"] = max(start_percent, end_percent - 1)
+    progress_state["ticker_message"] = message or f"{step_name} 运行中"
+
+
+def _start_pipeline_ticker(
+    writer: Optional[Callable],
+    progress_state: Dict[str, Any],
+    *,
+    interval_seconds: float = 1.0,
+) -> tuple[threading.Event, Optional[threading.Thread]]:
+    stop_event = threading.Event()
+    if writer is None:
+        return stop_event, None
+
+    def _tick() -> None:
+        while not stop_event.wait(interval_seconds):
+            cap_percent = int(progress_state.get("cap_percent", 0))
+            last_percent = int(progress_state.get("last_percent", -1))
+            if last_percent < cap_percent:
+                next_percent = last_percent + 1
+                _emit_pipeline_progress(
+                    writer,
+                    next_percent / 100,
+                    str(progress_state.get("ticker_message") or "Analyzer 运行中"),
+                    data={
+                        "step": progress_state.get("step"),
+                        "estimated": True,
+                    },
+                    progress_state=progress_state,
+                )
+
+    thread = threading.Thread(target=_tick, daemon=True)
+    thread.start()
+    return stop_event, thread
+
+
+class _AnalyzerProgressWriter:
+    """Forward node events and update pipeline progress from real work counts."""
+
+    def __init__(
+        self,
+        writer: Optional[Callable],
+        step_name: str,
+        progress_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._writer = writer
+        self._step_name = step_name
+        self._progress_state = progress_state
+
+    def __call__(self, payload: StreamEvent | Dict[str, Any] | Any):
+        if self._writer is None:
+            return None
+
+        event_dict = _event_to_dict(payload)
+        result = self._writer(payload)
+
+        if str(event_dict.get("current") or "") == "analyzer.pipeline":
+            return result
+
+        data = event_dict.get("data") if isinstance(event_dict.get("data"), dict) else {}
+        processed_samples = data.get("processed_samples")
+        total_failed_samples = data.get("total_failed_samples")
+        is_heartbeat = bool(data.get("heartbeat"))
+
+        # Do not convert arbitrary local node progress into global progress.
+        # It caused jumps such as 4% -> 63% when a node reported "local 60%".
+        # Only real completed work units should move the global bar.
+        if (
+            not is_heartbeat
+            and isinstance(processed_samples, (int, float))
+            and isinstance(total_failed_samples, (int, float))
+            and total_failed_samples >= 0
+        ):
+            ratio = 1.0 if total_failed_samples == 0 else processed_samples / max(total_failed_samples, 1)
+            overall_progress = _map_step_progress(self._step_name, ratio)
+            percent = _progress_percent(overall_progress)
+            _emit_pipeline_progress(
+                self._writer,
+                overall_progress,
+                event_dict.get("message") or self._step_name,
+                data={
+                    "step": self._step_name,
+                    "step_current": event_dict.get("current"),
+                    "processed_samples": processed_samples,
+                    "total_failed_samples": total_failed_samples,
+                    "progress_percent": percent,
+                },
+                progress_state=self._progress_state,
+            )
+        return result
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._writer, name)
 
 
 def _checkpoint_dir(checkpoint_path: str) -> None:
@@ -162,7 +329,7 @@ def _is_finished(state: Dict[str, Any]) -> bool:
 
 
 def _run_step(step_name: str, state: Dict[str, Any], writer: Optional[Callable] = None) -> Dict[str, Any]:
-    from loopai.agents.Analyzer.utils.stream import (
+    from loopai.skills.Analyzer.utils.stream import (
         reset_analyzer_stream_writer,
         set_analyzer_stream_writer,
     )
@@ -170,13 +337,13 @@ def _run_step(step_name: str, state: Dict[str, Any], writer: Optional[Callable] 
     token = set_analyzer_stream_writer(writer)
     try:
         if step_name == "eval_model":
-            from loopai.agents.Analyzer.nodes.eval_model import eval_model_node
+            from loopai.skills.Analyzer.nodes.eval_model import eval_model_node
             return eval_model_node(state)
         if step_name == "analyze_result":
-            from loopai.agents.Analyzer.nodes.analyze_result import analyze_result_node
+            from loopai.skills.Analyzer.nodes.analyze_result import analyze_result_node
             return analyze_result_node(state)
         if step_name == "draw_conclusion":
-            from loopai.agents.Analyzer.nodes.draw_conclusion import draw_conclusion_node
+            from loopai.skills.Analyzer.nodes.draw_conclusion import draw_conclusion_node
             return draw_conclusion_node(state)
         raise ValueError(f"Unknown executable Analyzer step: {step_name}")
     finally:
@@ -211,59 +378,109 @@ def run_analyzer_pipeline(
     if start_step is None:
         start_step = ANALYZER_PIPELINE_STEPS[0]
     start_at = _start_index(start_step)
+    progress_state: Dict[str, Any] = {
+        "last_percent": -1,
+        "cap_percent": 0,
+        "step": None,
+        "ticker_message": "Analyzer 运行中",
+    }
 
     if writer:
-        writer(StreamEvent(
-            current="analyzer.pipeline",
-            progress=0.0,
-            message="Analyzer pipeline started",
+        _emit_pipeline_progress(
+            writer,
+            0.0,
+            "Analyzer pipeline started",
             data={
                 "task_id": thread_id,
                 "resume": resume,
                 "analyze_task_type": (state.get("analyzer") or {}).get("analyze_task_type"),
             },
-        ))
+            progress_state=progress_state,
+        )
+    ticker_stop, ticker_thread = _start_pipeline_ticker(writer, progress_state)
 
-    if resume and from_node is None and _is_finished(state):
-        if writer:
-            writer(StreamEvent(
-                current="analyzer.pipeline",
-                progress=1.0,
-                message="Analyzer pipeline already finished",
-            ))
-        return state
-
-    for step_name in ANALYZER_PIPELINE_STEPS[start_at:]:
-        state["current"] = step_name
-        save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
-
-        if writer:
-            writer(StreamEvent(
-                current=f"analyzer.{step_name}",
-                progress=0.0,
-                message=f"步骤开始: {step_name}",
-            ))
-
-        if step_name == "finish":
-            state["last_completed"] = "finish"
-            save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+    try:
+        if resume and from_node is None and _is_finished(state):
             if writer:
-                writer(StreamEvent(
-                    current="analyzer.finish",
-                    progress=1.0,
-                    message="流水线完成",
-                ))
+                _emit_pipeline_progress(
+                    writer,
+                    1.0,
+                    "Analyzer pipeline already finished",
+                    progress_state=progress_state,
+                )
             return state
 
-        state = _run_step(step_name, state, writer=writer)
-        state["last_completed"] = step_name
-        save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+        for step_name in ANALYZER_PIPELINE_STEPS[start_at:]:
+            state["current"] = step_name
+            save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+            _set_pipeline_step_cap(progress_state, step_name, message=f"{step_name} 运行中")
 
-        if writer:
-            writer(StreamEvent(
-                current=f"analyzer.{step_name}",
-                progress=1.0,
-                message=f"步骤完成: {step_name}",
-            ))
+            if writer:
+                writer(StreamEvent(
+                    current=f"analyzer.{step_name}",
+                    progress=_STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                    progress_num=_progress_percent(_STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0]),
+                    total=100,
+                    message=f"步骤开始: {step_name}",
+                    data={"step": step_name},
+                ))
+                _emit_pipeline_progress(
+                    writer,
+                    _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                    f"开始 {step_name}",
+                    data={"step": step_name},
+                    progress_state=progress_state,
+                )
+
+            if step_name == "finish":
+                state["last_completed"] = "finish"
+                save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+                if writer:
+                    writer(StreamEvent(
+                        current="analyzer.finish",
+                        progress=1.0,
+                        progress_num=100,
+                        total=100,
+                        message="流水线完成",
+                    ))
+                    _emit_pipeline_progress(
+                        writer,
+                        1.0,
+                        "Analyzer 完成",
+                        data={"step": "finish"},
+                        progress_state=progress_state,
+                    )
+                return state
+
+            state = _run_step(
+                step_name,
+                state,
+                writer=_AnalyzerProgressWriter(writer, step_name, progress_state),
+            )
+            state["last_completed"] = step_name
+            save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+
+            if writer:
+                step_end = _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[1]
+                step_percent = _progress_percent(step_end)
+                writer(StreamEvent(
+                    current=f"analyzer.{step_name}",
+                    progress=round(step_end, 4),
+                    progress_num=step_percent,
+                    total=100,
+                    message=f"步骤完成: {step_name}",
+                    data={"step": step_name, "progress_percent": step_percent},
+                ))
+                _emit_pipeline_progress(
+                    writer,
+                    step_end,
+                    f"完成 {step_name}",
+                    data={"step": step_name, "estimated": False},
+                    progress_state=progress_state,
+                )
+    finally:
+        ticker_stop.set()
+        if ticker_thread is not None:
+            ticker_thread.join(timeout=0.2)
 
     return state
