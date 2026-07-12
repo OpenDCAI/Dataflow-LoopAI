@@ -8,7 +8,7 @@ from typing import Dict, Any, List
 from loopai.schema.events import StreamEvent
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
-from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
 
 from ..eval_metrics.metrics.runner import MetricRunner
 
@@ -18,7 +18,7 @@ logger = get_logger()
 def _emit(writer, message: str, *, progress=None, data=None):
     if writer:
         writer(StreamEvent(
-            current="AnalyzerAgent.metric_score_node",
+            current="analyzer.metric_score",
             message=message,
             progress=progress,
             data=data
@@ -27,6 +27,11 @@ def _emit(writer, message: str, *, progress=None, data=None):
 
 def _ensure_metric_outdir(state: LoopAIState) -> Path:
     analyzer_cfg = state.get("analyzer") or {}
+    runtime_outdir = analyzer_cfg.get("runtime_output_dir")
+    if runtime_outdir:
+        outdir = Path(runtime_outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        return outdir
     base_outdir = Path(
         analyzer_cfg.get("output_dir") or state.get("output_dir") or "./outputs"
     )

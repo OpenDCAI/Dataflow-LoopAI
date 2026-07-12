@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
 from loopai.schema.events import StreamEvent
-from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
 from loopai.common.prompts.prompt_loader import PromptLoader
 from langchain_openai import ChatOpenAI
 from loopai.schema.states import LoopAIState
@@ -32,6 +32,11 @@ def _ensure_analyzer_outdir(state: LoopAIState) -> str:
         output_dir / task_id / analyzer
     """
     cfg = _analyzer(state)
+    runtime_outdir = cfg.get("runtime_output_dir")
+    if runtime_outdir:
+        outdir = Path(runtime_outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        return str(outdir)
     base_outdir = Path(cfg.get("output_dir") or state.get("output_dir") or "./outputs")
     task_id = state.get("task_id") or "default_task"
     outdir = base_outdir / task_id / "analyzer"
@@ -46,6 +51,16 @@ def _safe_get_writer():
     """
     return get_safe_stream_writer()
 
+def _runtime_api_key(cfg: dict) -> str:
+    return (
+        cfg.get("analyze_api_key")
+        or os.getenv("_LOOPAI_ANALYZER_RUNTIME_API_KEY")
+        or os.getenv("ANALYZER_API_KEY")
+        or os.getenv("analyzer_api_key")
+        or os.getenv("DEEPSEEK_API_KEY")
+        or "EMPTY"
+    )
+
 
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
@@ -55,7 +70,7 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     cfg = _analyzer(state)
     model = ChatOpenAI(
         model=cfg["analyze_model_path"],
-        api_key=cfg.get("analyze_api_key", "EMPTY"),
+        api_key=_runtime_api_key(cfg),
         base_url=cfg.get("analyze_base_url"),
         temperature=cfg.get("analyze_temperature", 0.0),
         top_p=cfg.get("analyze_top_p", 0.95),
@@ -534,7 +549,7 @@ def analyze_metric_report_node(state: LoopAIState):
     def _emit(message, *, progress=None, data=None):
         if writer:
             writer(StreamEvent(
-                current="AnalyzerAgent.analyze_metric_report_node",
+                current="analyzer.analyze_metric_report",
                 message=message,
                 progress=progress,
                 data=data

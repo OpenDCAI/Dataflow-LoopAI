@@ -1,4 +1,4 @@
-from loopai.agents import AnalyzerAgent
+from loopai.skills.Analyzer.analyzer_agent import AnalyzerAgent
 from loopai.memory import checkpointer, store
 from rich.console import Console
 

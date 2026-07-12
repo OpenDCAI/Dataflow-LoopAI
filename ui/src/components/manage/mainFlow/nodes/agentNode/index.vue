@@ -41,7 +41,11 @@
             </div>
         </div>
 
-        <div v-if="customInfoFiltered.length > 0" class="col-wrapper" style="width: 250px">
+        <div
+            v-if="customInfoFiltered.length > 0"
+            class="col-wrapper"
+            style="width: 250px; flex-shrink: 0"
+        >
             <!-- Agent 的通用 CustomInfo 展示 -->
             <template v-if="customInfoFiltered.length > 0">
                 <div class="node-row-item">

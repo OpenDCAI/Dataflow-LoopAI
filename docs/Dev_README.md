@@ -326,10 +326,10 @@ for res in self.graph.stream(
 当节点逻辑较复杂时，推荐：
 
 * ✅ 节点放入 `nodes/` 子文件夹：
-  示例：`loopai/agents/Analyzer/nodes/eval_model.py`
+  示例：`loopai/skills/Analyzer/nodes/eval_model.py`
 
 * ✅ 工具函数放入 `utils/`：
-  示例：`loopai/agents/Analyzer/utils/llmaj.py`
+  示例：`loopai/skills/Analyzer/utils/llmaj.py`
 
 * ✅ LLM 工具调用放入 `tools/`：
   示例：`loopai/agents/Starter/tools/check_motivation.py`

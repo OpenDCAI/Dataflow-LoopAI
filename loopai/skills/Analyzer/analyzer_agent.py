@@ -6,7 +6,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import interrupt, Command
 
 from loopai.schema.states import LoopAIState, RuntimeContext
-from loopai.agents import BaseAgent
+from loopai.agents.BaseAgent.base_agent import BaseAgent
 from .nodes import (
     eval_model_node,
     metric_recommend_node,
@@ -58,7 +58,7 @@ class AnalyzerAgent(BaseAgent):
             # 2. code / text2sql 的 analyzer 必填参数
             if task_type in {"code", "text2sql"}:
                 analyzer_required = [
-                    "analyze_model_path", "analyze_base_url", "analyze_api_key",
+                    "analyze_model_path",
                     "analyze_temperature", "analyze_top_p",
                     "output_brief", "analyze_sampling_top_k",
                     "output_suggestion", "analyze_batch_size", "analyze_max_concurrency",
