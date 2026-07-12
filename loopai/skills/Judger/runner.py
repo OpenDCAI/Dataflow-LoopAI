@@ -340,7 +340,7 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     )
 
     judger = state.get("judger", {})
-    os.environ["CUDA_VISIBLE_DEVICES"] = judger.get("cuda_visible_devices", "2")
+    os.environ["CUDA_VISIBLE_DEVICES"] = judger.get("cuda_visible_devices", "0")
 
     tensor_parallel_size = judger.get("eval_vllm_tensor_parallel_size", 1)
     gpu_memory_utilization = judger.get("eval_vllm_gpu_memory_utilization", 0.9)
@@ -354,18 +354,11 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
             message="Missing eval_model_path for vLLM startup.",
         )
 
-    cuda_devices = judger.get("cuda_visible_devices", "0")
-    env_configs = json.dumps({
-        "CUDA_VISIBLE_DEVICES": str(cuda_devices),
-        "NCCL_P2P_DISABLE": "1", "NCCL_IB_DISABLE": "1",
-        "NCCL_DEBUG": "INFO", "NCCL_SOCKET_IFNAME": "lo", "NCCL_BLOCKING_WAIT": "1",
-    })
-
     writer(StreamEvent(
         current=state.get("current"), progress=0.0, message="正在启动本地 vLLM 服务",
         data={"model_path": model_path, "tensor_parallel_size": tensor_parallel_size}))
     try:
-        start_vllm_openai_api_server(env_configs, tensor_parallel_size, gpu_memory_utilization, model_path)
+        start_vllm_openai_api_server(tensor_parallel_size, gpu_memory_utilization, model_path)
     except Exception as exc:
         logger.exception(f"[Judger] vLLM 启动失败")
         emit_error(

@@ -4,10 +4,7 @@ import subprocess
 import socket
 import time
 import re
-import json
 import threading
-
-from langgraph.config import get_stream_writer
 from loopai.schema.events import StreamEvent
 
 from loopai.schema.states import LoopAIState
@@ -85,9 +82,8 @@ def _consume_subprocess_output(proc, stop_event):
             pass
 
 def start_vllm_openai_api_server(
-    env_configs, 
-    vllm_tensor_parallel_size, 
-    vllm_gpu_memory_utilization, 
+    vllm_tensor_parallel_size,
+    vllm_gpu_memory_utilization,
     vllm_model,
     poll_interval: float = 2.0,
     max_timeout: float = 180.0
@@ -124,16 +120,11 @@ def start_vllm_openai_api_server(
         )
     logger.info(f"使用解释器启动 vllm: {python_exec}")
     vllm_command = f"{python_exec} -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {DEFAULT_VLLM_PORT} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes"
-    # 停止使用env_config -> 传入空字符串
-    env_configs = json.loads(env_configs)
     port = parse_port_from_command_str(vllm_command)
     host = "localhost"
 
-    # 设置环境变量（优化：使用独立环境，避免覆盖全局）
+    # 使用独立环境变量副本启动子进程
     process_env = os.environ.copy()
-    for key, value in env_configs.items():
-        process_env[key] = value
-    #logger.info("已设置GPU和NCCL环境变量")
 
     proc = subprocess.Popen(
         vllm_command,

@@ -241,6 +241,64 @@ def _run_eval_in_subprocess(
 
 
 # ---------------------------------------------------------------------------
+# 输出健康检查
+# ---------------------------------------------------------------------------
+
+def _check_output_health(
+    detail_path: str,
+    bench_name: str,
+    sample_size: int = 10,
+    writer=None,
+):
+    """抽样检查评测输出文件是否包含有效模型产出。
+
+    如果抽样行中关键字段（generated_ans / eval_pred）全为空，
+    说明模型推理阶段可能已失败（OOM、vLLM 崩溃等）。
+    """
+    if not detail_path or not os.path.exists(detail_path):
+        return
+
+    rows: List[Dict[str, Any]] = []
+    with open(detail_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if i >= sample_size:
+                break
+            line = line.strip()
+            if line:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+
+    if not rows:
+        return
+
+    gen_keys = ("generated_ans", "eval_pred", "completion", "prediction")
+    non_empty = 0
+    for row in rows:
+        for key in gen_keys:
+            if row.get(key) and str(row[key]).strip():
+                non_empty += 1
+                break
+
+    if non_empty == 0:
+        emit_error(
+            RuntimeError(
+                f"[{bench_name}] All {len(rows)} sampled rows have empty output "
+                f"(checked fields: {', '.join(gen_keys)}). "
+                f"Model inference may have failed (CUDA OOM, vLLM crash, etc.)."
+            ),
+            code=ErrorCode.EXTERNAL_SERVICE_ERROR,
+            recoverable=True,
+            stream_writer=writer,
+            message=(
+                f"Output validation failed for bench '{bench_name}': "
+                f"all sampled outputs are empty — check model/vLLM health."
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
 
@@ -438,6 +496,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     stats = result["stats"]
     logger.info(f"[Judger/general_text] subprocess result: stats={stats}")
     detail_path = result.get("detail_path")
+    _check_output_health(detail_path, bench_name, writer=writer)
     bench.meta["eval_result"] = stats
     bench.meta["eval_detail_path"] = detail_path
 
