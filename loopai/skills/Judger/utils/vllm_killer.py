@@ -2,15 +2,7 @@ import os
 import subprocess
 import socket
 import time
-import re
-import json
-import threading  # 新增：引入线程相关模块
-
-from langgraph.config import get_stream_writer
-from loopai.schema.events import StreamEvent
-
-from loopai.schema.states import LoopAIState
-from loopai.agents import BaseAgent
+import threading
 
 from loopai.logger import get_logger
 logger = get_logger()
@@ -50,8 +42,8 @@ def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
 
 def kill_vllm_openai_api_server(
     port,
-    stop_event: threading.Event = None,  # 新增：接收启动时返回的线程停止事件
-    process_kill_wait: float = 30.0  # 旧进程终止等待超时时间
+    stop_event: threading.Event = None,
+    process_kill_wait: float = 10.0,
 ) -> bool:
     """
     关闭vllm openai兼容api服务（适配后台消费线程，彻底关闭）
@@ -112,9 +104,14 @@ def kill_vllm_openai_api_server(
             time.sleep(1.0)
 
         logger.info(f"等待端口{port}释放...")
+        port_wait_start = time.time()
         while is_port_open(host, int(port)):
+            if time.time() - port_wait_start > process_kill_wait:
+                logger.warning(f"端口{port}释放超时")
+                break
             time.sleep(0.5)
-        logger.info(f"端口{port}已释放")
+        else:
+            logger.info(f"端口{port}已释放")
         return True
 
     except FileNotFoundError:

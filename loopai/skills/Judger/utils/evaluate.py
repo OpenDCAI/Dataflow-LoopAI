@@ -6,6 +6,8 @@ replaced ``get_stream_writer()`` with a passed-in ``writer`` parameter.
 """
 
 import itertools
+import json
+import os
 from collections import defaultdict, Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -15,9 +17,9 @@ from typing import Any, Dict, List, Union
 import numpy as np
 import tqdm
 
-from loopai.agents.Judger.utils.oj.data import write_jsonl, stream_jsonl, read_problems
-from loopai.agents.Judger.utils.oj.execution import check_correctness
-from loopai.agents.Judger.utils.oj.execution_sql import compare_sql_wrapper
+from loopai.skills.Judger.utils.data import write_jsonl, stream_jsonl, read_problems
+from loopai.skills.Judger.utils.execution import check_correctness
+from loopai.skills.Judger.utils.execution_sql import compare_sql_wrapper
 from loopai.common.event_tool import StreamEvent
 from loopai.logger import get_logger
 
@@ -68,6 +70,56 @@ def _write_evaluate_log(pass_at_k, result_path, test_case_path, problem_path):
         f.write(f"\nProblem:{problem_path}")
         f.write(f"\nResult:{result_path}")
         f.write("\n" + "\n".join(lines))
+
+
+def _check_eval_output_health(
+    result_path: str,
+    task_type: str,
+    sample_size: int = 10,
+    writer=None,
+):
+    """抽样检查评测结果文件，确认模型生成了有效内容。
+
+    code/text2sql 检查 ``completion`` 字段，全空说明生成步骤失败。
+    """
+    if not result_path or not os.path.exists(result_path):
+        return
+
+    rows: List[Dict[str, Any]] = []
+    with open(result_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if i >= sample_size:
+                break
+            line = line.strip()
+            if line:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+
+    if not rows:
+        return
+
+    non_empty = sum(
+        1 for row in rows
+        if row.get("completion") and str(row["completion"]).strip()
+    )
+
+    if non_empty == 0:
+        from loopai.common.exception import emit_error, ErrorCode
+        emit_error(
+            RuntimeError(
+                f"[{task_type}] All {len(rows)} sampled rows have empty 'completion'. "
+                f"Model generation may have failed (vLLM crash, API error, etc.)."
+            ),
+            code=ErrorCode.EXTERNAL_SERVICE_ERROR,
+            recoverable=True,
+            stream_writer=writer,
+            message=(
+                f"Output validation failed for {task_type} evaluation: "
+                f"all sampled outputs are empty — check model/vLLM health."
+            ),
+        )
 
 
 def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
@@ -137,6 +189,7 @@ def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
     logger.info(f"Writing results to {result_path}...")
     write_jsonl(result_path, tqdm.tqdm(combine_results(), total=n_samples))
     _write_evaluate_log(pass_at_k, result_path, test_case_path, problem_path)
+    _check_eval_output_health(result_path, task_type, writer=writer)
 
     return {"pass_at_k": pass_at_k, "result_path": result_path}
 
@@ -215,5 +268,6 @@ def run_evaluate_text2sql(state: Dict[str, Any], writer) -> Dict[str, Any]:
     logger.info(f"Writing results to {result_path}...")
     write_jsonl(result_path, tqdm.tqdm(combine_results(), total=n_samples))
     _write_evaluate_log(pass_at_k, result_path, test_case_path, problem_path)
+    _check_eval_output_health(result_path, task_type, writer=writer)
 
     return {"pass_at_k": pass_at_k, "result_path": result_path}

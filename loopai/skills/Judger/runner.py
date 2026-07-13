@@ -9,6 +9,7 @@ from loopai.common.event_tool import StreamEvent
 from loopai.common.exception import emit_error, ErrorCode
 from loopai.logger import get_logger
 
+
 logger = get_logger()
 
 
@@ -152,7 +153,9 @@ def _load_task_state(task_id: str) -> Dict[str, Any]:
 
 
 def _save_task_progress(state: Dict[str, Any], task_id: str) -> None:
+
     """将流水线进度写回 Configer（TaskModel.state）。"""
+
     from loopai.skills.Configer import update_configer_task_state_config
 
     judger = state.get("judger", {})
@@ -279,7 +282,6 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     # 5. JSONL 字段校验
     if task_type == "code":
-        from loopai.agents.Judger.utils.oj.data import check_jsonl_fields
         fmt = judger.get("eval_format_type", "")
         if fmt == "mbpp":
             required = ["text", "code", "task_id", "challenge_test_list", "test_list"]
@@ -296,7 +298,6 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
                 message=f"Problem file {problem_path} has invalid fields for task type {task_type}.",
             )
     elif task_type == "text2sql":
-        from loopai.agents.Judger.utils.oj.data import check_jsonl_fields
         required = ["task_id", "prompt", "db_id", "question", "ground_truth"]
         ok, details = check_jsonl_fields(problem_path, required)
         if not ok:
@@ -319,9 +320,11 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 
 def _step_kill_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
+
     """关闭本地 vLLM 进程（端口 8911）。"""
-    from loopai.agents.Judger.utils.oj.vllm_killer import kill_vllm_openai_api_server
-    from loopai.agents.Judger.utils.oj.vllm_starter import DEFAULT_VLLM_PORT
+
+    from loopai.skills.Judger.utils.vllm_killer import kill_vllm_openai_api_server
+    from loopai.skills.Judger.utils.vllm_starter import DEFAULT_VLLM_PORT
 
     writer(StreamEvent(current=state.get("current"), progress=0.0, message="正在关闭本地 vLLM 服务"))
     kill_vllm_openai_api_server(DEFAULT_VLLM_PORT)
@@ -332,13 +335,12 @@ def _step_kill_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     """启动本地 vLLM 服务。"""
-    from loopai.agents.Judger.utils.oj.vllm_starter import (
+    from loopai.skills.Judger.utils.vllm_starter import (
         start_vllm_openai_api_server, DEFAULT_VLLM_PORT,
     )
-    from loopai.agents.Judger.nodes.eval_general_text_node import set_gpu
 
     judger = state.get("judger", {})
-    set_gpu(state)
+    os.environ["CUDA_VISIBLE_DEVICES"] = judger.get("cuda_visible_devices", "0")
 
     tensor_parallel_size = judger.get("eval_vllm_tensor_parallel_size", 1)
     gpu_memory_utilization = judger.get("eval_vllm_gpu_memory_utilization", 0.9)
@@ -352,18 +354,11 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
             message="Missing eval_model_path for vLLM startup.",
         )
 
-    cuda_devices = judger.get("cuda_visible_devices", "0")
-    env_configs = json.dumps({
-        "CUDA_VISIBLE_DEVICES": str(cuda_devices),
-        "NCCL_P2P_DISABLE": "1", "NCCL_IB_DISABLE": "1",
-        "NCCL_DEBUG": "INFO", "NCCL_SOCKET_IFNAME": "lo", "NCCL_BLOCKING_WAIT": "1",
-    })
-
     writer(StreamEvent(
         current=state.get("current"), progress=0.0, message="正在启动本地 vLLM 服务",
         data={"model_path": model_path, "tensor_parallel_size": tensor_parallel_size}))
     try:
-        start_vllm_openai_api_server(env_configs, tensor_parallel_size, gpu_memory_utilization, model_path)
+        start_vllm_openai_api_server(tensor_parallel_size, gpu_memory_utilization, model_path)
     except Exception as exc:
         logger.exception(f"[Judger] vLLM 启动失败")
         emit_error(
@@ -380,12 +375,14 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 
 def _step_format_data(state: Dict[str, Any], writer) -> Dict[str, Any]:
+
     """可选的数据格式转换步骤（human-eval、mbpp 等）。"""
+
+    from loopai.skills.Judger.utils.format import run_format_data
     judger = state.get("judger", {})
     format_type = judger.get("eval_format_type")
 
     if format_type and format_type != "":
-        from loopai.skills.Judger.utils.format import run_format_data
         writer(StreamEvent(
             current=state.get("current"), progress=0.0,
             message=f"正在进行数据格式转换 [{format_type}]"))
@@ -403,7 +400,9 @@ def _step_format_data(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 
 def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
+
     """样本生成步骤：调用 vLLM 批量生成 code/text2sql 样本。"""
+
     from loopai.skills.Judger.utils.generate import run_generate_code, run_generate_text2sql
 
     task_type = state.get("judger", {}).get("eval_task_type", "code")
@@ -435,7 +434,9 @@ def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 
 def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
+
     """样本评测步骤：执行代码/执行 SQL，计算 pass@k。"""
+
     from loopai.skills.Judger.utils.evaluate import run_evaluate_code, run_evaluate_text2sql
 
     task_type = state.get("judger", {}).get("eval_task_type", "code")
@@ -469,11 +470,13 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 
 def _step_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
+
     """通用文本评测：One-Eval DataFlowEvalTool 子进程评测。
 
     逻辑来自 ``loopai.skills.Judger.utils.eval_general_text``，
     已去除 LangGraph 依赖，进度事件直接走传入的 ``writer``。
     """
+
     from loopai.skills.Judger.utils.eval_general_text import run_eval_general_text
     return run_eval_general_text(state, writer)
 
@@ -532,6 +535,7 @@ def run_judger_pipeline(
         最终状态字典。
     """
     from .runtime_config import resolve_judger_runtime_config
+    from loopai.skills.Configer import get_configer_state_config
 
     # 加载或初始化 state
     if resume:
@@ -542,7 +546,6 @@ def run_judger_pipeline(
         state = _load_task_state(task_id)
         if not state.get("judger"):
             # 任务无 state → 回退到全局默认配置
-            from loopai.skills.Configer import get_configer_state_config
             cfg = get_configer_state_config(section_name="judger")
             if cfg and cfg.get("data"):
                 state["judger"] = _unwrap_configer(cfg["data"].get("config", {}))

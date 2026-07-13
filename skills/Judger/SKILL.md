@@ -24,7 +24,7 @@ python -c "from loopai.skills.Judger import run; run()"
 缺环境变量时 `emit_error` 退出并输出错误 JSON。
 
 **禁止使用的路径：**
-- ❌ `loopai.agents.Judger.JudgerAgent` — **已硬拦截**，`import JudgerAgent` 抛 `RuntimeError`
+- ❌ `loopai.agents.Judger.JudgerAgent` — **已删除**，请使用 `loopai.skills.Judger.run()`
 - ❌ Codex 进程内直接 import `loopai.skills.Judger` — pipeline 内 `emit_error` 会 `sys.exit(1)`，杀死 Codex 自身进程
 
 **正确调用后的产物（用于判断是否走了正确路径）：**
