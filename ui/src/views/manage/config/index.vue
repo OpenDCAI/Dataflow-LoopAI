@@ -507,7 +507,7 @@ export default {
             return this.modelPoolStatus.models || []
         },
         modelPoolAvailable() {
-            return Object.keys(this.config.system || {}).length > 0
+            return Boolean(this.config)
         },
         modelPoolProxyBaseUrl() {
             return this.modelPoolConfig.proxy_base_url || ''
@@ -587,6 +587,14 @@ export default {
                     })
                 }
             }
+            if (!options.length) {
+                options.push({
+                    key: '__empty_model__',
+                    text: '-',
+                    model: { tier: this.modelPoolConfig.default_tier || 'medium', name: '', model_name: '' },
+                    placeholder: true
+                })
+            }
             return options
         },
         selectedModelOption: {
@@ -602,7 +610,7 @@ export default {
                 return matched || null
             },
             set(option) {
-                if (!option) return
+                if (!option || option.placeholder) return
                 const model = option.model || {}
                 if (this.config.system?.model?.value && model.tier) {
                     this.config.system.model.value.default_tier = model.tier
@@ -626,7 +634,7 @@ export default {
                 return matched || null
             },
             set(option) {
-                if (!option) return
+                if (!option || option.placeholder) return
                 const model = option.model || {}
                 this.setSystemValue('codex_model', model.name || model.model_name || option.key)
                 this.setSystemValue('codex_wire_api', 'responses')
@@ -729,6 +737,9 @@ export default {
             }
         }
     },
+    created() {
+        this.ensureModelPoolConfig()
+    },
     mounted() {
         this.getConfigs().then(() => {
             this.ensureModelPoolConfig()
@@ -748,7 +759,7 @@ export default {
             this.show.dataset = false
         },
         setSystemValue(key, value) {
-            if (!this.config.system) return
+            if (!this.config.system) this.config.system = {}
             if (!this.config.system[key]) {
                 this.config.system[key] = this.wrappedValue(value)
                 return
@@ -808,7 +819,7 @@ export default {
             }
         },
         ensureModelPoolConfig() {
-            if (!this.config.system) return
+            if (!this.config.system) this.config.system = {}
             const current = this.config.system.model?.value
             if (!current || typeof current !== 'object' || Array.isArray(current)) {
                 this.config.system.model = this.wrappedValue(this.buildLegacyModelPoolConfig(), 'dict')
@@ -869,8 +880,9 @@ export default {
             try {
                 await this.persistConfig({ silent: true })
                 await this.loadModelPoolStatus(true)
-                this.modelPoolProbeMessage = this.local('Probe finished.')
-                this.$barWarning(this.local('Probe finished.'), { status: 'correct' })
+                const hasHealthyModel = this.modelPoolModels.some((model) => this.healthClass(model) === 'healthy')
+                this.modelPoolProbeMessage = hasHealthyModel ? this.local('Probe finished.') : this.local('Probe failed.')
+                this.$barWarning(this.modelPoolProbeMessage, { status: hasHealthyModel ? 'correct' : 'warning' })
             } catch (error) {
                 this.modelPoolProbeMessage = this.local('Probe failed.')
                 this.$barWarning(this.local('Probe failed.'), { status: 'error' })
@@ -887,19 +899,33 @@ export default {
             if (!resp.ok) throw new Error(`model pool status failed: ${resp.status}`)
             this.modelPoolStatus = await resp.json()
         },
+        hasProbeResult(model) {
+            const probe = model?.probe || {}
+            return Boolean(probe.checked_at || probe.error || probe.chat || probe.responses)
+        },
+        hasProbeFailure(model) {
+            const probe = model?.probe || {}
+            if (probe.error) return true
+            return ['chat', 'responses'].some((key) => {
+                const result = probe[key]
+                if (!result) return false
+                if (result.ok) return false
+                return Boolean(result.error || result.status_code || result.latency_ms)
+            })
+        },
         healthText(model) {
             const selected = model.probe?.selected_wire_api
             if (selected) return `${this.local('Online')} · ${selected}`
             if (model.probe?.chat?.ok) return `${this.local('Online')} · chat`
             if (model.probe?.responses?.ok) return `${this.local('Online')} · responses`
-            if (model.probe?.error) return this.local('Unavailable')
+            if (this.hasProbeFailure(model)) return this.local('Unavailable')
             return this.local('Not Probed')
         },
         healthClass(model) {
             const selected = model.probe?.selected_wire_api
             if (selected || model.probe?.chat?.ok || model.probe?.responses?.ok) return 'healthy'
-            if (model.probe?.error) return 'unhealthy'
             if (model.enabled === false) return 'disabled'
+            if (this.hasProbeFailure(model) || this.hasProbeResult(model)) return 'unhealthy'
             return 'unknown'
         },
         formatCompact(value) {
