@@ -6,6 +6,7 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -14,6 +15,7 @@ sys.modules.setdefault("colorlog", types.SimpleNamespace(ColoredFormatter=loggin
 
 from loopai.skills.ObtainerCLI.cli import run
 from loopai.skills.ObtainerCLI.config import write_lake_config
+from loopai.skills.ObtainerCLI.errors import ObtainerCliError
 from loopai.skills.ObtainerCLI.monitor_state import monitor_state_path
 from loopai.agents.Obtainer.datamixer.clusters import update_dataset_clusters
 from loopai.agents.Obtainer.datamixer.store import DataStore
@@ -38,6 +40,43 @@ def _dm(root: Path, args: list[str], capsys) -> dict:
     assert exit_code == 0, payload
     assert payload["command"] == "dm"
     return payload["result"]
+
+
+def _set_starter_model_pool(tmp_path: Path, monkeypatch) -> Path:
+    starter_config = tmp_path / "starter.yaml"
+    starter_config.write_text(
+        yaml.safe_dump(
+            {
+                "system": {
+                    "api_port": 8855,
+                    "codex_model_pool_name": "codex",
+                    "model": {
+                        "default_tier": "low",
+                        "proxy_base_url": "http://127.0.0.1:8855/responseProxy/v1",
+                        "pool": [
+                            {
+                                "tier": "low",
+                                "name": "starter",
+                                "model_name": "gpt-4o-mini",
+                                "base_url": "http://low.example/v1",
+                                "api_key": "low-key",
+                            },
+                            {
+                                "tier": "medium",
+                                "name": "codex",
+                                "model_name": "deepseek-chat",
+                                "base_url": "http://deepseek.example/v1",
+                                "api_key": "deepseek-key",
+                            },
+                        ],
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STARTER_CONFIG", str(starter_config))
+    return starter_config
 
 
 def test_obtainercli_dm_init_ingest_query_index_and_recipe_export(tmp_path: Path, capsys) -> None:
@@ -205,6 +244,124 @@ def test_obtainercli_dm_init_ingest_query_index_and_recipe_export(tmp_path: Path
     assert {tuple(sorted(row)) for row in rows} == {
         ("_dm", "input", "instruction", "output", "source_uri")
     }
+
+
+def test_datamixer_ingest_skips_registered_benchmark_contamination(tmp_path: Path, capsys) -> None:
+    warehouse = tmp_path / "warehouse"
+    bench_file = tmp_path / "bench.txt"
+    records = tmp_path / "input" / "records.jsonl"
+    bench_text = (
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa "
+        "lambda mu nu xi omicron"
+    )
+    bench_file.write_text(bench_text + "\n", encoding="utf-8")
+    _write_jsonl(
+        records,
+        [
+            {"content": {"text": bench_text}, "source_uri": "fixture://bench-overlap"},
+            {
+                "content": {
+                    "text": "unique training sample about portfolio risk and cash flow analysis"
+                },
+                "source_uri": "fixture://clean",
+            },
+        ],
+    )
+
+    _dm(warehouse, ["init"], capsys)
+    _dm(warehouse, ["contam", "add", "--name", "toybench", "--file", str(bench_file)], capsys)
+    ingest = _dm(
+        warehouse,
+        [
+            "ingest",
+            "finance_training",
+            "--file",
+            str(records),
+            "--domain",
+            "finance",
+            "--task-type",
+            "SFT",
+        ],
+        capsys,
+    )
+
+    assert ingest["ingested"] == 2
+    assert ingest["written"] == 1
+    assert ingest["contaminated"] == 1
+    assert ingest["contam_sources"] == {"toybench": 1}
+
+    query = _dm(warehouse, ["query", "--limit", "10"], capsys)
+    assert query["total"] == 1
+    store = DataStore.open(warehouse)
+    try:
+        content = store.get_content(query["rows"][0]["cid"])
+    finally:
+        store.close()
+    serialized = json.dumps(content, ensure_ascii=False)
+    assert "unique training sample" in serialized
+    assert bench_text not in serialized
+
+
+def test_contam_add_removes_existing_benchmark_contamination(tmp_path: Path, capsys) -> None:
+    warehouse = tmp_path / "warehouse"
+    bench_file = tmp_path / "bench.txt"
+    records = tmp_path / "input" / "records.jsonl"
+    bench_text = (
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa "
+        "lambda mu nu xi omicron"
+    )
+    bench_file.write_text(bench_text + "\n", encoding="utf-8")
+    _write_jsonl(
+        records,
+        [
+            {"content": {"text": bench_text}, "source_uri": "fixture://bench-overlap"},
+            {
+                "content": {
+                    "text": "unique training sample about portfolio risk and cash flow analysis"
+                },
+                "source_uri": "fixture://clean",
+            },
+        ],
+    )
+
+    _dm(warehouse, ["init"], capsys)
+    ingest = _dm(
+        warehouse,
+        [
+            "ingest",
+            "finance_training",
+            "--file",
+            str(records),
+            "--domain",
+            "finance",
+            "--task-type",
+            "SFT",
+        ],
+        capsys,
+    )
+    assert ingest["written"] == 2
+
+    registered = _dm(
+        warehouse,
+        ["contam", "add", "--name", "toybench", "--file", str(bench_file)],
+        capsys,
+    )
+    audit = registered["auto_decontamination"]
+    assert audit["scanned"] == 2
+    assert audit["contaminated"] == 1
+    assert audit["removed"] == 1
+    assert audit["applied"] is True
+
+    query = _dm(warehouse, ["query", "--limit", "10"], capsys)
+    assert query["total"] == 1
+    store = DataStore.open(warehouse)
+    try:
+        content = store.get_content(query["rows"][0]["cid"])
+    finally:
+        store.close()
+    serialized = json.dumps(content, ensure_ascii=False)
+    assert "unique training sample" in serialized
+    assert bench_text not in serialized
 
 
 def test_dm_ingest_registers_dataset_card_and_validates_derived_fields(tmp_path: Path, capsys) -> None:
@@ -1086,6 +1243,26 @@ def test_dm_lake_pointer_resolves_to_datamixer_warehouse(tmp_path: Path, capsys)
     assert payload["result"]["samples"] == 0
 
 
+def test_dm_lake_pointer_prefers_root_when_root_is_datamixer_warehouse(tmp_path: Path, capsys) -> None:
+    lake_root = tmp_path / "lake"
+    stale_warehouse = lake_root / "warehouse"
+    link = tmp_path / "repo" / ".loopai" / "lake.yaml"
+
+    _dm(lake_root, ["init"], capsys)
+    _dm(stale_warehouse, ["init"], capsys)
+    input_path = tmp_path / "records.jsonl"
+    _write_jsonl(input_path, [{"text": "root record"}])
+    _dm(lake_root, ["ingest", "root_dataset", "--file", str(input_path)], capsys)
+    write_lake_config(link, root=lake_root, warehouse=stale_warehouse)
+
+    result = run(["dm", "--lake", str(link), "status"])
+    payload = _last_json(capsys)
+
+    assert result == 0
+    assert payload["result"]["warehouse"] == str(lake_root.resolve())
+    assert payload["result"]["samples"] == 1
+
+
 def test_dm_lake_load_reuses_existing_datamixer_warehouse(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "shared" / "warehouse"
     link = tmp_path / "repo" / ".loopai" / "lake.yaml"
@@ -1163,9 +1340,10 @@ def test_sft_export_agent_start_dry_run_writes_isolated_worker_prompt(
     run_dir = tmp_path / "sft_export_run"
     report = tmp_path / "analysis_report.md"
     report.write_text("Need Alpaca SFT math data.", encoding="utf-8")
-    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
-    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
-    monkeypatch.setenv("CODEX_API_KEY", "dummy")
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODEX_BASE_URL", "http://bad-env.example/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-codex")
+    monkeypatch.setenv("CODEX_API_KEY", "bad-env-key")
 
     exit_code = run(
         [
@@ -1196,8 +1374,10 @@ def test_sft_export_agent_start_dry_run_writes_isolated_worker_prompt(
     assert "instruction != output" in prompt
     assert f"{sys.executable} -m loopai.skills.ObtainerCLI.cli" in prompt
     state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
-    assert state["target_records"] == 100000
+    assert state["target_records"] == 10
     assert state["format"] == "alpaca"
+    assert state["provider"]["model_pool_name"] == "codex"
+    assert state["provider"]["source"] == "starter_yaml:system.model"
 
     exit_code = run(["dm", "--root", str(warehouse), "sft-export-agent", "status", "--run", str(run_dir)])
     status_payload = _last_json(capsys)
@@ -1220,19 +1400,20 @@ def test_sft_export_agent_resume_reuses_saved_thread_id(
             {
                 "warehouse": str(warehouse),
                 "thread_id": "thread-123",
-                "provider": {"source": "env", "model": "deepseek-chat"},
+                "provider": {"source": "starter_yaml:system.model", "model_pool_name": "codex", "model": "codex"},
             }
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
-    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
-    monkeypatch.setenv("CODEX_API_KEY", "dummy")
-    captured: dict[str, object] = {}
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODEX_BASE_URL", "http://bad-env.example/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-codex")
+    monkeypatch.setenv("CODEX_API_KEY", "bad-env-key")
+    captured: dict[str, object] = {"prompts": [], "thread_ids": []}
 
     def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True, thread_id=None, **kwargs):
-        captured["prompt"] = prompt
-        captured["thread_id"] = thread_id
+        captured["prompts"].append(prompt)
+        captured["thread_ids"].append(thread_id)
         captured["prov"] = prov
         (run_dir / "final_report.json").write_text(
             json.dumps({"ok": False, "blockers": ["needs repair"]}),
@@ -1259,12 +1440,119 @@ def test_sft_export_agent_resume_reuses_saved_thread_id(
     payload = _last_json(capsys)
 
     assert exit_code == 0
-    assert captured["thread_id"] == "thread-123"
-    assert "remove text fallback and retry" in str(captured["prompt"])
+    assert captured["thread_ids"]
+    assert all(thread_id == "thread-123" for thread_id in captured["thread_ids"])
+    assert "remove text fallback and retry" in str(captured["prompts"][0])
+    assert "outer SFT export acceptance gate rejected" in str(captured["prompts"][-1])
+    assert payload["ok"] is False
     assert payload["thread_id"] == "thread-123"
     status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
-    assert status["state"] == "completed"
+    assert status["state"] == "failed"
     assert status["worker_ok"] is False
+    assert status["acceptance_ok"] is False
+
+
+def test_sft_export_agent_acceptance_feedback_retries_until_valid(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.skills.ObtainerCLI import sft_export_agent
+
+    warehouse = tmp_path / "warehouse"
+    warehouse.mkdir()
+    run_dir = tmp_path / "sft_export_run"
+    report = tmp_path / "analysis_report.md"
+    report.write_text("Need two Alpaca records.", encoding="utf-8")
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    calls: list[dict[str, object]] = []
+
+    def write_export(*, invalid: bool) -> None:
+        export_dir = run_dir / "export"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        source = "text" if invalid else "answer"
+        (export_dir / "part-00000.jsonl").write_text(
+            "\n".join(
+                [
+                    json.dumps({"instruction": "q1", "input": "", "output": "a1"}),
+                    json.dumps({"instruction": "q2", "input": "", "output": "a2"}),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (export_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "snapshot_id": "snap-1",
+                    "dataset_digest": "digest-1",
+                    "recipe_fingerprint": "fp-1",
+                    "export_schema": {"fields": ["instruction", "input", "output"]},
+                    "recipe": {
+                        "export": {
+                            "schema": {
+                                "fields": {
+                                    "output": {"sources": [source]},
+                                }
+                            }
+                        },
+                        "buckets": [
+                            {
+                                "name": "bucket_a",
+                                "filter": "dataset_id='ds-a'",
+                                "export": {
+                                    "schema": {
+                                        "fields": {
+                                            "output": {"sources": [source]},
+                                        }
+                                    }
+                                },
+                            }
+                        ],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "final_report.json").write_text(
+            json.dumps({"ok": True, "export_path": str(export_dir)}),
+            encoding="utf-8",
+        )
+
+    def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True, thread_id=None, **kwargs):
+        calls.append({"prompt": prompt, "thread_id": thread_id})
+        write_export(invalid=len(calls) == 1)
+        return {"summary": "ok", "thread_id": "thread-accept"}
+
+    monkeypatch.setattr(sft_export_agent.codex, "run_via_sdk", fake_run_via_sdk)
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "sft-export-agent",
+            "start",
+            "--run",
+            str(run_dir),
+            "--analysis-report",
+            str(report),
+            "--target-records",
+            "2",
+            "--foreground",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert len(calls) == 2
+    assert calls[0]["thread_id"] is None
+    assert calls[1]["thread_id"] == "thread-accept"
+    assert "BUCKET_OUTPUT_SOURCE_FORBIDDEN" in str(calls[1]["prompt"])
+    status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "completed"
+    assert status["acceptance_ok"] is True
 
 
 def test_sft_export_agent_start_defaults_to_background(
@@ -1278,9 +1566,10 @@ def test_sft_export_agent_start_defaults_to_background(
     run_dir = tmp_path / "sft_export_run"
     report = tmp_path / "analysis_report.md"
     report.write_text("Need Alpaca SFT math data.", encoding="utf-8")
-    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
-    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
-    monkeypatch.setenv("CODEX_API_KEY", "dummy")
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODEX_BASE_URL", "http://bad-env.example/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-codex")
+    monkeypatch.setenv("CODEX_API_KEY", "bad-env-key")
     captured: dict[str, object] = {}
 
     def fake_spawn_background(**kwargs):
@@ -1330,9 +1619,10 @@ def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
     run_dir = tmp_path / "acquisition_run"
     report = tmp_path / "analysis_report.md"
     report.write_text("Need general domain datasets.", encoding="utf-8")
-    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
-    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
-    monkeypatch.setenv("CODEX_API_KEY", "dummy")
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODEX_BASE_URL", "http://bad-env.example/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-codex")
+    monkeypatch.setenv("CODEX_API_KEY", "bad-env-key")
 
     exit_code = run(
         [
@@ -1351,6 +1641,8 @@ def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
             "30",
             "--max-rows-per-dataset",
             "200000",
+            "--max-bytes-per-dataset",
+            str(5 * 1024 * 1024 * 1024),
             "--dry-run",
         ]
     )
@@ -1362,17 +1654,47 @@ def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
     prompt = (run_dir / "worker_prompt.md").read_text(encoding="utf-8")
     assert "compare the candidate list against the original user" in prompt
     assert "Each single dataset is capped at 100000 rows" in prompt
+    assert "2147483648 output bytes" in prompt
     assert "DataMixer `ingest` or `agent-ingest`" in prompt
     assert "register it during ingest with `--dataset-card <path>`" in prompt
     assert "Pass `--derived-field <name>` for each derived field" in prompt
     assert "dataset_cards/*.md" in prompt
+    assert "SearchAgent task JSON:" in prompt
+    assert "manifest/tasks.json" in prompt
+    assert "manifest/searchagent/searchagent_manifest.json" in prompt
+    assert "--output-root" in prompt
+    assert "--no-deepsearch" in prompt
+    assert "Do not inspect" in prompt
+    assert "manifest/tasks/" in prompt
+    assert "download manifest" in prompt
+    assert "Do not hand-write this file with `echo`" in prompt
+    assert "Keep an oversampled candidate pool" in prompt
+    assert "--limit 150" in prompt
+    assert "--max-rows 100000" in prompt
+    assert "--max-bytes-per-dataset 2147483648" in prompt
+    assert "download_results.json" in prompt
+    assert "records_jsonl" in prompt
+    assert "Wait for the download command to exit" in prompt
+    assert "zero-byte JSONL file is" in prompt
+    assert "ingest <dataset_name>" in prompt
+    assert "--file <records_jsonl>" in prompt
+    assert "`<dataset_name>` is required" in prompt
+    assert "Do not omit `<dataset_name>`" in prompt
+    assert "Top-level" in prompt
+    assert "cli ingest" in prompt
+    assert "--tag source_dataset_id=<source_dataset_id>" in prompt
+    assert "--source-dataset-id" in prompt
+    assert "--source-url" in prompt
     assert f"{sys.executable} -m loopai.skills.ObtainerCLI.cli" in prompt
     state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
     assert state["target_datasets"] == 30
     assert state["max_rows_per_dataset"] == 100000
+    assert state["max_bytes_per_dataset"] == 2147483648
+    assert state["provider"]["model_pool_name"] == "codex"
+    assert state["provider"]["model"] == "codex"
 
 
-def test_dataset_acquisition_agent_model_falls_back_to_starter_yaml(
+def test_dataset_acquisition_agent_model_requires_starter_model_pool(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1393,9 +1715,9 @@ def test_dataset_acquisition_agent_model_falls_back_to_starter_yaml(
         ),
         encoding="utf-8",
     )
-    monkeypatch.delenv("CODEX_BASE_URL", raising=False)
-    monkeypatch.delenv("CODEX_MODEL", raising=False)
-    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+    monkeypatch.setenv("CODEX_BASE_URL", "http://bad-env.example/v1")
+    monkeypatch.setenv("CODEX_MODEL", "yaml-model")
+    monkeypatch.setenv("CODEX_API_KEY", "bad-env-key")
     monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
     monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -1419,12 +1741,102 @@ def test_dataset_acquisition_agent_model_falls_back_to_starter_yaml(
     )
     payload = _last_json(capsys)
 
-    assert exit_code == 0
-    assert payload["status"] == "dry_run"
-    assert payload["provider"]["source"] == "starter_yaml:system.starter"
-    assert payload["provider"]["model_pool_name"] == "yaml-model"
-    state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
-    assert state["provider"]["model"] == "yaml-model"
+    assert exit_code == 2
+    assert payload["error_code"] == "OBTAINERCLI_MODEL_NOT_FOUND"
+    assert "Starter model pool" in payload["message"]
+    assert not (run_dir / "thread.json").exists()
+
+
+def test_obtainercli_provider_prefers_codex_model_from_starter_pool(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI.sft_export_agent import _resolve_provider
+
+    starter_config = tmp_path / "starter.yaml"
+    starter_config.write_text(
+        yaml.safe_dump(
+            {
+                "system": {
+                    "api_port": 8855,
+                    "codex_model": "deepseek-chat",
+                    "model": {
+                        "default_tier": "low",
+                        "proxy_base_url": "http://127.0.0.1:8855/responseProxy/v1",
+                        "pool": [
+                            {
+                                "tier": "low",
+                                "name": "starter",
+                                "model_name": "gpt-4o-mini",
+                                "base_url": "http://low.example/v1",
+                                "api_key": "low-key",
+                            },
+                            {
+                                "tier": "medium",
+                                "name": "codex",
+                                "model_name": "deepseek-chat",
+                                "base_url": "http://deepseek.example/v1",
+                                "api_key": "deepseek-key",
+                            },
+                        ],
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STARTER_CONFIG", str(starter_config))
+    monkeypatch.setenv("CODEX_BASE_URL", "http://bad-env.example/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-codex")
+    monkeypatch.setenv("CODEX_API_KEY", "bad-env-key")
+
+    prov, meta = _resolve_provider(tmp_path, None)
+
+    assert prov["base_url"] == "http://127.0.0.1:8855/responseProxy/v1"
+    assert prov["model"] == "deepseek-chat"
+    assert meta["model_pool_name"] == "codex"
+    assert meta["tier"] == "medium"
+    assert meta["upstream_model_name"] == "deepseek-chat"
+    assert meta["requested_model"] == "deepseek-chat"
+
+
+def test_obtainercli_provider_does_not_silently_fallback_unknown_pool_model(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI.sft_export_agent import _resolve_provider
+
+    starter_config = tmp_path / "starter.yaml"
+    starter_config.write_text(
+        yaml.safe_dump(
+            {
+                "system": {
+                    "model": {
+                        "default_tier": "low",
+                        "pool": [
+                            {
+                                "tier": "low",
+                                "name": "starter",
+                                "model_name": "gpt-4o-mini",
+                                "base_url": "http://low.example/v1",
+                                "api_key": "low-key",
+                            }
+                        ],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STARTER_CONFIG", str(starter_config))
+    monkeypatch.delenv("CODEX_BASE_URL", raising=False)
+    monkeypatch.delenv("CODEX_MODEL", raising=False)
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+
+    with pytest.raises(ObtainerCliError) as exc:
+        _resolve_provider(tmp_path, "deepseek-codex")
+
+    assert exc.value.error_code == "OBTAINERCLI_MODEL_NOT_FOUND"
 
 
 def test_dataset_acquisition_agent_start_defaults_to_background(
@@ -1436,9 +1848,10 @@ def test_dataset_acquisition_agent_start_defaults_to_background(
 
     warehouse = tmp_path / "warehouse"
     run_dir = tmp_path / "acquisition_run"
-    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
-    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
-    monkeypatch.setenv("CODEX_API_KEY", "dummy")
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODEX_BASE_URL", "http://bad-env.example/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-codex")
+    monkeypatch.setenv("CODEX_API_KEY", "bad-env-key")
     captured: dict[str, object] = {}
 
     def fake_spawn_background(**kwargs):
@@ -1477,6 +1890,55 @@ def test_dataset_acquisition_agent_start_defaults_to_background(
     assert captured["warehouse"] == warehouse.resolve()
     assert Path(captured["prompt_path"]).exists()
     assert (run_dir / "thread.json").exists()
+    state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
+    assert state["provider"]["model_pool_name"] == "codex"
+    assert state["provider"]["model"] == "codex"
+
+
+def test_dataset_acquisition_agent_large_start_uses_scaled_default_timeout(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    warehouse = tmp_path / "warehouse"
+    run_dir = tmp_path / "acquisition_run"
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    captured: dict[str, object] = {}
+
+    def fake_spawn_background(**kwargs):
+        captured.update(kwargs)
+        return {
+            "ok": True,
+            "status": "background_started",
+            "run_dir": str(kwargs["run_dir"]),
+            "pid": 5252,
+            "prompt_path": str(kwargs["prompt_path"]),
+        }
+
+    monkeypatch.setattr(dataset_acquisition_agent, "_spawn_background", fake_spawn_background)
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "dataset-acquisition-agent",
+            "start",
+            "--run",
+            str(run_dir),
+            "--objective",
+            "build a 100k finance SFT dataset",
+            "--target-datasets",
+            "40",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 0
+    assert payload["status"] == "background_started"
+    assert captured["timeout"] > 3600
 
 
 def test_dataset_acquisition_agent_resume_reuses_saved_thread_id(
@@ -1494,14 +1956,15 @@ def test_dataset_acquisition_agent_resume_reuses_saved_thread_id(
             {
                 "warehouse": str(warehouse),
                 "thread_id": "thread-acq-123",
-                "provider": {"source": "env", "model": "deepseek-chat"},
+                "provider": {"source": "starter_yaml:system.model", "model_pool_name": "codex", "model": "codex"},
             }
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
-    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
-    monkeypatch.setenv("CODEX_API_KEY", "dummy")
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODEX_BASE_URL", "http://bad-env.example/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-codex")
+    monkeypatch.setenv("CODEX_API_KEY", "bad-env-key")
     captured: dict[str, object] = {}
 
     def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True, thread_id=None, **kwargs):
@@ -1565,10 +2028,16 @@ def test_dataset_acquisition_worker_env_isolates_outer_task_context(
     assert env["LOOPAI_WORKER_KIND"] == "dataset-acquisition-agent"
     python_executable = codex.loopai_python_executable()
     assert env["LOOPAI_PYTHON_EXECUTABLE"] == python_executable
-    assert env["PATH"].split(":")[0] == str(Path(python_executable).resolve().parent)
+    assert str(Path(python_executable).resolve().parent) in env["PATH"].split(":")
     assert env["HF_ENDPOINT"] == "https://hf-mirror.com"
     assert env["HF_HUB_ENDPOINT"] == "https://hf-mirror.com"
     assert env["HF_HUB_DISABLE_TELEMETRY"] == "1"
+    assert "CODEX_API_KEY" not in env
+    assert "CODEX_BASE_URL" not in env
+    assert "CODEX_MODEL" not in env
+    assert "DEEPSEEK_API_KEY" not in env
+    assert "DEEPSEEK_BASE_URL" not in env
+    assert "DEEPSEEK_MODEL" not in env
     assert "OBTAINER_MODEL" not in env
     assert "OBTAINER_BASE_URL" not in env
     assert "OBTAINER_API_KEY" not in env
@@ -1626,6 +2095,88 @@ def test_codex_runner_path_does_not_prepend_system_python_bin(monkeypatch) -> No
     assert path.split(":")[:3] == ["/opt/node/bin", "/usr/bin", "/bin"]
 
 
+def test_codex_response_proxy_uses_project_config_without_websockets(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import tomlkit
+
+    from loopai.agents.Obtainer.datamixer import codex
+
+    captured: dict = {}
+
+    def fake_runner(env, prompt, timeout, on_stdout_payload=None):
+        captured["env"] = env
+        return 0, json.dumps({
+            "type": "completed",
+            "result": {"finalResponse": "{}"},
+        }) + "\n", ""
+
+    codex_home = tmp_path / "codex_home"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(codex, "_run_loopai_codex_runner", fake_runner)
+
+    codex.run_via_sdk(
+        "ping",
+        {
+            "base_url": "http://127.0.0.1:8855/responseProxy/v1",
+            "api_key": "loopai-local-proxy",
+            "model": "medium",
+        },
+        cwd=str(tmp_path),
+        timeout=1,
+    )
+
+    env = captured["env"]
+    assert env["CODEX_USE_PROJECT_CONFIG"] == "1"
+    assert env["CODEX_HOME"] == str(codex_home)
+    parsed = tomlkit.parse((codex_home / "config.toml").read_text(encoding="utf-8"))
+    assert parsed["model_provider"] == "loopai_model_pool_proxy"
+    provider = parsed["model_providers"]["loopai_model_pool_proxy"]
+    assert provider["base_url"] == "http://127.0.0.1:8855/responseProxy/v1"
+    assert provider["wire_api"] == "responses"
+    assert provider["supports_websockets"] is False
+    assert parsed["projects"][str(tmp_path.resolve())]["trust_level"] == "trusted"
+
+
+def test_dataset_acquisition_spawn_uses_explicit_python_executable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    captured: dict = {}
+
+    class FakePopen:
+        pid = 12345
+
+        def __init__(self, cmd, cwd, env, stdout, stderr, start_new_session):
+            captured["cmd"] = cmd
+            captured["env"] = env
+            captured["cwd"] = cwd
+
+    prompt_path = tmp_path / "worker_prompt.md"
+    prompt_path.write_text("prompt", encoding="utf-8")
+    python_executable = str(tmp_path / "env" / "bin" / "python")
+    Path(python_executable).parent.mkdir(parents=True)
+    Path(python_executable).write_text("", encoding="utf-8")
+    Path(python_executable).chmod(0o755)
+    monkeypatch.setattr(dataset_acquisition_agent.subprocess, "Popen", FakePopen)
+
+    dataset_acquisition_agent._spawn_background(
+        run_dir=tmp_path / "run",
+        warehouse=tmp_path / "warehouse",
+        prompt_path=prompt_path,
+        timeout=1,
+        model="",
+        python_executable=python_executable,
+    )
+
+    assert captured["cmd"][0] == python_executable
+    assert captured["env"]["LOOPAI_PYTHON_EXECUTABLE"] == python_executable
+    assert captured["env"]["PATH"].split(":")[0] == str(Path(python_executable).parent)
+
+
 def test_dataset_acquisition_worker_preserves_custom_hf_hub_endpoint(
     monkeypatch,
 ) -> None:
@@ -1679,9 +2230,10 @@ def test_dataset_acquisition_agent_resume_refuses_active_run(
         encoding="utf-8",
     )
     monkeypatch.setattr("loopai.skills.ObtainerCLI.dataset_acquisition_agent._pid_alive", lambda pid: True)
-    monkeypatch.setenv("CODEX_BASE_URL", "http://127.0.0.1:15721/v1")
-    monkeypatch.setenv("CODEX_MODEL", "deepseek-chat")
-    monkeypatch.setenv("CODEX_API_KEY", "dummy")
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODEX_BASE_URL", "http://bad-env.example/v1")
+    monkeypatch.setenv("CODEX_MODEL", "deepseek-codex")
+    monkeypatch.setenv("CODEX_API_KEY", "bad-env-key")
 
     exit_code = run(
         [
@@ -1733,3 +2285,75 @@ def test_dataset_acquisition_worker_marks_status_interrupted_on_keyboard_interru
     assert status["state"] == "interrupted"
     assert status["error"] == "KeyboardInterrupt"
     assert status["prompt_path"].endswith("worker_prompt.md")
+
+
+def test_dataset_acquisition_worker_preserves_successful_final_report_on_runner_error(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    run_dir = tmp_path / "acquisition_run"
+
+    def raise_after_report(*args, **kwargs):
+        (run_dir / "final_report.json").write_text(
+            json.dumps({"ok": True, "datasets_ingested": ["finance_sft_100k"]}),
+            encoding="utf-8",
+        )
+        raise TimeoutError("runner timed out after final report")
+
+    monkeypatch.setattr(dataset_acquisition_agent.codex, "run_via_sdk", raise_after_report, raising=False)
+
+    result = dataset_acquisition_agent._run_worker(
+        run_dir=run_dir,
+        prompt="test prompt",
+        prov={"base_url": "http://127.0.0.1:15721/v1", "api_key": "dummy", "model": "deepseek-chat"},
+        provider_meta={"source": "test", "model": "deepseek-chat"},
+        timeout=1,
+    )
+
+    assert result["status"] == "completed"
+    status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "completed"
+    assert status["worker_ok"] is True
+    assert status["runner_warning"] == "Codex runner timed out after final report"
+
+
+def test_dataset_acquisition_status_reconciles_successful_final_report(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "acquisition_run"
+    run_dir.mkdir()
+    (run_dir / "thread.json").write_text(
+        json.dumps({"warehouse": str(tmp_path / "warehouse"), "thread_id": "thread-1"}),
+        encoding="utf-8",
+    )
+    (run_dir / "status.json").write_text(
+        json.dumps({"state": "failed", "error": "Command '['corepack', 'yarn', 'dev', '<very long prompt>']' timed out after 3600 seconds"}),
+        encoding="utf-8",
+    )
+    (run_dir / "final_report.json").write_text(
+        json.dumps({"ok": True, "datasets_ingested": ["finance_sft_100k"]}),
+        encoding="utf-8",
+    )
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(tmp_path / "warehouse"),
+            "dataset-acquisition-agent",
+            "status",
+            "--run",
+            str(run_dir),
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 0
+    assert payload["status"]["state"] == "completed"
+    status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "completed"
+    assert status["worker_ok"] is True
+    assert status["runner_warning"] == "Codex runner timed out after 3600 seconds"

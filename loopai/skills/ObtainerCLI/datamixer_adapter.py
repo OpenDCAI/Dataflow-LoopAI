@@ -22,12 +22,19 @@ from .tables import ensure_tables, write_jsonl
 AUDIT_TABLES = {"assets", "ingest_runs", "embeddings", "exports", "record_lineage"}
 
 
+def _is_datamixer_warehouse(path: Path) -> bool:
+    return (path / "datamixer.toml").is_file()
+
+
 def warehouse_root(lake: str | Path) -> Path:
     lake_path = Path(lake)
     config = read_lake_config_for_lake(lake_path)
+    lake_root = resolve_lake_root(lake_path)
+    if _is_datamixer_warehouse(lake_root):
+        return lake_root
     if config.get("warehouse"):
         return Path(config["warehouse"]).expanduser().resolve()
-    return resolve_lake_root(lake_path) / "warehouse"
+    return lake_root / "warehouse"
 
 
 def _audit_dir(lake_root: Path) -> Path:
@@ -327,6 +334,8 @@ def ingest_datamixer_path(
             store.close()
             raise ValueError(f"Duplicate records: {result.merged}")
         store.close()
+        contaminated = int(getattr(result, "contaminated", 0) or 0)
+        contam_sources = dict(getattr(result, "contam_sources", {}) or {})
 
         append_audit_rows(
             lake_root,
@@ -363,7 +372,7 @@ def ingest_datamixer_path(
                     "finished_at": utc_now(),
                     "rows_seen": result.ingested,
                     "rows_written": result.written,
-                    "rows_quarantined": 0,
+                    "rows_quarantined": contaminated,
                     "error_summary": "",
                     "config_snapshot": {
                         "stage": stage,
@@ -372,22 +381,39 @@ def ingest_datamixer_path(
                         "processing_level": processing_level,
                         "source_kind": source_kind,
                         "tags": tag_map,
+                        "benchmark_decontamination": {
+                            "enabled": True,
+                            "threshold": 0.8,
+                            "skipped": contaminated,
+                            "sources": contam_sources,
+                        },
                     },
                 }
             ],
         )
+    warnings = []
+    if contaminated:
+        warnings.append(
+            {
+                "code": "BENCHMARK_CONTAMINATION_SKIPPED",
+                "message": f"Skipped {contaminated} rows that overlap registered benchmark sets.",
+                "sources": contam_sources,
+            }
+        )
     payload = {
         "ok": True,
         "command": "ingest path",
-        "status": "success",
-        "warnings": [],
+        "status": "success_with_warnings" if warnings else "success",
+        "warnings": warnings,
         "lake_root": str(lake_root),
         "rows_seen": result.ingested,
         "rows_written": result.written,
-        "rows_quarantined": 0,
+        "rows_quarantined": contaminated,
         "merged": result.merged,
         "new_blobs": result.new_blobs,
         "deduped_blobs": result.deduped_blobs,
+        "contaminated": contaminated,
+        "contam_sources": contam_sources,
     }
     try:
         from .monitor_state import update_monitor_delta
@@ -412,7 +438,7 @@ def ingest_datamixer_path(
                             "status": "succeeded",
                             "rows_seen": result.ingested,
                             "rows_written": result.written,
-                            "rows_quarantined": 0,
+                            "rows_quarantined": contaminated,
                             "finished_at": utc_now(),
                         }
                     ]

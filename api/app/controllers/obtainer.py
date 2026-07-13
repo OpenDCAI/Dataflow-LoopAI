@@ -123,6 +123,16 @@ def _datamixer_command_payload() -> dict[str, Any]:
                 ],
             },
             {
+                "key": "benchmark",
+                "label": "Benchmark Guard",
+                "commands": [
+                    "contam list",
+                    "contam add --name BENCH --file /path/to/benchmark.jsonl --text-field text --workers 8  # registers and removes existing overlaps",
+                    "decontaminate --against BENCH --threshold 0.8",
+                    "decontaminate --against BENCH --threshold 0.8 --apply",
+                ],
+            },
+            {
                 "key": "index",
                 "label": "Index & Recall",
                 "commands": [

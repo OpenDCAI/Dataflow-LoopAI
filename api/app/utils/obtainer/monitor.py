@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from loopai.skills.ObtainerCLI.config import read_lake_config_for_lake, resolve_lake_root
+from loopai.skills.ObtainerCLI.monitor_state import benchmark_monitor_state
 from loopai.skills.ObtainerCLI.tables import TABLES, read_table, table_path
 
 
@@ -218,6 +219,7 @@ def build_lake_monitor(*, lake: str | Path, latest_limit: int = 8) -> dict:
     exports = rows_by_table["exports"]
     tag_rows = rows_by_table["record_tags"]
     embedding = _embedding_summary(records, embeddings, config)
+    benchmarks = benchmark_monitor_state(lake_root)
 
     if records and embedding["coverage"] < 1:
         warnings.append(
@@ -244,6 +246,8 @@ def build_lake_monitor(*, lake: str | Path, latest_limit: int = 8) -> dict:
         "quality_findings": len(quality_findings),
         "ingest_runs": len(ingest_runs),
         "exports": len(exports),
+        "benchmarks": int(benchmarks.get("count") or 0),
+        "benchmark_rows": int(benchmarks.get("total_rows") or 0),
         "embedding_coverage": embedding["coverage"],
         "warnings": len(warnings),
         "health_score": _health_score(warnings, records, embedding, quality_findings),
@@ -264,6 +268,7 @@ def build_lake_monitor(*, lake: str | Path, latest_limit: int = 8) -> dict:
         "summary": summary,
         "tables": tables,
         "embedding": embedding,
+        "benchmarks": benchmarks,
         "charts": {
             "ingest_trend": _ingest_trend(ingest_runs),
             "composition": {

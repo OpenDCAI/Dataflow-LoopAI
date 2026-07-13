@@ -17,6 +17,7 @@ from loopai.skills.ObtainerCLI.ingest import ingest_path
 from loopai.skills.ObtainerCLI.lake_init import init_lake
 from loopai.skills.ObtainerCLI.tables import append_rows
 from loopai.skills.ObtainerCLI.datamixer_adapter import auto_embed_pending_embeddings
+from loopai.skills.ObtainerCLI.config import write_lake_config
 
 from api.app.utils.obtainer.monitor import build_lake_monitor, probe_embedding_health
 from api.app.controllers.obtainer import (
@@ -267,6 +268,63 @@ def test_lake_monitor_endpoint_reads_monitor_cache_without_rebuild(tmp_path: Pat
     assert response["code"] == 200
     assert response["data"]["cache_status"] == "fresh"
     assert response["data"]["summary"]["records"] == 2
+
+
+def test_lake_monitor_endpoint_returns_registered_benchmark_sets(tmp_path: Path) -> None:
+    from loopai.agents.Obtainer.datamixer import contam
+
+    lake_root = tmp_path / "lake"
+    warehouse = lake_root / "warehouse"
+    link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    init_lake(root=lake_root, link_path=link_path, if_not_exists=True)
+    contam.register(
+        warehouse,
+        "toybench",
+        [
+            "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu",
+            "finance benchmark question with reference answer",
+        ],
+        ngram=3,
+    )
+    rebuild_monitor_state(warehouse, lake=link_path)
+
+    response = asyncio.run(get_lake_monitor(lake=str(link_path)))
+
+    assert response["code"] == 200
+    assert response["data"]["summary"]["benchmarks"] == 1
+    assert response["data"]["summary"]["benchmark_rows"] == 2
+    assert response["data"]["benchmarks"]["sets"][0]["name"] == "toybench"
+    assert response["data"]["benchmarks"]["sets"][0]["rows"] == 2
+
+
+def test_lake_monitor_endpoint_prefers_root_warehouse_when_pointer_warehouse_is_stale(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from loopai.agents.Obtainer.datamixer.store import DataStore
+
+    lake_root = tmp_path / "lake"
+    stale_warehouse = lake_root / "warehouse"
+    link_path = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    DataStore.init(lake_root).close()
+    DataStore.init(stale_warehouse).close()
+    input_path = tmp_path / "input" / "records.jsonl"
+    _write_jsonl(input_path, [{"text": "alpha"}])
+    ingest_path(lake=lake_root, input_path=input_path, dataset="root_dataset")
+    write_lake_config(link_path, root=lake_root, warehouse=stale_warehouse)
+    rebuild_monitor_state(lake_root, lake=link_path)
+
+    def fail_rebuild(*args, **kwargs):
+        raise AssertionError("monitor endpoint must not call full rebuild")
+
+    monkeypatch.setattr("api.app.utils.obtainer.monitor.build_lake_monitor", fail_rebuild)
+
+    response = asyncio.run(get_lake_monitor(lake=str(link_path)))
+
+    assert response["code"] == 200
+    assert response["data"]["summary"]["records"] == 1
+    assert response["data"]["warehouse"] == str(lake_root.resolve())
+    assert response["data"]["config"]["warehouse"] == str(lake_root.resolve())
 
 
 def test_datamixer_cli_endpoint_uses_warehouse_from_lake_pointer(tmp_path: Path) -> None:

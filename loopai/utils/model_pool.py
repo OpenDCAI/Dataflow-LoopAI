@@ -163,11 +163,15 @@ class ResolvedModelProvider:
     upstream_model_name: str
     source: str
 
-    def as_provider(self) -> dict[str, str]:
+    def as_provider(self) -> dict[str, Any]:
         return {
             "base_url": self.base_url,
             "api_key": self.api_key,
             "model": self.model,
+            "model_provider": "loopai_model_pool_proxy",
+            "provider_name": "LoopAI Model Pool Proxy",
+            "wire_api": "responses",
+            "supports_websockets": False,
         }
 
     def meta(self) -> dict[str, Any]:
@@ -285,6 +289,8 @@ class StarterModelPool:
             for entry in candidates:
                 if requested == entry.model_name:
                     return entry
+            if requested.lower() not in TIERS and not tier:
+                return None
         resolved_tier = str(tier or requested or self.default_tier).strip().lower()
         if resolved_tier in TIERS:
             for entry in candidates:

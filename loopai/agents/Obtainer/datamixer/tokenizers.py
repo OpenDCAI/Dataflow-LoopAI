@@ -13,7 +13,9 @@ Specs (string form, so they are recordable in recipes/manifests):
 
 Real tokenizers are optional extras (``pip install datamixer[tokenizers]``); the
 MVP stays zero-dependency by defaulting to ``heuristic`` and clearly marking
-counts as *estimated* vs *exact*.
+counts as *estimated* vs *exact*. Per-record tokenizer failures also fall back
+to the heuristic estimator so token accounting does not block ingest/export on
+unexpected text.
 """
 from __future__ import annotations
 
@@ -48,11 +50,17 @@ class Tokenizer:
     _encode: Callable[[str], list] | None = None
 
     def count(self, text: str) -> int:
-        return self._count(text or "")
+        try:
+            return self._count(text or "")
+        except Exception:
+            return utils.estimate_tokens(text or "")
 
     def encode(self, text: str) -> list:
         if self._encode is not None:
-            return self._encode(text or "")
+            try:
+                return self._encode(text or "")
+            except Exception:
+                return _heuristic_encode(text or "")
         return _heuristic_encode(text)        # fallback for count-only tokenizers
 
 

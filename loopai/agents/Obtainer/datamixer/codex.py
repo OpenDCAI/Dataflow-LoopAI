@@ -23,7 +23,9 @@ import sys
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
+
+import tomlkit
 
 from loopai.utils.model_pool import StarterModelPool, load_starter_system_config_sync
 from .models import ModelPool, ModelSpec
@@ -170,7 +172,76 @@ def provider_from_model(spec: ModelSpec) -> dict:
         "base_url": _base_url(spec.api_url),
         "api_key": spec.resolved_key(),
         "model": spec.model,
+        "wire_api": "responses" if spec.response_format == "response" else "chat",
     }
+
+
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_response_proxy_base_url(base_url: str) -> bool:
+    return "/responseproxy/" in str(base_url or "").strip().lower()
+
+
+def _requires_project_config(prov: dict) -> bool:
+    if _to_bool(prov.get("use_project_config"), False):
+        return True
+    if "supports_websockets" in prov:
+        return not _to_bool(prov.get("supports_websockets"), True)
+    return _is_response_proxy_base_url(str(prov.get("base_url") or ""))
+
+
+def _sync_runner_project_config(home: Path, prov: dict, cwd: str) -> None:
+    """Write Codex provider config for transports that need CLI config fields.
+
+    Passing only ``baseUrl`` to @openai/codex-sdk does not carry provider-level
+    flags such as ``supports_websockets = false``. The Python response proxy is
+    HTTP-only, so proxy-backed workers must use project config.
+    """
+    home.mkdir(parents=True, exist_ok=True)
+    config_path = home / "config.toml"
+    if config_path.exists():
+        try:
+            template = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            template = tomlkit.document()
+    else:
+        template = tomlkit.document()
+
+    provider_name = str(prov.get("model_provider") or "loopai_model_pool_proxy").strip()
+    template["model_provider"] = provider_name
+
+    model_providers = template.setdefault("model_providers", tomlkit.table())
+    provider_config = model_providers.get(provider_name)
+    if not isinstance(provider_config, dict):
+        provider_config = tomlkit.table()
+        model_providers[provider_name] = provider_config
+
+    provider_config["name"] = str(prov.get("provider_name") or "LoopAI Model Pool Proxy")
+    provider_config["base_url"] = str(prov.get("base_url") or "").rstrip("/")
+    provider_config["env_key"] = str(prov.get("env_key") or "CODEX_API_KEY")
+    provider_config["wire_api"] = str(prov.get("wire_api") or "responses")
+    provider_config["supports_websockets"] = _to_bool(
+        prov.get("supports_websockets"),
+        default=not _is_response_proxy_base_url(str(prov.get("base_url") or "")),
+    )
+
+    workspace = str(Path(cwd).resolve())
+    projects = template.setdefault("projects", tomlkit.table())
+    project_config = projects.get(workspace)
+    if not isinstance(project_config, dict):
+        project_config = tomlkit.table()
+        projects[workspace] = project_config
+    project_config.setdefault("trust_level", "trusted")
+
+    config_path.write_text(tomlkit.dumps(template), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +417,9 @@ def run_via_sdk(prompt: str, prov: dict, cwd: str, timeout: int = 600,
                 network: bool = True, thread_id: str | None = None,
                 on_event: Callable[[dict], None] | None = None) -> dict:
     home = codex_home()
+    use_project_config = _requires_project_config(prov)
+    if home and use_project_config:
+        _sync_runner_project_config(home, prov, cwd)
     env = {
         "CODEX_API_KEY": prov["api_key"] or "",
         "CODEX_BASE_URL": prov["base_url"],
@@ -357,6 +431,8 @@ def run_via_sdk(prompt: str, prov: dict, cwd: str, timeout: int = 600,
     }
     if home:
         env["CODEX_HOME"] = str(home)
+    if use_project_config:
+        env["CODEX_USE_PROJECT_CONFIG"] = "1"
     env["CODEX_THREAD_ID"] = thread_id or ""
     code, out, err = _run_loopai_codex_runner(env, prompt, timeout, on_stdout_payload=on_event)
     return _parse_runner_output(out, err, code)

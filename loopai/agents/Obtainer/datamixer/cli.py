@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -286,6 +287,8 @@ def cmd_ingest(args) -> int:
         "dataset_id": ds_id, "ingested": res.ingested,
         "written": res.written, "merged": res.merged,
         "new_blobs": res.new_blobs, "deduped_blobs": res.deduped_blobs,
+        "contaminated": res.contaminated,
+        "contam_sources": res.contam_sources,
     }
     if dataset_card:
         out["dataset_card"] = dataset_card
@@ -315,7 +318,11 @@ def cmd_ingest(args) -> int:
     _emit(args, out, lambda d: print(
         f"read {d['ingested']} records into {d['dataset_id']}: "
         f"{d['written']} new samples, {d['merged']} merged (duplicate id); "
-        f"blobs: {d['new_blobs']} new, {d['deduped_blobs']} dedup hits"))
+        f"blobs: {d['new_blobs']} new, {d['deduped_blobs']} dedup hits"
+        + (
+            f"; benchmark-contaminated skipped: {d['contaminated']} {d['contam_sources']}"
+            if d.get("contaminated") else ""
+        )))
     return 0
 
 
@@ -688,23 +695,175 @@ def _load_texts(path: str, text_field: str = "text"):
                     yield line
 
 
+_DECONTAM_WORKER_SETS = None
+_DECONTAM_WORKER_THRESHOLD = 0.8
+
+
+def _default_decontam_workers() -> int:
+    return max(1, min(8, os.cpu_count() or 1))
+
+
+def _decontam_worker_init(root: str, against, threshold: float) -> None:
+    global _DECONTAM_WORKER_SETS, _DECONTAM_WORKER_THRESHOLD
+    from . import contam
+
+    _DECONTAM_WORKER_SETS = contam.load_sets(root, against)
+    _DECONTAM_WORKER_THRESHOLD = threshold
+
+
+def _decontam_match_batch(batch: list[tuple[str, str]]) -> list[tuple[str, bool, str]]:
+    from . import contam
+
+    sets = _DECONTAM_WORKER_SETS
+    if sets is None:
+        raise RuntimeError("decontamination worker was not initialized")
+    out = []
+    for sample_id, text in batch:
+        hit, source = contam.match(text, sets, _DECONTAM_WORKER_THRESHOLD)
+        out.append((sample_id, hit, source))
+    return out
+
+
+def _decontaminate_catalog(
+    store,
+    *,
+    against: list[str] | None = None,
+    threshold: float = 0.8,
+    apply: bool = False,
+    dataset_id: str | None = None,
+    where: str | None = None,
+    workers: int | None = None,
+    batch_size: int = 512,
+) -> dict:
+    from collections import Counter
+    from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+    from . import contam, utils
+
+    sets = contam.load_sets(store.root, against)
+    if not sets:
+        raise ValueError("no contamination sets registered; run `datamixer contam add` first")
+
+    workers = max(1, int(workers or _default_decontam_workers()))
+    batch_size = max(1, int(batch_size or 512))
+    by_source: Counter = Counter()
+    scanned = 0
+    contaminated = 0
+    removed = 0
+
+    def row_text(row: dict) -> tuple[str, str]:
+        try:
+            content = store.get_content(row["cid"])
+        except KeyError:
+            content = None
+        return row.get("sample_id"), utils.extract_text(content)
+
+    def apply_matches(matches: list[tuple[str, bool, str]]) -> None:
+        nonlocal contaminated, removed
+        delete_ids = []
+        for sample_id, hit, source in matches:
+            if not sample_id:
+                continue
+            if hit:
+                contaminated += 1
+                by_source[source or "unknown"] += 1
+                if apply:
+                    delete_ids.append(sample_id)
+                else:
+                    store.catalog.update_fields(sample_id, {
+                        "is_contaminated": 1,
+                        "contam_source": source})
+            elif not apply:
+                store.catalog.update_fields(sample_id, {
+                    "is_contaminated": 0,
+                    "contam_source": None})
+        if delete_ids:
+            removed += store.catalog.delete_by_ids(delete_ids)
+        elif not apply:
+            store.catalog.commit()
+
+    if workers == 1:
+        for rows in store.catalog.iter_query(where=where, dataset_id=dataset_id,
+                                             batch_size=batch_size):
+            batch = [row_text(row) for row in rows]
+            scanned += len(batch)
+            matches = []
+            for sample_id, text in batch:
+                hit, source = contam.match(text, sets, threshold)
+                matches.append((sample_id, hit, source))
+            apply_matches(matches)
+    else:
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_decontam_worker_init,
+            initargs=(str(store.root), against, threshold),
+        ) as pool:
+            pending = set()
+
+            def drain(done) -> None:
+                for fut in done:
+                    apply_matches(fut.result())
+
+            for rows in store.catalog.iter_query(where=where, dataset_id=dataset_id,
+                                                 batch_size=batch_size):
+                batch = [row_text(row) for row in rows]
+                scanned += len(batch)
+                pending.add(pool.submit(_decontam_match_batch, batch))
+                if len(pending) >= workers * 2:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    drain(done)
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                drain(done)
+
+    if not apply:
+        store.catalog.commit()
+    return {
+        "scanned": scanned,
+        "contaminated": contaminated,
+        "by_source": dict(by_source),
+        "removed": removed,
+        "applied": bool(apply),
+        "workers": workers,
+        "batch_size": batch_size,
+    }
+
+
 def cmd_contam_add(args) -> int:
     from . import contam
     s = _open(args)
     try:
+        workers = max(1, int(args.workers or _default_decontam_workers()))
         meta = contam.register(s.root, args.name,
                                _load_texts(args.file, args.text_field),
-                               ngram=args.ngram)
+                               ngram=args.ngram,
+                               workers=workers,
+                               batch_size=args.batch_size)
+        audit = _decontaminate_catalog(
+            s,
+            against=[args.name],
+            threshold=args.threshold,
+            apply=True,
+            workers=workers,
+            batch_size=args.batch_size,
+        )
     except FileNotFoundError:
         s.close()
         return _fail(args, f"file not found: {args.file}")
     except (json.JSONDecodeError, OSError) as e:
         s.close()
         return _fail(args, f"cannot read {args.file}: {e}")
+    except (ValueError, KeyError) as e:
+        s.close()
+        return _fail(args, str(e))
     s.close()
-    _emit(args, meta, lambda d: print(
+    out = {**meta, "auto_decontamination": audit}
+    _emit(args, out, lambda d: print(
         f"registered contamination set '{d['name']}': {d['num_texts']} texts, "
-        f"{d['num_ngrams']} {d['ngram']}-grams"))
+        f"{d['num_ngrams']} {d['ngram']}-grams "
+        f"using {d.get('build_workers', 1)} build workers; "
+        f"auto-decontaminated: scanned {d['auto_decontamination']['scanned']}, "
+        f"removed {d['auto_decontamination']['removed']} "
+        f"using {d['auto_decontamination']['workers']} workers"))
     return 0
 
 
@@ -720,54 +879,30 @@ def cmd_contam_list(args) -> int:
 
 
 def cmd_decontaminate(args) -> int:
-    from collections import Counter
-    from .operators import create, base
     s = _open(args)
     ds_id = s.catalog.resolve_dataset(args.dataset) if args.dataset else None
     against = ([x.strip() for x in args.against.split(",") if x.strip()]
                if args.against else None)
     try:
-        op = create("decontaminate", against=against,
-                    overlap_threshold=args.threshold, mode="score")
-        ctx = base.OperatorContext(run_id="decontam", root=str(s.root))
-        op.setup(ctx)
-        rows = s.catalog.query(where=args.filter, dataset_id=ds_id)
+        res = _decontaminate_catalog(
+            s,
+            against=against,
+            threshold=args.threshold,
+            apply=args.apply,
+            dataset_id=ds_id,
+            where=args.filter,
+            workers=args.workers,
+            batch_size=args.batch_size,
+        )
     except (ValueError, KeyError) as e:
         s.close()
         return _fail(args, str(e))
-    for r in rows:
-        try:
-            r["content"] = s.get_content(r["cid"])
-        except KeyError:
-            r["content"] = None
-    out = op.process(rows, ctx)
-    by_source: Counter = Counter()
-    contaminated = 0
-    for r in out:
-        sid = r.get("sample_id")
-        if not sid:
-            continue
-        s.catalog.update_fields(sid, {
-            "is_contaminated": r.get("is_contaminated", 0),
-            "contam_source": r.get("contam_source")})
-        if r.get("is_contaminated"):
-            contaminated += 1
-            by_source[r.get("contam_source")] += 1
-    s.catalog.commit()
-    removed = 0
-    if args.apply and contaminated:
-        flt = "is_contaminated = 1"
-        if args.filter:
-            flt = f"({args.filter}) AND {flt}"
-        removed = s.catalog.delete_samples(where=flt, dataset_id=ds_id)
     s.close()
-    res = {"scanned": len(rows), "contaminated": contaminated,
-           "by_source": dict(by_source), "removed": removed,
-           "applied": bool(args.apply)}
     _emit(args, res, lambda d: print(
         f"scanned {d['scanned']}, contaminated {d['contaminated']} "
         f"{dict(d['by_source'])}" + (f", removed {d['removed']}"
-                                     if d['applied'] else "")))
+                                     if d['applied'] else "")
+        + f", workers {d['workers']}"))
     return 0
 
 
@@ -1510,6 +1645,12 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--file", required=True, help="JSONL (text field) or one text/line")
     a.add_argument("--text-field", dest="text_field", default="text")
     a.add_argument("--ngram", type=int, default=13)
+    a.add_argument("--threshold", type=float, default=0.8,
+                   help="overlap threshold for automatic removal from existing samples")
+    a.add_argument("--workers", type=int, default=None,
+                   help="parallel workers for automatic decontamination")
+    a.add_argument("--batch-size", dest="batch_size", type=int, default=512,
+                   help="samples per decontamination batch")
     a.set_defaults(func=cmd_contam_add)
     a = ct.add_parser("list", help="list registered benchmark sets")
     a.set_defaults(func=cmd_contam_list)
@@ -1523,6 +1664,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--threshold", type=float, default=0.8)
     sp.add_argument("--apply", action="store_true",
                     help="delete contaminated samples (default: only flag them)")
+    sp.add_argument("--workers", type=int, default=None,
+                    help="parallel workers for decontamination matching")
+    sp.add_argument("--batch-size", dest="batch_size", type=int, default=512,
+                    help="samples per decontamination batch")
     sp.set_defaults(func=cmd_decontaminate)
 
     # compliance: PII redaction + erasure

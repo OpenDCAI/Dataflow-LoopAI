@@ -45,7 +45,7 @@ namespace: loopai
 1. Codex 读取 Analyzer report，启用 Obtainer skill。
 2. 解析 report，生成明确 objective、keywords 或 task-json。
 3. 调用 SearchAgent，检查 `searchagent_manifest.json`。
-4. 使用 `download manifest` 下载候选数据集，单数据集采集上限为 100000 行。
+4. 使用 `download manifest` 下载候选数据集，单数据集采集上限为 100000 行和 2GiB 本地 JSONL 输出；达到字节上限时保留部分数据并报告截断。
 5. 使用 `dm ingest` 或 `dm agent-ingest` 入湖。
 6. 使用 `dm op` / `dm pipeline` 做质量、去重、安全与标签补齐。
 7. 使用 `dm index` / `dm recall` 做召回与覆盖检查。

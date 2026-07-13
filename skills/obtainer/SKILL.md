@@ -28,8 +28,6 @@ not a generic coding task:
 6. Report warehouse path, datasets, record counts, recipe/export artifacts,
    lineage, manifests, and snapshots.
 
-Do not introduce a separate DataMixer skill. DataMixer is already integrated into
-Obtainer and must be invoked through `loopai-obtainercli dm ...`.
 
 ## Hard Constraints
 
@@ -90,16 +88,22 @@ Obtainer and must be invoked through `loopai-obtainercli dm ...`.
   is interrupted, or creates partial/empty files for selected datasets, stop
   before ingest. Report the command, exit code, produced files, and blocker.
 - **Acquisition download cap.** Internal `download manifest` writes at most
-  100,000 rows per dataset, even if `--max-rows 0` or a larger value is
-  supplied. Treat this as the bounded acquisition bridge into DataMixer, not as
-  final production SFT output.
+  100,000 rows and 2GiB of local JSONL output per dataset, even if `--max-rows
+  0`, a larger row value, or an oversized `--max-bytes-per-dataset` value is
+  supplied. If the byte cap is reached, keep the partial JSONL and report
+  `truncated`, `truncated_reason`, `rows_written`, and `bytes_written`. Treat
+  this as the bounded acquisition bridge into DataMixer, not as final
+  production SFT output.
 - **Production SFT budget.** If the Analyzer report or user gives no explicit
   SFT target, set and report a production default before export: at least
   100,000 total records, or an explicit token budget when token counts are
   available.
-- **Preserve recipe proportions.** A 40/30/20/10 recipe over 100,000 records
-  means 40,000 / 30,000 / 20,000 / 10,000 records. For token-budget recipes,
-  preserve proportions against `total_tokens`.
+- **Plan recipe proportions from the current need.** Do not assume a fixed
+  bucket mix from examples or prior runs. The worker must choose and justify
+  bucket proportions from the current user goal, Analyzer failure taxonomy,
+  available lake inventory, quality filters, and record/token budget. For
+  token-budget recipes, allocate against `total_tokens`; for sample-budget
+  recipes, allocate against `total_samples`.
 - **Use semantic recipe filters.** Failure-taxonomy exports must use meaningful
   tags or columns such as `bug_type=syntax`, `bug_type=logic`,
   `bug_type=runtime`, and `bug_type=assertion`. If those tags do not exist in
@@ -169,9 +173,9 @@ ${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /
   --keywords "instruction tuning dataset, open QA dataset, summarization dataset" \
   --target-datasets 30 \
   --max-rows-per-dataset 100000 \
+  --max-bytes-per-dataset 2147483648 \
   --discovery-mode auto \
-  --python-executable /path/to/loopai-env/bin/python \
-  --model deepseek-codex
+  --python-executable /path/to/loopai-env/bin/python
 ```
 
 `start` runs the inner Codex SDK worker in the background by default and returns
@@ -191,15 +195,18 @@ Resume the same worker:
 ```bash
 ${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent resume \
   --run ./outputs/acquisition_run \
-  --message "Remove unrelated datasets from the filtered manifest, then continue ingest." \
-  --model deepseek-codex
+  --message "Remove unrelated datasets from the filtered manifest, then continue ingest."
 ```
+
+Do not pass `--model` to `dataset-acquisition-agent` unless the user explicitly
+requests a one-off override. By default the wrapper resolves the Codex worker
+model from Starter's model pool, preferring the configured Codex default model.
 
 The worker wrapper injects the detailed acquisition policy: explicit objective
 and keywords, candidate list review against the original request before
-download, rejection report, 100,000-row per-dataset cap, normalized JSONL,
-DataMixer-only ingest/status/query/index operations, complete provenance tags,
-and `final_report.json`.
+download, rejection report, 100,000-row and 2GiB JSONL-output per-dataset caps,
+normalized JSONL, DataMixer-only ingest/status/query/index operations, complete
+provenance tags, and `final_report.json`.
 
 ## DataMixer Lake Operations
 
@@ -288,7 +295,6 @@ pipeline, trial-run it, and optionally merge the processed JSONL back:
 ```bash
 loopai-obtainercli dm --root /path/to/warehouse dataflow agent-run \
   --target "score GSM8K answer-focused SFT rows and keep high-quality rows" \
-  --model deepseek-codex \
   --dataset math_sft \
   --trial-rows 20 \
   --expected-outputs math_answer_quality \
@@ -332,8 +338,8 @@ loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent start 
   --keywords "program repair dataset, buggy fixed code pairs, Python SyntaxError fix, runtime exception repair" \
   --target-datasets 8 \
   --max-rows-per-dataset 100000 \
+  --max-bytes-per-dataset 2147483648 \
   --discovery-mode auto \
-  --model deepseek-codex \
   --json
 ```
 
@@ -361,9 +367,11 @@ or provider failure risk.
 For human debugging only, use `loopai-obtainercli download manifest ...` after
 writing a filtered manifest and rejection report.
 
-The downloader enforces a 100,000-row cap per dataset. `--max-rows 0` is also
-capped to 100,000 rows per dataset for safety. Production SFT sizing and final
-mixing must be handled later through DataMixer recipes.
+The downloader enforces a 100,000-row cap and a 2GiB local JSONL output cap per
+dataset. `--max-rows 0` is also capped to 100,000 rows per dataset for safety.
+When the byte cap is reached, the partial JSONL remains usable and the download
+result must report the truncation. Production SFT sizing and final mixing must
+be handled later through DataMixer recipes.
 
 ## Production SFT Export
 
@@ -391,8 +399,7 @@ loopai-obtainercli dm --root /path/to/warehouse sft-export-agent start \
   --analysis-report ./outputs/analyzer_report.md \
   --format alpaca \
   --target-records 100000 \
-  --out ./outputs/sft_export_run/export \
-  --model deepseek-codex
+  --out ./outputs/sft_export_run/export
 ```
 
 `start` returns after launching a background worker by default. Use
@@ -412,12 +419,15 @@ schema or quality problem:
 ```bash
 loopai-obtainercli dm --root /path/to/warehouse sft-export-agent resume \
   --run ./outputs/sft_export_run \
-  --message "Exclude buckets whose output field falls back to text, then re-export." \
-  --model deepseek-codex
+  --message "Exclude buckets whose output field falls back to text, then re-export."
 ```
 
 `resume` also runs in the background by default and returns a PID plus log
 paths. Poll with `status`.
+
+Do not pass `--model` to `sft-export-agent` unless the user explicitly requests
+a one-off override. The worker should use Starter's configured Codex model by
+default.
 
 Outer Codex decides between `resume` and a fresh `start`:
 

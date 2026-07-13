@@ -311,6 +311,34 @@
                     </button>
                 </div>
 
+                <section class="dm-panel benchmark-panel">
+                    <div class="panel-head">
+                        <p>{{ local('Benchmark Guard') }}</p>
+                        <span>{{ formatNumber(benchmarks.count || 0) }} {{ local('sets') }} · {{ formatNumber(benchmarks.total_rows || 0) }} {{ local('rows') }}</span>
+                    </div>
+                    <div class="benchmark-layout">
+                        <div class="benchmark-score">
+                            <strong>{{ formatNumber(benchmarks.count || 0) }}</strong>
+                            <span>{{ local('registered benchmark sets') }}</span>
+                        </div>
+                        <div class="benchmark-table">
+                            <button
+                                v-for="item in benchmarkSets"
+                                :key="item.name"
+                                type="button"
+                                class="benchmark-item"
+                                @click="setDetail(item.name, item)"
+                            >
+                                <span :title="item.name">{{ item.name }}</span>
+                                <strong>{{ formatNumber(item.rows || item.num_texts || 0) }}</strong>
+                            </button>
+                            <div v-if="benchmarkSets.length === 0" class="benchmark-empty">
+                                {{ local('No benchmark guard sets registered') }}
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
                 <div class="main-grid">
                     <section class="dm-panel warehouse-panel">
                         <div class="panel-head">
@@ -531,6 +559,13 @@ export default {
         embedding() {
             return this.monitor?.embedding || { probe: { status: 'not_checked' } }
         },
+        benchmarks() {
+            return this.monitor?.benchmarks || { count: 0, total_rows: 0, sets: [] }
+        },
+        benchmarkSets() {
+            const sets = this.benchmarks?.sets || []
+            return Array.isArray(sets) ? sets : []
+        },
         warnings() {
             return this.monitor?.warnings || []
         },
@@ -666,6 +701,14 @@ export default {
                     note: `${this.formatNumber(this.embedding.pending_records || 0)} ${this.local('pending')}`,
                     level: this.embeddingLevel,
                     payload: this.embedding
+                },
+                {
+                    key: 'benchmark',
+                    label: this.local('Benchmark'),
+                    value: `${this.formatNumber(this.benchmarks.count || 0)} ${this.local('sets')}`,
+                    note: `${this.formatNumber(this.benchmarks.total_rows || 0)} ${this.local('rows')}`,
+                    level: Number(this.benchmarks.count || 0) > 0 ? 'good' : 'warn',
+                    payload: this.benchmarks
                 }
             ]
         },
@@ -768,6 +811,16 @@ export default {
                     background: 'rgba(203, 101, 36, 0.14)',
                     color: 'rgba(181, 83, 20, 1)',
                     payload: this.monitor?.latest?.quality_findings || []
+                },
+                {
+                    key: 'benchmark',
+                    label: this.local('Benchmark Guard'),
+                    value: this.formatNumber(this.benchmarks.count || 0),
+                    note: `${this.formatNumber(this.benchmarks.total_rows || 0)} ${this.local('rows')}`,
+                    icon: 'Shield',
+                    background: 'rgba(185, 72, 83, 0.12)',
+                    color: 'rgba(154, 52, 62, 1)',
+                    payload: this.benchmarks
                 },
                 {
                     key: 'exports',
@@ -1631,7 +1684,7 @@ export default {
 
     .runtime-states {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
         gap: 8px;
         min-width: 0;
     }
@@ -2129,7 +2182,7 @@ export default {
 
 .kpi-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
     gap: 10px;
     margin-top: 10px;
 
@@ -2184,6 +2237,88 @@ export default {
             font-size: 12px;
             color: rgba(105, 111, 123, 1);
         }
+    }
+}
+
+.benchmark-panel {
+    min-height: 148px;
+    margin-top: 10px;
+
+    .benchmark-layout {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 12px;
+        min-height: 86px;
+    }
+
+    .benchmark-score {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-width: 0;
+        padding: 14px;
+        border: 1px solid rgba(185, 72, 83, 0.14);
+        border-radius: 6px;
+        background: rgba(255, 248, 248, 1);
+
+        strong {
+            font-size: 30px;
+            line-height: 1;
+            color: rgba(154, 52, 62, 1);
+        }
+
+        span {
+            @include nowrap;
+
+            margin-top: 8px;
+            font-size: 12px;
+            color: rgba(92, 97, 107, 1);
+        }
+    }
+
+    .benchmark-table {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 8px;
+        align-content: start;
+        min-width: 0;
+    }
+
+    .benchmark-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 82px;
+        align-items: center;
+        gap: 8px;
+        min-height: 38px;
+        padding: 8px 10px;
+        border: 1px solid rgba(48, 55, 67, 0.08);
+        border-radius: 6px;
+        background: rgba(247, 248, 251, 1);
+        cursor: pointer;
+
+        span {
+            @include nowrap;
+
+            font-size: 12px;
+            color: rgba(34, 38, 46, 1);
+        }
+
+        strong {
+            text-align: right;
+            font-size: 12px;
+            color: rgba(154, 52, 62, 1);
+        }
+    }
+
+    .benchmark-empty {
+        display: flex;
+        align-items: center;
+        min-height: 38px;
+        padding: 8px 10px;
+        border: 1px dashed rgba(104, 121, 141, 0.24);
+        border-radius: 6px;
+        color: rgba(105, 111, 123, 1);
+        font-size: 12px;
     }
 }
 
@@ -2506,6 +2641,10 @@ export default {
 
     .insight-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .benchmark-panel .benchmark-layout {
+        grid-template-columns: minmax(0, 1fr);
     }
 }
 

@@ -166,11 +166,62 @@ def test_download_manifest_caps_oversized_max_rows_per_dataset(tmp_path, monkeyp
     assert result["results"][0]["row_cap_applied"] is True
 
 
+def test_download_manifest_truncates_huggingface_rows_at_byte_cap(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import download
+
+    manifest = tmp_path / "searchagent_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "download_list": [
+                    {
+                        "source": "huggingface",
+                        "dataset_id": "huge/rows",
+                        "download": {
+                            "method": "huggingface",
+                            "dataset_id": "huge/rows",
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_load_hf_dataset(dataset_id, *, split, streaming):
+        assert dataset_id == "huge/rows"
+        for index in range(20):
+            yield {"text": "x" * 80, "index": index}
+
+    monkeypatch.setattr(download, "_load_hf_dataset", fake_load_hf_dataset)
+
+    result = download.download_manifest(
+        manifest=manifest,
+        output_root=tmp_path / "downloads",
+        max_rows=20,
+        max_bytes_per_dataset=700,
+    )
+
+    item = result["results"][0]
+    records_path = Path(result["records_jsonl"][0])
+    rows = [json.loads(line) for line in records_path.read_text(encoding="utf-8").splitlines()]
+
+    assert result["ok"] is True
+    assert 0 < len(rows) < 20
+    assert records_path.stat().st_size <= 700
+    assert item["rows_written"] == len(rows)
+    assert item["bytes_written"] == records_path.stat().st_size
+    assert item["byte_cap_applied"] is True
+    assert item["truncated"] is True
+    assert item["truncated_reason"] == "max_bytes_per_dataset"
+
+
 def test_cli_download_manifest_emits_json(tmp_path, monkeypatch, capsys):
     from loopai.skills.ObtainerCLI import cli
 
     def fake_download_manifest(**kwargs):
         assert kwargs["max_rows"] == 100_000
+        assert kwargs["max_bytes_per_dataset"] == 2 * 1024 * 1024 * 1024
         return {
             "ok": True,
             "status": "completed",

@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -45,6 +46,8 @@ class IngestResult:
     merged: int          # records that collapsed onto an existing sample row
     deduped_blobs: int   # content blobs that were already present (CAS dedup)
     new_blobs: int       # content blobs newly written
+    contaminated: int = 0  # records skipped because they overlap benchmark sets
+    contam_sources: dict[str, int] = field(default_factory=dict)
 
 
 class DataStore:
@@ -106,6 +109,8 @@ class DataStore:
         content_key: str = "content",
         allow_duplicates: bool = False,
         tokenizer: str | None = None,
+        decontaminate: bool = True,
+        contamination_threshold: float = 0.8,
     ) -> IngestResult:
         """Ingest an iterable of records.
 
@@ -118,7 +123,14 @@ class DataStore:
         from . import tokenizers
         defaults = defaults or {}
         tok = tokenizers.resolve(tokenizer)
-        n = new = dup = written_rows = merged_rows = 0
+        read_rows = accepted_rows = new = dup = written_rows = merged_rows = 0
+        contaminated_rows = 0
+        contam_sources: Counter[str] = Counter()
+        contamination_sets = []
+        if decontaminate:
+            from . import contam
+
+            contamination_sets = contam.load_sets(self.root)
         row_metadata_keys = set(schema.CORE_FIELD_NAMES) | {
             "bug_type",
             "failure_type",
@@ -136,12 +148,25 @@ class DataStore:
             "idempotency_key",
         }
         for rec in records:
+            read_rows += 1
             if content_key in rec:
                 content = rec[content_key]
                 meta = {k: v for k, v in rec.items() if k != content_key}
             else:
                 content = rec
                 meta = {k: v for k, v in rec.items() if k in row_metadata_keys}
+            if contamination_sets:
+                from . import contam
+
+                hit, source = contam.match(
+                    utils.extract_text(content),
+                    contamination_sets,
+                    threshold=contamination_threshold,
+                )
+                if hit:
+                    contaminated_rows += 1
+                    contam_sources[source or "unknown"] += 1
+                    continue
             merged = {**defaults, **meta}
             if "n_tokens" not in merged:
                 merged["n_tokens"] = tok.count(utils.extract_text(content))
@@ -150,15 +175,24 @@ class DataStore:
             new += int(blob_written)
             dup += int(not blob_written)
             # unique salt per record keeps every occurrence as its own row
-            salt = n if allow_duplicates else None
+            salt = accepted_rows if allow_duplicates else None
             _sid, created = self.catalog.add_sample(dataset_id, cid, merged, salt)
             written_rows += int(created)
             merged_rows += int(not created)
-            n += 1
-            if n % 2000 == 0:
+            accepted_rows += 1
+            if read_rows % 2000 == 0:
                 self.catalog.commit()
         self.catalog.commit()
-        return IngestResult(dataset_id, n, written_rows, merged_rows, dup, new)
+        return IngestResult(
+            dataset_id,
+            read_rows,
+            written_rows,
+            merged_rows,
+            dup,
+            new,
+            contaminated_rows,
+            dict(contam_sources),
+        )
 
     def get_content(self, cid: str) -> Any:
         return self.cas.get_json(cid)

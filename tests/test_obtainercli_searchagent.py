@@ -233,6 +233,146 @@ def test_searchagent_deepsearch_enriches_provider_keywords(tmp_path, monkeypatch
     assert result["download_list"][0]["dataset_id"] == "openai/gsm8k"
 
 
+def test_searchagent_skips_duckduckgo_deepsearch_and_uses_provider_fallback(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import searchagent
+
+    class FakeMethodDecisionAgent:
+        async def decide_method_order(self, **kwargs):
+            return {
+                "method_order": ["huggingface"],
+                "keywords_for_hf": kwargs["search_keywords"],
+                "reasoning": "provider fallback",
+            }
+
+    class FakeHfManager:
+        async def search_datasets(self, keywords, max_results=5):
+            return {
+                keywords[0]: [
+                    {
+                        "id": "nvidia/Nemotron-Agentic-v1",
+                        "title": "Nemotron Agentic",
+                        "description": "tool use data",
+                    }
+                ]
+            }
+
+    async def fail_deepsearch(**kwargs):
+        raise AssertionError("DuckDuckGo deepsearch should be skipped")
+
+    monkeypatch.delenv("OBTAINER_SEARCHAGENT_ALLOW_DUCKDUCKGO_DEEPSEARCH", raising=False)
+    monkeypatch.setattr(searchagent, "_make_method_decision_agent", lambda **kwargs: FakeMethodDecisionAgent())
+    monkeypatch.setattr(searchagent, "_make_hf_manager", lambda: FakeHfManager())
+    monkeypatch.setattr(searchagent, "_run_deepsearch", fail_deepsearch)
+
+    result = searchagent.run_searchagent(
+        query="need agentic tool use datasets",
+        objective="collect tool use data",
+        keywords="agent,tool use",
+        output_root=tmp_path,
+        model_name="test-model",
+        base_url="http://127.0.0.1:8000/v1",
+        api_key="test-key",
+        search_engine="duckduckgo",
+        deepsearch=True,
+    )
+
+    task = result["tasks"][0]
+    assert task["deepsearch"]["skipped"] is True
+    assert task["deepsearch"]["skip_reason"] == "duckduckgo_deepsearch_disabled_without_tavily"
+    assert result["download_list"][0]["dataset_id"] == "nvidia/Nemotron-Agentic-v1"
+
+
+def test_searchagent_falls_back_to_kaggle_when_decision_provider_has_no_candidates(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import searchagent
+
+    class FakeMethodDecisionAgent:
+        async def decide_method_order(self, **kwargs):
+            return {
+                "method_order": ["huggingface"],
+                "keywords_for_hf": ["finance qa"],
+                "reasoning": "try hf first",
+            }
+
+    class FakeHfManager:
+        async def search_datasets(self, keywords, max_results=5):
+            return {keyword: [] for keyword in keywords}
+
+    class FakeKaggleManager:
+        async def search_datasets(self, keywords, max_results=5):
+            return {
+                keywords[0]: [
+                    {
+                        "id": "owner/finance-qa",
+                        "title": "Finance QA",
+                        "description": "financial question answering",
+                        "url": "https://www.kaggle.com/datasets/owner/finance-qa",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(searchagent, "_make_method_decision_agent", lambda **kwargs: FakeMethodDecisionAgent())
+    monkeypatch.setattr(searchagent, "_make_hf_manager", lambda: FakeHfManager())
+    monkeypatch.setattr(searchagent, "_make_kaggle_manager", lambda **kwargs: FakeKaggleManager())
+
+    result = searchagent.run_searchagent(
+        query="need finance QA datasets",
+        objective="collect finance QA data",
+        keywords="finance qa",
+        output_root=tmp_path,
+        model_name="test-model",
+        base_url="http://127.0.0.1:8000/v1",
+        api_key="test-key",
+        deepsearch=False,
+    )
+
+    candidate = result["download_list"][0]
+    assert candidate["source"] == "kaggle"
+    assert candidate["dataset_id"] == "owner/finance-qa"
+    assert candidate["fallback_reason"] == "no_candidates_from_decision_methods"
+
+
+def test_searchagent_provider_fallback_survives_method_decision_failure(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import searchagent
+
+    class FakeMethodDecisionAgent:
+        async def decide_method_order(self, **kwargs):
+            raise RuntimeError("model unavailable")
+
+    class FakeHfManager:
+        async def search_datasets(self, keywords, max_results=5):
+            return {
+                keywords[0]: [
+                    {
+                        "id": "openai/gsm8k",
+                        "title": "GSM8K",
+                        "description": "math word problems",
+                    }
+                ]
+            }
+
+    class FakeKaggleManager:
+        async def search_datasets(self, keywords, max_results=5):
+            return {}
+
+    monkeypatch.setattr(searchagent, "_make_method_decision_agent", lambda **kwargs: FakeMethodDecisionAgent())
+    monkeypatch.setattr(searchagent, "_make_hf_manager", lambda: FakeHfManager())
+    monkeypatch.setattr(searchagent, "_make_kaggle_manager", lambda **kwargs: FakeKaggleManager())
+
+    result = searchagent.run_searchagent(
+        query="need math reasoning datasets",
+        objective="collect math data",
+        keywords="gsm8k",
+        output_root=tmp_path,
+        model_name="test-model",
+        base_url="http://127.0.0.1:8000/v1",
+        api_key="test-key",
+        deepsearch=False,
+    )
+
+    assert result["download_list"][0]["dataset_id"] == "openai/gsm8k"
+    assert result["errors"][0]["stage"] == "method_decision"
+
+
 def test_searchagent_runs_task_json_in_parallel_and_keeps_domain_metadata(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import searchagent
 

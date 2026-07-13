@@ -12,9 +12,13 @@ from loopai.agents.Obtainer.datamixer import codex
 
 from .errors import ObtainerCliError
 from .sft_export_agent import _json_read, _json_write, _resolve_provider, _workspace
+from .download import MAX_BYTES_PER_DATASET
 
 DEFAULT_TARGET_DATASETS = 1
 DEFAULT_MAX_ROWS_PER_DATASET = 100000
+DEFAULT_MAX_BYTES_PER_DATASET = MAX_BYTES_PER_DATASET
+DEFAULT_MIN_TIMEOUT_SECONDS = 3600
+DEFAULT_MAX_TIMEOUT_SECONDS = 6 * 3600
 STATUS_FILE = "status.json"
 STATE_FILE = "thread.json"
 
@@ -46,9 +50,15 @@ Hard rules:
 5. Before downloading, compare the candidate list against the original user
    request and Analyzer report. Remove clearly unrelated datasets and write
    both a filtered manifest and a rejection report with exact reasons.
-6. Each single dataset is capped at {max_rows_per_dataset} rows. Do not bypass
-   this cap. Smaller sampled downloads are allowed for broad acquisition, but
-   record sampled_rows and cap in the manifest/report.
+6. Each single dataset is capped at {max_rows_per_dataset} rows and
+   {max_bytes_per_dataset} output bytes. Do not bypass these caps. Smaller
+   sampled downloads are allowed for broad acquisition, but record sampled_rows,
+   rows_written, bytes_written, max_rows_effective, max_bytes_effective, and
+   cap/truncation status in the manifest/report. For `download manifest`,
+   `--limit` caps candidate items to try, `--max-rows` caps rows per dataset,
+   and `--max-bytes-per-dataset` caps local JSONL output bytes per dataset. If
+   the byte cap is reached, keep the partial JSONL and report `truncated`,
+   `truncated_reason`, `rows_written`, and `bytes_written`.
 7. Normalize each downloaded dataset to JSONL before ingest. Each row must
    preserve source_uri, source_dataset/source_dataset_id, split, and enough
    payload fields for later SFT/PT processing.
@@ -177,6 +187,31 @@ def _analysis_block(paths: list[str]) -> str:
     return "\n".join(f"- {p}" for p in paths) + "\n"
 
 
+def _default_timeout_for_target(target_datasets: int) -> int:
+    target = max(int(target_datasets or DEFAULT_TARGET_DATASETS), DEFAULT_TARGET_DATASETS)
+    return min(
+        DEFAULT_MAX_TIMEOUT_SECONDS,
+        max(DEFAULT_MIN_TIMEOUT_SECONDS, 1800 + target * 180),
+    )
+
+
+def _resolve_timeout(requested_timeout: int, *, target_datasets: int) -> int:
+    if requested_timeout and requested_timeout > 0:
+        return requested_timeout
+    return _default_timeout_for_target(target_datasets)
+
+
+def _compact_runner_warning(message: str) -> str:
+    text = str(message or "").strip()
+    marker = "timed out after "
+    if marker in text:
+        tail = text[text.rfind(marker):].strip().strip("'\"")
+        return f"Codex runner {tail}"
+    if len(text) > 1000:
+        return text[:1000].rstrip() + "..."
+    return text
+
+
 def build_start_prompt(
     *,
     warehouse: Path,
@@ -186,12 +221,14 @@ def build_start_prompt(
     keywords: str,
     target_datasets: int,
     max_rows_per_dataset: int,
+    max_bytes_per_dataset: int,
     discovery_mode: str,
     extra_message: str,
 ) -> str:
     policy = _policy_text().format(
         warehouse=str(warehouse),
         max_rows_per_dataset=max_rows_per_dataset,
+        max_bytes_per_dataset=max_bytes_per_dataset,
         python_executable=codex.loopai_python_executable(),
     )
     return f"""{policy}
@@ -223,6 +260,9 @@ Target datasets:
 Per-dataset row cap:
 - {max_rows_per_dataset}
 
+Per-dataset output byte cap:
+- {max_bytes_per_dataset}
+
 Discovery mode:
 - {discovery_mode}
 
@@ -230,11 +270,73 @@ Required artifacts:
 - candidates manifest: {run_dir}/manifest/candidates.json
 - filtered manifest: {run_dir}/manifest/filtered_manifest.json
 - rejections: {run_dir}/manifest/rejections.json
+- SearchAgent task JSON: {run_dir}/manifest/tasks.json
+- SearchAgent manifest: {run_dir}/manifest/searchagent/searchagent_manifest.json
 - dataset cards: {run_dir}/manifest/dataset_cards/*.md
 - derived-field specs/validation: {run_dir}/manifest/derived_fields.json
 - downloads: {run_dir}/downloads/
 - ingest report: {run_dir}/manifest/ingest_results.json
 - final report: {run_dir}/final_report.json
+
+Required discovery procedure:
+1. Create `{run_dir}/manifest/tasks.json` with a top-level `tasks` list.
+2. Run SearchAgent and wait for it to finish:
+   {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli searchagent \
+     --query "{objective or keywords or 'dataset acquisition'}" \
+     --task-json {run_dir}/manifest/tasks.json \
+     --output-root {run_dir}/manifest/searchagent \
+     --parallelism 3 \
+     --max-results-per-source {max(target_datasets, 5)} \
+     --no-deepsearch \
+     --json
+3. Read `{run_dir}/manifest/searchagent/searchagent_manifest.json`. Copy or
+   transform its `candidates`/`download_list` into `{run_dir}/manifest/candidates.json`.
+   Do not inspect `{run_dir}/manifest/tasks/`; SearchAgent does not write there.
+   Preserve SearchAgent metadata. Do not hand-write this file with `echo`.
+   Keep an oversampled candidate pool: if SearchAgent produced
+   `{max(target_datasets * 5, target_datasets + 10, 10)}` or fewer candidates,
+   keep all of them; otherwise keep at least
+   `{max(target_datasets * 5, target_datasets + 10, 10)}` relevant candidates
+   and record every removed candidate with a concrete reason in
+   `{run_dir}/manifest/rejections.json`.
+4. Download only through this manifest command shape:
+   {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli download manifest \
+     --manifest {run_dir}/manifest/candidates.json \
+     --output-root {run_dir}/downloads \
+     --limit {max(target_datasets * 5, target_datasets + 10, 10)} \
+     --max-rows {max_rows_per_dataset} \
+     --max-bytes-per-dataset {max_bytes_per_dataset} \
+     --json
+5. Wait for the download command to exit. Do not read
+   `{run_dir}/downloads/download_results.json` while the command is still
+   running. If the command does not exit successfully or the result file is
+   missing, write an `ok=false` blocker with the command, status, exit code,
+   stdout, and stderr; do not infer success from partial files.
+6. After download completes, read `{run_dir}/downloads/download_results.json`.
+   Use only non-empty `records_jsonl` paths from that report for ingest. Do not
+   guess raw parquet, JSON, or nested download paths. A zero-byte JSONL file is
+   not a successful download.
+7. For each accepted downloaded JSONL, ingest with this exact DataMixer shape:
+   {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} ingest <dataset_name> \
+     --file <records_jsonl> \
+     --dataset-card <dataset_card_md> \
+     --source <source_platform> \
+     --license <license_or_unknown> \
+     --domain <domain> \
+     --task-type <task_type> \
+     --processing-level raw \
+     --source-kind <source_platform> \
+     --source-uri <source_url_or_uri> \
+     --split <split> \
+     --tag source_dataset_id=<source_dataset_id> \
+     --tag acquisition_run={run_dir.name} \
+     --json
+   `<dataset_name>` is required and must appear immediately after `ingest`.
+   Do not omit `<dataset_name>`. Top-level
+   `{codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli ingest`
+   is invalid. Do not use non-existent ingest flags such as
+   `--source-dataset-id` or `--source-url`; put those values in
+   `--tag source_dataset_id=<source_dataset_id>` and `--source-uri ...`.
 
 Extra caller instruction:
 {extra_message or '- none'}
@@ -245,7 +347,7 @@ warehouse, and blockers.
 
 
 def build_resume_prompt(*, run_dir: Path, message: str) -> str:
-    return f"""{_policy_text().format(warehouse='the warehouse recorded in thread.json', max_rows_per_dataset=DEFAULT_MAX_ROWS_PER_DATASET, python_executable=codex.loopai_python_executable())}
+    return f"""{_policy_text().format(warehouse='the warehouse recorded in thread.json', max_rows_per_dataset=DEFAULT_MAX_ROWS_PER_DATASET, max_bytes_per_dataset=DEFAULT_MAX_BYTES_PER_DATASET, python_executable=codex.loopai_python_executable())}
 
 # Resume task
 
@@ -273,10 +375,21 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     start.add_argument("--objective", default="")
     start.add_argument("--keywords", default="")
     start.add_argument("--target-datasets", type=int, default=DEFAULT_TARGET_DATASETS)
-    start.add_argument("--max-rows-per-dataset", type=int, default=DEFAULT_MAX_ROWS_PER_DATASET)
+    start.add_argument(
+        "--max-rows-per-dataset",
+        type=int,
+        default=DEFAULT_MAX_ROWS_PER_DATASET,
+        help="maximum rows to write per dataset; 0 and oversized values are capped",
+    )
+    start.add_argument(
+        "--max-bytes-per-dataset",
+        type=int,
+        default=DEFAULT_MAX_BYTES_PER_DATASET,
+        help="maximum local JSONL output bytes per dataset; partial files are kept and reported when capped",
+    )
     start.add_argument("--discovery-mode", choices=["auto", "searchagent", "codex-web"], default="auto")
     start.add_argument("--model", default="")
-    start.add_argument("--timeout", type=int, default=3600)
+    start.add_argument("--timeout", type=int, default=0, help="Codex worker timeout in seconds; 0 means scale by target datasets")
     start.add_argument("--message", default="")
     start.add_argument("--python-executable", default="", help="Python executable for the isolated worker")
     start.add_argument("--node-bin-dir", default="", help="Directory containing node/corepack for codex-runner")
@@ -288,7 +401,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     resume.add_argument("--run", required=True)
     resume.add_argument("--message", required=True)
     resume.add_argument("--model", default="")
-    resume.add_argument("--timeout", type=int, default=3600)
+    resume.add_argument("--timeout", type=int, default=0, help="Codex worker timeout in seconds; 0 means reuse scaled run default")
     resume.add_argument("--python-executable", default="", help="Python executable for the isolated worker")
     resume.add_argument("--node-bin-dir", default="", help="Directory containing node/corepack for codex-runner")
     resume.add_argument("--dry-run", action="store_true")
@@ -302,7 +415,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     worker = sub.add_parser("worker-run", help=argparse.SUPPRESS)
     worker.add_argument("--run", required=True)
     worker.add_argument("--prompt", required=True)
-    worker.add_argument("--timeout", type=int, default=3600)
+    worker.add_argument("--timeout", type=int, default=0)
     worker.add_argument("--thread-id", default="")
     worker.add_argument("--model", default="")
     worker.add_argument("--python-executable", default="", help=argparse.SUPPRESS)
@@ -315,6 +428,19 @@ def _status_payload(run_dir: Path) -> dict:
     status = _json_read(run_dir / STATUS_FILE)
     state = _json_read(run_dir / STATE_FILE)
     final_report = _json_read(run_dir / "final_report.json")
+    if final_report.get("ok") is True and status.get("state") != "completed":
+        _complete_from_successful_final_report(
+            run_dir,
+            thread_id=str(state.get("thread_id") or status.get("thread_id") or ""),
+            runner_warning=str(status.get("error") or ""),
+        )
+        status = _json_read(run_dir / STATUS_FILE)
+    elif isinstance(status.get("runner_warning"), str):
+        compact_warning = _compact_runner_warning(status["runner_warning"])
+        if compact_warning != status["runner_warning"]:
+            status["runner_warning"] = compact_warning
+            status["updated_at"] = time.time()
+            _json_write(run_dir / STATUS_FILE, status)
     pid = status.get("pid") if isinstance(status, dict) else None
     if pid:
         status["process_alive"] = _pid_alive(pid)
@@ -325,6 +451,42 @@ def _status_payload(run_dir: Path) -> dict:
         "status": status or {"state": "unknown"},
         "thread": {key: value for key, value in state.items() if key != "provider"},
         "final_report": final_report or None,
+    }
+
+
+def _complete_from_successful_final_report(
+    run_dir: Path,
+    *,
+    thread_id: str = "",
+    runner_warning: str = "",
+) -> dict | None:
+    final_report = _json_read(run_dir / "final_report.json")
+    if final_report.get("ok") is not True:
+        return None
+    state = _json_read(run_dir / STATE_FILE)
+    saved_thread_id = state.get("thread_id") or thread_id or None
+    status = {
+        "state": "completed",
+        "updated_at": time.time(),
+        "thread_id": saved_thread_id,
+        "final_report": str(run_dir / "final_report.json"),
+        "worker_ok": True,
+    }
+    if runner_warning:
+        runner_warning = _compact_runner_warning(runner_warning)
+        status["runner_warning"] = runner_warning
+    _json_write(run_dir / STATUS_FILE, status)
+    return {
+        "ok": True,
+        "status": "completed",
+        "run_dir": str(run_dir),
+        "thread_id": saved_thread_id,
+        "final_report": str(run_dir / "final_report.json"),
+        "worker_result": {
+            "ok": True,
+            "final_report": str(run_dir / "final_report.json"),
+            "warning": runner_warning or None,
+        },
     }
 
 
@@ -417,6 +579,7 @@ def _run_worker(
         _policy_text().format(
             warehouse="see thread.json",
             max_rows_per_dataset=DEFAULT_MAX_ROWS_PER_DATASET,
+            max_bytes_per_dataset=DEFAULT_MAX_BYTES_PER_DATASET,
             python_executable=codex.loopai_python_executable(),
         ),
         encoding="utf-8",
@@ -464,6 +627,13 @@ def _run_worker(
         })
         raise
     except Exception as exc:
+        completed = _complete_from_successful_final_report(
+            run_dir,
+            thread_id=thread_id,
+            runner_warning=str(exc),
+        )
+        if completed is not None:
+            return completed
         _json_write(run_dir / STATUS_FILE, {
             "state": "failed",
             "updated_at": time.time(),
@@ -504,6 +674,7 @@ def _save_initial_state(
     analysis_reports: list[str],
     target_datasets: int,
     max_rows_per_dataset: int,
+    max_bytes_per_dataset: int,
     objective: str,
     keywords: str,
     discovery_mode: str,
@@ -521,6 +692,7 @@ def _save_initial_state(
         "analysis_reports": analysis_reports,
         "target_datasets": target_datasets,
         "max_rows_per_dataset": max_rows_per_dataset,
+        "max_bytes_per_dataset": max_bytes_per_dataset,
         "objective": objective,
         "keywords": keywords,
         "discovery_mode": discovery_mode,
@@ -572,7 +744,11 @@ def run_agent(argv: list[str], *, root: str) -> dict:
         max_rows = args.max_rows_per_dataset
         if max_rows <= 0 or max_rows > DEFAULT_MAX_ROWS_PER_DATASET:
             max_rows = DEFAULT_MAX_ROWS_PER_DATASET
+        max_bytes = args.max_bytes_per_dataset
+        if max_bytes <= 0 or max_bytes > DEFAULT_MAX_BYTES_PER_DATASET:
+            max_bytes = DEFAULT_MAX_BYTES_PER_DATASET
         target_datasets = max(args.target_datasets, DEFAULT_TARGET_DATASETS)
+        timeout = _resolve_timeout(args.timeout, target_datasets=target_datasets)
         python_executable = args.python_executable or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
         node_bin_dir = args.node_bin_dir or os.environ.get("LOOPAI_NODE_BIN_DIR", "")
         prov, provider_meta = _resolve_provider(warehouse, args.model or None)
@@ -582,6 +758,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             analysis_reports=args.analysis_report,
             target_datasets=target_datasets,
             max_rows_per_dataset=max_rows,
+            max_bytes_per_dataset=max_bytes,
             objective=args.objective,
             keywords=args.keywords,
             discovery_mode=args.discovery_mode,
@@ -597,6 +774,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             keywords=args.keywords,
             target_datasets=target_datasets,
             max_rows_per_dataset=max_rows,
+            max_bytes_per_dataset=max_bytes,
             discovery_mode=args.discovery_mode,
             extra_message=args.message,
         )
@@ -607,6 +785,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 _policy_text().format(
                     warehouse=str(warehouse),
                     max_rows_per_dataset=max_rows,
+                    max_bytes_per_dataset=max_bytes,
                     python_executable=codex.loopai_python_executable(),
                 ),
                 encoding="utf-8",
@@ -616,7 +795,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                     run_dir=run_dir,
                     warehouse=warehouse,
                     prompt_path=prompt_path,
-                    timeout=args.timeout,
+                    timeout=timeout,
                     model=args.model or "",
                     python_executable=python_executable,
                     node_bin_dir=node_bin_dir,
@@ -626,7 +805,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             prompt=prompt,
             prov=prov,
             provider_meta=provider_meta,
-            timeout=args.timeout,
+            timeout=timeout,
             dry_run=args.dry_run,
         )
 
@@ -655,6 +834,10 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                     exit_code=2,
                 )
         thread_id = str(state.get("thread_id") or "")
+        timeout = _resolve_timeout(
+            args.timeout,
+            target_datasets=int(state.get("target_datasets") or DEFAULT_TARGET_DATASETS),
+        )
         if not thread_id and not args.dry_run:
             raise ObtainerCliError(
                 "DATASET_ACQUISITION_AGENT_THREAD_MISSING",
@@ -670,6 +853,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 _policy_text().format(
                     warehouse=str(warehouse),
                     max_rows_per_dataset=state.get("max_rows_per_dataset") or DEFAULT_MAX_ROWS_PER_DATASET,
+                    max_bytes_per_dataset=state.get("max_bytes_per_dataset") or DEFAULT_MAX_BYTES_PER_DATASET,
                     python_executable=codex.loopai_python_executable(),
                 ),
                 encoding="utf-8",
@@ -679,7 +863,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                     run_dir=run_dir,
                     warehouse=warehouse,
                     prompt_path=prompt_path,
-                    timeout=args.timeout,
+                    timeout=timeout,
                     model=args.model or state.get("provider", {}).get("model_pool_name", ""),
                     thread_id=thread_id,
                     python_executable=python_executable,
@@ -690,7 +874,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             prompt=prompt,
             prov=prov,
             provider_meta=provider_meta,
-            timeout=args.timeout,
+            timeout=timeout,
             thread_id=thread_id,
             dry_run=args.dry_run,
         )
@@ -714,12 +898,16 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 hint="Use start/resume to create worker prompt files.",
                 exit_code=2,
             )
+        timeout = _resolve_timeout(
+            args.timeout,
+            target_datasets=int(state.get("target_datasets") or DEFAULT_TARGET_DATASETS),
+        )
         return _run_worker(
             run_dir=run_dir,
             prompt=prompt_path.read_text(encoding="utf-8"),
             prov=prov,
             provider_meta=provider_meta,
-            timeout=args.timeout,
+            timeout=timeout,
             thread_id=args.thread_id,
         )
 

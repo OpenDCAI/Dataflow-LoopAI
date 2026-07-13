@@ -12,11 +12,26 @@ from .errors import ObtainerCliError
 from .models import utc_now
 
 
+PROVIDER_METHODS = ("huggingface", "kaggle")
+TRUTHY = {"1", "true", "yes", "on"}
+
+
 def _first_non_empty(*values: Any) -> Any:
     for value in values:
         if value is not None and value != "":
             return value
     return None
+
+
+def _env_truthy(name: str) -> bool:
+    return str(os.getenv(name) or "").strip().lower() in TRUTHY
+
+
+def _should_skip_web_deepsearch(*, search_engine: str, tavily_api_key: str) -> bool:
+    engine = str(search_engine or "").strip().lower()
+    if engine == "duckduckgo" and not tavily_api_key and not _env_truthy("OBTAINER_SEARCHAGENT_ALLOW_DUCKDUCKGO_DEEPSEARCH"):
+        return True
+    return False
 
 
 def _starter_config_candidates(starter_config: str | Path | None = None) -> list[Path]:
@@ -418,6 +433,61 @@ def _flatten_kaggle_candidates(search_results: dict[str, list[dict[str, Any]]]) 
     return candidates
 
 
+def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        source = str(candidate.get("source") or candidate.get("download", {}).get("method") or "")
+        dataset_id = str(candidate.get("dataset_id") or candidate.get("url") or "")
+        key = (source, dataset_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+async def _search_provider_methods(
+    *,
+    methods: list[str],
+    hf_keywords: list[str],
+    kaggle_keywords: list[str],
+    max_results_per_source: int,
+    kaggle_username: str,
+    kaggle_key: str,
+    fallback_reason: str = "",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    candidates: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for method in methods:
+        if method == "huggingface":
+            try:
+                hf_manager = _make_hf_manager()
+                hf_results = await hf_manager.search_datasets(hf_keywords, max_results=max_results_per_source)
+                rows = _flatten_hf_candidates(hf_results)
+                if fallback_reason:
+                    for row in rows:
+                        row["fallback_reason"] = fallback_reason
+                candidates.extend(rows)
+            except Exception as exc:
+                errors.append({"method": method, "error": str(exc), "fallback_reason": fallback_reason or None})
+        elif method == "kaggle":
+            try:
+                kaggle_manager = _make_kaggle_manager(
+                    kaggle_username=kaggle_username,
+                    kaggle_key=kaggle_key,
+                )
+                kaggle_results = await kaggle_manager.search_datasets(kaggle_keywords, max_results=max_results_per_source)
+                rows = _flatten_kaggle_candidates(kaggle_results)
+                if fallback_reason:
+                    for row in rows:
+                        row["fallback_reason"] = fallback_reason
+                candidates.extend(rows)
+            except Exception as exc:
+                errors.append({"method": method, "error": str(exc), "fallback_reason": fallback_reason or None})
+    return candidates, errors
+
+
 async def _search_web_for_deepsearch(
     *,
     query: str,
@@ -437,6 +507,8 @@ async def _search_web_for_deepsearch(
         urls = _extract_urls_from_text(search_results, limit=max_urls)
     if urls or search_engine.lower() != "duckduckgo":
         return search_results, urls[:max_urls]
+    if not _env_truthy("OBTAINER_SEARCHAGENT_DDGS_FALLBACK"):
+        return search_results, []
 
     try:
         from ddgs import DDGS
@@ -603,6 +675,8 @@ async def _search_single_task(
 
     deepsearch_result: dict[str, Any] = {
         "enabled": deepsearch,
+        "skipped": False,
+        "skip_reason": "",
         "queries": [],
         "urls": [],
         "pages": [],
@@ -611,7 +685,12 @@ async def _search_single_task(
         "derived_keywords": [],
         "errors": [],
     }
-    if deepsearch:
+    if deepsearch and _should_skip_web_deepsearch(search_engine=search_engine, tavily_api_key=tavily_api_key):
+        deepsearch_result.update({
+            "skipped": True,
+            "skip_reason": "duckduckgo_deepsearch_disabled_without_tavily",
+        })
+    elif deepsearch:
         deepsearch_result = await _run_deepsearch(
             objective=objective,
             query_text=query_text,
@@ -635,53 +714,67 @@ async def _search_single_task(
         limit=12,
     )
 
-    method_agent = _make_method_decision_agent(
-        model_name=model_name,
-        base_url=base_url,
-        api_key=api_key,
-        temperature=temperature,
-        prompt_loader=prompt_loader,
-    )
-    decision = await method_agent.decide_method_order(
-        user_original_request="\n\n".join(
-            part
-            for part in [
-                query_text,
-                f"Deepsearch summary: {deepsearch_result.get('summary', '')}" if deepsearch_result.get("summary") else "",
-            ]
-            if part
-        ),
-        current_task_objective=objective,
-        search_keywords=enriched_keywords,
-    )
-    method_order = [
-        method
-        for method in decision.get("method_order", ["huggingface", "kaggle"])
-        if method in {"huggingface", "kaggle"}
-    ] or ["huggingface", "kaggle"]
-    hf_keywords = _merge_keywords(decision.get("keywords_for_hf"), enriched_keywords, limit=12)
-
     candidates: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = list(deepsearch_result.get("errors", []))
+    try:
+        method_agent = _make_method_decision_agent(
+            model_name=model_name,
+            base_url=base_url,
+            api_key=api_key,
+            temperature=temperature,
+            prompt_loader=prompt_loader,
+        )
+        decision = await method_agent.decide_method_order(
+            user_original_request="\n\n".join(
+                part
+                for part in [
+                    query_text,
+                    f"Deepsearch summary: {deepsearch_result.get('summary', '')}" if deepsearch_result.get("summary") else "",
+                ]
+                if part
+            ),
+            current_task_objective=objective,
+            search_keywords=enriched_keywords,
+        )
+    except Exception as exc:
+        decision = {
+            "method_order": list(PROVIDER_METHODS),
+            "keywords_for_hf": enriched_keywords,
+            "reasoning": "fallback: method decision failed; using provider search order",
+        }
+        errors.append({"stage": "method_decision", "error": str(exc)})
+    method_order = [
+        method
+        for method in decision.get("method_order", list(PROVIDER_METHODS))
+        if method in PROVIDER_METHODS
+    ] or list(PROVIDER_METHODS)
+    hf_keywords = _merge_keywords(decision.get("keywords_for_hf"), enriched_keywords, limit=12)
+    provider_candidates, provider_errors = await _search_provider_methods(
+        methods=method_order,
+        hf_keywords=hf_keywords,
+        kaggle_keywords=enriched_keywords,
+        max_results_per_source=max_results_per_source,
+        kaggle_username=kaggle_username,
+        kaggle_key=kaggle_key,
+    )
+    candidates.extend(provider_candidates)
+    errors.extend(provider_errors)
 
-    for method in method_order:
-        if method == "huggingface":
-            try:
-                hf_manager = _make_hf_manager()
-                hf_results = await hf_manager.search_datasets(hf_keywords, max_results=max_results_per_source)
-                candidates.extend(_flatten_hf_candidates(hf_results))
-            except Exception as exc:
-                errors.append({"method": method, "error": str(exc)})
-        elif method == "kaggle":
-            try:
-                kaggle_manager = _make_kaggle_manager(
-                    kaggle_username=kaggle_username,
-                    kaggle_key=kaggle_key,
-                )
-                kaggle_results = await kaggle_manager.search_datasets(enriched_keywords, max_results=max_results_per_source)
-                candidates.extend(_flatten_kaggle_candidates(kaggle_results))
-            except Exception as exc:
-                errors.append({"method": method, "error": str(exc)})
+    missing_provider_methods = [method for method in PROVIDER_METHODS if method not in set(method_order)]
+    if missing_provider_methods and not candidates:
+        fallback_candidates, fallback_errors = await _search_provider_methods(
+            methods=missing_provider_methods,
+            hf_keywords=hf_keywords,
+            kaggle_keywords=enriched_keywords,
+            max_results_per_source=max_results_per_source,
+            kaggle_username=kaggle_username,
+            kaggle_key=kaggle_key,
+            fallback_reason="no_candidates_from_decision_methods",
+        )
+        candidates.extend(fallback_candidates)
+        errors.extend(fallback_errors)
+
+    candidates = _dedupe_candidates(candidates)
 
     for candidate in candidates:
         if task_domain:

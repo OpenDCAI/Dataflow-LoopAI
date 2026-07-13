@@ -111,8 +111,8 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-
   --keywords "program repair dataset, buggy fixed code pairs, Python SyntaxError fix, runtime exception repair, assertion failure repair" \
   --target-datasets 8 \
   --max-rows-per-dataset 100000 \
+  --max-bytes-per-dataset 2147483648 \
   --discovery-mode auto \
-  --model deepseek-codex \
   --json
 ```
 
@@ -130,19 +130,22 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent resume \
   --run ./outputs/acquisition_run \
   --message "Remove unrelated datasets from the filtered manifest, then continue ingest." \
-  --model deepseek-codex \
   --json
 ```
 
+默认不要传 `--model`；worker 会从 Starter 模型池读取配置好的 Codex 默认模型。
+只有用户明确要求本次覆盖模型时才使用 `--model`。
+
 Worker 内部策略会要求：先把报告解析成明确搜集意图，候选列表先与原始需求
-校对并写 rejections，再下载；单数据集最多 100000 行；下载后规范 JSONL；
+校对并写 rejections，再下载；单数据集最多 100000 行，且本地 JSONL
+输出默认最多 2GiB；下载后规范 JSONL；
 入湖必须走 DataMixer `ingest` 或 `agent-ingest`；最终写 `final_report.json`。
 
 底层 SearchAgent 与下载命令仍保留为采集桥，但只供 worker 内部调用或人工调试。
 外层 Codex 在正常工作流中不要创建 task JSON、不要直接调用 `searchagent`，也不要直接调用 `download manifest`。
 
 检查 `searchagent_manifest.json` 后，先剔除不相关数据集并写 filtered manifest
-和 rejection report，再下载候选数据集。采集桥对单个数据集最多写出 100000 行：
+和 rejection report，再下载候选数据集。采集桥对单个数据集最多写出 100000 行和 2GiB 本地 JSONL：
 
 ```bash
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent status \
@@ -150,7 +153,7 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-
   --json
 ```
 
-worker 内部的 `download manifest` 会强制执行单数据集 100000 行上限；即使传 `--max-rows 0` 或更大的值，也会按该上限写出。生产 SFT 的最终规模、配比和出湖必须继续通过 DataMixer recipe 完成，不能把下载阶段的多个文件拼接为最终训练集。
+worker 内部的 `download manifest` 会强制执行单数据集 100000 行上限和 2GiB 输出文件上限；即使传 `--max-rows 0`、更大的行数，或过大的 `--max-bytes-per-dataset`，也会按安全上限写出。达到字节上限时会中断当前数据集下载、保留已写出的部分 JSONL，并在结果里报告 `truncated`、`truncated_reason`、`rows_written` 和 `bytes_written`。生产 SFT 的最终规模、配比和出湖必须继续通过 DataMixer recipe 完成，不能把下载阶段的多个文件拼接为最终训练集。
 
 ## 4. 入湖
 
@@ -209,7 +212,6 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse decontaminate --agai
 
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataflow agent-run \
   --target "score GSM8K answer-focused SFT rows and keep high-quality rows" \
-  --model deepseek-codex \
   --dataset math_sft \
   --trial-rows 20 \
   --expected-outputs math_answer_quality \
@@ -243,8 +245,7 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse sft-export-agent sta
   --analysis-report ./outputs/analyzer_report.md \
   --format alpaca \
   --target-records 100000 \
-  --out ./outputs/code_failure_repair_sft_v1/export \
-  --model deepseek-codex
+  --out ./outputs/code_failure_repair_sft_v1/export
 ```
 
 `start` 默认把内部 Codex SDK worker 放到后台运行，立即返回 PID、日志路径
@@ -262,9 +263,11 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse sft-export-agent sta
 ```bash
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse sft-export-agent resume \
   --run ./outputs/code_failure_repair_sft_v1 \
-  --message "Remove buckets whose output falls back to text, then re-export." \
-  --model deepseek-codex
+  --message "Remove buckets whose output falls back to text, then re-export."
 ```
+
+默认不要传 `--model`；worker 会从 Starter 模型池读取配置好的 Codex 默认模型。
+只有用户明确要求本次覆盖模型时才使用 `--model`。
 
 `resume` 同样默认后台运行；外层 Codex 用 `status` 轮询，不需要长时间占住
 上下文。

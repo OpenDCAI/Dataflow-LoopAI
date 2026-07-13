@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .datamixer_adapter import datamixer_argv_from_lake, start_background_auto_embed
 from .dataset_acquisition_agent import run_agent as run_dataset_acquisition_agent
-from .download import MAX_ROWS_PER_DATASET, download_manifest
+from .download import MAX_BYTES_PER_DATASET, MAX_ROWS_PER_DATASET, download_manifest
 from .errors import ObtainerCliError
 from .events import emit_obtainer_event, get_obtainer_event_writer
 from .lake_manager import current_lake_pointer, delete_lake_pointer, load_lake_pointer, scan_lake_candidates
@@ -118,6 +118,8 @@ def _is_monitor_mutating_datamixer_command(key: tuple[str, ...]) -> bool:
         ("index", "build"),
         ("recipe", "export"),
         ("snapshot", "create"),
+        ("contam", "add"),
+        ("decontaminate",),
     }
 
 
@@ -408,7 +410,18 @@ def build_parser() -> argparse.ArgumentParser:
     download_manifest_cmd.add_argument("--output-root", default="./outputs/downloads")
     download_manifest_cmd.add_argument("--limit", type=int, default=0)
     download_manifest_cmd.add_argument("--split", default="train")
-    download_manifest_cmd.add_argument("--max-rows", type=int, default=MAX_ROWS_PER_DATASET)
+    download_manifest_cmd.add_argument(
+        "--max-rows",
+        type=int,
+        default=MAX_ROWS_PER_DATASET,
+        help="maximum rows to write per dataset; 0 and oversized values are capped",
+    )
+    download_manifest_cmd.add_argument(
+        "--max-bytes-per-dataset",
+        type=int,
+        default=MAX_BYTES_PER_DATASET,
+        help="maximum local JSONL output bytes per dataset; partial files are kept and reported when capped",
+    )
     download_manifest_cmd.add_argument("--streaming", action=argparse.BooleanOptionalAction, default=True)
     download_manifest_cmd.add_argument("--json", action="store_true")
 
@@ -503,6 +516,7 @@ def run(argv: list[str] | None = None) -> int:
                 limit=args.limit,
                 split=args.split,
                 max_rows=args.max_rows,
+                max_bytes_per_dataset=args.max_bytes_per_dataset,
                 streaming=args.streaming,
             )
         elif args.command == "dm":

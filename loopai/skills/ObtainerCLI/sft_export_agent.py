@@ -11,15 +11,16 @@ from pathlib import Path
 from typing import Any
 
 from loopai.agents.Obtainer.datamixer import codex
-from loopai.agents.Obtainer.datamixer.models import ModelPool
 from loopai.utils.model_pool import StarterModelPool
 
 from .errors import ObtainerCliError
 
 
 DEFAULT_TARGET_RECORDS = 100000
+MAX_ACCEPTANCE_REVISIONS = 3
 STATE_FILE = "thread.json"
 STATUS_FILE = "status.json"
+FORBIDDEN_OUTPUT_SOURCES = {"text", "raw_content", "content"}
 
 
 def _json_write(path: Path, payload: dict) -> None:
@@ -136,53 +137,6 @@ def _starter_system_sources(*, model_pool: bool = False) -> list[tuple[str, dict
     return [yaml_item] if _explicit_starter_config_set() else [db_item, yaml_item]
 
 
-def _runtime_provider_options() -> list[dict[str, Any]]:
-    options: list[dict[str, Any]] = []
-
-    def add_option(*, source: str, base_url: Any, model: Any, api_key: Any) -> None:
-        if not base_url or not model:
-            return
-        options.append({
-            "source": source,
-            "base_url": str(base_url),
-            "model": str(model),
-            "api_key": str(api_key or ""),
-            "api_key_source": source if api_key else "empty",
-        })
-
-    add_option(
-        source="env:CODEX",
-        base_url=os.environ.get("CODEX_BASE_URL"),
-        model=os.environ.get("CODEX_MODEL"),
-        api_key=os.environ.get("CODEX_API_KEY"),
-    )
-    add_option(
-        source="env:DEEPSEEK",
-        base_url=os.environ.get("DEEPSEEK_BASE_URL"),
-        model=os.environ.get("DEEPSEEK_MODEL"),
-        api_key=os.environ.get("DEEPSEEK_API_KEY"),
-    )
-
-    for source, system in _starter_system_sources():
-        add_option(
-            source=f"{source}.codex",
-            base_url=system.get("codex_base_url"),
-            model=system.get("codex_model"),
-            api_key=system.get("codex_api_key"),
-        )
-        add_option(
-            source=f"{source}.starter",
-            base_url=system.get("starter_base_url"),
-            model=_first_non_empty(
-                system.get("starter_model_path"),
-                system.get("starter_model_name"),
-            ),
-            api_key=system.get("starter_api_key"),
-        )
-
-    return options
-
-
 def _has_explicit_starter_pool(system: dict[str, Any]) -> bool:
     model_value = system.get("model")
     return (
@@ -196,69 +150,23 @@ def _provider_from_starter_model_pool(model: str | None) -> tuple[dict, dict] | 
         if not _has_explicit_starter_pool(system):
             continue
         pool = StarterModelPool(system)
-        provider = pool.resolve_proxy_provider(model, tier=pool.default_tier)
+        requested_model = model or _first_non_empty(
+            system.get("codex_model_pool_name"),
+            system.get("codex_model_name"),
+            system.get("codex_model"),
+        )
+        provider = pool.resolve_proxy_provider(
+            requested_model,
+            tier=None if requested_model else pool.default_tier,
+        )
         if provider is None:
             continue
         return provider.as_provider(), {
             **provider.meta(),
             "source": source,
-            "requested_model": model or "",
+            "requested_model": requested_model or "",
         }
     return None
-
-
-def _provider_from_runtime(model: str | None) -> tuple[dict, dict] | None:
-    pooled = _provider_from_starter_model_pool(model)
-    if pooled is not None:
-        return pooled
-
-    options = _runtime_provider_options()
-    if model:
-        for option in options:
-            if option["model"] == model:
-                prov = {
-                    "base_url": option["base_url"],
-                    "api_key": option["api_key"],
-                    "model": option["model"],
-                }
-                return prov, {
-                    "source": option["source"],
-                    "requested_model": model,
-                    "model_pool_name": model,
-                    "base_url": option["base_url"],
-                    "model": option["model"],
-                    "api_key_source": option["api_key_source"],
-                }
-        for option in options:
-            prov = {
-                "base_url": option["base_url"],
-                "api_key": option["api_key"],
-                "model": model,
-            }
-            return prov, {
-                "source": f"{option['source']}:requested_model",
-                "requested_model": model,
-                "model_pool_name": model,
-                "base_url": option["base_url"],
-                "model": model,
-                "api_key_source": option["api_key_source"],
-            }
-        return None
-
-    if not options:
-        return None
-    option = options[0]
-    prov = {
-        "base_url": option["base_url"],
-        "api_key": option["api_key"],
-        "model": option["model"],
-    }
-    return prov, {
-        "source": option["source"],
-        "base_url": option["base_url"],
-        "model": option["model"],
-        "api_key_source": option["api_key_source"],
-    }
 
 
 def _resolve_provider(root: Path, model: str | None) -> tuple[dict, dict]:
@@ -267,43 +175,22 @@ def _resolve_provider(root: Path, model: str | None) -> tuple[dict, dict]:
         return pooled
 
     if model:
-        try:
-            spec = ModelPool(root).get(model)
-        except KeyError:
-            runtime = _provider_from_runtime(model)
-            if runtime is not None:
-                return runtime
-        else:
-            prov = codex.provider_from_model(spec)
-            return prov, {
-                "source": "model_pool",
-                "model_pool_name": model,
-                "base_url": prov["base_url"],
-                "model": prov["model"],
-                "api_key_source": "model_pool",
-            }
-    else:
-        runtime = _provider_from_runtime(None)
-        if runtime is not None:
-            return runtime
-
-    if model:
         raise ObtainerCliError(
             "OBTAINERCLI_MODEL_NOT_FOUND",
-            f"model {model!r} is not registered in this warehouse model pool or runtime config",
+            f"model {model!r} is not registered in Starter model pool",
             hint=(
-                "Register it with `dm model add`, or set CODEX_BASE_URL/CODEX_MODEL, "
-                "or configure system.codex_* / system.starter_* in starter.yaml."
+                "Register it in system.model.pool and select the Codex default "
+                "with system.codex_model/codex_model_name/codex_model_pool_name."
             ),
             exit_code=2,
         )
     else:
         raise ObtainerCliError(
             "OBTAINERCLI_MODEL_REQUIRED",
-            "ObtainerCLI worker requires a model provider",
+            "ObtainerCLI worker requires a Starter model pool provider",
             hint=(
-                "Register a model with `dm model add`, export CODEX_BASE_URL/CODEX_MODEL, "
-                "or configure system.codex_* / system.starter_* in starter.yaml."
+                "Configure system.model.pool in Starter and set the Codex default "
+                "with system.codex_model/codex_model_name/codex_model_pool_name."
             ),
             exit_code=2,
         )
@@ -364,6 +251,34 @@ Hard rules:
 13. If validation fails, do not mark ok=true. Patch the recipe, normalize data,
     exclude invalid buckets, or write a blocker final_report with exact reasons.
 14. Do not read or print secret/key files.
+
+Allowed DataMixer CLI examples:
+
+- Status and schema discovery:
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} status --json`
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} dataset list --json`
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} dataset show <dataset_name_or_id> --json`
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} columns --json`
+
+- Sample inspection:
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} query --dataset <dataset_name_or_id> --limit 5 --json`
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} query --dataset <dataset_name_or_id> --columns sample_id,dataset_id,domain,lang,n_tokens --limit 20 --json`
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} query --filter "domain='finance'" --limit 20 --json`
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} sample show <sample_id> --content --json`
+
+- Recipe workflow:
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} recipe validate <recipe.yaml> --json`
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} recipe plan <recipe.yaml> --json`
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} recipe preview <recipe.yaml> --per-bucket 3 --json`
+  `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} recipe export <recipe.yaml> --out <export_dir> --snapshot --json`
+
+Important CLI constraints:
+
+- `query` does not accept positional SQL. Do not run `query "SELECT ..."`.
+- Use `--filter`, `--dataset`, `--columns`, and `--limit` for query selection.
+- Put `--json` at the end or before the subcommand; both are accepted.
+- Keep inspection outputs small with `--limit`; inspect full content only for
+  selected samples via `sample show <sample_id> --content --json`.
 """
 
 
@@ -449,7 +364,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     start.add_argument("--run", required=True, help="run directory for worker state and artifacts")
     start.add_argument("--analysis-report", action="append", default=[])
     start.add_argument("--format", default="alpaca", choices=["alpaca"])
-    start.add_argument("--target-records", type=int, default=DEFAULT_TARGET_RECORDS)
+    start.add_argument("--target-records", type=int, default=None)
     start.add_argument("--out", default="")
     start.add_argument("--model", default="")
     start.add_argument("--timeout", type=int, default=1800)
@@ -554,8 +469,17 @@ def _spawn_background(
     if node_bin_dir:
         cmd.extend(["--node-bin-dir", node_bin_dir])
     env = os.environ.copy()
-    env.pop("CODEX_THREAD_ID", None)
-    env.pop("CODEX_USE_PROJECT_CONFIG", None)
+    for key in (
+        "CODEX_THREAD_ID",
+        "CODEX_USE_PROJECT_CONFIG",
+        "CODEX_API_KEY",
+        "CODEX_BASE_URL",
+        "CODEX_MODEL",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "DEEPSEEK_MODEL",
+    ):
+        env.pop(key, None)
     python_executable = codex.loopai_python_executable()
     env["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
     env["PATH"] = codex.runner_process_path(python_executable, env.get("PATH"))
@@ -628,6 +552,232 @@ def _save_initial_state(
     })
 
 
+def _field_sources(field_spec: Any) -> list[str]:
+    if not isinstance(field_spec, dict):
+        return []
+    sources = field_spec.get("sources")
+    if isinstance(sources, str):
+        return [sources]
+    if isinstance(sources, list):
+        return [str(item) for item in sources if item is not None]
+    return []
+
+
+def _validate_export_rows(export_dir: Path, target_records: int | None) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    jsonl_files = sorted(export_dir.glob("*.jsonl"))
+    if not jsonl_files:
+        return [{
+            "code": "EXPORT_JSONL_MISSING",
+            "message": f"no JSONL shard files found under {export_dir}",
+        }]
+    row_count = 0
+    for file_path in jsonl_files:
+        with file_path.open("r", encoding="utf-8") as fh:
+            for line_no, line in enumerate(fh, 1):
+                row_count += 1
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    issues.append({
+                        "code": "EXPORT_JSONL_INVALID",
+                        "file": str(file_path),
+                        "line": line_no,
+                        "message": str(exc),
+                    })
+                    continue
+                keys = set(row.keys()) if isinstance(row, dict) else set()
+                if keys != {"instruction", "input", "output"}:
+                    issues.append({
+                        "code": "EXPORT_ROW_KEYS_INVALID",
+                        "file": str(file_path),
+                        "line": line_no,
+                        "keys": sorted(keys),
+                        "message": "row keys must be exactly instruction/input/output",
+                    })
+                instruction = row.get("instruction") if isinstance(row, dict) else None
+                input_value = row.get("input") if isinstance(row, dict) else None
+                output = row.get("output") if isinstance(row, dict) else None
+                if not isinstance(instruction, str) or not instruction.strip():
+                    issues.append({
+                        "code": "EXPORT_INSTRUCTION_EMPTY",
+                        "file": str(file_path),
+                        "line": line_no,
+                        "message": "instruction must be a non-empty string",
+                    })
+                if not isinstance(input_value, str):
+                    issues.append({
+                        "code": "EXPORT_INPUT_NOT_STRING",
+                        "file": str(file_path),
+                        "line": line_no,
+                        "message": "input must be a string",
+                    })
+                if not isinstance(output, str) or not output.strip():
+                    issues.append({
+                        "code": "EXPORT_OUTPUT_EMPTY",
+                        "file": str(file_path),
+                        "line": line_no,
+                        "message": "output must be a non-empty string",
+                    })
+                if isinstance(instruction, str) and instruction == output:
+                    issues.append({
+                        "code": "EXPORT_INSTRUCTION_EQUALS_OUTPUT",
+                        "file": str(file_path),
+                        "line": line_no,
+                        "message": "instruction must not equal output",
+                    })
+    if target_records and row_count != target_records:
+        issues.append({
+            "code": "EXPORT_ROW_COUNT_MISMATCH",
+            "expected": target_records,
+            "actual": row_count,
+            "message": "exported row count does not match target_records",
+        })
+    return issues
+
+
+def _validate_manifest_sources(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    recipe = manifest.get("recipe") if isinstance(manifest, dict) else None
+    if isinstance(recipe, dict) and isinstance(recipe.get("recipe"), dict):
+        recipe = recipe["recipe"]
+    if not isinstance(recipe, dict):
+        return [{
+            "code": "MANIFEST_RECIPE_MISSING",
+            "message": "manifest is missing embedded recipe",
+        }]
+
+    global_fields = (
+        recipe.get("export", {}).get("schema", {}).get("fields", {})
+        if isinstance(recipe.get("export"), dict) else {}
+    )
+    global_output_sources = _field_sources(global_fields.get("output"))
+    global_forbidden = sorted(set(global_output_sources) & FORBIDDEN_OUTPUT_SOURCES)
+    if global_forbidden:
+        issues.append({
+            "code": "GLOBAL_OUTPUT_SOURCE_FORBIDDEN",
+            "field": "export.schema.fields.output.sources",
+            "sources": global_output_sources,
+            "forbidden_sources": global_forbidden,
+            "message": "global output.sources contains forbidden whole-text fallback sources",
+        })
+
+    buckets = recipe.get("buckets")
+    if not isinstance(buckets, list) or not buckets:
+        issues.append({
+            "code": "RECIPE_BUCKETS_MISSING",
+            "message": "recipe must contain at least one bucket",
+        })
+        return issues
+
+    for bucket in buckets:
+        if not isinstance(bucket, dict):
+            continue
+        fields = (
+            bucket.get("export", {}).get("schema", {}).get("fields", {})
+            if isinstance(bucket.get("export"), dict) else {}
+        )
+        output_sources = _field_sources(fields.get("output"))
+        forbidden = sorted(set(output_sources) & FORBIDDEN_OUTPUT_SOURCES)
+        if forbidden:
+            issues.append({
+                "code": "BUCKET_OUTPUT_SOURCE_FORBIDDEN",
+                "bucket": bucket.get("name"),
+                "filter": bucket.get("filter"),
+                "field": "export.schema.fields.output.sources",
+                "sources": output_sources,
+                "forbidden_sources": forbidden,
+                "message": "bucket output.sources contains forbidden whole-text fallback sources",
+            })
+    return issues
+
+
+def _acceptance_check(run_dir: Path) -> dict[str, Any]:
+    state = _json_read(run_dir / STATE_FILE)
+    target_records = state.get("target_records") if isinstance(state.get("target_records"), int) else None
+    final_report_path = run_dir / "final_report.json"
+    final_report = _json_read(final_report_path)
+    issues: list[dict[str, Any]] = []
+    if not final_report:
+        issues.append({
+            "code": "FINAL_REPORT_MISSING",
+            "message": f"final_report.json is missing at {final_report_path}",
+        })
+    elif final_report.get("ok") is not True:
+        issues.append({
+            "code": "FINAL_REPORT_NOT_OK",
+            "message": "final_report.json must set ok=true after successful validation",
+            "final_report_ok": final_report.get("ok"),
+            "blockers": final_report.get("blockers") or final_report.get("blocks"),
+        })
+
+    export_path = _first_non_empty(final_report.get("export_path"), state.get("export_out"))
+    export_dir = Path(export_path).expanduser() if export_path else (run_dir / "export")
+    manifest_path = export_dir / "manifest.json"
+    manifest = _json_read(manifest_path)
+    if not manifest:
+        issues.append({
+            "code": "MANIFEST_MISSING",
+            "message": f"export manifest is missing at {manifest_path}",
+        })
+    else:
+        for required in ("snapshot_id", "dataset_digest", "recipe_fingerprint", "export_schema"):
+            if not manifest.get(required):
+                issues.append({
+                    "code": "MANIFEST_FIELD_MISSING",
+                    "field": required,
+                    "message": f"manifest is missing {required}",
+                })
+        issues.extend(_validate_manifest_sources(manifest))
+
+    if export_dir.exists():
+        issues.extend(_validate_export_rows(export_dir, target_records))
+    else:
+        issues.append({
+            "code": "EXPORT_DIR_MISSING",
+            "message": f"export directory is missing at {export_dir}",
+        })
+
+    return {
+        "ok": not issues,
+        "checked_at": time.time(),
+        "issues": issues,
+        "final_report": str(final_report_path),
+        "export_path": str(export_dir),
+        "manifest_path": str(manifest_path),
+    }
+
+
+def _build_acceptance_feedback(run_dir: Path, acceptance: dict[str, Any], attempt: int) -> str:
+    issues = acceptance.get("issues", [])
+    issues_text = json.dumps(issues, ensure_ascii=False, indent=2)
+    return f"""The outer SFT export acceptance gate rejected your previous submission.
+
+You must revise the existing recipe/export/final_report in this same run directory:
+{run_dir}
+
+Do not just mark ok=true. Fix the exact issues below, rerun the required DataMixer
+commands, regenerate the export with `recipe export --snapshot`, and then rewrite
+final_report.json with the new validation evidence.
+
+Acceptance attempt: {attempt}/{MAX_ACCEPTANCE_REVISIONS}
+
+Rejected issues:
+{issues_text}
+
+Important requirements:
+- If a bucket output source uses forbidden whole-text fallback fields
+  (`text`, `raw_content`, or `content`), inspect that dataset and choose a real
+  answer/response/solution/result field. If no such field exists, remove that
+  bucket and replace it with a valid dataset/bucket.
+- Preserve the requested target record count when enough valid samples exist.
+- Final JSONL rows must contain exactly instruction/input/output.
+- Manifest must include snapshot_id, dataset_digest, recipe_fingerprint, and
+  export_schema.
+- Return only after the outer acceptance gate would pass.
+"""
+
+
 def _run_worker(
     *,
     run_dir: Path,
@@ -668,45 +818,113 @@ def _run_worker(
         "prompt_path": str(prompt_path),
         "thread_id": thread_id or None,
     })
-    try:
-        result = codex.run_via_sdk(
-            prompt,
-            prov,
-            cwd=str(_workspace()),
-            timeout=timeout,
-            thread_id=thread_id or None,
+    current_prompt = prompt
+    current_thread_id = thread_id or None
+    result: dict[str, Any] = {}
+    acceptance: dict[str, Any] = {"ok": False, "issues": []}
+    for attempt_index in range(MAX_ACCEPTANCE_REVISIONS + 1):
+        try:
+            result = codex.run_via_sdk(
+                current_prompt,
+                prov,
+                cwd=str(_workspace()),
+                timeout=timeout,
+                thread_id=current_thread_id,
+            )
+        except Exception as exc:
+            _json_write(run_dir / STATUS_FILE, {
+                "state": "failed",
+                "updated_at": time.time(),
+                "error": str(exc),
+                "thread_id": current_thread_id,
+                "acceptance_attempt": attempt_index,
+            })
+            raise
+
+        state = _json_read(run_dir / STATE_FILE)
+        if result.get("thread_id"):
+            state["thread_id"] = result["thread_id"]
+            current_thread_id = result["thread_id"]
+        state["updated_at"] = time.time()
+        state["provider"] = provider_meta
+        _json_write(run_dir / STATE_FILE, state)
+        _json_write(
+            run_dir / "logs" / f"codex_result_{int(time.time())}_attempt_{attempt_index}.json",
+            result,
         )
-    except Exception as exc:
+
+        acceptance = _acceptance_check(run_dir)
+        acceptance["attempt"] = attempt_index
+        _json_write(run_dir / "acceptance_report.json", acceptance)
+        if acceptance.get("ok"):
+            break
+
+        if attempt_index >= MAX_ACCEPTANCE_REVISIONS:
+            break
+        if not current_thread_id:
+            acceptance.setdefault("issues", []).append({
+                "code": "CODEX_THREAD_MISSING",
+                "message": "cannot request a revision because Codex SDK did not return a thread_id",
+            })
+            break
+
+        feedback = _build_acceptance_feedback(run_dir, acceptance, attempt_index + 1)
+        feedback_path = run_dir / f"acceptance_feedback_{attempt_index + 1}.md"
+        feedback_path.write_text(feedback, encoding="utf-8")
+        _json_write(run_dir / STATUS_FILE, {
+            "state": "running",
+            "updated_at": time.time(),
+            "thread_id": current_thread_id,
+            "acceptance_ok": False,
+            "acceptance_attempt": attempt_index + 1,
+            "acceptance_issues": acceptance.get("issues", []),
+            "feedback_path": str(feedback_path),
+        })
+        current_prompt = feedback
+
+    state = _json_read(run_dir / STATE_FILE)
+    final_report = _json_read(run_dir / "final_report.json")
+    accepted = bool(acceptance.get("ok"))
+    if not accepted:
         _json_write(run_dir / STATUS_FILE, {
             "state": "failed",
             "updated_at": time.time(),
-            "error": str(exc),
-            "thread_id": thread_id or None,
+            "thread_id": state.get("thread_id") or current_thread_id,
+            "final_report": str(run_dir / "final_report.json") if final_report else None,
+            "worker_ok": False,
+            "acceptance_ok": False,
+            "acceptance_issues": acceptance.get("issues", []),
         })
-        raise
+        return {
+            "ok": False,
+            "status": "failed",
+            "run_dir": str(run_dir),
+            "thread_id": state.get("thread_id") or current_thread_id,
+            "final_report": str(run_dir / "final_report.json") if final_report else None,
+            "acceptance": acceptance,
+            "worker_result": {
+                key: value
+                for key, value in result.items()
+                if key != "runner_result"
+            },
+        }
 
-    state = _json_read(run_dir / STATE_FILE)
-    if result.get("thread_id"):
-        state["thread_id"] = result["thread_id"]
-    state["updated_at"] = time.time()
-    state["provider"] = provider_meta
-    _json_write(run_dir / STATE_FILE, state)
-    _json_write(run_dir / "logs" / f"codex_result_{int(time.time())}.json", result)
-
-    final_report = _json_read(run_dir / "final_report.json")
     _json_write(run_dir / STATUS_FILE, {
         "state": "completed",
         "updated_at": time.time(),
-        "thread_id": state.get("thread_id") or thread_id or None,
+        "thread_id": state.get("thread_id") or current_thread_id,
         "final_report": str(run_dir / "final_report.json") if final_report else None,
         "worker_ok": final_report.get("ok") if final_report else None,
+        "acceptance_ok": True,
+        "acceptance_attempt": acceptance.get("attempt"),
     })
     return {
         "ok": True,
         "status": "completed",
         "run_dir": str(run_dir),
-        "thread_id": state.get("thread_id") or thread_id or None,
+        "thread_id": state.get("thread_id") or current_thread_id,
         "final_report": str(run_dir / "final_report.json") if final_report else None,
+        "acceptance": acceptance,
         "worker_result": {
             key: value
             for key, value in result.items()
@@ -740,12 +958,13 @@ def run_agent(argv: list[str], *, root: str) -> dict:
         python_executable = args.python_executable or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
         node_bin_dir = args.node_bin_dir or os.environ.get("LOOPAI_NODE_BIN_DIR", "")
         prov, provider_meta = _resolve_provider(warehouse, args.model or None)
+        target_records = args.target_records if args.target_records is not None else DEFAULT_TARGET_RECORDS
         _save_initial_state(
             run_dir=run_dir,
             warehouse=warehouse,
             analysis_reports=args.analysis_report,
             export_out=export_out,
-            target_records=max(args.target_records, DEFAULT_TARGET_RECORDS),
+            target_records=target_records,
             export_format=args.format,
             provider_meta=provider_meta,
             mode="start",
@@ -757,7 +976,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             run_dir=run_dir,
             analysis_reports=args.analysis_report,
             export_format=args.format,
-            target_records=max(args.target_records, DEFAULT_TARGET_RECORDS),
+            target_records=target_records,
             export_out=export_out,
             extra_message=args.message,
         )

@@ -12,6 +12,7 @@ from .models import canonical_json, utc_now
 
 
 MAX_ROWS_PER_DATASET = 100_000
+MAX_BYTES_PER_DATASET = 2 * 1024 * 1024 * 1024
 
 
 def _ensure_hf_mirror_env() -> None:
@@ -85,14 +86,30 @@ def _normalize_row(row: dict[str, Any], *, dataset_id: str, split: str, row_inde
     return normalized
 
 
-def _write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> int:
+def _write_jsonl(
+    path: Path,
+    rows: Iterable[dict[str, Any]],
+    *,
+    max_bytes: int,
+) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
-    with path.open("w", encoding="utf-8") as handle:
+    bytes_written = 0
+    truncated = False
+    with path.open("wb") as handle:
         for row in rows:
-            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+            if max_bytes > 0 and bytes_written + len(line) > max_bytes:
+                truncated = True
+                break
+            handle.write(line)
             count += 1
-    return count
+            bytes_written += len(line)
+    return {
+        "rows_written": count,
+        "bytes_written": bytes_written,
+        "byte_cap_reached": truncated,
+    }
 
 
 def _load_hf_dataset(dataset_id: str, *, split: str, streaming: bool) -> Any:
@@ -117,6 +134,7 @@ def _export_huggingface_jsonl(
     output_root: Path,
     split: str,
     max_rows: int,
+    max_bytes_per_dataset: int,
     streaming: bool,
 ) -> dict[str, Any]:
     dataset_id = str(
@@ -136,6 +154,7 @@ def _export_huggingface_jsonl(
     _ensure_hf_mirror_env()
     dataset = _load_hf_dataset(dataset_id, split=split, streaming=streaming)
     effective_max_rows = _effective_max_rows(max_rows)
+    effective_max_bytes = _effective_max_bytes(max_bytes_per_dataset)
     selected_rows = islice(dataset, effective_max_rows)
     rows_iter = (
         _normalize_row(dict(row), dataset_id=dataset_id, split=split, row_index=index)
@@ -143,7 +162,8 @@ def _export_huggingface_jsonl(
     )
     dataset_name = _safe_name(dataset_id)
     records_path = output_root / "records" / f"{dataset_name}.{split}.jsonl"
-    rows_written = _write_jsonl(records_path, rows_iter)
+    write_result = _write_jsonl(records_path, rows_iter, max_bytes=effective_max_bytes)
+    rows_written = int(write_result["rows_written"])
     return {
         "ok": rows_written > 0,
         "status": "completed" if rows_written > 0 else "empty",
@@ -151,9 +171,15 @@ def _export_huggingface_jsonl(
         "dataset_id": dataset_id,
         "split": split,
         "rows_written": rows_written,
+        "bytes_written": int(write_result["bytes_written"]),
         "max_rows_requested": max_rows,
         "max_rows_effective": effective_max_rows,
         "row_cap_applied": max_rows == 0 or max_rows > effective_max_rows,
+        "max_bytes_requested": max_bytes_per_dataset,
+        "max_bytes_effective": effective_max_bytes,
+        "byte_cap_applied": bool(write_result["byte_cap_reached"]),
+        "truncated": bool(write_result["byte_cap_reached"]),
+        "truncated_reason": "max_bytes_per_dataset" if write_result["byte_cap_reached"] else "",
         "records_jsonl": str(records_path.resolve()),
         "candidate": item,
     }
@@ -165,6 +191,47 @@ def _effective_max_rows(max_rows: int) -> int:
     return min(max_rows, MAX_ROWS_PER_DATASET)
 
 
+def _effective_max_bytes(max_bytes: int) -> int:
+    if max_bytes <= 0:
+        return MAX_BYTES_PER_DATASET
+    return min(max_bytes, MAX_BYTES_PER_DATASET)
+
+
+def _write_download_progress(
+    path: Path,
+    *,
+    total: int,
+    index: int,
+    item: dict[str, Any] | None,
+    results: list[dict[str, Any]],
+    state: str,
+) -> None:
+    completed = [row for row in results if row.get("ok")]
+    failed = [row for row in results if not row.get("ok")]
+    current_dataset = None
+    if item:
+        current_dataset = str(
+            item.get("dataset_id")
+            or (item.get("download") or {}).get("dataset_id")
+            or ""
+        ) or None
+    payload = {
+        "schema_version": "obtainercli.download.progress.v1",
+        "updated_at": utc_now(),
+        "state": state,
+        "total": total,
+        "processed": len(results),
+        "current_index": index,
+        "current_dataset": current_dataset,
+        "completed": len(completed),
+        "failed": len(failed),
+        "percent": int((len(results) / total) * 100) if total else 100,
+        "last_result": results[-1] if results else None,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def download_manifest(
     *,
     manifest: str | Path,
@@ -172,6 +239,7 @@ def download_manifest(
     limit: int = 0,
     split: str = "train",
     max_rows: int = MAX_ROWS_PER_DATASET,
+    max_bytes_per_dataset: int = MAX_BYTES_PER_DATASET,
     streaming: bool = True,
 ) -> dict[str, Any]:
     if max_rows < 0:
@@ -180,14 +248,23 @@ def download_manifest(
             "download max rows must be zero or positive",
             hint=f"Use a value from 1 to {MAX_ROWS_PER_DATASET}; 0 is capped to the default per-dataset limit.",
         )
+    if max_bytes_per_dataset < 0:
+        raise ObtainerCliError(
+            "INVALID_MAX_BYTES",
+            "download max bytes per dataset must be zero or positive",
+            hint=f"Use a value from 1 to {MAX_BYTES_PER_DATASET}; 0 is capped to the default per-dataset byte limit.",
+        )
 
     payload = _read_manifest(manifest)
     output_path = Path(output_root)
     output_path.mkdir(parents=True, exist_ok=True)
     items = _iter_download_items(payload, limit=limit)
+    progress_path = output_path / "download_progress.json"
 
     results: list[dict[str, Any]] = []
-    for item in items:
+    _write_download_progress(progress_path, total=len(items), index=0, item=None, results=results, state="starting")
+    for index, item in enumerate(items, 1):
+        _write_download_progress(progress_path, total=len(items), index=index, item=item, results=results, state="running")
         source = str(item.get("source") or (item.get("download") or {}).get("method") or "").lower()
         if source == "huggingface":
             try:
@@ -197,6 +274,7 @@ def download_manifest(
                         output_root=output_path,
                         split=split,
                         max_rows=max_rows,
+                        max_bytes_per_dataset=max_bytes_per_dataset,
                         streaming=streaming,
                     )
                 )
@@ -231,8 +309,9 @@ def download_manifest(
                     "dataset_id": item.get("dataset_id"),
                     "error": "unsupported download source",
                     "candidate": item,
-                }
-            )
+                    }
+                )
+        _write_download_progress(progress_path, total=len(items), index=index, item=item, results=results, state="running")
 
     result_path = output_path / "download_results.json"
     completed = [row for row in results if row.get("ok")]
@@ -246,13 +325,25 @@ def download_manifest(
         "max_rows_requested": max_rows,
         "max_rows_effective": _effective_max_rows(max_rows),
         "max_rows_per_dataset": MAX_ROWS_PER_DATASET,
+        "max_bytes_requested": max_bytes_per_dataset,
+        "max_bytes_effective": _effective_max_bytes(max_bytes_per_dataset),
+        "max_bytes_per_dataset": MAX_BYTES_PER_DATASET,
         "requested": len(items),
         "completed": len(completed),
         "results": results,
         "records_jsonl": [row["records_jsonl"] for row in completed if row.get("records_jsonl")],
     }
     result_path.write_text(json.dumps(response, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    _write_download_progress(
+        progress_path,
+        total=len(items),
+        index=len(items),
+        item=items[-1] if items else None,
+        results=results,
+        state=response["status"],
+    )
     return {
         **response,
         "result_path": str(result_path.resolve()),
+        "progress_path": str(progress_path.resolve()),
     }

@@ -10,6 +10,20 @@
             </div>
         </div>
 
+        <div class="section">
+            <div class="section-title">
+                <span>Benchmark</span>
+                <span>{{ formatNumber(benchmarks.count || 0) }} sets</span>
+            </div>
+            <div class="benchmark-list">
+                <div v-for="item in benchmarkSets" :key="item.name" class="benchmark-row">
+                    <span :title="item.name">{{ item.name }}</span>
+                    <strong>{{ formatNumber(item.rows || item.num_texts || 0) }}</strong>
+                </div>
+                <div v-if="benchmarkSets.length === 0" class="empty-line">未注册 benchmark 审查集</div>
+            </div>
+        </div>
+
         <div v-if="embeddingProgress.visible" class="section">
             <div class="section-title">
                 <span>Embedding</span>
@@ -118,6 +132,11 @@ const lakeInitialized = computed(() => {
 
 const summary = computed(() => monitor.value?.summary || {})
 const embedding = computed(() => monitor.value?.embedding || {})
+const benchmarks = computed(() => monitor.value?.benchmarks || { count: 0, total_rows: 0, sets: [] })
+const benchmarkSets = computed(() => {
+    const sets = benchmarks.value?.sets || []
+    return Array.isArray(sets) ? sets.slice(0, 6) : []
+})
 
 const cacheLevel = computed(() => {
     if (!lakeInitialized.value) return 'bad'
@@ -154,6 +173,8 @@ const capabilityCards = computed(() => {
     const warehouse = monitor.value?.config?.warehouse || monitor.value?.lake_root || '未加载'
     const healthStatus = embeddingHealth.value?.status || embedding.value?.probe?.status || 'not_checked'
     const qualityFindings = Number(summary.value.quality_findings || 0)
+    const benchmarkCount = Number(benchmarks.value.count || 0)
+    const benchmarkRows = Number(benchmarks.value.total_rows || 0)
 
     return [
         {
@@ -178,6 +199,13 @@ const capabilityCards = computed(() => {
                 ? 'dataset-acquisition-agent / sft-export-agent'
                 : '命令面未暴露 worker',
             level: coworkerAvailable.value ? 'good' : 'warn'
+        },
+        {
+            key: 'benchmark',
+            label: 'Benchmark',
+            value: `${formatNumber(benchmarkCount)} sets`,
+            detail: `${formatNumber(benchmarkRows)} rows guarded`,
+            level: benchmarkCount > 0 ? 'good' : 'warn'
         },
         {
             key: 'quality',
@@ -487,10 +515,34 @@ onBeforeUnmount(() => {
 }
 
 .task-list,
-.stream-list {
+.stream-list,
+.benchmark-list {
     display: flex;
     flex-direction: column;
     gap: 5px;
+}
+
+.benchmark-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 56px;
+    gap: 6px;
+    align-items: center;
+    min-height: 20px;
+    font-size: 11px;
+    color: rgba(45, 45, 45, 0.82);
+
+    span {
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    strong {
+        text-align: right;
+        font-size: 11px;
+        color: rgba(90, 45, 133, 0.88);
+    }
 }
 
 .task-row {

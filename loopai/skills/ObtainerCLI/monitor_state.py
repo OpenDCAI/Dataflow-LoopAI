@@ -39,6 +39,51 @@ def _stat(path: Path) -> dict[str, int | str]:
     }
 
 
+def _directory_signature(path: Path) -> dict[str, Any]:
+    if not path.is_dir():
+        return {"path": str(path), "exists": 0, "files": []}
+    files = []
+    for item in sorted(path.rglob("*")):
+        if not item.is_file():
+            continue
+        stat = item.stat()
+        files.append(
+            {
+                "path": str(item.relative_to(path)),
+                "size": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+            }
+        )
+    return {"path": str(path), "exists": 1, "files": files}
+
+
+def benchmark_monitor_state(warehouse: str | Path) -> dict[str, Any]:
+    root = Path(warehouse).expanduser().resolve()
+    try:
+        from loopai.agents.Obtainer.datamixer import contam
+
+        raw_sets = contam.list_sets(root)
+    except Exception as exc:
+        return {"count": 0, "total_rows": 0, "sets": [], "error": str(exc)}
+    sets = []
+    for item in raw_sets:
+        rows = int(item.get("num_texts") or 0)
+        sets.append(
+            {
+                "name": str(item.get("name") or ""),
+                "rows": rows,
+                "num_texts": rows,
+                "ngram": int(item.get("ngram") or 0),
+                "num_ngrams": int(item.get("num_ngrams") or 0),
+            }
+        )
+    return {
+        "count": len(sets),
+        "total_rows": sum(item["rows"] for item in sets),
+        "sets": sets,
+    }
+
+
 def monitor_signature(warehouse: str | Path) -> dict[str, Any]:
     root = Path(warehouse).expanduser().resolve()
     catalog = root / "catalog.db"
@@ -50,6 +95,7 @@ def monitor_signature(warehouse: str | Path) -> dict[str, Any]:
         "catalog_db": _stat(catalog),
         "catalog_db_wal": _stat(root / "catalog.db-wal"),
         "catalog_db_shm": _stat(root / "catalog.db-shm"),
+        "contam": _directory_signature(root / "contam"),
         "audit": audit,
     }
 
@@ -86,6 +132,8 @@ def _empty_monitor_payload(*, warehouse: Path, lake: str | Path | None = None) -
             "quality_findings": 0,
             "ingest_runs": 0,
             "exports": 0,
+            "benchmarks": 0,
+            "benchmark_rows": 0,
             "embedding_coverage": 0,
             "warnings": 0,
             "health_score": 0,
@@ -105,6 +153,7 @@ def _empty_monitor_payload(*, warehouse: Path, lake: str | Path | None = None) -
             "coverage": 0,
             "probe": {"status": "not_checked"},
         },
+        "benchmarks": benchmark_monitor_state(warehouse),
         "charts": {
             "ingest_trend": [],
             "composition": {"domain": {}, "processing_level": {}, "source_kind": {}, "task_type": {}},
@@ -151,6 +200,16 @@ def _apply_embedding_config(payload: dict[str, Any], config: dict[str, str]) -> 
             "api_key_set": bool(config.get("embedding_api_key") or os.getenv("OBTAINERCLI_EMBED_API_KEY")),
         }
     )
+
+
+def _apply_actual_warehouse(payload: dict[str, Any], warehouse: str | Path) -> None:
+    root = Path(warehouse).expanduser().resolve()
+    payload["warehouse"] = str(root)
+    payload.setdefault("config", {})["warehouse"] = str(root)
+    benchmarks = benchmark_monitor_state(root)
+    payload["benchmarks"] = benchmarks
+    payload.setdefault("summary", {})["benchmarks"] = int(benchmarks.get("count") or 0)
+    payload.setdefault("summary", {})["benchmark_rows"] = int(benchmarks.get("total_rows") or 0)
 
 
 def _sync_incremental_counts(state: dict[str, Any], delta: dict[str, Any] | None = None) -> None:
@@ -204,6 +263,7 @@ def build_lightweight_monitor_payload(*, warehouse: str | Path, lake: str | Path
     root = Path(warehouse).expanduser().resolve()
     payload = _empty_monitor_payload(warehouse=root, lake=lake)
     _apply_embedding_config(payload, _lake_config_values(lake))
+    _apply_actual_warehouse(payload, root)
     warnings: list[dict[str, str]] = []
     catalog = root / "catalog.db"
     counts = {name: 0 for name in TABLES}
@@ -404,12 +464,15 @@ def read_monitor_state(warehouse: str | Path, *, lake: str | Path | None = None)
     except (OSError, json.JSONDecodeError) as exc:
         payload = _empty_monitor_payload(warehouse=root, lake=lake)
         _apply_embedding_config(payload, config)
+        _apply_actual_warehouse(payload, root)
         return _with_cache_metadata(payload, warehouse=root, cache_status="error", stale_reason=str(exc))
     if state is None:
         payload = _empty_monitor_payload(warehouse=root, lake=lake)
         _apply_embedding_config(payload, config)
+        _apply_actual_warehouse(payload, root)
         return _with_cache_metadata(payload, warehouse=root, cache_status="cache_missing", stale_reason="cache_missing")
     _apply_embedding_config(state, config)
+    _apply_actual_warehouse(state, root)
     fresh, reason = is_monitor_state_fresh(root, state)
     if fresh:
         state["cache_status"] = "fresh"
@@ -418,6 +481,7 @@ def read_monitor_state(warehouse: str | Path, *, lake: str | Path | None = None)
         return state
     out = dict(state)
     _apply_embedding_config(out, config)
+    _apply_actual_warehouse(out, root)
     if out.get("cache_status") != "rebuilding":
         out["cache_status"] = "stale"
     out["stale"] = True
@@ -455,6 +519,7 @@ def update_monitor_delta(
     state["summary"] = summary
     state["latest"] = latest
     _sync_incremental_counts(state, effective_delta)
+    _apply_actual_warehouse(state, root)
     state["last_operation_id"] = operation_id
     cache_status = "rebuilding" if trigger_background else "fresh"
     rebuild = state.get("rebuild") if isinstance(state.get("rebuild"), dict) else {}
