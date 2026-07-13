@@ -60,8 +60,11 @@ def _unwrap_state_config(config: dict[str, Any], task_id: str) -> dict[str, Any]
     return state
 
 
-def _serialize_task_runtime(runtime: TaskRuntime) -> dict[str, Any]:
-    return {
+def _serialize_task_runtime(
+    runtime: TaskRuntime,
+    include_state: bool = False,
+) -> dict[str, Any]:
+    payload = {
         "id": runtime.id,
         "task_id": runtime.task_id,
         "node_name": runtime.node_name,
@@ -70,6 +73,9 @@ def _serialize_task_runtime(runtime: TaskRuntime) -> dict[str, Any]:
         "createdAt": runtime.createdAt,
         "updatedAt": runtime.updatedAt,
     }
+    if include_state:
+        payload["state"] = runtime.state
+    return payload
 
 
 def _serialize_task(task: TaskModel) -> dict[str, Any]:
@@ -331,7 +337,7 @@ async def get_latest_task_runtime(
     ).order_by("-updatedAt", "-id").first()
     if not runtime:
         return None
-    return _serialize_task_runtime(runtime)
+    return _serialize_task_runtime(runtime, include_state=True)
 
 
 async def list_task_runtime_history(
@@ -342,7 +348,7 @@ async def list_task_runtime_history(
         task_id=task_id,
         node_name=node_name,
     ).order_by("-updatedAt", "-id")
-    return [_serialize_task_runtime(runtime) for runtime in runtimes]
+    return [_serialize_task_runtime(runtime, include_state=True) for runtime in runtimes]
 
 
 async def list_latest_task_runtimes(task_id: str) -> list[dict[str, Any]]:

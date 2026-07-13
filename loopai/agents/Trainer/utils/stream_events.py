@@ -26,10 +26,25 @@ def get_trainer_context_id(state: dict[str, Any]) -> str:
     return str(context_id)
 
 
+def get_trainer_version_id(state: dict[str, Any]) -> str | None:
+    trainer_state = state.get("trainer", {}) if isinstance(state, dict) else {}
+    version_id = trainer_state.get("trainer_version_id") or trainer_state.get("version_id")
+    return str(version_id) if version_id else None
+
+
+def get_trainer_event_dir(state: dict[str, Any]) -> str | None:
+    trainer_state = state.get("trainer", {}) if isinstance(state, dict) else {}
+    event_dir = trainer_state.get("trainer_output_dir") or trainer_state.get("output_dir")
+    return str(event_dir) if event_dir else None
+
+
 def get_trainer_event_log_path(state: dict[str, Any]) -> str:
-    output_dir = state.get("output_dir") or state.get("trainer", {}).get("output_dir") or "./outputs"
+    event_dir = get_trainer_event_dir(state)
+    if event_dir:
+        return f"{event_dir.rstrip('/')}/{TRAINER_CURRENT}.pkl"
+    output_dir = state.get("output_dir") or "./outputs"
     context_id = get_trainer_context_id(state)
-    return f"{output_dir.rstrip('/')}/{context_id}/{TRAINER_CURRENT}.pkl"
+    return f"{str(output_dir).rstrip('/')}/{context_id}/{TRAINER_CURRENT}.pkl"
 
 
 def build_trainer_success_payload(
@@ -80,12 +95,16 @@ def record_trainer_result(state: dict[str, Any], payload: dict[str, Any]) -> dic
 
 def _persist_trainer_event(state: dict[str, Any], event: StreamEvent) -> None:
     try:
-        output_dir = state.get("output_dir") or state.get("trainer", {}).get("output_dir") or "./outputs"
+        output_dir = state.get("output_dir") or "./outputs"
         context_id = event.context_id or get_trainer_context_id(state)
+        version_id = event.version_id or get_trainer_version_id(state)
+        event.version_id = version_id
         writer = get_event_writer(
             name=TRAINER_CURRENT,
             context_id=context_id,
             log_file_path=output_dir,
+            version_id=version_id,
+            event_dir=get_trainer_event_dir(state),
         )
         writer(event)
         state.setdefault("trainer", {})["trainer_event_log_path"] = str(writer.event_path)
@@ -117,6 +136,7 @@ def emit_trainer_event(
             node=node,
             status=status,
             context_id=get_trainer_context_id(state),
+            version_id=get_trainer_version_id(state),
             error=error,
         )
         _persist_trainer_event(state, event)
@@ -132,6 +152,7 @@ def emit_trainer_event(
         node=node,
         status=status,
         context_id=get_trainer_context_id(state),
+        version_id=get_trainer_version_id(state),
         error=error,
     )
     payload = event.json()

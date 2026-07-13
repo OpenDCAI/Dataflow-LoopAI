@@ -2,10 +2,11 @@
 import os
 import json
 import time
+import threading
 from pathlib import Path
 from typing import List, Dict, Any
 from loopai.schema.events import StreamEvent
-from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
 from loopai.common.prompts.prompt_loader import PromptLoader
 from langchain_openai import ChatOpenAI
 from loopai.schema.states import LoopAIState
@@ -23,11 +24,26 @@ def _analyzer(state: LoopAIState) -> dict:
 
 def _ensure_analyzer_outdir(state: LoopAIState) -> str:
     cfg = _analyzer(state)
+    runtime_outdir = cfg.get("runtime_output_dir")
+    if runtime_outdir:
+        outdir = Path(runtime_outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        return str(outdir)
     base_outdir = Path(cfg.get("output_dir") or state.get("output_dir") or "./outputs")
     task_id = state.get("task_id") or "default_task"
     outdir = base_outdir / task_id / "analyzer"
     outdir.mkdir(parents=True, exist_ok=True)
     return str(outdir)
+
+def _runtime_api_key(cfg: dict) -> str:
+    return (
+        cfg.get("analyze_api_key")
+        or os.getenv("_LOOPAI_ANALYZER_RUNTIME_API_KEY")
+        or os.getenv("ANALYZER_API_KEY")
+        or os.getenv("analyzer_api_key")
+        or os.getenv("DEEPSEEK_API_KEY")
+        or "EMPTY"
+    )
 
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
@@ -37,12 +53,49 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     cfg = _analyzer(state)
     model = ChatOpenAI(
         model=cfg['analyze_model_path'],
-        api_key=cfg['analyze_api_key'],
+        api_key=_runtime_api_key(cfg),
         base_url=cfg['analyze_base_url'],
         temperature=cfg.get('analyze_temperature', 0.0),
         top_p=cfg.get('analyze_top_p', 0.95),
     )
     return model
+
+
+def _batch_one_with_heartbeat(
+    llm: ChatOpenAI,
+    prompt: str,
+    *,
+    emit,
+    message: str,
+    start_progress: float,
+    end_progress: float,
+    data: Dict[str, Any] | None = None,
+) -> str:
+    stop_event = threading.Event()
+
+    def _heartbeat() -> None:
+        tick = 0
+        while not stop_event.wait(1.0):
+            tick += 1
+            wait_fraction = min(0.85, tick / 20)
+            progress = start_progress + (end_progress - start_progress) * wait_fraction
+            emit(
+                message,
+                progress=round(progress, 3),
+                data={
+                    **(data or {}),
+                    "waiting_seconds": tick,
+                    "heartbeat": True,
+                },
+            )
+
+    heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+    heartbeat_thread.start()
+    try:
+        return llm.batch([prompt])[0].content
+    finally:
+        stop_event.set()
+        heartbeat_thread.join(timeout=0.2)
 
 
 def pick_failure_examples(oj_records: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
@@ -166,7 +219,7 @@ def analyze_result_node(state: LoopAIState):
     def _emit(message, *, progress=None, data=None):
         if writer:
             writer(StreamEvent(
-                current="AnalyzerAgent.analyze_result_node",
+                current="analyzer.analyze_result",
                 message=message,
                 progress=progress,
                 data=data
@@ -232,7 +285,18 @@ def analyze_result_node(state: LoopAIState):
        },
     )
     # ChatOpenAI 支持 .batch，返回 BaseMessage，取第一个的 content
-    response = llm.batch([prompt])[0].content
+    response = _batch_one_with_heartbeat(
+        llm,
+        prompt,
+        emit=_emit,
+        message="等待模型生成分析",
+        start_progress=0.60,
+        end_progress=0.75,
+        data={
+            "model": cfg.get("analyze_model_path"),
+            "base_url": cfg.get("analyze_base_url"),
+        },
+    )
     _emit(
         "模型分析生成完成",
         progress=0.75,

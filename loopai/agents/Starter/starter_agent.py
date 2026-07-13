@@ -13,7 +13,7 @@ from loopai.schema.events import StreamEvent
 from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.agents.Configer import ConfigerAgent
 from loopai.agents.Judger import JudgerAgent
-from loopai.agents.Analyzer import AnalyzerAgent
+from loopai.skills.Analyzer.analyzer_agent import AnalyzerAgent
 from loopai.agents.Constructor import ConstructorAgent
 from loopai.agents.Trainer import TrainerAgent
 from loopai.agents.WebCrawler import WebCrawlerAgent

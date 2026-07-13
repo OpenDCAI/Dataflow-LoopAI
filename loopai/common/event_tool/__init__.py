@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import pickle
 import uuid
@@ -11,6 +12,7 @@ import logging
 
 from loopai.common.db_tool.runtime import sync_task_runtime_sync
 from loopai.common.db_tool.base import require_db_path
+from loopai.common.db_tool.task import get_task_states_config_sync
 
 
 try:
@@ -75,6 +77,7 @@ class StreamEvent:
     version_id: Optional[str] = None
     node: Optional[str] = None
     status: Optional[str] = None
+    # i.e. task_id
     context_id: Optional[str] = None
     error: Optional[Any] = None
 
@@ -182,10 +185,26 @@ class PickleEventWriter:
         self.version_id = version_id or str(uuid.uuid4())
 
     def __call__(self, payload: StreamEvent | dict[str, Any]) -> StreamEvent:
-        event = _coerce_stream_event(payload)
-        event.node = event.node or self.name
-        if event.context_id is None:
-            event.context_id = self.context_id
+        event = self.set_running(payload)
+        return event
+
+    def set_event(self, payload: StreamEvent | dict[str, Any], status: str = 'running') -> StreamEvent:
+        if self.version_id is None:
+            self.version_id = self.new_version_id()
+        payload = payload or {}
+        if isinstance(payload, dict) and "current" not in payload:
+            event = StreamEvent(
+                current=self.name,
+                progress=payload.get("progress", 1.0 if status in {"failed", "completed"} else None),
+                progress_num=payload.get("progress_num"),
+                total=payload.get("total"),
+                message=payload.get("message"),
+                data=payload.get("data", payload if status == "completed" else None),
+                error=payload.get("error", payload if status == "failed" else None),
+            )
+            event = _coerce_stream_event(event)
+        else:
+            event = _coerce_stream_event(payload)
         if event.version_id and event.version_id != self.version_id:
             logger.warning(
                 "Ignoring mismatched event version_id for %s/%s: event=%s writer=%s",
@@ -194,76 +213,53 @@ class PickleEventWriter:
                 event.version_id,
                 self.version_id,
             )
+        if event.message is None and status == "failed":
+            event.message = "Sub-agent failed."
+        elif event.message is None and status == "completed":
+            event.message = "Sub-agent completed."
+        event.status = status
         event.version_id = self.version_id
-        event.status = event.status or "running"
+        event.node = self.name
+        event.context_id = self.context_id
         self._sync_runtime(status=event.status)
         self._append_event(event)
         return event
 
-    def set_running(self):
-        if self.version_id is None:
-            self.version_id = str(uuid.uuid4())
-        self._sync_runtime(status="running")
-    
-    def set_failed(self, payload: dict[str, Any] | None = None):
-        if self.version_id is None:
-            self.version_id = str(uuid.uuid4())
-        payload = payload or {}
-        self._sync_runtime(status="failed")
-        return self._append_status_event(
-            status="failed",
-            message=payload.get("message", "Sub-agent failed."),
-            data=payload.get("data"),
-            error=payload.get("error", payload),
-        )
-    
-    def set_completed(self, payload: dict[str, Any] | None = None):
-        if self.version_id is None:
-            self.version_id = str(uuid.uuid4())
-        payload = payload or {}
-        self._sync_runtime(status="completed")
-        return self._append_status_event(
-            status="completed",
-            message=payload.get("message", "Sub-agent completed."),
-            data=payload.get("data", payload),
-            error=None,
-        )
+    def set_running(self, payload: dict[str, Any] | None = None):
+        return self.set_event(payload, status="running")
 
-    def _append_status_event(
-        self,
-        *,
-        status: str,
-        message: str,
-        data: Any = None,
-        error: Any = None,
-    ) -> StreamEvent:
-        event = StreamEvent(
-            current=self.name,
-            progress=1.0,
-            message=message,
-            data=data,
-            version_id=self.version_id,
-            node=self.name,
-            status=status,
-            context_id=self.context_id,
-            error=error,
-        )
-        event = _coerce_stream_event(event)
-        self._append_event(event)
-        return event
+    def set_failed(self, payload: dict[str, Any] | None = None):
+        return self.set_event(payload, status="failed")
+
+    def set_completed(self, payload: dict[str, Any] | None = None):
+        return self.set_event(payload, status="completed")
+
+    def refresh_version_id(self):
+        self.version_id = self.new_version_id()
+        return self.version_id
+
+    def new_version_id(self) -> str:
+        return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
     def _sync_runtime(self, *, status: str) -> None:
         try:
             db_path = require_db_path()
+            task_state = self._load_task_state(db_path)
             sync_task_runtime_sync(
                 db_path=db_path,
                 task_id=self.context_id,
                 node_name=self.name,
                 version=self.version_id,
                 status=status,
+                state=task_state,
             )
         except Exception as exc:  # pragma: no cover - runtime sync is best effort
-            logger.warning("Failed to sync task runtime for %s/%s: %s", self.context_id, self.name, exc)
+            logger.warning("Failed to sync task runtime for %s/%s: %s",
+                           self.context_id, self.name, exc)
+
+    def _load_task_state(self, db_path: str) -> str | None:
+        task_state = get_task_states_config_sync(db_path, self.context_id)
+        return json.dumps(task_state.get("config", {}), ensure_ascii=False)
 
     def _append_event(self, event: StreamEvent) -> None:
         self.event_path.parent.mkdir(parents=True, exist_ok=True)
@@ -296,12 +292,16 @@ def get_event_writer(
     log_file_path: str = "./outputs",
     *,
     version_id: str | None = None,
+    event_dir: str | os.PathLike[str] | None = None,
 ) -> PickleEventWriter:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
     version_value = _sanitize_path_component(version_id or str(uuid.uuid4()), "version")
     base_path = Path(log_file_path)
-    event_path = base_path / context_value / agent_name / version_value / f"{agent_name}.pkl"
+    if event_dir is not None:
+        event_path = Path(event_dir) / f"{agent_name}.pkl"
+    else:
+        event_path = base_path / context_value / agent_name / version_value / f"{agent_name}.pkl"
     return PickleEventWriter(
         name=agent_name,
         context_id=context_value,
@@ -316,8 +316,15 @@ def load_stream_events(
     log_file_path: str = "./outputs",
     *,
     version_id: str | None = None,
+    event_dir: str | os.PathLike[str] | None = None,
 ) -> list[StreamEvent]:
-    grouped_events = load_stream_event_groups(name, context_id, log_file_path, version_id=version_id)
+    grouped_events = load_stream_event_groups(
+        name,
+        context_id,
+        log_file_path,
+        version_id=version_id,
+        event_dir=event_dir,
+    )
     flattened_events: list[StreamEvent] = []
     for events in grouped_events.values():
         flattened_events.extend(events)
@@ -331,12 +338,15 @@ def load_stream_event_groups(
     log_file_path: str = "./outputs",
     *,
     version_id: str | None = None,
+    event_dir: str | os.PathLike[str] | None = None,
 ) -> dict[str, list[StreamEvent]]:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
     base_path = Path(log_file_path) / context_value
     event_paths: list[Path] = []
-    if version_id:
+    if event_dir is not None:
+        event_paths.append(Path(event_dir) / f"{agent_name}.pkl")
+    elif version_id:
         version_value = _sanitize_path_component(version_id, "version")
         event_paths.append(base_path / agent_name / version_value / f"{agent_name}.pkl")
     else:
@@ -361,8 +371,18 @@ def dump_stream_events_json(
     log_file_path: str = "./outputs",
     *,
     version_id: str | None = None,
+    event_dir: str | os.PathLike[str] | None = None,
 ) -> list[dict[str, Any]]:
-    return [item.json() for item in load_stream_events(name, context_id, log_file_path, version_id=version_id)]
+    return [
+        item.json()
+        for item in load_stream_events(
+            name,
+            context_id,
+            log_file_path,
+            version_id=version_id,
+            event_dir=event_dir,
+        )
+    ]
 
 
 __all__ = [

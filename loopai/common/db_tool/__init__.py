@@ -2,6 +2,8 @@ from .base import close_db, init_sqlite_db, sqlite_db_session, sqlite_db_url
 from .runtime import (
     create_task_runtime,
     create_task_runtime_sync,
+    get_current_task_runtime,
+    get_current_task_runtime_sync,
     get_latest_task_runtime,
     get_latest_task_runtime_sync,
     list_latest_task_runtimes,
@@ -47,6 +49,8 @@ __all__ = [
     "get_default_states_config_sync",
     "get_default_system_config",
     "get_default_system_config_sync",
+    "get_current_task_runtime",
+    "get_current_task_runtime_sync",
     "get_latest_task_runtime",
     "get_latest_task_runtime_sync",
     "get_task_config",

@@ -23,7 +23,8 @@ Do not use this skill for Judger, Analyzer, data crawling, or broad project refa
 
 ```text
 loopai/skills/Trainer/
-├── __init__.py        # run() / load_events()
+├── __init__.py        # run() / load_events() / analyze_results() / prefill_guide()
+├── results.py         # parses metrics and selects the best checkpoint
 ├── runner.py          # skill entry that calls TrainerAgent
 └── runtime_config.py  # resolves kwargs/env/state/starter.yaml
 
@@ -103,7 +104,9 @@ Useful environment variables:
 
 - `TASK_ID`
 - `DB_PATH`
+- `VERSION_ID`
 - `OUTPUT_DIR`
+- `TRAINER_OUTPUT_DIR`
 - `TRAIN_FRAMEWORK`
 - `TRAIN_DATASET_PATH`
 - `TRAIN_MODEL_PATH`
@@ -124,6 +127,70 @@ Required Trainer fields:
 - `train_input_model_name`
 - `llamafactory_dir` when `train_framework` is `llamafactory`
 
+## Versioned Runtime
+
+Each Trainer run owns one `version_id`.
+
+By default, `run()` generates a fresh UUID. You can override it with:
+
+- `version_id=...`
+- `trainer_version_id=...`
+- `VERSION_ID`
+
+Runtime status is synchronized through `TaskRuntimeItem` with:
+
+```text
+task_id = task_id
+node_name = trainer
+version = trainer_version_id
+status = running | completed | failed
+```
+
+Trainer static files are written under:
+
+```text
+{output_dir}/{task_id}/trainer/{trainer_version_id}/
+```
+
+Important state fields:
+
+- `trainer_version_id`
+- `trainer_output_dir`
+- `trainer_event_log_path`
+- `trainer_training_task_id`
+
+Keep `context_id` as the task id when reading events or runtime state. Use `trainer_version_id` only to distinguish a specific run.
+
+## Prefill Guidance
+
+Use `prefill_guide()` before launching Trainer when the task may not have enough config:
+
+```python
+from loopai.skills.Trainer import prefill_guide
+
+guide = prefill_guide(state, task_type="sft")
+if not guide["ready"]:
+    print(guide["user_required_fields"])
+```
+
+`trainer_prefill_guide` is also written to `state["trainer"]` during runtime resolution.
+
+Fields that usually require user or task-specific input:
+
+- `train_input_dataset_path`
+- `train_input_model_name`
+- `train_input_task_description`
+- `llamafactory_dir`
+
+Fields that Trainer can usually prefill:
+
+- `train_framework`: defaults to `llamafactory`
+- `train_input_config_template_path`: defaults to the bundled SFT YAML template
+- `CUDA_VISIBLE_DEVICES`: defaults to `0`
+- `train_input_use_swanlab`: defaults to `false`
+
+If `guide["user_required_fields"]` is non-empty, ask the user or Configer to fill those fields before starting training. Do not start Trainer only with placeholder paths.
+
 ## Events
 
 TrainerAgent emits structured `StreamEvent` entries with:
@@ -142,8 +209,64 @@ Read persisted events:
 ```python
 from loopai.skills.Trainer import load_events
 
-events = load_events(task_id="trainer_task_001", output_dir="./outputs")
+events = load_events(
+    task_id="trainer_task_001",
+    output_dir="./outputs",
+    version_id="trainer_version_uuid",
+)
 ```
+
+## Result Analysis
+
+Trainer Skill writes core training results back to `state["trainer"]` after a run:
+
+- `trainer_result`
+- `trainer_last_error`
+- `trainer_result_analysis`
+- `trainer_result_summary`
+- `trainer_best_checkpoint`
+- `trainer_best_metric`
+- `trainer_best_checkpoint_path`
+- `update_model_path`
+- `training_checkpoints`
+- `training_step_losses`
+
+Use `analyze_results()` when you need to inspect training artifacts without starting a new training run:
+
+```python
+from loopai.skills.Trainer import analyze_results
+
+analysis = analyze_results(
+    task_id="trainer_task_001",
+    output_dir="./outputs",
+)
+
+best_checkpoint = analysis["data"]["best_checkpoint"]
+summary = analysis["data"]["summary"]
+```
+
+The analyzer reads, when available:
+
+- `trainer_log.jsonl`
+- `metrics/metrics.json`
+- `checkpoint-*` directories
+
+Best checkpoint selection rule:
+
+1. Prefer the checkpoint aligned with the lowest `eval_loss`.
+2. If no `eval_loss` is available, use the lowest training `loss`.
+3. If no loss metric is available, choose the latest checkpoint.
+
+When comparing multiple Trainer runs, call `analyze_results()` for each run and compare:
+
+- `summary["best_metric"]`
+- `summary["best_checkpoint_name"]`
+- `summary["checkpoint_count"]`
+- `summary["metric_count"]`
+- `trainer_result.status`
+- `trainer_last_error`
+
+Prefer reporting the selected checkpoint path from `trainer_best_checkpoint_path` or `update_model_path` as the model candidate for the next Judger or Analyzer step.
 
 ## Invocation Guidance
 

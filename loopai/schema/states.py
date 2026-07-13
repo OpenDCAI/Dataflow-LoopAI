@@ -1208,18 +1208,9 @@ class AnalyzerState(BaseModel):
         description="分析模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
-    analyze_base_url: str = Field(
-        default="",
-        title="分析模型 Base URL",
-        description="分析模型 Base URL",
-        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"}
-    )
-    analyze_api_key: str = Field(
-        default="",
-        title="分析模型 API Key",
-        description="分析模型 API Key",
-        json_schema_extra={"ui_type": "password", "ui_group": "分析模型"}
-    )
+    # Analyzer API endpoint and API key are runtime-only values. Keeping them
+    # out of the public state schema prevents Configer/UI/model prompts from
+    # seeing or copying credentials out of system config.
     analyze_temperature: float = Field(
         default=0,
         title="分析模型温度",
@@ -1608,6 +1599,18 @@ class TrainerState(BaseModel):
         description="Trainer 实时事件流持久化文件路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
+    trainer_version_id: str = Field(
+        default="",
+        title="Trainer 运行版本 ID",
+        description="每次启动 Trainer 子节点时生成的 version_id，用于 TaskRuntimeItem 和版本化输出目录",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    trainer_output_dir: str = Field(
+        default="",
+        title="Trainer 本次输出目录",
+        description="Trainer 本次运行的版本化输出目录，通常为 outputs/{task_id}/trainer/{version_id}",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
     trainer_result: Dict[str, Any] = Field(
         default_factory=dict,
         title="Trainer 标准返回结果",
@@ -1621,6 +1624,54 @@ class TrainerState(BaseModel):
         description="Trainer 最近一次结构化错误信息",
         json_schema_extra={"ui_type": "textarea",
                            "language": "json", "ui_group": "训练模型"}
+    )
+    trainer_missing_fields: List[str] = Field(
+        default_factory=list,
+        title="Trainer 缺失字段",
+        description="启动 Trainer 前仍需补齐的配置字段",
+        json_schema_extra={"ui_type": "textarea",
+                           "language": "json", "ui_group": "训练模型"}
+    )
+    trainer_prefill_guide: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Trainer 预填引导",
+        description="面向用户或 Codex 的 Trainer 配置预填说明，包括必填字段、默认值和示例",
+        json_schema_extra={"ui_type": "textarea",
+                           "language": "json", "ui_group": "训练模型"}
+    )
+    trainer_result_analysis: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Trainer 结果分析",
+        description="Trainer 训练产物解析结果，包含最佳 checkpoint、指标摘要和错误信息",
+        json_schema_extra={"ui_type": "textarea",
+                           "language": "json", "ui_group": "训练模型"}
+    )
+    trainer_result_summary: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Trainer 结果摘要",
+        description="Trainer 训练结果摘要",
+        json_schema_extra={"ui_type": "textarea",
+                           "language": "json", "ui_group": "训练模型"}
+    )
+    trainer_best_checkpoint: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Trainer 最优 Checkpoint",
+        description="根据 eval_loss/loss 选择出的最优 checkpoint",
+        json_schema_extra={"ui_type": "textarea",
+                           "language": "json", "ui_group": "训练模型"}
+    )
+    trainer_best_metric: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Trainer 最优指标",
+        description="用于选择最优 checkpoint 的指标记录",
+        json_schema_extra={"ui_type": "textarea",
+                           "language": "json", "ui_group": "训练模型"}
+    )
+    trainer_best_checkpoint_path: str = Field(
+        default="",
+        title="Trainer 最优 Checkpoint 路径",
+        description="根据训练指标选择出的最优 checkpoint 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
     )
     train_config: str = Field(
         default="",
@@ -1830,8 +1881,6 @@ class LoopAIState(MessagesState):
     # analyze_task_type: str = 'code'
     # analyze_batch_size: int = 20
     # analyze_model_path: str
-    # analyze_base_url: str
-    # analyze_api_key: str
     # analyze_temperature: float = 0
     # analyze_top_p: float = 0.95
     # output_brief: bool

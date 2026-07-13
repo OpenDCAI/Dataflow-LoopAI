@@ -19,10 +19,10 @@ def __getattr__(name):
         from .Judger.judger_agent import JudgerAgent
         return JudgerAgent
     if name == "AnalyzerAgent":
-        from .Analyzer.analyzer_agent import AnalyzerAgent
+        from loopai.skills.Analyzer.analyzer_agent import AnalyzerAgent
         return AnalyzerAgent
     if name == "run_analyzer_standalone":
-        from .Analyzer.standalone import run_analyzer_standalone
+        from loopai.skills.Analyzer.runner import run_analyzer_standalone
         return run_analyzer_standalone
     if name == "TrainerAgent":
         from .Trainer.trainer_agent import TrainerAgent

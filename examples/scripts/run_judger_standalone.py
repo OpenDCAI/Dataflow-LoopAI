@@ -258,98 +258,31 @@ def main():
 
     from loopai.skills.Judger import run
 
-    kwargs: Dict[str, Any] = {}
-    if args.task_id:
-        kwargs["task_id"] = args.task_id
-    if args.output_dir:
-        kwargs["output_dir"] = args.output_dir
-
-    # 从配置文件构建 state
+    # 从配置文件构建 state（可选）
     state: Optional[Dict[str, Any]] = None
-    task_id_from_config: Optional[str] = None
     if args.config_path:
         config = _load_config(args.config_path)
         if "default_states" in config:
-            # starter.yaml 格式
             state = _extract_state_from_starter_yaml(config)
         else:
-            # 纯 JSON 格式：{"judger": {...}, "task_id": "..."}
             state = {
                 "judger": config.get("judger", {}),
-                "task_id": args.task_id or config.get("task_id", ""),
                 "output_dir": args.output_dir or config.get("output_dir", "./outputs"),
             }
-            for key in ("trainer", "analyzer", "obtainer", "constructor"):
-                if key in config:
-                    state[key] = config[key]
-        task_id_from_config = state.get("task_id")
 
-    task_id = args.task_id or os.getenv("TASK_ID") or task_id_from_config
+    # task_id 通过环境变量传递，run() 自动读取
+    task_id = args.task_id or os.getenv("TASK_ID")
+    if task_id:
+        os.environ["TASK_ID"] = task_id
+    if args.output_dir:
+        os.environ["OUTPUT_DIR"] = args.output_dir
 
-    try:
-        result = run(
-            state=state,
-            task_id=task_id,
-            resume=args.resume,
-            from_step=args.from_step,
-            **kwargs,
-        )
-
-        if args.print_result:
-            _print_result(result)
-
-        if args.print_events:
-            task_id = result.get("task_id") or task_id
-            output_dir = result.get("output_dir") or args.output_dir or "./outputs"
-            from loopai.skills.Judger import load_events
-            events = load_events(task_id=task_id, output_dir=output_dir)
-            print(f"\n=== Events ({len(events)}) ===", file=sys.stderr)
-            for evt in events:
-                print(
-                    f"  [{evt.get('time', '?')}] "
-                    f"progress={evt.get('progress')} {evt.get('message', '')}",
-                    file=sys.stderr,
-                )
-
-        # 最终结果用标准 payload 输出到 stdout（Codex 消费）
-        from loopai.common.exception import emit_success
-
-        judger = result.get("judger", {})
-        bench = judger.get("bench") or {}
-
-        # 统一指标：code/text2sql → pass_at_k，general_text → stats
-        metrics = judger.get("metrics") or {}
-        if not metrics:
-            metrics = (bench.get("meta") or {}).get("eval_result") or {}
-        metrics_str = json.dumps(metrics, ensure_ascii=False) if metrics else ""
-
-        emit_success(
-            data={
-                "task_type": judger.get("eval_task_type"),
-                "output_result_path": judger.get("output_result_path"),
-                "output_case_path": judger.get("output_case_path"),
-                "output_problem_path": judger.get("output_problem_path"),
-                "output_pred_path": judger.get("output_pred_path"),
-                "bench": bench,
-                "metrics": metrics_str,
-            },
-            message="Judger pipeline completed.",
-        )
-
-    except Exception as exc:
-        from loopai.common.exception import emit_error, ErrorCode
-
-        # 根据异常类型分派 ErrorCode
-        if isinstance(exc, ValueError):
-            code = ErrorCode.CONFIG_ERROR
-        elif isinstance(exc, FileNotFoundError):
-            code = ErrorCode.NOT_FOUND
-        elif isinstance(exc, RuntimeError):
-            code = ErrorCode.EXTERNAL_SERVICE_ERROR
-        else:
-            code = ErrorCode.UNHANDLED_EXCEPTION
-
-        emit_error(exc, code=code, recoverable=True, message="Judger pipeline failed.")
+    # run() 内部处理一切：env 校验、writer 创建、emit_success/emit_error
+    run(
+        state=state,
+        resume=args.resume,
+        from_step=args.from_step,
+    )
 
 
 if __name__ == "__main__":

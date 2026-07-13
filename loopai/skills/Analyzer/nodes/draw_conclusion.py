@@ -12,7 +12,7 @@ from loopai.logger import get_logger
 
 from loopai.common.prompts.prompt_loader import PromptLoader
 from loopai.schema.events import StreamEvent
-from loopai.agents.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
 from loopai.skills.Analyzer.history_compare import (
     build_historical_comparison,
     render_historical_comparison_text,
@@ -27,6 +27,11 @@ def _analyzer(state: LoopAIState) -> dict:
 
 def _ensure_analyzer_outdir(state: LoopAIState) -> str:
     cfg = _analyzer(state)
+    runtime_outdir = cfg.get("runtime_output_dir")
+    if runtime_outdir:
+        outdir = Path(runtime_outdir)
+        outdir.mkdir(parents=True, exist_ok=True)
+        return str(outdir)
     base_outdir = Path(cfg.get("output_dir") or state.get("output_dir") or "./outputs")
     task_id = state.get("task_id") or "default_task"
     outdir = base_outdir / task_id / "analyzer"
@@ -90,6 +95,17 @@ def pick_samples_by_stage(
             break
 
     return picked
+
+def _runtime_api_key(cfg: dict) -> str:
+    return (
+        cfg.get("analyze_api_key")
+        or os.getenv("_LOOPAI_ANALYZER_RUNTIME_API_KEY")
+        or os.getenv("ANALYZER_API_KEY")
+        or os.getenv("analyzer_api_key")
+        or os.getenv("DEEPSEEK_API_KEY")
+        or "EMPTY"
+    )
+
 def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     初始化模型
@@ -106,7 +122,7 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
     cfg = _analyzer(state)
     model = ChatOpenAI(
         model=cfg['analyze_model_path'],
-        api_key=cfg['analyze_api_key'],
+        api_key=_runtime_api_key(cfg),
         base_url=cfg['analyze_base_url'],
         temperature=cfg.get('analyze_temperature', 0.0),
         top_p=cfg.get('analyze_top_p', 0.95),
@@ -543,7 +559,7 @@ def draw_conclusion_node(state: LoopAIState):
     def _emit(message, *, progress=None, data=None):
         if writer:
             writer(StreamEvent(
-                current="AnalyzerAgent.draw_conclusion_node",
+                current="analyzer.draw_conclusion",
                 message=message,
                 progress=progress,
                 data=data

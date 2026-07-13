@@ -11,7 +11,7 @@ from typing import Any, Dict
 from tqdm import tqdm
 from langchain_openai import ChatOpenAI
 
-from loopai.agents.Judger.utils.oj.data import read_problems, write_jsonl
+from loopai.skills.Judger.utils.data import read_problems, write_jsonl
 from loopai.common.event_tool import StreamEvent
 from loopai.logger import get_logger
 
@@ -48,7 +48,7 @@ def run_generate_code(state: Dict[str, Any], writer) -> str:
     problem_path = judger_state["eval_problem_path"]
     problem_file_name = Path(problem_path).stem
     test_case_path = str(
-        output_dir / str(state_task_id) / "judger" / f"{problem_file_name}_sample.jsonl"
+        output_dir / str(state_task_id) / "judger" / writer.version_id / f"{problem_file_name}_sample.jsonl"
     )
 
     batch_size = judger_state["eval_batch_size"]
@@ -119,7 +119,7 @@ def run_generate_text2sql(state: Dict[str, Any], writer) -> str:
     problem_path = judger_state["eval_problem_path"]
     problem_file_name = Path(problem_path).stem
     test_case_path = str(
-        output_dir / str(state_task_id) / "judger" / f"{problem_file_name}_sample.jsonl"
+        output_dir / str(state_task_id) / "judger" / writer.version_id / f"{problem_file_name}_sample.jsonl"
     )
 
     task_type = judger_state["eval_task_type"]

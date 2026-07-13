@@ -1,24 +1,39 @@
 # `loopai.skills.Configer`
 
-给 codex / function skill 用的配置工具，专门修改非 `system` 的 `states` 参数。
+给外部 Codex / function skill 用的任务配置与运行时工具集。
 
-## 能力
+它主要分成两类能力：
 
-- 读取全部非 `system` 的状态参数说明
-- 读取非 `system` 的字段说明和 schema 默认值
-- 根据传入 JSON 修改对应 `states` 字段
-- 自动根据环境变量决定修改任务配置还是默认用户配置
-- 显式按 `task_id` 读取或修改任务级 states 实际值
+- `config_tool` 为首的 `state` 工具：读取和修改任务 `states` 配置
+- `runtime_tool` 为首的 `runtime` 工具：读取任务节点 runtime 状态
+
+如果你只想快速上手，可以这样理解：
+
+- 想看或改任务参数，用 `state` 工具
+- 想看节点跑到了哪里、历史状态如何，用 `runtime` 工具
+- 读数据库通常需要 `DB_PATH`
+- 任务级读取通常会优先使用 `task_id` / `TASK_ID`
+
+## 快速导航
+
+- 想理解参数结构：先看 `get_configer_state_schema`
+- 想读当前任务配置：用 `get_configer_task_state_config`
+- 想改当前任务配置：用 `update_configer_task_state_config`
+- 想看单节点当前状态：用 `get_runtime_task_node_latest`
+- 想看单节点历史：用 `get_runtime_task_node_history`
+- 想看当前任务全部节点最新状态：用 `get_runtime_task_latest_runtimes`
 
 ## 环境变量
 
-- `DB_PATH`: 更新配置时必填，SQLite 数据库路径
-- `task_id` 或 `TASK_ID`: 选填
+- `DB_PATH`：SQLite 数据库路径；读取数据库实际值时必需
+- `task_id` 或 `TASK_ID`：当前任务 ID；任务级读取或修改时优先使用
 
-行为规则：
+通用规则：
 
-- 有 `task_id` / `TASK_ID`：修改对应任务的 `states`
-- 没有 `task_id` / `TASK_ID`：修改全局默认配置里的 `default_states`
+- 显式传了 `task_id`，优先用显式参数
+- 没显式传时，会回退到环境变量 `task_id` / `TASK_ID`
+- `state` 工具里，部分接口在没有任务 ID 时会读取默认配置
+- `runtime` 工具只面向任务运行时，因此需要任务 ID
 
 ## 导入
 
@@ -27,18 +42,37 @@ from loopai.skills.Configer import (
     get_configer_state_config,
     get_configer_state_schema,
     get_configer_task_state_config,
+    get_runtime_task_latest_runtimes,
+    get_runtime_task_node_history,
+    get_runtime_task_node_latest,
     update_configer_state_config,
     update_configer_task_state_config,
 )
 ```
 
-## 读取 schema
+## State 工具
+
+这一组工具围绕任务 `states` 配置工作，核心入口是 `config_tool`。
+
+适合的场景：
+
+- 想知道某个 section 下有哪些字段
+- 想读取当前任务某个参数的实际值
+- 想修改当前任务或默认配置里的某个 `states` 字段
+
+### 你应该先用哪个
+
+- 先看字段说明：`get_configer_state_schema`
+- 读取当前生效配置：`get_configer_state_config` 或 `get_configer_task_state_config`
+- 修改配置：`update_configer_state_config` 或 `update_configer_task_state_config`
+
+### 1. 看 schema
 
 ```python
 result = get_configer_state_schema()
 ```
 
-也可以只取某个 section：
+只看某个 section：
 
 ```python
 result = get_configer_state_schema(section_name="judger")
@@ -46,35 +80,27 @@ result = get_configer_state_schema(section_name="configer")
 result = get_configer_state_schema(section_name="default")
 ```
 
-返回的是统一 success/error payload。
-
-成功时 `data.states` 里包含：
+成功时 `data.states` 里通常包含：
 
 - 字段说明
 - 字段类型
 - schema 默认值
 
-并且不会暴露 `system` 配置，也不区分 task_id。
+说明：
 
-如果传了 `section_name`，则只返回对应分组的 schema。
+- 这里只看 schema，不区分 task_id
+- 不会暴露 `system` 配置
 
-## 读取实际配置
+### 2. 读当前配置
 
-读取数据库中的实际配置值，需要 `DB_PATH`，并且会根据是否有 `task_id` / `TASK_ID` 自动读取任务配置或默认配置。
-
-读取整个 section：
+自动根据环境变量决定读任务配置还是默认配置：
 
 ```python
 get_configer_state_config(section_name="judger")
-```
-
-读取 section 下的单个字段：
-
-```python
 get_configer_state_config(section_name="judger", field_name="eval_temperature")
 ```
 
-如果你必须显式指定某个任务，而不是依赖环境变量：
+如果你必须显式指定任务：
 
 ```python
 get_configer_task_state_config(
@@ -84,9 +110,14 @@ get_configer_task_state_config(
 )
 ```
 
-## 更新配置
+行为规则：
 
-现在更新接口只针对单个 section：
+- 有 `task_id` / `TASK_ID`：读对应任务的 `states`
+- 没有 `task_id` / `TASK_ID`：读默认配置里的 `default_states`
+
+### 3. 改当前配置
+
+更新接口按 section 工作：
 
 ```python
 update_configer_state_config(
@@ -97,8 +128,6 @@ update_configer_state_config(
 )
 ```
 
-或者：
-
 ```python
 update_configer_state_config(
     "judger",
@@ -108,9 +137,9 @@ update_configer_state_config(
 )
 ```
 
-也支持传 JSON 字符串。
+也支持直接传 JSON 字符串。
 
-如果你必须显式指定某个任务，而不是依赖环境变量：
+如果你必须显式指定任务：
 
 ```python
 update_configer_task_state_config(
@@ -123,6 +152,117 @@ update_configer_task_state_config(
 )
 ```
 
+### State 工具限制
+
+- 不允许修改 `system`
+- 不允许修改不存在的 section
+- 不允许修改不存在的字段
+- 不允许通过该 skill 修改 `default.task_id`
+
+## Runtime 工具
+
+这一组工具围绕任务节点 runtime 工作，核心入口是 `runtime_tool`。
+
+适合的场景：
+
+- 想看某个节点当前最新状态
+- 想追溯某个节点的历史 runtime
+- 想快速看到当前任务下所有节点的最新状态
+
+### 你应该先用哪个
+
+- 看单节点最新状态：`get_runtime_task_node_latest`
+- 看单节点历史：`get_runtime_task_node_history`
+- 看当前任务全部节点最新状态：`get_runtime_task_latest_runtimes`
+
+### 1. 看某个节点的最新 runtime
+
+```python
+get_runtime_task_node_latest(node_name="trainer")
+```
+
+显式指定任务：
+
+```python
+get_runtime_task_node_latest(node_name="trainer", task_id="your-task-id")
+```
+
+返回重点：
+
+- `data.task_id`
+- `data.node_name`
+- `data.runtime`
+
+### 2. 看某个节点的历史 runtime
+
+```python
+get_runtime_task_node_history(node_name="trainer")
+```
+
+显式指定任务：
+
+```python
+get_runtime_task_node_history(node_name="trainer", task_id="your-task-id")
+```
+
+返回重点：
+
+- `data.task_id`
+- `data.node_name`
+- `data.runtimes`
+
+### 3. 看当前任务全部节点的最新 runtime
+
+这个接口的语义对齐：`GET /task/runtime/{task_id}/latest`
+
+```python
+get_runtime_task_latest_runtimes()
+```
+
+显式指定任务：
+
+```python
+get_runtime_task_latest_runtimes(task_id="your-task-id")
+```
+
+返回重点：
+
+- `data.task_id`
+- `data.runtimes`
+
+## 返回格式
+
+这两类工具都返回统一 success/error payload。
+
+成功示意：
+
+```python
+{
+    "ok": True,
+    "status": "completed",
+    "message": "...",
+    "data": {...},
+    "error": None,
+}
+```
+
+失败示意：
+
+```python
+{
+    "ok": False,
+    "status": "failed",
+    "message": "...",
+    "data": None,
+    "error": {
+        "type": "...",
+        "code": "...",
+        "detail": "...",
+        "recoverable": True,
+    },
+}
+```
+
 ## Shell 调用建议
 
 如果是在 `python -c`、heredoc、codex-sdk 子进程里调用，要注意：
@@ -131,7 +271,7 @@ update_configer_task_state_config(
 - 需要显式 `print(...)`
 - 建议配合 `timeout` 和 `python3 -u`
 
-示例：
+state 示例：
 
 ```bash
 timeout 20 python3 -u <<'PY'
@@ -143,27 +283,27 @@ print(json.dumps(result, ensure_ascii=False, default=str), flush=True)
 PY
 ```
 
-更新示例：
+runtime 示例：
 
 ```bash
 timeout 20 python3 -u <<'PY'
 import json
-from loopai.skills.Configer import update_configer_task_state_config
+from loopai.skills.Configer import get_runtime_task_node_latest
 
-result = update_configer_task_state_config("judger", {"eval_task_type": "code"}, task_id="your-task-id")
+result = get_runtime_task_node_latest("trainer", task_id="your-task-id")
 print(json.dumps(result, ensure_ascii=False, default=str), flush=True)
 PY
 ```
 
-## 排障约束
+## 使用建议
 
-- 正常配置读写应优先使用 skill 接口，不要直接写 SQLite
-- 如果接口调用超时或报错，可以只读检查数据库结构和当前值用于排障
-- 排障时也不建议绕过 skill 直接修改 `starterconfig` / `taskmodel`
+- 想理解参数结构，先用 `get_configer_state_schema`
+- 想读任务真实配置，优先用 `get_configer_task_state_config`
+- 想判断节点当前进度，优先用 `get_runtime_task_node_latest`
+- 想看整条链路当前状态，优先用 `get_runtime_task_latest_runtimes`
+- 正常读写优先走 skill 接口，不要直接改 SQLite
 
-## 限制
+如果你只记一句话：
 
-- 不允许修改 `system`
-- 不允许修改不存在的 section
-- 不允许修改不存在的字段
-- 不允许通过该 skill 修改 `default.task_id`
+- `state` 工具负责“任务参数是什么”
+- `runtime` 工具负责“任务现在跑到哪了”

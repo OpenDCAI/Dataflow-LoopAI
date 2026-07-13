@@ -26,8 +26,8 @@ os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # 创建FastAPI应用
 app = FastAPI(
-    title="LLaMA Factory Remote Training Service",
-    description="远程训练服务，支持通过API触发LLaMA Factory训练任务",
+    title="LoopAI Server",
+    description="LoopAI server with APIs for managing training tasks",
     version="1.0.0",
 )
 
@@ -65,7 +65,7 @@ app.mount(
 async def root():
     """根路径"""
     return {
-        "message": "LLaMA Factory Remote Training Service",
+        "message": "LoopAI Server",
         "version": "1.0.0",
         "endpoints": {
             "task-train-status": "GET /task/train_status - 获取 Trainer 指标文件",

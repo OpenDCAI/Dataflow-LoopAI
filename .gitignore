@@ -35,3 +35,4 @@ docs/superpowers
 codex_home/
 .loopai
 codex-chat-router/target
+.vscode

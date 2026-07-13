@@ -41,7 +41,11 @@
             </div>
         </div>
 
-        <div v-if="showCustomInfoPanel" class="col-wrapper" style="width: 250px">
+        <div
+            v-if="showCustomInfoPanel"
+            class="col-wrapper"
+            style="width: 250px; flex-shrink: 0"
+        >
             <!-- Agent 的通用 CustomInfo 展示 -->
             <template v-if="showCustomInfoPanel">
                 <div class="node-row-item">
@@ -290,8 +294,10 @@ const customStatusTitle = computed(() => {
 
 const runningMe = computed(() => {
     try {
-        return loopAI.taskStatus.running_tasks.some((task) => {
-            return thisData.value.include_nodes.includes(task)
+        return loopAI.taskStatus.node_status.some((node) => {
+            return (
+                thisData.value.include_nodes.includes(node.node_name) && node.status === 'running'
+            )
         })
     } catch (e) {
         return false

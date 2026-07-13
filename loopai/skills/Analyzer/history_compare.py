@@ -216,16 +216,16 @@ def _summary(comparison: Dict[str, Any]) -> str:
     regressed = len(comparison.get("regressed_cases") or [])
 
     parts = [
-        f"Pass rate change: {_fmt_pct(pass_delta) if isinstance(pass_delta, (int, float)) else 'N/A'}.",
-        f"Score gap change: {score_gap_delta:.4f}." if isinstance(score_gap_delta, (int, float)) else "Score gap change: N/A.",
-        f"Improved cases: {improved}; regressed cases: {regressed}.",
+        f"通过率变化：{_fmt_pct(pass_delta) if isinstance(pass_delta, (int, float)) else 'N/A'}。",
+        f"平均分数差距变化：{score_gap_delta:.4f}。" if isinstance(score_gap_delta, (int, float)) else "平均分数差距变化：N/A。",
+        f"进步样本数：{improved}；退步样本数：{regressed}。",
     ]
     if isinstance(pass_delta, (int, float)) and pass_delta < 0:
-        parts.append("Suggestion: inspect regressed cases and dominant new error types first.")
+        parts.append("建议：优先检查退步样本和新增的高频错误类型。")
     elif isinstance(pass_delta, (int, float)) and pass_delta > 0:
-        parts.append("Suggestion: preserve changes behind improved cases and review remaining high-frequency errors.")
+        parts.append("建议：保留带来进步的改动，并继续关注剩余高频错误。")
     else:
-        parts.append("Suggestion: compare score gaps and error distribution for targeted follow-up.")
+        parts.append("建议：结合分数差距和错误分布做后续定向分析。")
     return " ".join(parts)
 
 
@@ -247,7 +247,7 @@ def build_historical_comparison(
 
     if not baseline_result_path:
         comparison["has_baseline"] = False
-        comparison["warning"] = "baseline_result_path is not set"
+        comparison["warning"] = "未配置 baseline_result_path"
         return comparison
 
     current_rows, current_warning = _read_jsonl(current_result_path or "")
@@ -256,7 +256,7 @@ def build_historical_comparison(
     if warnings:
         comparison["has_baseline"] = False
         comparison["warning"] = "; ".join(warnings)
-        comparison["comparison_summary"] = "Historical Comparison warning: " + comparison["warning"]
+        comparison["comparison_summary"] = "历史对比警告：" + comparison["warning"]
         return comparison
 
     current_stats = _stats(current_rows)
@@ -288,29 +288,29 @@ def build_historical_comparison(
 
 
 def render_historical_comparison_text(comparison: Dict[str, Any]) -> str:
-    lines = ["", "Historical Comparison", "---------------------"]
-    lines.append(f"baseline_result_path: {comparison.get('baseline_result_path') or 'N/A'}")
-    lines.append(f"current_result_path: {comparison.get('current_result_path') or 'N/A'}")
+    lines = ["", "历史对比", "---------------------"]
+    lines.append(f"基准结果文件：{comparison.get('baseline_result_path') or 'N/A'}")
+    lines.append(f"当前结果文件：{comparison.get('current_result_path') or 'N/A'}")
 
     if comparison.get("warning"):
-        lines.append(f"warning: {comparison['warning']}")
+        lines.append(f"警告：{comparison['warning']}")
         return "\n".join(lines)
 
     metric_diff = comparison.get("metric_diff") or {}
-    lines.append(f"pass_rate change: {_fmt_pct(metric_diff.get('pass_rate')) if isinstance(metric_diff.get('pass_rate'), (int, float)) else 'N/A'}")
+    lines.append(f"通过率变化：{_fmt_pct(metric_diff.get('pass_rate')) if isinstance(metric_diff.get('pass_rate'), (int, float)) else 'N/A'}")
     score_gap = metric_diff.get("avg_score_gap")
-    lines.append(f"score gap change: {score_gap:.4f}" if isinstance(score_gap, (int, float)) else "score gap change: N/A")
+    lines.append(f"平均分数差距变化：{score_gap:.4f}" if isinstance(score_gap, (int, float)) else "平均分数差距变化：N/A")
 
     error_diff = comparison.get("error_distribution_diff") or {}
     if error_diff:
         top_errors = sorted(error_diff.items(), key=lambda item: abs(item[1]), reverse=True)[:8]
-        lines.append("error distribution change: " + ", ".join(f"{k}:{v:+d}" for k, v in top_errors))
+        lines.append("错误分布变化：" + ", ".join(f"{k}:{v:+d}" for k, v in top_errors))
     else:
-        lines.append("error distribution change: N/A")
+        lines.append("错误分布变化：N/A")
 
     improved = comparison.get("improved_cases") or []
     regressed = comparison.get("regressed_cases") or []
-    lines.append("improved cases: " + (", ".join(str(item.get("case_id")) for item in improved[:10]) or "N/A"))
-    lines.append("regressed cases: " + (", ".join(str(item.get("case_id")) for item in regressed[:10]) or "N/A"))
-    lines.append("suggestion: " + (comparison.get("comparison_summary") or "Review changed cases and error distribution."))
+    lines.append("进步样本：" + (", ".join(str(item.get("case_id")) for item in improved[:10]) or "N/A"))
+    lines.append("退步样本：" + (", ".join(str(item.get("case_id")) for item in regressed[:10]) or "N/A"))
+    lines.append("建议：" + (comparison.get("comparison_summary") or "检查变化样本和错误分布。"))
     return "\n".join(lines)

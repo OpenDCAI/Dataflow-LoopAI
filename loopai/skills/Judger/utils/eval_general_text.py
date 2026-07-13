@@ -17,12 +17,27 @@ from typing import Any, Dict, List, Optional
 
 from one_eval.toolkits.dataflow_eval_tool import DataFlowEvalTool
 from one_eval.core.state import ModelConfig
-from loopai.agents.Judger.utils.oj.const import field_mapping
 from loopai.common.event_tool import StreamEvent
 from loopai.common.exception import emit_error, ErrorCode
 from loopai.logger import get_logger
 
 logger = get_logger()
+
+
+# field_mapping 内联（原 loopai.agents.Judger.utils.oj.const）
+field_mapping = {
+    "question": ["question", "prompt", "query", "input", "problem", "instruction", "题目", "问题", "输入", "提示"],
+    "target": ["target", "answer", "reference", "gold", "gold_answer", "gt", "chosen", "label", "expected", "标准答案", "答案", "参考答案", "标签"],
+    "targets": ["targets", "answers", "references", "gold_answers", "候选答案", "参考答案列表"],
+    "prediction": ["generated_ans", "prediction", "pred", "response", "output", "model_output", "generated", "预测", "模型输出", "生成答案", "回答"],
+    "choices": ["choices", "options", "candidates", "选项", "候选项"],
+    "label": ["label", "answer", "target", "correct_option", "正确选项", "标签"],
+    "labels": ["labels", "answers", "targets", "正确选项列表", "标签列表"],
+    "better": ["better", "preferred", "winner", "更优答案", "偏好", "更好"],
+    "answer": ["chosen", "selected", "preferred", "positive", "pos", "human", "good", "helpful", "harmless", "correct", "accepted", "response_chosen", "output_good", "优", "选中", "正样本"],
+    "rejected": ["rejected", "unselected", "unpreferred", "loser", "negative", "neg", "machine", "bad", "harmful", "helpless", "incorrect", "ignored", "response_rejected", "output_bad", "差", "拒绝", "负样本"],
+    "text": ["text", "content", "essay", "article", "response", "output", "文本", "内容", "文章", "回答"],
+}
 
 
 @dataclass
@@ -226,6 +241,64 @@ def _run_eval_in_subprocess(
 
 
 # ---------------------------------------------------------------------------
+# 输出健康检查
+# ---------------------------------------------------------------------------
+
+def _check_output_health(
+    detail_path: str,
+    bench_name: str,
+    sample_size: int = 10,
+    writer=None,
+):
+    """抽样检查评测输出文件是否包含有效模型产出。
+
+    如果抽样行中关键字段（generated_ans / eval_pred）全为空，
+    说明模型推理阶段可能已失败（OOM、vLLM 崩溃等）。
+    """
+    if not detail_path or not os.path.exists(detail_path):
+        return
+
+    rows: List[Dict[str, Any]] = []
+    with open(detail_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if i >= sample_size:
+                break
+            line = line.strip()
+            if line:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+
+    if not rows:
+        return
+
+    gen_keys = ("generated_ans", "eval_pred", "completion", "prediction")
+    non_empty = 0
+    for row in rows:
+        for key in gen_keys:
+            if row.get(key) and str(row[key]).strip():
+                non_empty += 1
+                break
+
+    if non_empty == 0:
+        emit_error(
+            RuntimeError(
+                f"[{bench_name}] All {len(rows)} sampled rows have empty output "
+                f"(checked fields: {', '.join(gen_keys)}). "
+                f"Model inference may have failed (CUDA OOM, vLLM crash, etc.)."
+            ),
+            code=ErrorCode.EXTERNAL_SERVICE_ERROR,
+            recoverable=True,
+            stream_writer=writer,
+            message=(
+                f"Output validation failed for bench '{bench_name}': "
+                f"all sampled outputs are empty — check model/vLLM health."
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
 
@@ -244,6 +317,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         Path(state.get("output_dir") or "./outputs")
         / (state.get("task_id") or "default_task")
         / "judger"
+        / (writer.version_id or "")
     )
     outdir.mkdir(parents=True, exist_ok=True)
     run_ts = time.strftime("%Y%m%d_%H%M%S")
@@ -254,12 +328,14 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         emit_error(
             ValueError("缺少评测输入路径：请提供 judger.eval_problem_path"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
             message="Missing judger.eval_problem_path for general_text evaluation.",
         )
     if not os.path.exists(eval_result_path):
         emit_error(
             FileNotFoundError(f"评测输入路径不存在：{eval_result_path}"),
             code=ErrorCode.NOT_FOUND, recoverable=True,
+            stream_writer=writer,
             message=f"Problem file not found: {eval_result_path}",
         )
 
@@ -268,6 +344,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         emit_error(
             ValueError("通用文本评测缺少 eval_type。请在 judger.bench_dataflow_eval_type 中提供"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
             message="Missing judger.bench_dataflow_eval_type for general_text evaluation.",
         )
 
@@ -329,12 +406,14 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
         emit_error(
             ValueError(f"[{bench_name}] 缺少 dataset_cache"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
             message=f"Bench '{bench_name}' is missing dataset_cache.",
         )
     if not bench.bench_dataflow_eval_type:
         emit_error(
             ValueError(f"[{bench_name}] 缺少 eval_type"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
             message=f"Bench '{bench_name}' is missing bench_dataflow_eval_type.",
         )
 
@@ -382,6 +461,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
                 emit_error(
                     RuntimeError(f"[{bench_name}] run_eval 子进程未返回结果"),
                     code=ErrorCode.EXTERNAL_SERVICE_ERROR, recoverable=True,
+                    stream_writer=writer,
                     message=f"DataFlowEvalTool subprocess (pid={proc.pid}) exited without returning a result.",
                 )
         if not payload.get("ok"):
@@ -389,6 +469,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
                 RuntimeError(f"{payload.get('error', 'run_eval failed')}\n"
                              f"{payload.get('traceback', '')}"),
                 code=ErrorCode.EXTERNAL_SERVICE_ERROR, recoverable=True,
+                stream_writer=writer,
                 message=f"DataFlowEvalTool subprocess evaluation failed.",
             )
 
@@ -415,6 +496,7 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     stats = result["stats"]
     logger.info(f"[Judger/general_text] subprocess result: stats={stats}")
     detail_path = result.get("detail_path")
+    _check_output_health(detail_path, bench_name, writer=writer)
     bench.meta["eval_result"] = stats
     bench.meta["eval_detail_path"] = detail_path
 

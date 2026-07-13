@@ -54,7 +54,7 @@
 读取顺序要求：
 
 1. 优先从环境变量 `TASK_ID` 获取当前 `task_id`
-2. 其他与当前意图相关的主要 state / 配置项，优先通过 `skills/configer/SKILL.md` 中提供的方法读取，不要先要求用户手工重复这些已有信息
+2. 其他与当前意图相关的主要 state / 配置项，优先通过 `skills/Configer/SKILL.md` 中提供的方法读取，不要先要求用户手工重复这些已有信息
 3. 读取完成后，先把你识别到的任务信息总结给用户确认，再启动对应 sub-agent
 
 只有在自动读取后仍缺少关键字段，或当前上下文无法唯一判断主要目标 / 阶段时，才用简短问题补齐。
@@ -92,13 +92,13 @@
 
 当意图为 `config` 时，优先使用本地 skill：
 
-- `skills/configer/SKILL.md`
+- `skills/Configer/SKILL.md`
 
-优先使用本地 `skills/configer/SKILL.md` 中定义的方法做实际读写。
+优先使用本地 `skills/Configer/SKILL.md` 中定义的方法做实际读写。
 
 注意：
 
-- 这个路径应优先理解为工作区中的 `skills/configer/SKILL.md`
+- 这个路径应优先理解为工作区中的 `skills/Configer/SKILL.md`
 - 如果运行时存在独立 `CODEX_HOME`，其中同名 skill 只是同一份预设的镜像
 - 不要先通过全仓搜索 README 或源码来猜参数，优先读取该 skill 并调用其中提到的配置函数
 - 如果需要修改配置，优先走 skill 或明确的本地 Python/CLI 封装，不要伪装成远程 tool 调用
