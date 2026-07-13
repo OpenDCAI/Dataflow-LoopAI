@@ -465,11 +465,15 @@ def run_analyzer_pipeline(
                 step_percent = _progress_percent(step_end)
                 writer(StreamEvent(
                     current=f"analyzer.{step_name}",
-                    progress=round(step_end, 4),
-                    progress_num=step_percent,
+                    progress=1.0,
+                    progress_num=100,
                     total=100,
                     message=f"步骤完成: {step_name}",
-                    data={"step": step_name, "progress_percent": step_percent},
+                    data={
+                        "step": step_name,
+                        "progress_percent": step_percent,
+                        "step_progress_percent": 100,
+                    },
                 ))
                 _emit_pipeline_progress(
                     writer,
