@@ -881,7 +881,12 @@ export default {
                 await this.persistConfig({ silent: true })
                 await this.loadModelPoolStatus(true)
                 const hasHealthyModel = this.modelPoolModels.some((model) => this.healthClass(model) === 'healthy')
-                this.modelPoolProbeMessage = hasHealthyModel ? this.local('Probe finished.') : this.local('Probe failed.')
+                const hasProbedModel = this.modelPoolModels.some((model) => this.hasProbeResult(model))
+                this.modelPoolProbeMessage = hasHealthyModel
+                    ? this.local('Probe finished.')
+                    : hasProbedModel
+                        ? this.local('Probe finished with unavailable models.')
+                        : this.local('Probe finished.')
                 this.$barWarning(this.modelPoolProbeMessage, { status: hasHealthyModel ? 'correct' : 'warning' })
             } catch (error) {
                 this.modelPoolProbeMessage = this.local('Probe failed.')

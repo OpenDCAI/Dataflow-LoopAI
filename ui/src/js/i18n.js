@@ -639,6 +639,10 @@ export default {
         "en": "Probe finished.",
         "zh": "探测完成。"
     },
+    "Probe finished with unavailable models.": {
+        "en": "Probe finished, but no model is available.",
+        "zh": "探测完成，模型不可用。"
+    },
     "Probe failed.": {
         "en": "Probe failed.",
         "zh": "探测失败。"
