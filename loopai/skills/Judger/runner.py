@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from loopai.common.event_tool import StreamEvent
 from loopai.common.exception import emit_error, ErrorCode
+from loopai.skills.Judger.utils.data import check_jsonl_fields
 from loopai.logger import get_logger
 
 

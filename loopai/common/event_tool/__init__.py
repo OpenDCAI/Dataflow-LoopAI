@@ -182,7 +182,7 @@ class PickleEventWriter:
         self.name = name
         self.context_id = context_id
         self.event_path = event_path
-        self.version_id = version_id or str(uuid.uuid4())
+        self.version_id = version_id or self.new_version_id()
 
     def __call__(self, payload: StreamEvent | dict[str, Any]) -> StreamEvent:
         event = self.set_running(payload)

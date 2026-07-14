@@ -115,6 +115,35 @@ def test_starter_model_pool_resolves_proxy_provider():
     assert provider.upstream_model_name == "upstream-model"
 
 
+def test_response_proxy_fallback_prefers_codex_base_url_without_pool_match():
+    system = _system("http://upstream.example/v1", "chat")
+    system["codex_base_url"] = "http://codex.example"
+    system["base_url"] = "http://legacy.example"
+    service = ResponseProxyService(system)
+
+    upstream_v1, api_key, model, entry = service._resolve_upstream({"model": "missing-model"})
+
+    assert entry is None
+    assert upstream_v1 == "http://codex.example/v1"
+    assert api_key == ""
+    assert model == "missing-model"
+
+
+def test_response_proxy_request_base_url_overrides_system_fallbacks():
+    system = _system("http://upstream.example/v1", "chat")
+    system["codex_base_url"] = "http://codex.example"
+    system["base_url"] = "http://legacy.example"
+    service = ResponseProxyService(system)
+
+    upstream_v1, _api_key, _model, entry = service._resolve_upstream({
+        "model": "missing-model",
+        "base_url": "http://request.example",
+    })
+
+    assert entry is None
+    assert upstream_v1 == "http://request.example/v1"
+
+
 def test_responses_endpoint_routes_to_chat_upstream_through_pool():
     server, base_url = _start_server()
     try:
