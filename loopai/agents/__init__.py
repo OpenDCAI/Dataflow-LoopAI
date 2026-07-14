@@ -5,6 +5,7 @@ __all__ = [
     "AnalyzerAgent",
     "run_analyzer_standalone",
     "TrainerAgent",
+    "ObtainerAgent",
 ]
 
 
@@ -27,4 +28,7 @@ def __getattr__(name):
     if name == "TrainerAgent":
         from .Trainer.trainer_agent import TrainerAgent
         return TrainerAgent
+    if name == "ObtainerAgent":
+        from .Obtainer.obtainer_agent import ObtainerAgent
+        return ObtainerAgent
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

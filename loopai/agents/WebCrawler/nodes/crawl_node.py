@@ -61,13 +61,16 @@ def crawl_node(state: LoopAIState) -> LoopAIState:
     
     # 创建爬取编排器
     try:
+        base_output_dir = webcrawler.get("output_dir") or state.get("output_dir", "./output")
+        deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        tavily_api_key = os.getenv("TAVILY_API_KEY", "").strip()
         orchestrator = CrawlOrchestrator(
-            deepseek_api_key=webcrawler.get("deepseek_api_key", ""),
-            tavily_api_key=webcrawler.get("tavily_api_key", ""),
+            deepseek_api_key=deepseek_api_key,
+            tavily_api_key=tavily_api_key,
             deepseek_api_base=webcrawler.get("deepseek_api_base", "https://api.deepseek.com/v1"),
             model=webcrawler.get("model", "deepseek-chat"),
             max_pages=webcrawler.get("max_pages", 10000),
-            output_dir=os.path.join(state.get("output_dir", "./output"), "webcrawler_output"),
+            output_dir=os.path.join(base_output_dir, "webcrawler_output"),
             stream_callback=writer,  # 传递 writer 作为回调
             # 爬取策略参数
             num_queries=webcrawler.get("num_queries", 1),

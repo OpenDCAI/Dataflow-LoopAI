@@ -1,10 +1,10 @@
-# Trainer Agent 使用指南
+# Trainer Skill 使用指南
 
-Trainer Agent 是 Dataflow-LoopAI 框架中负责模型训练的智能代理。它能够自动化完成从数据验证到模型训练的完整流程，并集成 SwanLab 监控功能。
+Trainer Skill 是 Dataflow-LoopAI 中负责模型训练的技能实现。它能够自动化完成从数据验证到模型训练的完整流程，并集成 SwanLab 监控功能。
 
 ## 🏗️ 架构设计
 
-Trainer Agent 采用三阶段顺序执行架构：
+Trainer Skill 内部采用三阶段顺序执行架构：
 
 ```
 数据检查 → 配置生成 → 训练执行
@@ -83,7 +83,7 @@ Trainer Agent 采用三阶段顺序执行架构：
 ### 基本用法
 
 ```python
-from loopai.agents import TrainerAgent
+from loopai.skills.Trainer.trainer_agent import TrainerAgent
 from loopai.memory import checkpointer, store
 
 # 创建 TrainerAgent 实例
@@ -94,7 +94,7 @@ training_state = {
     # 必需字段
     'train_input_dataset_path': "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json",  # 使用 JSON 格式数据集
     'train_input_task_description': '训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务',
-    'train_input_config_template_path': "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
+    'train_input_config_template_path': "loopai/skills/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
     'train_input_model_name': '/jizhicfs/hymiezhao/models/Qwen2.5-1.5B',
     'output_dir': './output/trainer_test'
 

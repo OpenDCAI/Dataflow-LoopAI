@@ -11,12 +11,16 @@ from pathlib import Path
 from langgraph.config import get_stream_writer
 from loopai.schema.states import LoopAIState
 from loopai.common.exception import ErrorCode
-from loopai.agents.Trainer.utils.task_manager import TaskManager
-from loopai.agents.Trainer.utils.task_status import TaskStatus
-from loopai.agents.Trainer.utils.task_tools import read_log_file
-from loopai.agents.Trainer.utils.insert_dataset import insert_dataset_to_llamafactory
-from loopai.agents.Trainer.utils.training_log_parser import parse_task_training_progress, TrainingLogParser
-from loopai.agents.Trainer.utils.stream_events import build_trainer_error, emit_trainer_event
+from loopai.skills.Trainer.utils.task_manager import TaskManager
+from loopai.skills.Trainer.utils.task_status import TaskStatus
+from loopai.skills.Trainer.utils.task_tools import read_log_file
+from loopai.skills.Trainer.utils.insert_dataset import insert_dataset_to_llamafactory
+from loopai.skills.Trainer.utils.training_log_parser import parse_task_training_progress, TrainingLogParser
+from loopai.skills.Trainer.utils.stream_events import (
+    build_trainer_error,
+    emit_trainer_event,
+    prepare_trainer_run,
+)
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -84,6 +88,10 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
     if writer is None:
         writer = get_stream_writer()
 
+    run_writer = prepare_trainer_run(state)
+    trainer_task_id = str(run_writer.version_id)
+    task_manager = None
+    task_id = None
     logger.info("开始执行训练节点")
 
     try:
@@ -101,7 +109,6 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
 
         # 获取参数
         task_description = state.get('trainer', {}).get('train_input_task_description', '未指定任务描述')
-        trainer_task_id = state.get('trainer', {}).get('trainer_task_id')
         dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
         llamafactory_dir = state.get('trainer', {}).get('llamafactory_dir')
         output_dir = os.path.abspath(state.get('trainer', {}).get('output_dir') or './output/trainer')
@@ -239,19 +246,14 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
         # 等待训练完成（本地轮询）
         logger.info("⏳ 等待训练完成...")
         check_interval = 30  # 30秒检查一次
-        max_wait_time = 3600  # 最多等待1小时
 
         while True:
             elapsed_time = time.time() - start_time
 
-            if elapsed_time > max_wait_time:
-                logger.warning(f"等待超时（{max_wait_time}秒），任务可能仍在运行")
-                break
-
             # 直接从 TaskManager 获取任务状态（无需 HTTP 请求）
             status_info = task_manager.get_task_status(task_id)
             if not status_info:
-                break
+                raise RuntimeError(f"训练任务状态丢失: {task_id}")
 
             task_status = status_info.get('status')
             if isinstance(task_status, TaskStatus):
@@ -289,7 +291,8 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
                 }
             else:
                 progress_val = elapsed_time / 3600.0
-                progress_val = min(progress_val, 1.0)
+                # 没有解析到总步数时只展示估算值；真正结束前不报告 100%。
+                progress_val = min(progress_val, 0.99)
 
                 progress_message = f"训练进行中 - 状态: {task_status}"
                 progress_data = {
@@ -317,6 +320,9 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
 
             logger.info(f"任务状态: {task_status}, 已等待: {int(elapsed_time)}秒")
             time.sleep(check_interval)
+
+        # Trainer Skill 保持同步：等待训练线程完成 finally 清理后再继续。
+        task_manager.wait_for_completion(task_id)
 
         end_time = time.time()
         training_time = end_time - start_time
@@ -413,6 +419,7 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
 
         # 更新状态
         state.setdefault('trainer', {})['trainer_training_task_id'] = task_id
+        state.setdefault('trainer', {})['training_task_id'] = task_id
         state.setdefault('trainer', {})['trainer_training_execution_time'] = training_time
         state.setdefault('trainer', {})['trainer_training_final_status'] = final_status_dict
 
@@ -514,7 +521,13 @@ def training_execution_node(state: LoopAIState, writer=None) -> LoopAIState:
 
         logger.info(f"训练报告已保存到: {report_path}")
 
+    except (KeyboardInterrupt, SystemExit):
+        if task_manager is not None and task_id is not None:
+            task_manager.cancel_task(task_id, reason="Trainer caller interrupted")
+        raise
     except Exception as e:
+        if task_manager is not None and task_id is not None:
+            task_manager.cancel_task(task_id, reason=f"Trainer execution aborted: {e}")
         logger.error(f"训练节点执行失败: {str(e)}")
         state.setdefault('trainer', {})['trainer_training_success'] = False
         state.setdefault('trainer', {})['train_output_training_error'] = str(e)

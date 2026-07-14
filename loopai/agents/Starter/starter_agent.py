@@ -15,8 +15,8 @@ from loopai.agents.Configer import ConfigerAgent
 from loopai.agents.Judger import JudgerAgent
 from loopai.skills.Analyzer.analyzer_agent import AnalyzerAgent
 from loopai.agents.Constructor import ConstructorAgent
-from loopai.agents.Trainer import TrainerAgent
 from loopai.agents.WebCrawler import WebCrawlerAgent
+from loopai.skills.Trainer.trainer_agent import TrainerAgent
 
 from loopai.agents.Configer.tools.check_config import check_config
 

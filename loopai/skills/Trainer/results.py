@@ -131,8 +131,14 @@ def _find_training_output_dir(
         if value:
             candidates.append(Path(str(value)))
 
-    task_id = task_id or state.get("trainer_task_id")
-    trainer_task_id = trainer_task_id or state.get("trainer_training_task_id") or state.get("training_task_id")
+    task_id = task_id or state.get("task_id")
+    trainer_task_id = (
+        trainer_task_id
+        or state.get("trainer_version_id")
+        or state.get("trainer_task_id")
+        or state.get("trainer_training_task_id")
+        or state.get("training_task_id")
+    )
     if task_id and trainer_task_id:
         candidates.append(Path(output_dir) / str(task_id) / "trainer" / str(trainer_task_id))
 

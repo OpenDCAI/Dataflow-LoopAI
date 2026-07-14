@@ -207,7 +207,7 @@ conda create -n loopai-verl python=3.10
 * **AnalyzerAgent**：Analyzer 通过 `analyzer.analyze_base_url`、`analyzer.analyze_model_path`、`analyzer.analyze_api_key` 调用 OpenAI 兼容聊天接口。本地分析时，可以复用 vLLM 环境启动分析模型，并将 `analyze_base_url` 指向该服务。当前 Analyzer 不会自动拉起 vLLM。
 * **ObtainerCLI/DataMixer**：旧的 LangGraph `ObtainerAgent` 已退休。数据搜索、下载、入湖和 SFT 导出应使用 `skills/obtainer/SKILL.md`、`docs/OBTAINERCLI_USAGE.md` 和 `python -m loopai.skills.ObtainerCLI.cli`。新的 dataset-acquisition worker 会从 warehouse model pool、`CODEX_*`/`DEEPSEEK_*` 环境变量或 starter system config 解析模型端点。
 * **ConstructorAgent**：后处理、清洗和格式映射使用 `pip install -e .` 安装的 LoopAI 主环境。Constructor 通过 `constructor.model_path`、`constructor.base_url`、`constructor.api_key` 调用 OpenAI 兼容聊天接口；如果这些字段为空，部分路径会回退使用 Analyzer 的模型配置。Benchmark-aware 清洗可以额外使用 `constructor.benchmark_source_dir` 或 benchmark pool 相关字段，postprocess v2 流程也可能使用 `TAVILY_API_KEY` 做 source reference 搜索。
-* **TrainerAgent**：本地训练通常需要 `LLaMA-Factory` 或 `verl`。将 `trainer.train_framework` 设置为 `llamafactory` 或 `verl`。使用 LlamaFactory 时，需要配置 `trainer.llamafactory_dir` 为 LLaMA-Factory 仓库路径，并配置 `trainer.llamafactory_env_path` 为环境根目录或 `bin` 目录，例如 `/path/to/miniconda3/envs/loopai-llamafactory/bin`。使用 verl 时，可在 trainer 或 system 配置中提供 `verl_dir` 和 `verl_env_path`。Trainer 会通过内部任务管理器异步启动训练，在子线程中拉起对应训练框架的子进程，并持续回传日志。
+* **Trainer Skill**：本地训练通常需要 `LLaMA-Factory` 或 `verl`。将 `trainer.train_framework` 设置为 `llamafactory` 或 `verl`。使用 LlamaFactory 时，需要配置 `trainer.llamafactory_dir` 为 LLaMA-Factory 仓库路径，并配置 `trainer.llamafactory_env_path` 为环境根目录或 `bin` 目录，例如 `/path/to/miniconda3/envs/loopai-llamafactory/bin`。使用 verl 时，可在 trainer 或 system 配置中提供 `verl_dir` 和 `verl_env_path`。Trainer 会通过内部任务管理器拉起对应训练框架的子进程并持续回传日志；Skill 调用会保持前台同步，直到训练完成、失败或取消。
 
 这些字段可以通过 WebUI 的 Configer 流程、Agent state，或 `starter.yaml` 中对应的 `judger`、`analyzer`、`obtainer`、`constructor`、`trainer`、`system` 配置段提供。
 
@@ -242,7 +242,7 @@ LoopAI 中的每个 Agent 都被实现为一个**可独立运行、可组合的�
 * 通过 DataMixer recipe 导出训练数据
 * 支持可扩展的 Web 数据抓取
 
-### 🤖 TrainerAgent（训练代理）
+### 🛠️ Trainer Skill（训练技能）
 
 * 基于新数据执行增量训练
 * 支持持续学习以避免遗忘

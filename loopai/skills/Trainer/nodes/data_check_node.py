@@ -4,9 +4,10 @@
 """
 
 import os
-from pathlib import Path
+
+from loopai.skills.Trainer.utils.stream_events import prepare_trainer_run
 from loopai.schema.states import LoopAIState
-from loopai.agents.Trainer.utils.data_checker import check_data_format, generate_format_report
+from loopai.skills.Trainer.utils.data_checker import check_data_format, generate_format_report
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -28,17 +29,8 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
     """
     
     logger.info("开始执行数据检查节点")
-    # 生成一个task_id,更新到state中，供后续节点使用
-    import uuid
-    task_id = state.get('trainer', {}).get('trainer_version_id') or str(uuid.uuid4())
-    state['trainer']['trainer_task_id'] = task_id
-    state['trainer']['trainer_version_id'] = task_id
-    global_task_id = state.get('task_id') or 'default'
-    global_output_dir = os.path.abspath(state.get('output_dir') or './outputs')
-    trainer_task_id = state.get('trainer', {}).get('trainer_task_id')
-    training_output_dir = os.path.join(global_output_dir, global_task_id, 'trainer', trainer_task_id)
-    state['trainer']['trainer_output_dir'] = training_output_dir
-    state['trainer']['output_dir'] = training_output_dir
+    # version_id 是 Trainer 单次运行的唯一 ID，其他历史字段仅作兼容别名。
+    prepare_trainer_run(state)
     
     try:
         # 获取数据集路径 - 优先使用 obtainer/constructor 映射结果
@@ -72,7 +64,7 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
             report = generate_format_report(check_result)
             
             # 保存报告到输出目录
-            output_dir = state.get('trainer', {}).get('output_dir', './output/trainer')
+            output_dir = state.get('trainer', {}).get('trainer_output_dir', './output/trainer')
             os.makedirs(output_dir, exist_ok=True)
             
             report_path = os.path.join(output_dir, 'data_check_report.txt')
