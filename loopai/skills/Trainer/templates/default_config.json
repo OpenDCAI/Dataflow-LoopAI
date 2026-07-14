@@ -30,7 +30,7 @@
   "output_dir": "./output",
   "logging_steps": 10,
   "save_steps": 100,
-  "save_total_limit": 3,
+  "save_total_limit": 10,
   "save_only_model": true,
   "fp16": true,
   "ddp_timeout": 180000000,

@@ -56,6 +56,41 @@ def serialize_stream_event(event: Any) -> dict[str, Any]:
     return {}
 
 
+def _load_legacy_trainer_event_groups(
+    task_id: str,
+    state: dict[str, Any] | None,
+    output_dir: str,
+) -> dict[str, list[Any]]:
+    trainer_state = state.get("trainer", {}) if isinstance(state, dict) else {}
+    candidates: list[Path] = []
+    event_log_path = trainer_state.get("trainer_event_log_path")
+    if event_log_path:
+        candidates.append(Path(str(event_log_path)).expanduser().parent)
+    for field in ("trainer_output_dir", "output_dir"):
+        value = trainer_state.get(field)
+        if value:
+            candidates.append(Path(str(value)).expanduser())
+
+    visited: set[str] = set()
+    for candidate in candidates:
+        candidate_key = str(candidate)
+        if candidate_key in visited or not (candidate / "trainer.pkl").exists():
+            continue
+        visited.add(candidate_key)
+        try:
+            groups = load_stream_event_groups(
+                "trainer",
+                task_id,
+                log_file_path=output_dir,
+                event_dir=candidate,
+            )
+        except Exception:
+            continue
+        if groups:
+            return groups
+    return {}
+
+
 def build_custom_info(
     task_id: str,
     state: dict[str, Any] | None,
@@ -70,6 +105,8 @@ def build_custom_info(
             event_groups = load_stream_event_groups(agent_name, task_id, log_file_path=output_dir)
         except Exception:
             continue
+        if agent_name == "trainer" and not event_groups:
+            event_groups = _load_legacy_trainer_event_groups(task_id, state, output_dir)
 
         for current_key, events in event_groups.items():
             if not events:

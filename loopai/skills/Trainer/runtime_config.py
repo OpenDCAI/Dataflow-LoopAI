@@ -12,10 +12,7 @@ _DEFAULT_THREAD_ID = "trainer-default"
 _DEFAULT_TRAIN_FRAMEWORK = "llamafactory"
 _DEFAULT_CUDA_VISIBLE_DEVICES = "0"
 _DEFAULT_TEMPLATE_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "loopai"
-    / "agents"
-    / "Trainer"
+    Path(__file__).resolve().parent
     / "templates"
     / "qwen2_5_coder_bird_full_sft.yaml"
 )

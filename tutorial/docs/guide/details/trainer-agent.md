@@ -63,7 +63,7 @@ LLaMA-Factory 模式下必填字段包括：
 
 ### 1. 数据检查节点：`data_check`
 
-该节点会使用 `loopai/agents/Trainer/utils/data_checker.py` 验证数据集是否符合 LLaMA-Factory 支持的格式。
+该节点会使用 `loopai/skills/Trainer/utils/data_checker.py` 验证数据集是否符合 LLaMA-Factory 支持的格式。
 
 支持的主要格式包括：
 
@@ -139,7 +139,7 @@ LLM 辅助模式下，如果 `ConfigGenerator` 初始化时提供了 `model_path
 
 1. 将确认后的数据集注册到 `{llamafactory_dir}/data/dataset_info.json`
 2. 将生成的 YAML 配置复制到 `{output_dir}/configs/{trainer_task_id}.yaml`
-3. 通过 `TaskManager.start_training` 启动训练子进程，并每 30 秒轮询一次任务状态，最长等待 1 小时
+3. 通过 `TaskManager.start_training` 启动训练子进程，并每 30 秒轮询一次任务状态，直到训练完成、失败或取消
 4. 训练过程中实时解析 LLaMA-Factory 的日志，将 step、总 step、训练时间等信息写回 `state` 和 SSE 流
 5. 训练结束后扫描 `output_dir`，汇总 `checkpoint-*` 目录、解析 `trainer_log.jsonl` 中的 step-loss、获取 SwanLab 本地日志路径，并生成训练报告
 
@@ -155,7 +155,7 @@ LLM 辅助模式下，如果 `ConfigGenerator` 初始化时提供了 `model_path
 | `llamafactory_dir` | `str` | LLaMA-Factory 仓库根目录，用于注册数据集。 |
 | `train_input_dataset_path` | `str` | 训练数据集路径，支持 `.json` / `.jsonl`。如果未提供，会尝试使用 `obtainer/constructor.mapping_results.output_file`。 |
 | `train_input_task_description` | `str` | 任务描述，用于决定规则模式下的学习率、epoch、LoRA 参数等。 |
-| `train_input_config_template_path` | `str` | YAML 模板路径，例如 `loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml`。 |
+| `train_input_config_template_path` | `str` | YAML 模板路径，例如 `loopai/skills/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml`。 |
 | `train_input_model_name` | `str` | 基础模型名称或本地路径，最终写入 `model_name_or_path`。 |
 
 ### 可选字段
@@ -245,7 +245,7 @@ Trainer 会按优先级自动尝试：
 ## 最小可用示例
 
 ```python
-from loopai.agents import TrainerAgent
+from loopai.skills.Trainer.trainer_agent import TrainerAgent
 from loopai.memory import checkpointer, store
 
 trainer = TrainerAgent(checkpointer=checkpointer, store=store)
@@ -258,7 +258,7 @@ state = {
         "train_input_dataset_path": "/path/to/LLaMA-Factory/data/alpaca_en_demo.json",
         "train_input_task_description": "训练一个能够回答简单问题并进行对话的 AI 助手",
         "train_input_config_template_path":
-            "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
+            "loopai/skills/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
         "train_input_model_name": "/path/to/Qwen2.5-1.5B",
         "output_dir": "./output/trainer_demo",
         "train_input_use_swanlab": True,
@@ -301,7 +301,7 @@ print(summary["final_status"], summary["output_files"])
 - 数据检查未通过：`.json` 顶层必须是 `list`，`.jsonl` 每行必须是合法 JSON，`conversations[*].from` 必须是 `human/gpt/system` 之一
 - 配置生成失败：通常是模板路径不存在，或 YAML 本身不合法，落地前可以先用 `yaml.safe_load` 自查
 - 训练子进程失败：优先查看 `train_output_training_log_path`，常见原因包括模型路径错误、`llamafactory_dir` 不存在、CUDA OOM、未在 `dataset_info.json` 中注册数据集
-- 超时：当前 `training_execution_node` 中默认 `max_wait_time = 3600`，长任务需要在自定义场景中覆盖该节点或修改源码
+- 长时间训练：当前 `training_execution_node` 没有固定等待上限，调用方需要保持运行；如果调用被中断，Trainer 会取消训练进程组
 - SwanLab 日志路径为空：检查模板中的 `report_to` 是否被覆盖成 `none`，以及 `swanlab_api_key` 是否生效
 
 ## 进阶：单独复用配置生成能力
@@ -309,7 +309,7 @@ print(summary["final_status"], summary["output_files"])
 如果只想使用 LoopAI 中“任务描述 -> LLaMA-Factory YAML”这部分能力，而不直接执行训练，可以单独使用 `ConfigGenerator`：
 
 ```python
-from loopai.agents.Trainer.utils.config_generator import ConfigGenerator
+from loopai.skills.Trainer.utils.config_generator import ConfigGenerator
 
 gen = ConfigGenerator()
 config = gen.generate_config(
@@ -317,7 +317,7 @@ config = gen.generate_config(
     dataset_path="/path/to/sql_train.json",
     model_name="/path/to/Qwen2.5-Coder-7B",
     output_dir="./output/sql_sft",
-    template_path="loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
+    template_path="loopai/skills/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
     use_swanlab=True,
     swanlab_project="sql_sft",
 )

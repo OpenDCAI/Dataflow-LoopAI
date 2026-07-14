@@ -1398,8 +1398,8 @@ class AnalyzerState(BaseModel):
 class TrainerState(BaseModel):
     trainer_task_id: str = Field(
         default="",
-        title="训练任务 ID",
-        description="训练任务 ID",
+        title="Trainer 运行 ID（兼容字段）",
+        description="兼容旧调用方；值与 trainer_version_id 保持一致",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     train_framework: str = Field(
@@ -1540,8 +1540,8 @@ class TrainerState(BaseModel):
     )
     training_task_id: str = Field(
         default="",
-        title="训练任务 ID",
-        description="训练任务 ID",
+        title="Trainer 运行 ID（兼容字段）",
+        description="兼容旧调用方；值与 trainer_version_id 保持一致",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     training_final_status: dict = Field(
@@ -1733,8 +1733,8 @@ class TrainerState(BaseModel):
     )
     trainer_training_task_id: str = Field(
         default="",
-        title="Trainer 训练任务 ID",
-        description="Trainer 训练任务 ID",
+        title="Trainer 运行 ID（兼容字段）",
+        description="兼容旧调用方；值与 trainer_version_id 保持一致",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     trainer_training_execution_time: float = Field(

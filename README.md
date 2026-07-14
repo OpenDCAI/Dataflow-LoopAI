@@ -202,7 +202,7 @@ Agent-specific notes:
 * **AnalyzerAgent**: Analyzer calls an OpenAI-compatible chat endpoint through `analyzer.analyze_base_url`, `analyzer.analyze_model_path`, and `analyzer.analyze_api_key`. For local analysis, you can serve the analysis model with vLLM in the same vLLM environment and point `analyze_base_url` to it. Analyzer does not currently start vLLM by itself.
 * **ObtainerAgent**: data search, RAG, Hugging Face/Kaggle downloads, and webpage collection use the core LoopAI environment installed by `pip install -e .`. For webpage and Kaggle flows, run `playwright install` once in that environment. Obtainer calls an OpenAI-compatible chat endpoint through `obtainer.model_path`, `obtainer.base_url`, and `obtainer.api_key`; RAG embeddings can use `obtainer.rag_api_base_url`, `obtainer.rag_api_key`, and `obtainer.rag_embed_model`. Web search normally needs `obtainer.tavily_api_key` or `TAVILY_API_KEY`, and Kaggle downloads need `obtainer.kaggle_username` / `obtainer.kaggle_key` or `KAGGLE_USERNAME` / `KAGGLE_KEY`.
 * **ConstructorAgent**: post-processing, cleaning, and format mapping use the core LoopAI environment installed by `pip install -e .`. Constructor calls an OpenAI-compatible chat endpoint through `constructor.model_path`, `constructor.base_url`, and `constructor.api_key`; if these are empty, several paths fall back to the Analyzer model settings. Benchmark-aware cleaning can additionally use `constructor.benchmark_source_dir` or benchmark pool fields, and the postprocess v2 path may use `TAVILY_API_KEY` for source reference search.
-* **TrainerAgent**: local training normally requires `LLaMA-Factory` or `verl`. Set `trainer.train_framework` to `llamafactory` or `verl`. For LlamaFactory, set `trainer.llamafactory_dir` to the LLaMA-Factory repository and `trainer.llamafactory_env_path` to the environment root or `bin` directory, for example `/path/to/miniconda3/envs/loopai-llamafactory/bin`. For verl, provide `verl_dir` and `verl_env_path` in the trainer or system config. Trainer starts training asynchronously through an internal task manager, which launches the selected framework as a subprocess and streams logs back to LoopAI.
+* **Trainer Skill**: local training normally requires `LLaMA-Factory` or `verl`. Set `trainer.train_framework` to `llamafactory` or `verl`. For LlamaFactory, set `trainer.llamafactory_dir` to the LLaMA-Factory repository and `trainer.llamafactory_env_path` to the environment root or `bin` directory, for example `/path/to/miniconda3/envs/loopai-llamafactory/bin`. For verl, provide `verl_dir` and `verl_env_path` in the trainer or system config. Trainer launches the selected framework as a managed subprocess, streams logs back to LoopAI, and keeps the Skill call in the foreground until training completes, fails, or is cancelled.
 
 These fields can be provided through the WebUI Configer flow, in Agent state, or in `starter.yaml` under the corresponding `judger`, `analyzer`, `obtainer`, `constructor`, `trainer`, or `system` sections.
 
@@ -237,7 +237,7 @@ Each Agent in LoopAI is implemented as an **independent and composable subgraph*
 * Cleans and structures data for training
 * Supports extensible web data crawling
 
-### 🤖 TrainerAgent
+### 🛠️ Trainer Skill
 
 * Performs incremental training with new data
 * Supports continual learning to prevent forgetting
