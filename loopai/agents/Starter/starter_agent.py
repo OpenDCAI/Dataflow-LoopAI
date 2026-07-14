@@ -10,11 +10,10 @@ from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState, RuntimeContext
 from loopai.schema.events import StreamEvent
-from loopai.agents import BaseAgent
+from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.agents.Configer import ConfigerAgent
 from loopai.agents.Judger import JudgerAgent
 from loopai.skills.Analyzer.analyzer_agent import AnalyzerAgent
-from loopai.agents.Obtainer import ObtainerAgent
 from loopai.agents.Constructor import ConstructorAgent
 from loopai.agents.WebCrawler import WebCrawlerAgent
 from loopai.skills.Trainer.trainer_agent import TrainerAgent
@@ -113,6 +112,24 @@ class StarterAgent(BaseAgent):
 
     @staticmethod
     @BaseAgent.set_current
+    def obtain_node(state: LoopAIState) -> LoopAIState:
+        """Legacy obtain route placeholder.
+
+        Dataset acquisition is now handled by the Codex skill and ObtainerCLI
+        worker surface, not by the retired LangGraph ObtainerAgent.
+        """
+        writer = get_stream_writer()
+        message = (
+            "Legacy ObtainerAgent has been retired. Use skills/obtainer/SKILL.md "
+            "and loopai.skills.ObtainerCLI.cli DataMixer workflows for dataset acquisition."
+        )
+        logger.info("Exec: Obtain node routed to retired-agent notice")
+        writer(StreamEvent(current=state.get("current", ""), message=message).json())
+        state["next_to"] = "query_node"
+        return state
+
+    @staticmethod
+    @BaseAgent.set_current
     def end_node(state: LoopAIState) -> LoopAIState:
         """End the conversation"""
         return state
@@ -134,18 +151,7 @@ class StarterAgent(BaseAgent):
                                      store=self.store)(**kwargs)
         train_node = TrainerAgent(checkpointer=self.checkpointer,
                                   store=self.store)(**kwargs)
-        # ObtainerAgent will use model_name, base_url, api_key from StarterAgent
-        # But it also needs to get these from state if not provided in constructor
-        # So we pass them to ensure consistency
-        obtainer_node = ObtainerAgent(
-            model_name=self.model_name,
-            base_url=self.base_url,
-            api_key=self.api_key,
-            checkpointer=self.checkpointer,
-            store=self.store
-        )(**kwargs)
-        # ConstructorAgent will use model_name, base_url, api_key from StarterAgent
-        # It processes the downloaded data from ObtainerAgent
+        # ConstructorAgent will use model_name, base_url, api_key from StarterAgent.
         constructor_node = ConstructorAgent(
             model_name=self.model_name,
             base_url=self.base_url,
@@ -167,8 +173,7 @@ class StarterAgent(BaseAgent):
         builder.add_node("feedback_node", self.feedback_node)
         builder.add_node("route_node", self.route_node)
         builder.add_node("train_node", train_node)
-        # Use ObtainerAgent subgraph
-        builder.add_node("obtain_node", obtainer_node)
+        builder.add_node("obtain_node", self.obtain_node)
         # Use ConstructorAgent subgraph
         builder.add_node("constructor_node", constructor_node)
         builder.add_node("evaluate_node", self.evaluate_node)

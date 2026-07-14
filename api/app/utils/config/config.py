@@ -17,7 +17,11 @@ async def check_config_from_db(base_dir):
 
 def wrap_attr(val):
     type_name = 'str'
-    if type(val) == int:
+    if isinstance(val, dict):
+        type_name = 'dict'
+    elif isinstance(val, list):
+        type_name = 'list'
+    elif type(val) == int:
         type_name = 'int'
     elif type(val) == bool:
         type_name = 'bool'
@@ -109,6 +113,9 @@ def format_value(item):
         value = item.get('default')
     if value is None:
         item['value'] = None
+        return item
+    if type_name in {'dict', 'list', 'json'} or isinstance(value, (dict, list)):
+        item['value'] = value
         return item
     item['value'] = value
     if type_name == 'bool':

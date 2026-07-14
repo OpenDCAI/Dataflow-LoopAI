@@ -74,9 +74,9 @@ Analyzes Judger results, identifies failure patterns, and produces readable diag
 
 Handles interactive configuration updates, missing-field feedback, and recovery from interrupted workflows.
 
-### ObtainerAgent
+### ObtainerCLI/DataMixer
 
-Analyzes data requirements, searches for relevant datasets or web sources, and converts data into training-ready formats.
+The legacy LangGraph `ObtainerAgent` is retired. Use the ObtainerCLI/DataMixer skill workflow for dataset search, download, lake ingest, and recipe-based training export.
 
 ### TrainerAgent
 
@@ -215,10 +215,10 @@ Configuration requirements:
 - Add `examples/scripts/tavily_api_key.txt` for Tavily search.
 - Add `rag_api_key.txt` in the repository root for API-based embedding models.
 
-Run:
+Run DataMixer commands through:
 
 ```bash
-bash examples/scripts/run_obtainer.sh
+python -m loopai.skills.ObtainerCLI.cli dm --help
 ```
 
 ## Defining A New Agent

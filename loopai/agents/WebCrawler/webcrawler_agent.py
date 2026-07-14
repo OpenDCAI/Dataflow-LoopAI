@@ -5,7 +5,7 @@ from langgraph.graph import StateGraph
 from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState
-from loopai.agents import BaseAgent
+from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
 from .nodes import start_node as _start_node, crawl_node as _crawl_node, webcrawler_dataset_node as _webcrawler_dataset_node, end_node as _end_node

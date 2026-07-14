@@ -15,6 +15,7 @@ setup(
         "langchain-core>=0.3.0",
         "langchain-text-splitters>=0.2.0",
         "omegaconf>=2.3.0",
+        "PyYAML>=6.0",
         "httpx>=0.24.0",
         "chromadb>=0.4.0",
         "ddgs",

@@ -107,6 +107,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         status: 'stale'
     })
     const msgEventSource = ref(null)
+    const msgEventKeys = ref(new Set())
 
 
     const setCurrentTask = async (task) => {
@@ -134,9 +135,11 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     taskMessages.value = (res.data?.conversation || []).map((item) =>
                         normalizeConversationMessage(item)
                     )
-                    msgStreamModel.value.status = res?.data?.status || 'stale'
-                    msgStreamModel.value.loading = res?.data?.status === 'running'
-                    if (res?.data?.status === 'running' && !msgEventSource.value) {
+                    const streamStatus = res?.data?.status || 'stale'
+                    const shouldStream = ['submitted', 'running', 'finishing'].includes(streamStatus)
+                    msgStreamModel.value.status = streamStatus
+                    msgStreamModel.value.loading = shouldStream
+                    if (shouldStream && !msgEventSource.value) {
                         getMsgStream()
                     }
                 }
@@ -157,6 +160,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     msgStreamModel.value.status = 'stale'
                     msgStreamModel.value.loading = false
                     msgStreamModel.value.msgs = []
+                    msgEventKeys.value = new Set()
                     await getMessages()
                 }
                 return res
@@ -174,7 +178,28 @@ export const useLoopAI = defineStore('useLoopAI', () => {
             msgEventSource.value = null
         }
         msgStreamModel.value.loading = false
-        if (!keepMessage) msgStreamModel.value.msgs = []
+        if (!keepMessage) {
+            msgStreamModel.value.msgs = []
+            msgEventKeys.value = new Set()
+        }
+    }
+    const buildStreamEventKey = (data, event) => {
+        const sessionId = data?.session_id || currentTask.value?.task_id || ''
+        const eventIndex = data?._event_index ?? event?.lastEventId
+        if (eventIndex !== undefined && eventIndex !== null && String(eventIndex) !== '') {
+            return `${sessionId}:event-index:${eventIndex}`
+        }
+        const codexEvent = data?.event || {}
+        const item = codexEvent?.item || {}
+        const itemId = item?.id || item?.call_id || item?.thread_id
+        if (data?.type === 'event' && codexEvent?.type && itemId) {
+            return `${sessionId}:item:${codexEvent.type}:${itemId}`
+        }
+        if (data?.type === 'event' && codexEvent?.type && item?.type === 'command_execution' && item?.command) {
+            return `${sessionId}:command:${codexEvent.type}:${item.command}`
+        }
+        if (data?.type && data?.message) return `${sessionId}:message:${data.type}:${data.message}`
+        return null
     }
     const getMsgStream = async () => {
         if (!currentTask.value?.task_id) return
@@ -193,6 +218,11 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     status: 'warning'
                 })
                 return
+            }
+            const eventKey = buildStreamEventKey(resData.data, event)
+            if (eventKey) {
+                if (msgEventKeys.value.has(eventKey)) return
+                msgEventKeys.value.add(eventKey)
             }
             msgStreamModel.value.msgs.push(resData.data)
         }

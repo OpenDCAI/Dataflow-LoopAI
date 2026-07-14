@@ -135,8 +135,7 @@ export default {
                 .then(async (res) => {
                     if (res.code === 200) {
                         this.$refs.editor.editor().commands.setContent('')
-                        this.getStatus(session_id)
-                        this.getMsgStream()
+                        await this.getStatus(session_id)
                         this.lock.submit = true
                     } else {
                         this.lock.submit = true

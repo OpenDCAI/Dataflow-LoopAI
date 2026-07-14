@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from tortoise.expressions import Q
 from ..models.body import (
@@ -83,7 +83,7 @@ async def starter_codex_session(session_id: str):
 
 
 @router.get("/codex/session/{session_id}/stream", operation_id="starterCodexSessionStream", summary="Stream codex session events")
-async def starter_codex_session_stream(session_id: str):
+async def starter_codex_session_stream(session_id: str, request: Request):
     session = codex_session_store.get(session_id)
     if session is None:
         return response_body(
@@ -94,10 +94,20 @@ async def starter_codex_session_stream(session_id: str):
             },
         )()
     async def event_stream():
-        last_index = 0
+        last_event_id = request.headers.get("last-event-id") or request.query_params.get("last_event_id")
+        try:
+            last_index = max(0, int(last_event_id) + 1) if last_event_id is not None else 0
+        except (TypeError, ValueError):
+            last_index = 0
 
-        def wrap_sse_data(data):
-            return f"data: {json.dumps(response_body(data=data)(), ensure_ascii=False)}\n\n"
+        def wrap_sse_data(data, event_id: int | None = None):
+            payload = dict(data or {})
+            if event_id is not None:
+                payload.setdefault("_event_index", event_id)
+            encoded = json.dumps(response_body(data=payload)(), ensure_ascii=False)
+            if event_id is None:
+                return f"data: {encoded}\n\n"
+            return f"id: {event_id}\ndata: {encoded}\n\n"
 
         while True:
             current = codex_session_store.get(session_id)
@@ -112,7 +122,7 @@ async def starter_codex_session_stream(session_id: str):
             events = current.get("events", [])
             while last_index < len(events):
                 payload = events[last_index].get("payload", {})
-                yield wrap_sse_data(payload)
+                yield wrap_sse_data(payload, last_index)
                 last_index += 1
 
             if current.get("status") not in {"submitted", "running", "finishing"}:
@@ -120,7 +130,7 @@ async def starter_codex_session_stream(session_id: str):
                     "type": "session.snapshot",
                     "session_id": session_id,
                     "session": current,
-                })
+                }, len(events))
                 return
 
             await asyncio.sleep(0.5)

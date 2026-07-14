@@ -57,24 +57,23 @@ class KaggleManager:
         self,
         disable_cache: bool = False,
         temp_base_dir: Optional[str] = None,
-        # 下面这两个参数虽然保留在签名里以防报错，但逻辑中不再优先使用
         kaggle_username: Optional[str] = None,
         kaggle_key: Optional[str] = None,
     ):
         """Initialize Kaggle Manager"""
         
-        # --- 修改开始：只保留从配置文件读取的逻辑 ---
-        final_username, final_key = self._load_credentials_from_config()
+        config_username, config_key = self._load_credentials_from_config()
+        final_username = kaggle_username or os.getenv("KAGGLE_USERNAME") or config_username
+        final_key = kaggle_key or os.getenv("KAGGLE_KEY") or config_key
         
-        # 如果配置文件里有，直接写入环境变量，供后续 KaggleApi 自动读取
+        # Explicit credentials win, then environment, then local config.
         if final_username:
             os.environ["KAGGLE_USERNAME"] = final_username
         if final_key:
             os.environ["KAGGLE_KEY"] = final_key
             
         if not final_username or not final_key:
-             logger.warning("[Kaggle] 未在配置文件中找到完整的 Kaggle 凭证，后续初始化可能会失败。")
-        # --- 修改结束 ---
+            logger.warning("[Kaggle] Kaggle credentials incomplete; provider search may be skipped.")
 
         self.disable_cache = disable_cache
         self.temp_base_dir = os.getenv("DF_TEMP_DIR") or temp_base_dir
