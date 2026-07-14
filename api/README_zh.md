@@ -232,7 +232,7 @@ curl "http://localhost:8855/starter/agent/status"
 
 ### Trainer 指标
 
-旧的直接 `/train/*` API 已经移除。常规训练通过集成的 TrainerAgent 路径执行。WebUI 图表通过下面的任务级接口读取指标：
+旧的直接 `/train/*` API 已经移除。常规训练通过集成的 Trainer Skill 路径执行。WebUI 图表通过下面的任务级接口读取指标：
 
 | Method | Path | 说明 |
 | --- | --- | --- |

@@ -9,6 +9,7 @@
 """
 
 import os
+import signal
 import subprocess
 import shutil
 from datetime import datetime
@@ -93,7 +94,9 @@ class TaskManager:
             'started_at': None,
             'completed_at': None,
             'error_message': None,
-            'process': None
+            'process': None,
+            'process_group_id': None,
+            'cancel_requested': False,
         }
 
         self.tasks[task_id] = task_info
@@ -165,6 +168,9 @@ class TaskManager:
         self.log_parsers[task_id] = log_parser
 
         try:
+            if task_info.get('cancel_requested'):
+                return
+
             if framework == 'llamafactory':
                 self._run_llamafactory_training(task_info, config_path, log_path, log_parser)
             elif framework == 'verl':
@@ -258,10 +264,20 @@ class TaskManager:
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 cwd=self.llamafactory_dir,
-                env=env
+                env=env,
+                start_new_session=(os.name == "posix"),
             )
 
             task_info['process'] = process
+            if os.name == "posix":
+                # start_new_session=True makes the launcher the leader of a
+                # dedicated process group. torchrun and all ranks inherit it.
+                task_info['process_group_id'] = process.pid
+
+            if task_info.get('cancel_requested'):
+                self._terminate_task_process(task_info)
+                return
+
             try:
                 log_parser.start_monitoring()
             except Exception as e:
@@ -269,6 +285,8 @@ class TaskManager:
 
             return_code = process.wait()
 
+            if task_info.get('cancel_requested'):
+                return
             if return_code == 0:
                 task_info['status'] = TaskStatus.COMPLETED
             else:
@@ -299,13 +317,22 @@ class TaskManager:
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
                 cwd=self.verl_dir,
-                env=env
+                env=env,
+                start_new_session=(os.name == "posix"),
             )
 
             task_info['process'] = process
+            if os.name == "posix":
+                task_info['process_group_id'] = process.pid
+
+            if task_info.get('cancel_requested'):
+                self._terminate_task_process(task_info)
+                return
 
             return_code = process.wait()
 
+            if task_info.get('cancel_requested'):
+                return
             if return_code == 0:
                 task_info['status'] = TaskStatus.COMPLETED
             else:
@@ -320,7 +347,44 @@ class TaskManager:
         """获取所有任务"""
         return self.tasks.copy()
 
-    def cancel_task(self, task_id: str) -> bool:
+    def wait_for_completion(self, task_id: str) -> Optional[Dict]:
+        """同步等待后台训练线程完成并返回最终任务状态。"""
+        task_info = self.tasks.get(task_id)
+        if not task_info:
+            return None
+
+        future = task_info.get('future')
+        if future is not None:
+            future.result()
+        return task_info
+
+    @staticmethod
+    def _terminate_task_process(task_info: Dict, timeout: float = 10.0) -> None:
+        """终止训练 launcher 及其 torchrun/rank 子进程。"""
+        process = task_info.get('process')
+        if process is None or process.poll() is not None:
+            return
+
+        process_group_id = task_info.get('process_group_id')
+        try:
+            if os.name == "posix" and process_group_id:
+                os.killpg(process_group_id, signal.SIGTERM)
+            else:
+                process.terminate()
+
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                if os.name == "posix" and process_group_id:
+                    os.killpg(process_group_id, signal.SIGKILL)
+                else:
+                    process.kill()
+                process.wait()
+        except ProcessLookupError:
+            # The launcher or its process group has already exited.
+            return
+
+    def cancel_task(self, task_id: str, reason: str = "Task cancelled by user") -> bool:
         """取消训练任务"""
         if task_id not in self.tasks:
             return False
@@ -328,19 +392,15 @@ class TaskManager:
         task_info = self.tasks[task_id]
 
         if task_info['status'] == TaskStatus.RUNNING:
-            process = task_info.get('process')
-            if process:
-                try:
-                    process.terminate()
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                except Exception as e:
-                    logger.error(f"Error terminating process: {e}")
+            task_info['cancel_requested'] = True
+            try:
+                self._terminate_task_process(task_info)
+            except Exception as e:
+                logger.error(f"Error terminating training process group: {e}")
 
             task_info['status'] = TaskStatus.CANCELLED
             task_info['completed_at'] = get_current_timestamp()
-            task_info['error_message'] = "Task cancelled by user"
+            task_info['error_message'] = reason
             return True
 
         return False

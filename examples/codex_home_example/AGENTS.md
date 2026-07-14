@@ -75,6 +75,9 @@
 - 用户要求查看 Judger 过程或评测明细时，优先读取 `judger.pkl` 事件流
 - `train` 优先使用 Trainer Skill
 - 用户要求查看 Trainer 过程或训练事件时，优先读取 Trainer 事件输出
+- 每一轮训练都必须先调用 Trainer Skill 的 `prepare()`，向用户完整展示生成的 YAML；只有用户明确确认后才能调用 `run_prepared()`，不得对交互式训练直接调用兼容入口 `run()`
+- Trainer 必须以前台同步方式运行；训练进入 `completed`、`failed` 或 `cancelled` 前，不得结束当前执行
+- 如果长时间命令返回运行中的 cell/session id，必须持续等待同一执行结束，不能把“训练已启动”当成完成
 
 注意：
 

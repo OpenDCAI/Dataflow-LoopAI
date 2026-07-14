@@ -203,6 +203,7 @@ class ConfigGenerator:
             "output_dir": "./output",
             "logging_steps": 10,
             "save_steps": 100,
+            "save_total_limit": 10,
             "plot_loss": True,
             "overwrite_output_dir": True,
             "save_only_model": False,

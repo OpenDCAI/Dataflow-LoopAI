@@ -25,6 +25,7 @@ from .utils.stream_events import (
     build_trainer_error_payload,
     build_trainer_success_payload,
     emit_trainer_event,
+    prepare_trainer_run,
     record_trainer_result,
 )
 
@@ -279,6 +280,9 @@ class TrainerAgent(BaseAgent):
     def should_continue_after_data_check(state: LoopAIState) -> str:
         """数据检查后的条件判断"""
         if state.get('trainer', {}).get('trainer_data_check_passed', False):
+            if state.get('trainer', {}).get('_trainer_use_prepared_config', False):
+                logger.info("数据检查通过，使用用户已确认的训练配置")
+                return "training_execution"
             logger.info("数据检查通过，继续配置生成")
             return "config_generation"
         else:
@@ -289,6 +293,9 @@ class TrainerAgent(BaseAgent):
     def should_continue_after_config_generation(state: LoopAIState) -> str:
         """配置生成后的条件判断"""
         if state.get('trainer', {}).get('trainer_config_generation_success', False):
+            if state.get('trainer', {}).get('_trainer_prepare_only', False):
+                logger.info("配置生成成功，等待用户确认后再启动训练")
+                return "end"
             logger.info("配置生成成功，继续训练执行")
             return "training_execution"
         else:
@@ -319,6 +326,7 @@ class TrainerAgent(BaseAgent):
             self.should_continue_after_data_check,
             {
                 "config_generation": "config_generation",
+                "training_execution": "training_execution",
                 "end": "end"
             }
         )
@@ -420,6 +428,7 @@ class TrainerAgent(BaseAgent):
         @BaseAgent.set_current
         def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
             writer = get_stream_writer()
+            prepare_trainer_run(state)
             
             # 进度：开始检查必需字段
             emit_trainer_event(

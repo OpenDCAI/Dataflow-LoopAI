@@ -21,6 +21,7 @@ dataloader_num_workers: 4
 output_dir: /home/lpc/repos/LLaMA-Factory/output/
 logging_steps: 10
 save_steps: 100
+save_total_limit: 10
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
