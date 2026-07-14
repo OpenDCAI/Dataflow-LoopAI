@@ -13,7 +13,7 @@ import tomlkit
 
 from tortoise.expressions import Q
 
-from loopai.utils.model_pool import StarterModelPool
+from loopai.schema.model_pool import StarterModelPool
 from ...models.db_models import StarterConfig, TaskModel, ThreadHistory
 from ...utils.config.config import check_config_from_db
 

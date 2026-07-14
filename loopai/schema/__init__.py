@@ -1,3 +1,42 @@
 from .events import AgentEvent, StreamEvent
+from .model_pool import (
+    DEFAULT_PROXY_API_KEY,
+    DEFAULT_TIER,
+    TIERS,
+    ModelPoolEntry,
+    ResolvedModelProvider,
+    StarterModelPool,
+    chat_completions_url,
+    load_starter_config_from_db,
+    load_starter_config_from_yaml,
+    load_starter_system_config_sync,
+    load_yaml_config,
+    mask_secret,
+    normalize_v1_base_url,
+    normalize_wire_api,
+    resolve_secret,
+    responses_url,
+    starter_config_candidates,
+)
 
-__all__ = ['AgentEvent', 'StreamEvent']
+__all__ = [
+    "AgentEvent",
+    "StreamEvent",
+    "DEFAULT_PROXY_API_KEY",
+    "DEFAULT_TIER",
+    "TIERS",
+    "ModelPoolEntry",
+    "ResolvedModelProvider",
+    "StarterModelPool",
+    "chat_completions_url",
+    "load_starter_config_from_db",
+    "load_starter_config_from_yaml",
+    "load_starter_system_config_sync",
+    "load_yaml_config",
+    "mask_secret",
+    "normalize_v1_base_url",
+    "normalize_wire_api",
+    "resolve_secret",
+    "responses_url",
+    "starter_config_candidates",
+]
