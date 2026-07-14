@@ -86,7 +86,7 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
         analyzer = state.get("analyzer", {}) or {}
         model_name = webcrawler.get("model") or analyzer.get("analyze_model_path")
         base_url = webcrawler.get("deepseek_api_base") or analyzer.get("analyze_base_url")
-        api_key = webcrawler.get("deepseek_api_key") or analyzer.get("analyze_api_key")
+        api_key = os.getenv("DEEPSEEK_API_KEY", "").strip() or analyzer.get("analyze_api_key")
         temperature = webcrawler.get("temperature", 0.7)
         
         if not model_name or not base_url or not api_key:
@@ -98,7 +98,7 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
         prompt_loader = PromptLoader(state.get("prompt_template_dir"))
         
         # Output directory
-        output_dir = state.get("output_dir", "./output")
+        output_dir = webcrawler.get("output_dir") or state.get("output_dir", "./output")
         dataset_dir = os.path.join(output_dir, "webcrawler_dataset")
         os.makedirs(dataset_dir, exist_ok=True)
         

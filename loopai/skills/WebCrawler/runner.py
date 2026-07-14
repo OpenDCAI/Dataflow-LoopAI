@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from loopai.agents.WebCrawler.nodes.crawl_node import crawl_node
@@ -31,13 +32,44 @@ _STEP_ALIASES = {
     "end_node": "finish",
 }
 
-_CHECKPOINT_TABLE_DDL = """
-CREATE TABLE IF NOT EXISTS webcrawler_checkpoints (
+_CHECKPOINT_TABLE = "webcrawler_checkpoints_v2"
+_LEGACY_CHECKPOINT_TABLE = "webcrawler_checkpoints"
+_DEFAULT_CHECKPOINT_VERSION = "__default__"
+_CHECKPOINT_TABLE_DDL = f"""
+CREATE TABLE IF NOT EXISTS {_CHECKPOINT_TABLE} (
+    thread_id TEXT NOT NULL,
+    version_id TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(thread_id, version_id)
+)
+"""
+_LEGACY_CHECKPOINT_TABLE_DDL = f"""
+CREATE TABLE IF NOT EXISTS {_LEGACY_CHECKPOINT_TABLE} (
     thread_id TEXT PRIMARY KEY,
     state_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 )
 """
+
+_WEBCRAWLER_TASK_STATE_UPDATE_FIELDS = (
+    "output_dir",
+    "output_run_id",
+    "output_result",
+    "dataset_summary",
+    "dataset_sft_count",
+    "dataset_pt_count",
+    "dataset_sft_path",
+    "dataset_pt_path",
+    "dataset_sft_mapped_path",
+    "dataset_pt_mapped_path",
+    "dataset_mapping_results",
+    "runtime_version_id",
+    "runtime_version_output_dir",
+    "runtime_current_step",
+    "runtime_last_completed_step",
+)
+_SENSITIVE_WEBCRAWLER_FIELDS = ("deepseek_api_key", "tavily_api_key")
 
 
 def normalize_webcrawler_step(step_name: Optional[str]) -> Optional[str]:
@@ -69,22 +101,69 @@ def _json_safe(value: Any) -> Any:
         return str(value)
 
 
+def _sanitize_sensitive_webcrawler_fields(state: Dict[str, Any]) -> Dict[str, Any]:
+    webcrawler = state.get("webcrawler")
+    if not isinstance(webcrawler, dict):
+        return state
+    for field in _SENSITIVE_WEBCRAWLER_FIELDS:
+        webcrawler.pop(field, None)
+    return state
+
+
 def _connect(checkpoint_path: str) -> sqlite3.Connection:
     checkpoint_dir = os.path.dirname(checkpoint_path)
     if checkpoint_dir:
         os.makedirs(checkpoint_dir, exist_ok=True)
     conn = sqlite3.connect(checkpoint_path)
     conn.execute(_CHECKPOINT_TABLE_DDL)
+    conn.execute(_LEGACY_CHECKPOINT_TABLE_DDL)
     conn.commit()
     return conn
 
 
-def save_webcrawler_checkpoint(state: Dict[str, Any], thread_id: str, checkpoint_path: str) -> None:
+def _resolve_checkpoint_version_id(state: Dict[str, Any], version_id: Optional[str] = None) -> str:
+    candidate = str(version_id or "").strip()
+    if candidate:
+        return candidate
+    state_version = str((state.get("webcrawler") or {}).get("runtime_version_id") or "").strip()
+    return state_version or _DEFAULT_CHECKPOINT_VERSION
+
+
+def _latest_runtime_version(task_id: str, db_path: Optional[str], node_name: str = "webcrawler") -> Optional[str]:
+    if not task_id or not db_path:
+        return None
+    try:
+        from loopai.common.db_tool.runtime import get_latest_task_runtime_sync
+
+        runtime = get_latest_task_runtime_sync(db_path, task_id, node_name)
+        if runtime and runtime.get("version"):
+            return str(runtime["version"])
+    except Exception as exc:
+        logger.warning("Failed to resolve latest runtime version for %s: %s", task_id, exc)
+    return None
+
+
+def save_webcrawler_checkpoint(
+    state: Dict[str, Any],
+    thread_id: str,
+    checkpoint_path: str,
+    version_id: Optional[str] = None,
+) -> None:
+    state = _sanitize_sensitive_webcrawler_fields(state)
     payload = json.dumps(_json_safe(state), ensure_ascii=False)
     updated_at = datetime.now(timezone.utc).isoformat()
+    checkpoint_version = _resolve_checkpoint_version_id(state, version_id)
     with _connect(checkpoint_path) as conn:
         conn.execute(
-            """INSERT INTO webcrawler_checkpoints(thread_id, state_json, updated_at)
+            f"""INSERT INTO {_CHECKPOINT_TABLE}(thread_id, version_id, state_json, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(thread_id, version_id) DO UPDATE SET
+                   state_json = excluded.state_json,
+                   updated_at = excluded.updated_at""",
+            (thread_id, checkpoint_version, payload, updated_at),
+        )
+        conn.execute(
+            f"""INSERT INTO {_LEGACY_CHECKPOINT_TABLE}(thread_id, state_json, updated_at)
                VALUES (?, ?, ?)
                ON CONFLICT(thread_id) DO UPDATE SET
                    state_json = excluded.state_json,
@@ -94,17 +173,43 @@ def save_webcrawler_checkpoint(state: Dict[str, Any], thread_id: str, checkpoint
         conn.commit()
 
 
-def load_webcrawler_checkpoint(thread_id: str, checkpoint_path: str) -> Dict[str, Any]:
+def load_webcrawler_checkpoint(
+    thread_id: str,
+    checkpoint_path: str,
+    version_id: Optional[str] = None,
+) -> Dict[str, Any]:
     if not os.path.exists(checkpoint_path):
         raise RuntimeError(f"No checkpoint found for thread_id={thread_id} in {checkpoint_path}")
     with _connect(checkpoint_path) as conn:
-        row = conn.execute(
-            "SELECT state_json FROM webcrawler_checkpoints WHERE thread_id = ? LIMIT 1",
-            (thread_id,),
-        ).fetchone()
+        normalized_version = str(version_id or "").strip()
+        if normalized_version:
+            row = conn.execute(
+                f"""SELECT state_json
+                    FROM {_CHECKPOINT_TABLE}
+                    WHERE thread_id = ? AND version_id = ?
+                    LIMIT 1""",
+                (thread_id, normalized_version),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                f"""SELECT state_json
+                    FROM {_CHECKPOINT_TABLE}
+                    WHERE thread_id = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1""",
+                (thread_id,),
+            ).fetchone()
+        if row is None:
+            row = conn.execute(
+                f"SELECT state_json FROM {_LEGACY_CHECKPOINT_TABLE} WHERE thread_id = ? LIMIT 1",
+                (thread_id,),
+            ).fetchone()
     if row is None:
         raise RuntimeError(f"No checkpoint found for thread_id={thread_id} in {checkpoint_path}")
-    return json.loads(row[0])
+    loaded = json.loads(row[0])
+    if isinstance(loaded, dict):
+        return _sanitize_sensitive_webcrawler_fields(loaded)
+    return loaded
 
 
 def _start_index(step_name: str) -> int:
@@ -139,6 +244,43 @@ def _run_step(step_name: str, state: Dict[str, Any]) -> Dict[str, Any]:
     raise ValueError(f"Unknown executable WebCrawler step: {step_name}")
 
 
+def _safe_update_webcrawler_task_state(
+    state: Dict[str, Any],
+    runtime: Dict[str, Any],
+) -> None:
+    task_id = str(runtime.get("thread_id") or "").strip()
+    db_path = str(runtime.get("db_path") or "").strip()
+    if not task_id or not db_path:
+        return
+
+    webcrawler_state = state.get("webcrawler", {})
+    if not isinstance(webcrawler_state, dict):
+        return
+
+    updates = {
+        key: webcrawler_state[key]
+        for key in _WEBCRAWLER_TASK_STATE_UPDATE_FIELDS
+        if key in webcrawler_state and webcrawler_state.get(key) not in (None, "")
+    }
+    if not updates:
+        return
+
+    try:
+        from loopai.skills.Configer import update_configer_task_state_config
+
+        os.environ["DB_PATH"] = db_path
+        result = update_configer_task_state_config(
+            section_name="webcrawler",
+            updates=updates,
+            task_id=task_id,
+        )
+        if not result.get("ok"):
+            detail = (result.get("error") or {}).get("detail") or result.get("message")
+            logger.warning("Failed to sync WebCrawler task state: %s", detail)
+    except Exception as exc:
+        logger.warning("Failed to sync WebCrawler task state: %s", exc)
+
+
 def run_webcrawler_pipeline(
     state: Optional[Dict[str, Any]],
     thread_id: Optional[str] = None,
@@ -150,12 +292,21 @@ def run_webcrawler_pipeline(
     if checkpoint_path is None:
         checkpoint_path = os.getenv("WEBCRAWLER_CHECKPOINT_PATH", "outputs/webcrawler_checkpoints.sqlite")
 
+    resume_version_id = str(kwargs.get("version_id") or kwargs.get("run_id") or "").strip()
+    writer = kwargs.get("writer")
+
     if resume:
         if not thread_id:
             thread_id = kwargs.get("task_id") or os.getenv("TASK_ID")
         if not thread_id:
             raise ValueError("task_id/thread_id is required when resume=True")
-        state = load_webcrawler_checkpoint(str(thread_id), checkpoint_path)
+        db_path = str(kwargs.get("db_path") or os.getenv("DB_PATH") or "").strip()
+        resume_version_id = resume_version_id or _latest_runtime_version(str(thread_id), db_path) or ""
+        state = load_webcrawler_checkpoint(
+            str(thread_id),
+            checkpoint_path,
+            version_id=resume_version_id or None,
+        )
     elif state is None:
         state = {}
     else:
@@ -167,9 +318,23 @@ def run_webcrawler_pipeline(
         checkpoint_path=checkpoint_path,
         **kwargs,
     )
+    _sanitize_sensitive_webcrawler_fields(state)
     thread_id = runtime["thread_id"]
     output_dir = runtime["output_dir"]
-    writer = get_event_writer(name="webcrawler", context_id=thread_id, log_file_path=output_dir)
+    existing_version_id = str((state.get("webcrawler") or {}).get("runtime_version_id") or "").strip()
+    resume_version_id = resume_version_id or existing_version_id
+    if resume and not resume_version_id:
+        resume_version_id = _latest_runtime_version(thread_id, runtime.get("db_path"))
+
+    if writer is None:
+        writer = get_event_writer(
+            name="webcrawler",
+            context_id=thread_id,
+            log_file_path=output_dir,
+            version_id=resume_version_id or None,
+        )
+    elif getattr(writer, "version_id", None) is None and resume_version_id:
+        writer.version_id = resume_version_id
 
     writer(
         StreamEvent(
@@ -179,6 +344,15 @@ def run_webcrawler_pipeline(
             data={"task_id": thread_id, "resume": resume},
         )
     )
+    version_id = str(writer.version_id or "")
+    version_output_dir = str(Path(output_dir) / str(thread_id) / "webcrawler" / version_id)
+    os.makedirs(version_output_dir, exist_ok=True)
+
+    state.setdefault("webcrawler", {})
+    state["webcrawler"]["runtime_version_id"] = version_id
+    state["webcrawler"]["runtime_version_output_dir"] = version_output_dir
+    state["webcrawler"]["output_dir"] = version_output_dir
+    _safe_update_webcrawler_task_state(state, runtime)
 
     if from_step is not None:
         start_step = normalize_webcrawler_step(from_step)
@@ -193,7 +367,9 @@ def run_webcrawler_pipeline(
 
     for idx, step_name in enumerate(WEBCRAWLER_PIPELINE_STEPS[start_at:], start_at):
         state["current"] = step_name
-        save_webcrawler_checkpoint(state, thread_id, checkpoint_path)
+        state["webcrawler"]["runtime_current_step"] = step_name
+        save_webcrawler_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+        _safe_update_webcrawler_task_state(state, runtime)
         writer(
             StreamEvent(
                 current="webcrawler",
@@ -202,9 +378,20 @@ def run_webcrawler_pipeline(
             )
         )
 
-        state = _run_step(step_name, state)
-        state["last_completed"] = step_name
-        save_webcrawler_checkpoint(state, thread_id, checkpoint_path)
+        try:
+            state = _run_step(step_name, state)
+            state["last_completed"] = step_name
+            state.setdefault("webcrawler", {})
+            state["webcrawler"]["runtime_last_completed_step"] = step_name
+            save_webcrawler_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+            _safe_update_webcrawler_task_state(state, runtime)
+        except Exception as exc:
+            state.setdefault("webcrawler", {})
+            state["exception"] = str(exc)
+            state["webcrawler"]["runtime_current_step"] = step_name
+            save_webcrawler_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+            _safe_update_webcrawler_task_state(state, runtime)
+            raise
 
         if state.get("exception"):
             raise RuntimeError(str(state["exception"]))
