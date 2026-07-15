@@ -37,20 +37,6 @@ from loopai.skills.Configer import (
 MAX_LOOPER_MESSAGES = 12
 MAX_CONVERSATION_ITEMS = 30
 MAX_TEXT_PREVIEW = 1200
-SUMMARY_SYSTEM_PROMPT = """你是 Codex 会话摘要器。你只负责根据给定 conversation 和状态，总结本轮任务实际进展。
-输出要求：
-1. 输出纯文本，不要输出 JSON。
-2. 必须覆盖：当前目标、已完成动作、关键结论、失败/阻塞、最值得继续的下一步。
-3. 如果 conversation 信息不足，要明确指出缺口，而不是编造。
-4. 总结面向后续 planner 使用，要保留执行细节而不是写空泛摘要。"""
-
-
-LOOPER_JSON_RETRY_PROMPT = """你刚才的输出不符合 JSON 格式要求，不能被程序解析。
-请立刻重新输出，并且严格遵守以下要求：
-1. 只输出一个 JSON 对象。
-2. 不要输出 markdown 代码块，不要输出解释，不要输出额外文字。
-3. 仅允许合法 JSON，所有字符串里的反斜杠和引号都必须正确转义。
-4. 保持原本意图，只修正输出格式。"""
 
 
 @dataclass
@@ -456,11 +442,17 @@ async def _llm_text(config: LooperModelConfig, messages: list[dict[str, str]], *
     return await asyncio.to_thread(_call_llm_text, config, messages, json_mode=json_mode)
 
 
+def _load_looper_prompt(prompt_name: str) -> str:
+    prompt_loader = PromptLoader()
+    return prompt_loader("looper", prompt_name)
+
+
 async def _llm_json(config: LooperModelConfig, messages: list[dict[str, str]]) -> dict[str, Any]:
     text = await _llm_text(config, messages, json_mode=True)
     try:
         return _parse_json_object(text)
     except ValueError as exc:
+        retry_prompt = _load_looper_prompt("json_retry_prompt")
         retry_messages = [
             *messages,
             {"role": "assistant", "content": text},
@@ -468,7 +460,7 @@ async def _llm_json(config: LooperModelConfig, messages: list[dict[str, str]]) -
                 "role": "user",
                 "content": (
                     f"上一次输出解析失败：{exc}\n\n"
-                    f"原始输出如下：\n{text}\n\n{LOOPER_JSON_RETRY_PROMPT}"
+                    f"原始输出如下：\n{text}\n\n{retry_prompt}"
                 ),
             },
         ]
@@ -619,7 +611,7 @@ async def summarize_codex_progress(
         ensure_ascii=False,
     )
     messages = [
-        {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+        {"role": "system", "content": _load_looper_prompt("summary_system_prompt")},
         {"role": "user", "content": user_prompt},
     ]
     try:
