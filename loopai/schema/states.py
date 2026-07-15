@@ -1774,10 +1774,16 @@ class LooperState(BaseModel):
         description="基于当前 task_id 下最新 Codex conversation 生成的执行进展总结，应保留关键决策、已验证事实、失败原因、待继续动作等后续规划必需信息。",
         json_schema_extra={"ui_type": "textarea", "ui_group": "Looper"}
     )
+    last_conv_id: str = Field(
+        default="",
+        title="最近压缩到的会话 ID",
+        description="Looper 最近一次纳入 historySummary 压缩范围的最后一个 conversation item id。首次为空，后续用于仅增量压缩新对话。",
+        json_schema_extra={"ui_type": "text", "ui_group": "Looper"}
+    )
     command: str = Field(
         default="",
         title="输出指令",
-        description="Looper 输出的下一步指令 JSON 字符串。目前支持 {\"op\":\"query\",\"message\":\"...\"} 与 {\"op\":\"stop\"} 两种格式。",
+        description='Looper 输出的下一步指令 JSON 字符串。目前支持 {"op":"query","message":"..."} 与 {"op":"stop"} 两种格式。',
         json_schema_extra={"ui_type": "textarea", "ui_group": "Looper"}
     )
 

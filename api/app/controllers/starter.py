@@ -31,6 +31,65 @@ DEFAULT_OUTPUTS_DIR = os.path.join(LoopAI_DIR, "outputs")
 router = APIRouter(tags=["starter"])
 
 
+def _looper_error_response(exc: Exception):
+    message = str(exc).strip() or "Looper execution failed"
+    data: dict[str, Any] = {"error": message}
+
+    if message.startswith("Looper LLM HTTP "):
+        suffix = message[len("Looper LLM HTTP "):]
+        code_text, _, detail = suffix.partition(":")
+        try:
+            status_code = int(code_text.strip())
+        except ValueError:
+            status_code = 502
+        if detail.strip():
+            data["upstream_error"] = detail.strip()
+        return response_body(
+            code=status_code,
+            status="error",
+            message="Looper upstream model request failed",
+            data=data,
+        )()
+
+    if message.startswith("Looper LLM connection error:"):
+        reason = message.partition(":")[2].strip()
+        if reason:
+            data["upstream_error"] = reason
+        return response_body(
+            code=503,
+            status="error",
+            message="Looper upstream model connection failed",
+            data=data,
+        )()
+
+    if message == "Looper model configuration is incomplete.":
+        return response_body(
+            code=400,
+            status="error",
+            message="Looper model configuration is incomplete",
+            data=data,
+        )()
+
+    if (
+        message.startswith("Looper output JSON is invalid:")
+        or message.startswith("No JSON object found in Looper output:")
+        or message == "Looper output JSON must be an object."
+    ):
+        return response_body(
+            code=422,
+            status="error",
+            message="Looper returned invalid JSON",
+            data=data,
+        )()
+
+    return response_body(
+        code=500,
+        status="error",
+        message="Looper execution failed",
+        data=data,
+    )()
+
+
 @router.post("/codex/stream", operation_id="starterCodexStream", summary="Submit codex prompt")
 async def starter_codex_stream(req: StarterCodexRequest):
     system_config = await load_starter_system_config()
@@ -216,15 +275,18 @@ async def starter_codex_session_looper(session_id: str, req: StarterLooperReques
     if isinstance(session, dict):
         conversation = session.get("conversation") or []
 
-    looper_state = await run_looper_once(
-        task_id=session_id,
-        state=state,
-        system_config=system_config,
-        conversation=conversation,
-        session=session,
-        runtime_status=runtime_status,
-        output_dir=DEFAULT_OUTPUTS_DIR,
-    )
+    try:
+        looper_state = await run_looper_once(
+            task_id=session_id,
+            state=state,
+            system_config=system_config,
+            conversation=conversation,
+            session=session,
+            runtime_status=runtime_status,
+            output_dir=DEFAULT_OUTPUTS_DIR,
+        )
+    except Exception as exc:
+        return _looper_error_response(exc)
 
     raw_command = (looper_state.get("looper") or {}).get("command") or ""
     try:

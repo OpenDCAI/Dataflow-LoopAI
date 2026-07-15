@@ -21,6 +21,7 @@ from api.app.utils.monitor.hw_stat import (
     get_nvidia_gpu_usage,
 )
 from loopai.common.event_tool import StreamEvent, get_event_writer
+from loopai.common.exception import ErrorCode, emit_error
 from loopai.common.prompts import PromptLoader
 from loopai.schema.model_pool import (
     StarterModelPool,
@@ -42,6 +43,14 @@ SUMMARY_SYSTEM_PROMPT = """你是 Codex 会话摘要器。你只负责根据给�
 2. 必须覆盖：当前目标、已完成动作、关键结论、失败/阻塞、最值得继续的下一步。
 3. 如果 conversation 信息不足，要明确指出缺口，而不是编造。
 4. 总结面向后续 planner 使用，要保留执行细节而不是写空泛摘要。"""
+
+
+LOOPER_JSON_RETRY_PROMPT = """你刚才的输出不符合 JSON 格式要求，不能被程序解析。
+请立刻重新输出，并且严格遵守以下要求：
+1. 只输出一个 JSON 对象。
+2. 不要输出 markdown 代码块，不要输出解释，不要输出额外文字。
+3. 仅允许合法 JSON，所有字符串里的反斜杠和引号都必须正确转义。
+4. 保持原本意图，只修正输出格式。"""
 
 
 @dataclass
@@ -225,6 +234,21 @@ def _bytes_to_gib(value: Any) -> float:
         return 0.0
 
 
+def _looper_error_code(exc: Exception) -> ErrorCode:
+    message = str(exc).strip()
+    if message == "Looper model configuration is incomplete.":
+        return ErrorCode.CONFIG_ERROR
+    if message.startswith("Looper LLM HTTP ") or message.startswith("Looper LLM connection error:"):
+        return ErrorCode.EXTERNAL_SERVICE_ERROR
+    if (
+        message.startswith("Looper output JSON is invalid:")
+        or message.startswith("No JSON object found in Looper output:")
+        or message == "Looper output JSON must be an object."
+    ):
+        return ErrorCode.INVALID_INPUT
+    return ErrorCode.UNHANDLED_EXCEPTION
+
+
 def collect_machine_environment() -> dict[str, Any]:
     gpu_usage: list[Any] = []
     accelerator = "none"
@@ -287,6 +311,7 @@ def update_looper_state_via_configer(state: dict[str, Any], *, task_id: str | No
     updates = {
         "messages": looper.get("messages") if isinstance(looper.get("messages"), list) else [],
         "historySummary": str(looper.get("historySummary") or ""),
+        "last_conv_id": str(looper.get("last_conv_id") or ""),
         "command": str(looper.get("command") or ""),
     }
     return update_configer_task_state_config("looper", updates, task_id=task_id or state.get("task_id"))
@@ -433,7 +458,28 @@ async def _llm_text(config: LooperModelConfig, messages: list[dict[str, str]], *
 
 async def _llm_json(config: LooperModelConfig, messages: list[dict[str, str]]) -> dict[str, Any]:
     text = await _llm_text(config, messages, json_mode=True)
-    return _parse_json_object(text)
+    try:
+        return _parse_json_object(text)
+    except ValueError as exc:
+        retry_messages = [
+            *messages,
+            {"role": "assistant", "content": text},
+            {
+                "role": "user",
+                "content": (
+                    f"上一次输出解析失败：{exc}\n\n"
+                    f"原始输出如下：\n{text}\n\n{LOOPER_JSON_RETRY_PROMPT}"
+                ),
+            },
+        ]
+        retry_text = await _llm_text(config, retry_messages, json_mode=True)
+        try:
+            return _parse_json_object(retry_text)
+        except ValueError as retry_exc:
+            raise ValueError(
+                f"Looper JSON retry failed after invalid first response. First error: {exc}. "
+                f"Retry error: {retry_exc}"
+            ) from None
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:
@@ -449,7 +495,15 @@ def _parse_json_object(text: str) -> dict[str, Any]:
         end = text.rfind("}")
         if start == -1 or end == -1 or end <= start:
             raise ValueError(f"No JSON object found in Looper output: {text[:200]}")
-        payload = json.loads(text[start:end + 1])
+        candidate = text[start:end + 1]
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError as inner_exc:
+            snippet = candidate[max(0, inner_exc.pos - 80):inner_exc.pos + 80]
+            raise ValueError(
+                f"Looper output JSON is invalid: {inner_exc.msg} at line {inner_exc.lineno} "
+                f"column {inner_exc.colno}. Snippet: {snippet}"
+            ) from None
     if not isinstance(payload, dict):
         raise ValueError("Looper output JSON must be an object.")
     return payload
@@ -500,6 +554,28 @@ def _format_conversation_excerpt(conversation: list[dict[str, Any]]) -> str:
     return "\n".join(lines).strip()
 
 
+def _latest_conversation_id(conversation: list[dict[str, Any]]) -> str:
+    for item in reversed(conversation):
+        conv_id = str(item.get("id") or "").strip()
+        if conv_id:
+            return conv_id
+    return ""
+
+
+def _conversation_since_last_id(
+    conversation: list[dict[str, Any]],
+    last_conv_id: str,
+) -> tuple[list[dict[str, Any]], bool]:
+    normalized_last_id = str(last_conv_id or "").strip()
+    if not normalized_last_id:
+        return conversation, False
+
+    for index, item in enumerate(conversation):
+        if str(item.get("id") or "").strip() == normalized_last_id:
+            return conversation[index + 1 :], True
+    return conversation, False
+
+
 async def summarize_codex_progress(
     *,
     config: LooperModelConfig,
@@ -508,13 +584,29 @@ async def summarize_codex_progress(
     session: dict[str, Any] | None,
     conversation: list[dict[str, Any]],
     runtime_status: list[dict[str, Any]] | None,
-) -> str:
+) -> tuple[str, str]:
+    current_last_conv_id = _latest_conversation_id(conversation)
+    previous_summary = str((state.get("looper") or {}).get("historySummary") or "")
+    previous_last_conv_id = str((state.get("looper") or {}).get("last_conv_id") or "")
+
     if not conversation:
-        return _fallback_history_summary(conversation, session)
+        fallback = previous_summary or _fallback_history_summary(conversation, session)
+        return fallback, ""
+
+    new_conversation, found_last_conv_id = _conversation_since_last_id(conversation, previous_last_conv_id)
+    if found_last_conv_id and not new_conversation and previous_summary:
+        return previous_summary, current_last_conv_id
+
+    is_incremental = found_last_conv_id and bool(previous_summary)
+    conversation_for_summary = new_conversation if is_incremental else conversation
 
     user_prompt = json.dumps(
         _json_safe({
             "task_id": task_id,
+            "summary_mode": "incremental" if is_incremental else "full",
+            "previous_history_summary": previous_summary if is_incremental else "",
+            "previous_last_conv_id": previous_last_conv_id if is_incremental else "",
+            "current_last_conv_id": current_last_conv_id,
             "session_status": (session or {}).get("status"),
             "active_prompt": (session or {}).get("active_prompt"),
             "pending_prompts": (session or {}).get("pending_prompts"),
@@ -522,7 +614,7 @@ async def summarize_codex_progress(
             "last_error": (session or {}).get("last_error"),
             "runtime_status": runtime_status or [],
             "state_snapshot": _truncate_for_prompt(state),
-            "conversation_excerpt": _format_conversation_excerpt(conversation),
+            "conversation_excerpt": _format_conversation_excerpt(conversation_for_summary),
         }),
         ensure_ascii=False,
     )
@@ -531,9 +623,10 @@ async def summarize_codex_progress(
         {"role": "user", "content": user_prompt},
     ]
     try:
-        return await _llm_text(config, messages, json_mode=False)
+        return await _llm_text(config, messages, json_mode=False), current_last_conv_id
     except Exception:
-        return _fallback_history_summary(conversation, session)
+        fallback = previous_summary if is_incremental and previous_summary else _fallback_history_summary(conversation_for_summary, session)
+        return fallback, current_last_conv_id
 
 
 def _build_planner_user_prompt(
@@ -582,90 +675,103 @@ async def run_looper_once(
     state["looper"] = merged_looper
 
     writer = get_event_writer("looper", task_id, log_file_path=output_dir)
-    writer.set_running(
-        StreamEvent(
-            current="looper.status",
-            message="Looper is collecting Codex context.",
-            progress=0.1,
-            data={"task_id": task_id},
+    try:
+        writer.set_running(
+            StreamEvent(
+                current="looper.status",
+                message="Looper is collecting Codex context.",
+                progress=0.1,
+                data={"task_id": task_id},
+            )
         )
-    )
 
-    model_config = _resolve_looper_model_config(system_config, state)
-    normalized_conversation = _normalize_conversation(conversation)
-    machine_env = collect_machine_environment()
+        model_config = _resolve_looper_model_config(system_config, state)
+        normalized_conversation = _normalize_conversation(conversation)
+        machine_env = collect_machine_environment()
 
-    writer.set_running(
-        StreamEvent(
-            current="looper.status",
-            message="Looper is summarizing the latest Codex progress.",
-            progress=0.45,
+        writer.set_running(
+            StreamEvent(
+                current="looper.status",
+                message="Looper is summarizing the latest Codex progress.",
+                progress=0.45,
+            )
         )
-    )
-    history_summary = await summarize_codex_progress(
-        config=model_config,
-        task_id=task_id,
-        state=state,
-        session=session,
-        conversation=normalized_conversation,
-        runtime_status=runtime_status,
-    )
-
-    prompt_loader = PromptLoader()
-    system_prompt = prompt_loader("system", "looper_prompt")
-    planner_prompt = _build_planner_user_prompt(
-        task_id=task_id,
-        state=state,
-        session=session,
-        conversation=normalized_conversation,
-        runtime_status=runtime_status,
-        machine_env=machine_env,
-        latest_history_summary=history_summary,
-    )
-    internal_messages = _trim_internal_messages(merged_looper.get("messages"))
-
-    writer.set_running(
-        StreamEvent(
-            current="looper.status",
-            message="Looper is deciding the next Codex action.",
-            progress=0.8,
+        history_summary, latest_conv_id = await summarize_codex_progress(
+            config=model_config,
+            task_id=task_id,
+            state=state,
+            session=session,
+            conversation=normalized_conversation,
+            runtime_status=runtime_status,
         )
-    )
-    planner_output = await _llm_json(
-        model_config,
-        [
-            {"role": "system", "content": system_prompt},
-            *internal_messages,
-            {"role": "user", "content": planner_prompt},
-        ],
-    )
-    command = parse_looper_command(planner_output)
 
-    updated_messages = _trim_internal_messages(
-        [
-            *internal_messages,
-            {"role": "user", "content": planner_prompt},
-            {"role": "assistant", "content": json.dumps(planner_output, ensure_ascii=False)},
-        ]
-    )
-    state["looper"] = {
-        **merged_looper,
-        "messages": updated_messages,
-        "historySummary": history_summary,
-        "command": json.dumps(command, ensure_ascii=False),
-    }
-    update_looper_state_via_configer(state, task_id=task_id)
-
-    writer.set_completed(
-        StreamEvent(
-            current="looper.status",
-            message="Looper finished one planning pass.",
-            progress=1.0,
-            data={
-                "command": command,
-                "historySummary": history_summary,
-                "model_source": model_config.source,
-            },
+        prompt_loader = PromptLoader()
+        system_prompt = prompt_loader("system", "looper_prompt")
+        planner_prompt = _build_planner_user_prompt(
+            task_id=task_id,
+            state=state,
+            session=session,
+            conversation=normalized_conversation,
+            runtime_status=runtime_status,
+            machine_env=machine_env,
+            latest_history_summary=history_summary,
         )
-    )
-    return state
+        internal_messages = _trim_internal_messages(merged_looper.get("messages"))
+
+        writer.set_running(
+            StreamEvent(
+                current="looper.status",
+                message="Looper is deciding the next Codex action.",
+                progress=0.8,
+            )
+        )
+        planner_output = await _llm_json(
+            model_config,
+            [
+                {"role": "system", "content": system_prompt},
+                *internal_messages,
+                {"role": "user", "content": planner_prompt},
+            ],
+        )
+        command = parse_looper_command(planner_output)
+
+        updated_messages = _trim_internal_messages(
+            [
+                *internal_messages,
+                {"role": "user", "content": planner_prompt},
+                {"role": "assistant", "content": json.dumps(planner_output, ensure_ascii=False)},
+            ]
+        )
+        state["looper"] = {
+            **merged_looper,
+            "messages": updated_messages,
+            "historySummary": history_summary,
+            "last_conv_id": latest_conv_id,
+            "command": json.dumps(command, ensure_ascii=False),
+        }
+        update_looper_state_via_configer(state, task_id=task_id)
+
+        writer.set_completed(
+            StreamEvent(
+                current="looper.status",
+                message="Looper finished one planning pass.",
+                progress=1.0,
+                data={
+                    "command": command,
+                    "historySummary": history_summary,
+                    "model_source": model_config.source,
+                },
+            )
+        )
+        return state
+    except Exception as exc:
+        emit_error(
+            exc,
+            code=_looper_error_code(exc),
+            recoverable=True,
+            message="Looper planning pass failed.",
+            stream_writer=writer,
+            exit_process=False,
+            print_payload=False,
+        )
+        raise
