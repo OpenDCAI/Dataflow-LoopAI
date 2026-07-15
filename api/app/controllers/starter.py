@@ -184,6 +184,20 @@ async def starter_codex_session_reset(session_id: str):
     return response_body(message="Codex session reset", data=session)()
 
 
+
+@router.post("/codex/session/{session_id}/terminate", operation_id="starterCodexSessionTerminate", summary="Terminate codex session")
+async def starter_codex_session_terminate(session_id: str):
+    system_config = await load_starter_system_config()
+    service = CodexStarterService(system_config=system_config, session_store=codex_session_store)
+    payload = await service.terminate(session_id)
+
+    if payload.get("type") == "not_found":
+        return response_body(code=404, status="error", message=payload.get("message", "Codex session not found"), data=payload)()
+    if payload.get("type") == "not_running":
+        return response_body(code=409, status="error", message=payload.get("message", "Codex session is not running"), data=payload)()
+    return response_body(message="Codex session termination requested", data=payload)()
+
+
 async def load_config(task_id=None):
     if task_id is None:
         configItem = await StarterConfig.filter(Q(name='starter')).first()
