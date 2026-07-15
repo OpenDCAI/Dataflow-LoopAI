@@ -58,6 +58,7 @@
                     <template v-slot:right-space>
                         <div class="command-bar-right-space">
                             <fv-button
+                                v-show="!msgStreamModel.loading"
                                 theme="dark"
                                 :background="gradient"
                                 border-radius="50"
@@ -66,6 +67,17 @@
                                 @click="handleRefreshClick"
                             >
                                 <i class="ms-Icon ms-Icon--Refresh"></i>
+                            </fv-button>
+                            <fv-button
+                                v-show="msgStreamModel.loading"
+                                theme="dark"
+                                :background="gradient"
+                                border-radius="50"
+                                font-size="12"
+                                style="width: 25px; height: 25px"
+                                @click="handleStopClick"
+                            >
+                                <i class="ms-Icon ms-Icon--Stop"></i>
                             </fv-button>
                             <i
                                 class="ms-Icon ms-Icon--FullCircleMask status-coin"
@@ -436,7 +448,8 @@ export default {
             'getStatus',
             'getStateSchema',
             'setCurrentTask',
-            'resetStarterCodexSession'
+            'resetStarterCodexSession',
+            'terminateStarterCodexSession'
         ]),
         setViewport() {
             const flow = useVueFlow(this.flowId)
@@ -450,39 +463,7 @@ export default {
             clearInterval(this.timer.healthCheck)
             this.timer.healthCheck = setInterval(async () => {
                 await this.getStatus(this.currentTask?.task_id)
-                this.recoverTask()
             }, 5000)
-        },
-        recoverTask() {
-            try {
-                let running = this.taskStatus.running
-                if (running && !this.taskStatus.state && !this.currentTask) {
-                    this.stop()
-                    this.$barWarning(this.local('Detect running task without task id, stop it.'), {
-                        status: 'default'
-                    })
-                    return
-                }
-                let task_id = this.taskStatus.state.task_id
-                if (running && task_id && !this.currentTask) {
-                    this.$barWarning(this.local('Detect running task, obtaining task info.'), {
-                        status: 'default'
-                    })
-                    this.$api.task.getTask(task_id).then((res) => {
-                        if (res.code === 200) {
-                            this.currentTask = res.data
-                            this.$barWarning(this.local('Running task info obtained'), {
-                                status: 'correct'
-                            })
-                        } else {
-                            this.stop()
-                            this.$barWarning(res.message, {
-                                status: 'warning'
-                            })
-                        }
-                    })
-                }
-            } catch (e) {}
         },
         handleAdjustStatesClick() {
             if (!this.currentTask?.task_id) {
@@ -511,9 +492,12 @@ export default {
                             })
                             return
                         }
-                        this.$barWarning(res?.message || this.local('Failed to reset conversation.'), {
-                            status: 'warning'
-                        })
+                        this.$barWarning(
+                            res?.message || this.local('Failed to reset conversation.'),
+                            {
+                                status: 'warning'
+                            }
+                        )
                     } catch (error) {
                         this.$barWarning(this.local('Failed to reset conversation.'), {
                             status: 'error'
@@ -522,12 +506,35 @@ export default {
                 }
             })
         },
-        stop() {
-            this.$api.starter.stopAgent().then((res) => {
-                if (res.code === 200) {
-                    this.$barWarning(this.local('Stop signal sent'), {
-                        status: 'correct'
-                    })
+        handleStopClick() {
+            if (!this.currentTask?.task_id) {
+                this.$barWarning(this.local('No active task to terminate.'), {
+                    status: 'warning'
+                })
+                return
+            }
+            this.$infoBox(this.local('Are you sure to terminate this conversation?'), {
+                status: 'warning',
+                confirm: async () => {
+                    try {
+                        const res = await this.terminateStarterCodexSession()
+                        if (res?.code === 200) {
+                            this.$barWarning(this.local('Conversation terminated successfully.'), {
+                                status: 'correct'
+                            })
+                            return
+                        }
+                        this.$barWarning(
+                            res?.message || this.local('Failed to terminated conversation.'),
+                            {
+                                status: 'warning'
+                            }
+                        )
+                    } catch (error) {
+                        this.$barWarning(this.local('Failed to terminated conversation.'), {
+                            status: 'error'
+                        })
+                    }
                 }
             })
         },

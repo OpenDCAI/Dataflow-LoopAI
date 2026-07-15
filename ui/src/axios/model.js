@@ -23,6 +23,67 @@ export class ConfigModel {
     config=undefined
     
 }
+export class DataMixerCliRequest {
+  
+    /**
+     *
+
+     */ 
+    constructor(argv = undefined,line = undefined,files = undefined,lake = undefined,root = undefined,timeout_seconds = undefined){
+        this.argv = argv
+        this.line = line
+        this.files = files
+        this.lake = lake
+        this.root = root
+        this.timeout_seconds = timeout_seconds
+    }
+    
+    
+}
+export class DataMixerLakeDeleteRequest {
+  
+    /**
+     *
+     * @param {undefined} delete_warehouse 
+     * @param {undefined} yes 
+     */ 
+    constructor(link = undefined,delete_warehouse = undefined,yes = undefined){
+        this.link = link
+        this.delete_warehouse = delete_warehouse
+        this.yes = yes
+    }
+       
+    /**
+     * 
+     * @type {undefined}
+     */
+    delete_warehouse=undefined   
+    /**
+     * 
+     * @type {undefined}
+     */
+    yes=undefined
+    
+}
+export class DataMixerLakeLoadRequest {
+  
+    /**
+     *
+     * @param {String} warehouse 
+     */ 
+    constructor(warehouse = undefined,link = undefined,lake_root = undefined){
+        this.warehouse = warehouse
+        this.link = link
+        this.lake_root = lake_root
+    }
+       
+    /**
+     * 
+     * @type {String}
+     */
+    warehouse=undefined
+    
+}
 export class HTTPValidationError {
   
     /**
