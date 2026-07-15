@@ -809,6 +809,58 @@ export class starter {
   }
  
   /**
+  * @summary Run looper once and optionally execute its command
+  * @param {String} [pathsession_id] 
+  * @param {object} [body] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async starterCodexSessionLooper(pathsession_id,body,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'post',
+        url:'/starter/codex/session/'+pathsession_id+'/looper',
+        data:body,
+        params:{},
+        headers:{
+          "Content-Type":"application/json"
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
   * @summary Terminate codex session
   * @param {String} [pathsession_id] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
@@ -994,6 +1046,14 @@ starter.starterCodexSessionReset.fullPath=`${axios.defaults.baseURL}/starter/cod
 * @description starterCodexSessionReset url链接，不包含baseURL
 */
 starter.starterCodexSessionReset.path=`/starter/codex/session/{session_id}/reset`
+/**
+* @description starterCodexSessionLooper url链接，包含baseURL
+*/
+starter.starterCodexSessionLooper.fullPath=`${axios.defaults.baseURL}/starter/codex/session/{session_id}/looper`
+/**
+* @description starterCodexSessionLooper url链接，不包含baseURL
+*/
+starter.starterCodexSessionLooper.path=`/starter/codex/session/{session_id}/looper`
 /**
 * @description starterCodexSessionTerminate url链接，包含baseURL
 */

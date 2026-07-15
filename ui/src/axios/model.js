@@ -141,6 +141,24 @@ export class StarterCodexRequest {
     prompt=undefined
     
 }
+export class StarterLooperRequest {
+  
+    /**
+     *
+     * @param {undefined} execute_command 
+     */ 
+    constructor(workspace = undefined,execute_command = undefined){
+        this.workspace = workspace
+        this.execute_command = execute_command
+    }
+       
+    /**
+     * 
+     * @type {undefined}
+     */
+    execute_command=undefined
+    
+}
 export class TaskItem {
   
     /**

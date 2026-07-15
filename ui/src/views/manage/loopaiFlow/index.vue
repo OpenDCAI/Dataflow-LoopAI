@@ -171,24 +171,6 @@ export default {
             ],
             nodes: [
                 {
-                    id: 'configer',
-                    type: 'agent-node',
-                    position: { x: 1334, y: 683 },
-                    data: {
-                        label: 'Configer',
-                        status: 'Agent',
-                        stateKey: 'configer',
-                        graphClsPrefix: 'configer',
-                        include_nodes: ['configer'],
-                        icon: 'Settings',
-                        nodeInfo: 'Configer Agent for configuring the state of sub agents.',
-                        iconColor: 'rgba(45, 45, 45, 1)',
-                        background:
-                            'linear-gradient(130deg, rgba(201, 122, 162, 0.8), rgba(252, 252, 252, 0.8))',
-                        borderColor: 'rgba(201, 122, 162, 0.8)'
-                    }
-                },
-                {
                     id: 'trainer',
                     type: 'agent-node',
                     position: { x: 230, y: 96 },
@@ -298,24 +280,17 @@ export default {
                     }
                 },
                 {
-                    id: 'starter',
+                    id: 'looper',
                     type: 'agent-node',
-                    position: { x: 1334, y: 889 },
+                    position: { x: 1600, y: 95 },
                     data: {
-                        label: 'Starter',
+                        label: 'Looper',
                         status: 'Agent',
-                        stateKey: 'default',
-                        defaultStateKey: [
-                            'current',
-                            'next_to',
-                            'exception',
-                            'output_dir',
-                            'automated_query'
-                        ],
-                        graphClsPrefix: 'starter',
-                        include_nodes: ['query', 'feedback'],
+                        stateKey: 'looper',
+                        graphClsPrefix: 'looper',
+                        include_nodes: ['looper'],
                         icon: 'Robot',
-                        nodeInfo: 'Starter Agent for Supervision',
+                        nodeInfo: 'Looper Agent for Automation',
                         iconColor: 'rgba(45, 45, 45, 1)',
                         background:
                             'linear-gradient(130deg, rgba(129, 208, 246, 0.8), rgba(252, 252, 252, 0.8))',
