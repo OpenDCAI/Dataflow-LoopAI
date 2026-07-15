@@ -77,3 +77,8 @@ class StarterCodexRequest(BaseModel):
     prompt: str
     workspace: Optional[str] = None
     session_id: Optional[str] = None
+
+
+class StarterLooperRequest(BaseModel):
+    workspace: Optional[str] = None
+    execute_command: bool = True

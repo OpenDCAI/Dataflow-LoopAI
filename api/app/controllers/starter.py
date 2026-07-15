@@ -1,12 +1,14 @@
 import os
 import json
 import asyncio
+from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from tortoise.expressions import Q
 from ..models.body import (
     response_body,
     StarterCodexRequest,
+    StarterLooperRequest,
 )
 from ..models.db_models import StarterConfig, TaskModel
 from ..services.starter import (
@@ -17,6 +19,7 @@ from ..services.starter import (
     parse_task_state,
 )
 from ..services.task import build_initial_task_state, list_latest_task_runtimes
+from loopai.skills.Looper import parse_looper_command, run_looper_once
 from ..utils.monitor.hw_stat import get_nvidia_gpu_usage, get_huawei_npu_usage, get_cpu_usage, get_memory_usage
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -183,6 +186,86 @@ async def starter_codex_session_reset(session_id: str):
         session["ai_thread_id"] = None
     return response_body(message="Codex session reset", data=session)()
 
+
+
+@router.post("/codex/session/{session_id}/looper", operation_id="starterCodexSessionLooper", summary="Run looper once and optionally execute its command")
+async def starter_codex_session_looper(session_id: str, req: StarterLooperRequest | None = None):
+    task = await TaskModel.get_or_none(task_id=session_id)
+    if task is None:
+        return response_body(code=404, status="error", message="Task not found")()
+
+    request_payload = req or StarterLooperRequest()
+    os.environ["DB_PATH"] = DB_PATH
+    os.environ["TASK_ID"] = session_id
+    system_config = await load_starter_system_config()
+    service = CodexStarterService(system_config=system_config, session_store=codex_session_store)
+
+    session = codex_session_store.get(session_id)
+    if session is None:
+        session = await service.restore_session_snapshot(session_id)
+
+    state = parse_task_state(task.state)
+    if not isinstance(state, dict):
+        state = await build_initial_task_state(session_id)
+    else:
+        state.setdefault("task_id", session_id)
+        state.setdefault("messages", [])
+
+    runtime_status = await list_latest_task_runtimes(session_id)
+    conversation = []
+    if isinstance(session, dict):
+        conversation = session.get("conversation") or []
+
+    looper_state = await run_looper_once(
+        task_id=session_id,
+        state=state,
+        system_config=system_config,
+        conversation=conversation,
+        session=session,
+        runtime_status=runtime_status,
+        output_dir=DEFAULT_OUTPUTS_DIR,
+    )
+
+    raw_command = (looper_state.get("looper") or {}).get("command") or ""
+    try:
+        command = parse_looper_command(raw_command)
+    except Exception as exc:
+        return response_body(code=500, status="error", message=f"Invalid looper command: {exc}", data={"state": looper_state, "raw_command": raw_command})()
+
+    action: dict[str, Any] | None = None
+    if request_payload.execute_command:
+        latest_session = codex_session_store.get(session_id) or session
+        latest_status = str((latest_session or {}).get("status") or "")
+        if command["op"] == "query":
+            if latest_status in {"submitted", "running", "finishing", "terminating"}:
+                action = {
+                    "type": "deferred_running",
+                    "message": "Codex session is still running; looper command was planned but not auto-submitted.",
+                    "session_status": latest_status,
+                    "command": command,
+                }
+            else:
+                action = await service.submit(
+                    prompt=command["message"],
+                    workspace=request_payload.workspace or (latest_session or {}).get("workspace"),
+                    session_id=session_id,
+                    env_overrides={
+                        "DB_PATH": DB_PATH,
+                        "TASK_ID": session_id,
+                    },
+                )
+        elif command["op"] == "stop":
+            action = await service.terminate(session_id)
+
+    return response_body(
+        message="Looper finished one planning pass",
+        data={
+            "session_id": session_id,
+            "command": command,
+            "action": action,
+            "state": looper_state,
+        },
+    )()
 
 
 @router.post("/codex/session/{session_id}/terminate", operation_id="starterCodexSessionTerminate", summary="Terminate codex session")

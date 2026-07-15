@@ -8,6 +8,7 @@ from loopai.common.event_tool import load_stream_event_groups
 
 
 STREAM_EVENT_AGENT_NAMES = (
+    "looper",
     "judger",
     "obtainer",
     "constructor",
