@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from typing import Dict, Any, List
 
-from loopai.schema.events import StreamEvent
+from loopai.common.event_tool import StreamEvent
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer

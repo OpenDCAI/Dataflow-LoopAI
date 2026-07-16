@@ -11,7 +11,7 @@ from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
 from loopai.common.prompts.prompt_loader import PromptLoader
-from loopai.schema.events import StreamEvent
+from loopai.common.event_tool import StreamEvent
 from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
 from loopai.skills.Analyzer.history_compare import (
     build_historical_comparison,
