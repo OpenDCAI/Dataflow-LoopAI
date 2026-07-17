@@ -92,7 +92,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     taskStatus.value.waiting_llm = false
                 }
             })
-            .catch((error) => {
+            .catch(() => {
                 taskStatus.value.running = false
                 taskStatus.value.waiting_llm = false
                 proxy.$barWarning('server connection error', {
@@ -106,6 +106,32 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         loading: false,
         status: 'stale'
     })
+    const looperTakeover = ref({
+        timer: null,
+        seconds: 5,
+        duration: 5,
+        active: false
+    })
+    const clearLooperTakeoverCountdown = ({ resetSeconds = true, keepActive = false } = {}) => {
+        if (looperTakeover.value.timer) {
+            clearInterval(looperTakeover.value.timer)
+            looperTakeover.value.timer = null
+        }
+        looperTakeover.value.active = keepActive ? looperTakeover.value.active : false
+        if (resetSeconds) {
+            looperTakeover.value.seconds = looperTakeover.value.duration
+        }
+    }
+    const setLooperTakeoverCountdown = ({
+        seconds = looperTakeover.value.seconds,
+        duration = looperTakeover.value.duration,
+        active = looperTakeover.value.active
+    } = {}) => {
+        looperTakeover.value.duration = duration
+        looperTakeover.value.seconds = seconds
+        looperTakeover.value.active = active
+    }
+    
     const msgEventSource = ref(null)
     const msgEventKeys = ref(new Set())
 
@@ -113,6 +139,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
     const setCurrentTask = async (task) => {
         currentTask.value = task || null
         closeMsgStream()
+        clearLooperTakeoverCountdown()
         await getMessages()
     }
     const getMessages = async () => {
@@ -170,6 +197,17 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                 throw error
             })
         return resp
+    }
+
+    const terminateStarterCodexSession = async () => {
+        if (!currentTask.value?.task_id) return null
+        const resp = await proxy.$api.starter.starterCodexSessionTerminate(currentTask.value.task_id).then(async res => {
+            if (res.code === 200) {
+                closeMsgStream()
+            }
+            return res
+        })
+        return resp;
     }
 
     const closeMsgStream = ({ keepMessage = false } = {}) => {
@@ -277,10 +315,14 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         getStatus,
         taskMessages,
         msgStreamModel,
+        looperTakeover,
         currentMsg,
         getMessages,
         resetStarterCodexSession,
+        terminateStarterCodexSession,
         getMsgStream,
+        clearLooperTakeoverCountdown,
+        setLooperTakeoverCountdown,
         stateSchema,
         getStateSchema,
         getTaskStateConfig,
