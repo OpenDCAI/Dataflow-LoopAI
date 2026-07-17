@@ -102,14 +102,13 @@ Dataflow-LoopAI/
 * 缺失信息反馈和修改再校验（待实现）
 * 继续执行中断节点（待实现）
 
-### ✅ `ObtainerAgent`
+### ✅ `ObtainerCLI/DataMixer`
 
-作为系统的数据获取单元，负责：
+旧的 LangGraph `ObtainerAgent` 已退休。现在系统的数据获取、入湖和导出由 ObtainerCLI/DataMixer 流程负责：
 
-* 将用户的需求进行分析并调研
-* 收集相关数据集信息
-* 收集相关网页数据信息（待实现）
-* 整理各种格式的数据至可以直接用于训练的格式
+* 按用户需求和分析报告检索候选数据集
+* 下载并规范化原始数据，保留来源和 lineage
+* 入湖到 DataMixer warehouse，并通过 recipe 导出训练数据
 ---
 
 ## 📦 安装
@@ -260,7 +259,7 @@ python examples/scripts/run_judger.py
 ### 执行
 
 ```bash
-bash examples/scripts/run_obtainer.sh
+python -m loopai.skills.ObtainerCLI.cli dm --help
 ```
 ---
 

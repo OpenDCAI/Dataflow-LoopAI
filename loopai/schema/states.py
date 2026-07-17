@@ -1004,18 +1004,18 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "list", "ui_group": "评估模型",
                            "allowed_values": ["code", "text2sql", "general_text"]}
     )
-    #eval_base_url: str = Field(
+    # eval_base_url: str = Field(
     #    default=None,
     #    title="评估模型 Base URL",
     #    description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
     #    json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
-    #)
-    #eval_api_key: str = Field(
+    # )
+    # eval_api_key: str = Field(
     #    default="EMPTY",
     #    title="评估模型 API Key",
     #    description="评估模型 API Key",
     #    json_schema_extra={"ui_type": "password", "ui_group": "评估模型"}
-    #)
+    # )
     eval_temperature: float = Field(
         default=0,
         title="评估模型温度",
@@ -1034,13 +1034,13 @@ class JudgerState(BaseModel):
         description="评估模型问题路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
-    #eval_format_type: str = Field(
+    # eval_format_type: str = Field(
     #    default=None,
     #    title="评估模型问题格式化类型",
     #    description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"和\"mbpp\"，格式化后的文件将存至output_dir定义的目录下",
     #    json_schema_extra={"ui_type": "list",
     #                       "ui_group": "评估模型", "allowed_values": ["human-eval"]}
-    #)
+    # )
     eval_batch_size: int = Field(
         default=10,
         title="评估模型批量大小",
@@ -1134,7 +1134,7 @@ class JudgerState(BaseModel):
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
     # ===== 通用文本 / DataFlow Eval =====
-    
+
     # is_api: bool = Field(
     #    default=False,
     #    title="是否 API 模式",
@@ -1160,18 +1160,18 @@ class JudgerState(BaseModel):
         description="DataFlow 评测字段映射，如 input_question_key / input_target_key / input_pred_key",
         json_schema_extra={"ui_type": "json_viewer", "ui_group": "评估模型"}
     )
-    #skip_dataflow_eval: bool = Field(
+    # skip_dataflow_eval: bool = Field(
     #    default=False,
     #    title="跳过 DataFlow 正式评测",
     #    description="为 True 时仅准备 bench / records，不调用 DataFlowEvalTool.run_eval",
     #    json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
-    #)
-    #output_dir: str = Field(
+    # )
+    # output_dir: str = Field(
     #    default="",
     #    title="通用文本输出路径",
     #    description="通用文本任务结束后输出路径",
     #    json_schema_ectra={"ui_type": "text", "ui_group": "评估模型"}
-    #)
+    # )
 
 
 class AnalyzerState(BaseModel):
@@ -1398,8 +1398,8 @@ class AnalyzerState(BaseModel):
 class TrainerState(BaseModel):
     trainer_task_id: str = Field(
         default="",
-        title="训练任务 ID",
-        description="训练任务 ID",
+        title="Trainer 运行 ID（兼容字段）",
+        description="兼容旧调用方；值与 trainer_version_id 保持一致",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     train_framework: str = Field(
@@ -1409,7 +1409,7 @@ class TrainerState(BaseModel):
         json_schema_extra={"ui_type": "list", "ui_group": "训练模型",
                            "allowed_values": ["llamafactory"]},
         # json_schema_extra={"ui_type": "list", "ui_group": "训练模型",
-                                            #   "allowed_values": ["llamafactory", "verl"]}
+        #   "allowed_values": ["llamafactory", "verl"]}
     )
     llamafactory_dir: str = Field(
         default="",
@@ -1540,8 +1540,8 @@ class TrainerState(BaseModel):
     )
     training_task_id: str = Field(
         default="",
-        title="训练任务 ID",
-        description="训练任务 ID",
+        title="Trainer 运行 ID（兼容字段）",
+        description="兼容旧调用方；值与 trainer_version_id 保持一致",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     training_final_status: dict = Field(
@@ -1733,8 +1733,8 @@ class TrainerState(BaseModel):
     )
     trainer_training_task_id: str = Field(
         default="",
-        title="Trainer 训练任务 ID",
-        description="Trainer 训练任务 ID",
+        title="Trainer 运行 ID（兼容字段）",
+        description="兼容旧调用方；值与 trainer_version_id 保持一致",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     trainer_training_execution_time: float = Field(
@@ -1758,6 +1758,33 @@ class ConfigerState(BaseModel):
         title="配置器错误信息",
         description="配置器错误信息",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+
+
+class LooperState(BaseModel):
+    messages: list = Field(
+        default_factory=list,
+        title="Looper 内部消息",
+        description="Looper 内部规划上下文消息列表，用于保留 planner 与 summary 节点最近几轮的输入输出，避免每次都从零规划。",
+        json_schema_extra={"ui_type": "msg_list", "ui_group": "Looper"}
+    )
+    historySummary: str = Field(
+        default="",
+        title="Codex 会话总结",
+        description="基于当前 task_id 下最新 Codex conversation 生成的执行进展总结，应保留关键决策、已验证事实、失败原因、待继续动作等后续规划必需信息。",
+        json_schema_extra={"ui_type": "msg_item", "ui_group": "Looper"}
+    )
+    last_conv_id: str = Field(
+        default="",
+        title="最近压缩到的会话 ID",
+        description="Looper 最近一次纳入 historySummary 压缩范围的最后一个 conversation item id。首次为空，后续用于仅增量压缩新对话。",
+        json_schema_extra={"ui_type": "text", "ui_group": "Looper"}
+    )
+    command: str = Field(
+        default="",
+        title="输出指令",
+        description='Looper 输出的下一步指令 JSON 字符串。目前支持 {"op":"query","message":"..."} 与 {"op":"stop"} 两种格式。',
+        json_schema_extra={"ui_type": "looper_command", "ui_group": "Looper"}
     )
 
 
@@ -1793,6 +1820,12 @@ class DefaultState(BaseModel):
         description="输出目录",
         json_schema_extra={"ui_type": "file_path", "ui_group": "默认"}
     )
+    enable_looper: bool = Field(
+        default=True,
+        title="是否启用Looper",
+        description="启用Looper后, LoopAI将通过Looper自动替代用户接管下一步提问",
+        json_schema_extra={"ui_type": "switch", "ui_group": "默认"}
+    )
 
 
 def get_state_config_schema(language: str = "zh"):
@@ -1817,6 +1850,7 @@ def get_state_config_schema(language: str = "zh"):
 
     fields_statement = {
         "default": get_field_statement(DefaultState),
+        "looper": get_field_statement(LooperState),
         "judger": get_field_statement(JudgerState),
         "configer": get_field_statement(ConfigerState),
         "analyzer": get_field_statement(AnalyzerState),
@@ -1862,6 +1896,9 @@ class LoopAIState(MessagesState):
 
     # === Configer (保持原样) ===
     configer: Annotated[Dict[str, Any], merge_dict]
+
+    # === Looper (保持原样) ===
+    looper: Annotated[Dict[str, Any], merge_dict]
 
     # === Judger (保持原样) ===
     judger: Annotated[Dict[str, Any], merge_dict]

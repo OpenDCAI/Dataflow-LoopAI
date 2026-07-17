@@ -1,5 +1,6 @@
 import os
 import json
+from pathlib import Path
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -10,6 +11,7 @@ class PromptLoader:
 
     特点：
     - 自动扫描指定目录下所有以 `_prompt.json` 结尾的文件
+    - 自动扫描 `<prompt_type>/<prompt_name>.md` 单文件 prompt
     - 自动按文件名前缀创建 prompt 分组（如 system_prompt.json → system）
     - 提供类似字典的索引方式：loader(prompt_type="system", prompt_name="default_prompt")
     - 若缺少必要的 prompt（如 system/default_prompt）会直接报错，避免隐藏问题
@@ -24,7 +26,7 @@ class PromptLoader:
             prompt_template_dir:
                 prompt 模板所在目录。
                 若为 None，则默认使用当前文件所在目录。
-                注意：会自动加载所有以 `_prompt.json` 结尾的文件。
+                注意：会自动加载 `_prompt.json` 和 `<prompt_type>/<prompt_name>.md`。
         """
         default_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -36,12 +38,22 @@ class PromptLoader:
     
     def load_prompts(self):
         """
-        Scan all prompt files that endswith `_prompt.json` and load them as prompt dicts.
-        Merge prompts by prompt_type (system, task, etc.) across all files.
+        Load JSON prompts first, then Markdown prompts.
+
+        JSON keeps backward compatibility. Markdown files use:
+            <prompt_template_dir>/<prompt_type>/<prompt_name>.md
+
+        Markdown prompts override same-name JSON prompts, which enables
+        incremental migration and A/B comparison.
         """
+        self._load_json_prompts()
+        self._load_markdown_prompts()
+        self.check()
+
+    def _load_json_prompts(self):
         list_files = os.listdir(self.prompt_template_dir)
         matched_files = []
-        for filename in list_files:
+        for filename in sorted(list_files):
             if filename.endswith("_prompt.json"):
                 matched_files.append(filename)
 
@@ -75,8 +87,39 @@ class PromptLoader:
             except (FileNotFoundError, json.JSONDecodeError) as e:
                 logger.error(f"Failed to load prompt file '{match_path}': {e}")
                 raise RuntimeError(f"Error loading prompt file '{match_path}': {e}")
-                
-        self.check()
+
+    def _load_markdown_prompts(self):
+        root = Path(self.prompt_template_dir)
+        if not root.exists():
+            raise RuntimeError(f"Prompt template dir not found: {root}")
+        for prompt_type_dir in sorted(root.iterdir()):
+            if not prompt_type_dir.is_dir():
+                continue
+            prompt_type = prompt_type_dir.name
+            for prompt_path in sorted(prompt_type_dir.glob("*.md")):
+                prompt_name = prompt_path.stem
+                try:
+                    content = prompt_path.read_text(encoding="utf-8")
+                    content = self._strip_frontmatter(content)
+                    self.prompt_dict.setdefault(prompt_type, {})
+                    self.prompt_dict[prompt_type][prompt_name] = content
+                except OSError as e:
+                    logger.error(f"Failed to load prompt markdown '{prompt_path}': {e}")
+                    raise RuntimeError(f"Error loading prompt markdown '{prompt_path}': {e}")
+
+    @staticmethod
+    def _strip_frontmatter(content: str) -> str:
+        if not content.startswith("---\n"):
+            return content
+        end = content.find("\n---\n", 4)
+        if end == -1:
+            return content
+        return content[end + len("\n---\n"):]
+
+    def iter_prompt_keys(self):
+        for prompt_type in sorted(self.prompt_dict):
+            for prompt_name in sorted(self.prompt_dict[prompt_type]):
+                yield prompt_type, prompt_name
         
     def check(self):
         """

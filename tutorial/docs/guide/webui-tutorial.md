@@ -234,9 +234,9 @@ http://localhost:8855
 
 ## 示例二：数据获取、后处理与训练
 
-### 1. 启动 Obtainer
+### 1. 启动 ObtainerCLI/DataMixer
 
-基于分析报告，可以进一步执行 `ObtainerAgent` 做数据获取。
+基于分析报告，可以进一步使用 ObtainerCLI/DataMixer 做数据获取、入湖和训练数据导出。旧的 LangGraph `ObtainerAgent` 已退休。
 
 当前数据获取常见有两类路径：
 

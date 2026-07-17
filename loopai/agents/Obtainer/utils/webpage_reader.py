@@ -2,7 +2,7 @@ import json
 import asyncio
 from typing import Dict, Any, List, Optional
 
-from loopai.agents import BaseAgent
+from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.common.prompts import PromptLoader
 from loopai.logger import get_logger
 

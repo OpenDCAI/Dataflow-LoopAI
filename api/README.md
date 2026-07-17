@@ -219,7 +219,7 @@ curl "http://localhost:8855/starter/agent/status"
 
 ### Trainer Metrics
 
-The legacy direct `/train/*` API has been removed. Normal training runs through the integrated TrainerAgent path. WebUI charts read task-scoped metrics from:
+The legacy direct `/train/*` API has been removed. Normal training runs through the integrated Trainer Skill path. WebUI charts read task-scoped metrics from:
 
 | Method | Path | Description |
 | --- | --- | --- |

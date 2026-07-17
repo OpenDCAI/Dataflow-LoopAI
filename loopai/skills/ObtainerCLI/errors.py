@@ -4,12 +4,21 @@ from __future__ import annotations
 class ObtainerCliError(Exception):
     """Base error with a stable CLI code and exit code."""
 
-    def __init__(self, error_code: str, message: str, *, exit_code: int = 2, hint: str = ""):
+    def __init__(
+        self,
+        error_code: str,
+        message: str,
+        *,
+        exit_code: int = 2,
+        hint: str = "",
+        details: dict | None = None,
+    ):
         super().__init__(message)
         self.error_code = error_code
         self.message = message
         self.exit_code = exit_code
         self.hint = hint
+        self.details = details or {}
 
 
 class CandidateNotEnoughError(ObtainerCliError):

@@ -97,7 +97,18 @@ export default {
             try {
                 let task_id = this.state.task_id
                 let output_dir = this.state.output_dir
-                let trainer_task_id = this.custom_info['trainer.trainer.run']?.version_id || ''
+                let trainerState = this.state.trainer || {}
+                let trainerRuntime = (this.taskStatus.node_status || []).find(
+                    (item) => item.node_name === 'trainer'
+                )
+                let trainer_task_id =
+                    trainerRuntime?.version ||
+                    trainerState.trainer_version_id ||
+                    trainerState.trainer_task_id ||
+                    trainerState.trainer_training_task_id ||
+                    this.custom_info['trainer.trainer.run']?.version_id ||
+                    ''
+                if (!trainer_task_id) return
                 this.$api.task
                     .getTrainStatus(output_dir, task_id, trainer_task_id)
                     .then((res) => {

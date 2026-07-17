@@ -11,7 +11,7 @@ from typing import Any, Dict
 from tqdm import tqdm
 from langchain_openai import ChatOpenAI
 
-from loopai.agents.Judger.utils.oj.data import read_problems, write_jsonl
+from loopai.skills.Judger.utils.data import read_problems, write_jsonl
 from loopai.common.event_tool import StreamEvent
 from loopai.logger import get_logger
 

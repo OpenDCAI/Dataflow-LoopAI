@@ -1,0 +1,1 @@
+<automated_query>在上一轮执行中，`trainer_agent` 因参数缺失而中断并跳转至 `configer_agent`。现在用户已经补全了缺失的参数。请询问用户是否需要继续执行 `train` 操作。</automated_query>

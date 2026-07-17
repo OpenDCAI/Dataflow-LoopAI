@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ import tomlkit
 
 from tortoise.expressions import Q
 
+from loopai.schema.model_pool import StarterModelPool
 from ...models.db_models import StarterConfig, TaskModel, ThreadHistory
 from ...utils.config.config import check_config_from_db
 
@@ -238,6 +240,7 @@ def _sync_codex_home_config(
 ) -> Path:
     codex_home = _resolved_codex_home(system_config)
     codex_home.mkdir(parents=True, exist_ok=True)
+    _ensure_codex_home_seed_files(codex_home)
 
     config_path = codex_home / "config.toml"
     workspace = str(system_config.get("codex_workspace") or PROJECT_ROOT).strip() or str(PROJECT_ROOT)
@@ -281,6 +284,21 @@ def _sync_codex_home_config(
     return codex_home
 
 
+def _ensure_codex_home_seed_files(codex_home: Path) -> None:
+    if not EXAMPLE_CODEX_HOME.exists():
+        return
+    for source_path in EXAMPLE_CODEX_HOME.iterdir():
+        if source_path.name == "config.toml":
+            continue
+        target_path = codex_home / source_path.name
+        if target_path.exists():
+            continue
+        if source_path.is_dir() and not source_path.is_symlink():
+            shutil.copytree(source_path, target_path)
+        else:
+            shutil.copy2(source_path, target_path)
+
+
 def _resolved_codex_sandbox_mode(system_config: dict[str, Any]) -> str:
     configured = str(system_config.get("codex_sandbox_mode") or "").strip()
     if configured in ALLOWED_CODEX_SANDBOX_MODES:
@@ -301,6 +319,26 @@ async def load_starter_system_config() -> dict[str, Any]:
 
     system_config = config.get("system", {})
     if isinstance(system_config, dict):
+        system_config = dict(system_config)
+        pool = StarterModelPool(system_config)
+        entry = pool.codex_entry()
+        if entry is not None:
+            if pool.has_proxy():
+                provider = pool.resolve_proxy_provider(entry.name, tier=entry.tier)
+                if provider is not None:
+                    system_config["codex_base_url"] = provider.base_url
+                    system_config["codex_api_key"] = provider.api_key
+                    system_config["codex_model"] = provider.model
+                    system_config["codex_wire_api"] = "responses"
+                    system_config.setdefault("codex_model_provider", "loopai_model_pool_proxy")
+                    system_config.setdefault("codex_provider_name", "LoopAI Model Pool Proxy")
+                    system_config.setdefault("codex_api_key_env_key", "CODEX_API_KEY")
+                    system_config.setdefault("codex_supports_websockets", False)
+            else:
+                system_config["codex_base_url"] = entry.base_url
+                system_config["codex_api_key"] = entry.resolved_api_key()
+                system_config["codex_model"] = entry.model_name
+                system_config["codex_wire_api"] = entry.wire_api
         return system_config
     return {}
 
@@ -308,6 +346,8 @@ async def load_starter_system_config() -> dict[str, Any]:
 class CodexSessionStore:
     def __init__(self) -> None:
         self.sessions: dict[str, dict[str, Any]] = {}
+        self.processes: dict[str, asyncio.subprocess.Process] = {}
+        self.tasks: dict[str, asyncio.Task[Any]] = {}
 
     def _new_session(
         self,
@@ -331,6 +371,8 @@ class CodexSessionStore:
             "active_prompt": None,
             "conversation": [],
             "events": [],
+            "termination_requested": False,
+            "termination_reason": None,
             "created_at": _utc_now(),
             "updated_at": _utc_now(),
         }
@@ -385,6 +427,40 @@ class CodexSessionStore:
         kwargs["updated_at"] = _utc_now()
         session.update(kwargs)
         return session
+
+    def set_process(self, session_id: str, process: asyncio.subprocess.Process) -> None:
+        self.processes[session_id] = process
+
+    def get_process(self, session_id: str) -> asyncio.subprocess.Process | None:
+        return self.processes.get(session_id)
+
+    def clear_process(self, session_id: str) -> asyncio.subprocess.Process | None:
+        return self.processes.pop(session_id, None)
+
+    def set_task(self, session_id: str, task: asyncio.Task[Any]) -> None:
+        self.tasks[session_id] = task
+
+    def get_task(self, session_id: str) -> asyncio.Task[Any] | None:
+        return self.tasks.get(session_id)
+
+    def clear_task(self, session_id: str) -> asyncio.Task[Any] | None:
+        return self.tasks.pop(session_id, None)
+
+    def request_termination(self, session_id: str, reason: str = "user_requested") -> dict[str, Any] | None:
+        session = self.get(session_id)
+        if session is None:
+            return None
+        session["termination_requested"] = True
+        session["termination_reason"] = reason
+        session["status"] = "terminating"
+        session["pending_request"] = None
+        session["pending_prompts"] = []
+        session["updated_at"] = _utc_now()
+        return session
+
+    def is_termination_requested(self, session_id: str) -> bool:
+        session = self.get(session_id)
+        return bool(session and session.get("termination_requested"))
 
     def merge_inputs(self, session_id: str, values: dict[str, Any]) -> dict[str, Any] | None:
         session = self.get(session_id)
@@ -550,9 +626,13 @@ class CodexSessionStore:
                 "active_prompt": None,
                 "conversation": [],
                 "events": [],
+                "termination_requested": False,
+                "termination_reason": None,
                 "updated_at": _utc_now(),
             }
         )
+        self.clear_process(session_id)
+        self.clear_task(session_id)
         return session
 
 
@@ -709,15 +789,19 @@ class CodexStarterService:
         await self.persist_session_snapshot(resolved_session_id)
 
         async def run_in_background() -> None:
-            async for _ in self.stream(
-                prompt=prompt,
-                workspace=workspace,
-                session_id=resolved_session_id,
-                env_overrides=env_overrides,
-            ):
-                pass
+            try:
+                async for _ in self.stream(
+                    prompt=prompt,
+                    workspace=workspace,
+                    session_id=resolved_session_id,
+                    env_overrides=env_overrides,
+                ):
+                    pass
+            finally:
+                self.session_store.clear_task(resolved_session_id)
 
-        asyncio.create_task(run_in_background())
+        background_task = asyncio.create_task(run_in_background())
+        self.session_store.set_task(resolved_session_id, background_task)
         payload = {
             "type": "submitted",
             "session_id": resolved_session_id,
@@ -726,6 +810,50 @@ class CodexStarterService:
         }
         self.session_store.record_event(resolved_session_id, payload)
         await self.persist_session_snapshot(resolved_session_id)
+        return payload
+
+    async def terminate(self, session_id: str) -> dict[str, Any]:
+        session = self.session_store.get(session_id)
+        if session is None:
+            restored = await self.restore_session_snapshot(session_id)
+            if restored is None:
+                return {
+                    "type": "not_found",
+                    "session_id": session_id,
+                    "status": "not_started",
+                    "message": "Codex session not found",
+                }
+            session = restored
+
+        current_status = str(session.get("status") or "")
+        if current_status not in {"submitted", "running", "finishing", "terminating"}:
+            return {
+                "type": "not_running",
+                "session_id": session_id,
+                "status": current_status or "not_started",
+                "message": "Codex session is not running",
+            }
+
+        self.session_store.request_termination(session_id)
+        payload = {
+            "type": "termination.requested",
+            "session_id": session_id,
+            "status": "terminating",
+            "message": "Codex session termination requested",
+        }
+        self.session_store.record_event(session_id, payload)
+        await self.persist_session_snapshot(session_id)
+
+        proc = self.session_store.get_process(session_id)
+        if proc is not None and proc.returncode is None:
+            proc.terminate()
+            payload["signal"] = "terminate"
+
+        background_task = self.session_store.get_task(session_id)
+        if proc is None and background_task is not None and not background_task.done():
+            background_task.cancel()
+            payload["task_cancelled"] = True
+
         return payload
 
     def _build_env(
@@ -928,6 +1056,8 @@ class CodexStarterService:
             status="running",
             last_error=None,
             final_result=None,
+            termination_requested=False,
+            termination_reason=None,
         )
         env["CODEX_HOME"] = str(resolved_codex_home)
         if resumed_thread_id:
@@ -953,6 +1083,7 @@ class CodexStarterService:
         yield _sse(init_payload), queued_item
 
         try:
+            proc: asyncio.subprocess.Process | None = None
             try:
                 proc = await asyncio.create_subprocess_exec(
                     "corepack",
@@ -979,6 +1110,7 @@ class CodexStarterService:
                 yield _sse(error_payload), None
                 return
 
+            self.session_store.set_process(session_id, proc)
             assert proc.stdout is not None
             assert proc.stderr is not None
 
@@ -1097,6 +1229,30 @@ class CodexStarterService:
                     finalize_task.cancel()
                     await asyncio.gather(finalize_task, return_exceptions=True)
 
+            termination_requested = self.session_store.is_termination_requested(session_id)
+
+            if termination_requested:
+                self.session_store.update(
+                    session_id,
+                    status="terminated",
+                    last_error=None,
+                    active_prompt=None,
+                    final_result=final_result,
+                )
+                if active_prompt:
+                    self.session_store.set_message_state(session_id, active_prompt["message_id"], "cancelled")
+                terminated_payload = {
+                    "type": "terminated",
+                    "session_id": session_id,
+                    "message": "Codex session terminated",
+                    "returncode": returncode,
+                    "result": final_result,
+                }
+                self.session_store.record_event(session_id, terminated_payload)
+                await self.persist_session_snapshot(session_id)
+                yield _sse(terminated_payload), None
+                return
+
             if returncode != 0 and not (completed_seen and final_result is not None):
                 self.session_store.update(
                     session_id,
@@ -1153,6 +1309,18 @@ class CodexStarterService:
             self.session_store.record_event(session_id, done_payload)
             await self.persist_session_snapshot(session_id)
             yield _sse(done_payload), next_queued_item
+        except asyncio.CancelledError:
+            self.session_store.request_termination(session_id, reason="task_cancelled")
+            if active_prompt:
+                self.session_store.set_message_state(session_id, active_prompt["message_id"], "cancelled")
+            cancelled_payload = {
+                "type": "terminated",
+                "session_id": session_id,
+                "message": "Codex session terminated",
+            }
+            self.session_store.record_event(session_id, cancelled_payload)
+            await self.persist_session_snapshot(session_id)
+            raise
         except Exception as exc:
             self.session_store.update(session_id, status="failed", last_error=str(exc), active_prompt=None)
             if active_prompt:
@@ -1165,3 +1333,5 @@ class CodexStarterService:
             self.session_store.record_event(session_id, error_payload)
             await self.persist_session_snapshot(session_id)
             yield _sse(error_payload), None
+        finally:
+            self.session_store.clear_process(session_id)

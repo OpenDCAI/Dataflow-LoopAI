@@ -28,7 +28,7 @@ system:
 Notes:
 
 - Tavily keys usually start with `tvly-`.
-- Some example scripts in this repo also support `TAVILY_API_KEY` or `examples/scripts/tavily_api_key.txt` as a fallback.
+- Some example scripts in this repo also support `TAVILY_API_KEY` or `examples/scripts/tavily_api_key.txt` as alternative key sources.
 
 ## 2. `kaggle_username`
 

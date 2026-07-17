@@ -1,56 +1,32 @@
-# ObtainerCLI 使用文档
+# ObtainerCLI DataMixer 使用文档
 
-本文档对应 v2 分支当前的 `loopai.skills.ObtainerCLI` 第一版实现。它的目标是把 Obtainer 的数据入湖、索引和出湖流程做成可被 CLI/Codex 稳定调用的接口。
+ObtainerCLI 的数据湖能力由 DataMixer 完整承载。公开生产命令面只有：
 
-当前默认实现是 **local-parquet catalog**：表数据以 Parquet part 文件写在 lake root 下。旧的 `local-jsonl` catalog 仍保留为兼容路径，已有 JSONL lake 不会被强制迁移。
+```bash
+loopai-obtainercli dm --root /path/to/warehouse <datamixer-command> --json
+loopai-obtainercli dm --lake .loopai/lake.yaml <datamixer-command> --json
+```
 
-## 1. 环境准备
+`searchagent` 和 `download manifest` 是 acquisition worker 内部的数据采集桥，用于发现和下载候选数据集。正常产品流程中，外层 Codex 不应直接调用它们，而应启动 `dataset-acquisition-agent`。下载完成后，初始化、入湖、处理、索引、召回、配比、出湖、snapshot 和 lineage 都必须回到 `loopai-obtainercli dm ...`。
 
-推荐使用已安装好的 conda 环境：
+## 1. 环境与事件
 
 ```bash
 conda activate loopaiv2
-```
-
-确认 CLI 可用：
-
-```bash
 loopai-obtainercli --help
-python -m loopai.skills.ObtainerCLI --help
+loopai-obtainercli dm --help
 ```
 
-当前主命令：
-
-```text
-loopai-obtainercli lake init
-loopai-obtainercli lake status
-loopai-obtainercli ingest path
-loopai-obtainercli index embed
-loopai-obtainercli tag list
-loopai-obtainercli sample
-```
-
-所有命令都会输出 JSON，便于 Codex 或其他自动化进程解析。
-
-### StreamEvent 持久化
-
-如果需要让前端或 agent 读取进度事件，给命令传入 `--task-id`，或设置环境变量 `TASK_ID`：
+ObtainerCLI 会输出 JSON。需要记录 StreamEvent 时传入公共参数：
 
 ```bash
-loopai-obtainercli lake status \
-  --lake .loopai/lake.yaml \
+loopai-obtainercli \
   --task-id data_task_001 \
   --output-dir ./outputs \
-  --json
+  dm --root /data/lakes/code_sft/warehouse stats --json
 ```
 
-事件会写入：
-
-```text
-./outputs/data_task_001/obtainercli.pkl
-```
-
-Python 读取方式：
+事件写入 `./outputs/<task-id>/obtainercli/<version>/obtainercli.pkl`，可用：
 
 ```python
 from loopai.skills.ObtainerCLI import load_events
@@ -58,614 +34,265 @@ from loopai.skills.ObtainerCLI import load_events
 events = load_events(task_id="data_task_001", output_dir="./outputs")
 ```
 
-事件字段遵循 `loopai.common.event_tool.StreamEvent`，其中 `current` 固定为 `obtainercli`，`node` 为 `lake.status`、`lake.init`、`ingest.path`、`index.embed` 或 `sample` 等命令路径，`status` 为 `started`、`running`、`completed` 或 `failed`。如需关闭事件写入，可传 `--no-events`。
+## 2. 初始化与指针
 
-## 2. 数据湖初始化
-
-建议把大数据湖 root 放在 repo 外部，只在 repo 内保留 `.loopai/lake.yaml` 指针，避免 TB 级数据拖垮 IDE/Codex 文件索引。
+直接创建 DataMixer warehouse：
 
 ```bash
-loopai-obtainercli lake init \
-  --root /mnt/paper2any/xbr/loopai0531/lakes/loopai-v2 \
-  --link .loopai/lake.yaml \
-  --if-not-exists
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse init --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse status --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse schema --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse columns --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse stats --json
 ```
 
-默认会开启自动 embedding：
-
-```bash
-loopai-obtainercli lake init \
-  --root /mnt/paper2any/xbr/loopai0531/lakes/loopai-v2 \
-  --link .loopai/lake.yaml \
-  --embedding-provider openai-compatible \
-  --embedding-base-url http://127.0.0.1:8000/v1 \
-  --embedding-model BAAI/bge-small-zh-v1.5 \
-  --auto-embed \
-  --if-not-exists
-```
-
-如果暂时不希望入湖后自动 embedding：
-
-```bash
-loopai-obtainercli lake init \
-  --root /mnt/paper2any/xbr/loopai0531/lakes/loopai-v2 \
-  --link .loopai/lake.yaml \
-  --no-auto-embed \
-  --if-not-exists
-```
-
-初始化后会生成两份配置：
-
-```text
-/mnt/.../lakes/loopai-v2/lake.yaml
-.loopai/lake.yaml
-```
-
-`.loopai/lake.yaml` 是指针配置，典型内容如下：
+LoopAI 项目应复用同一个 DataMixer warehouse。repo 内的
+`.loopai/lake.yaml` 是可切换指针，`--lake` 只负责把指针解析到同一个
+DataMixer warehouse：
 
 ```yaml
-root: /mnt/paper2any/xbr/loopai0531/lakes/loopai-v2
-warehouse: /mnt/paper2any/xbr/loopai0531/lakes/loopai-v2/warehouse
-catalog: local-parquet
+root: /data/lakes/code_sft
+warehouse: /data/lakes/code_sft/warehouse
+catalog: datamixer
+backend: datamixer
 namespace: loopai
-auto_embed: true
-embedding_provider: openai-compatible
-embedding_base_url: http://127.0.0.1:8000/v1
-embedding_api_key:
-embedding_model: BAAI/bge-small-zh-v1.5
-embedding_backend: local-jsonl
-embedding_text_field: text
 ```
 
-## 3. 数据湖目录结构
+之后可使用：
 
-当前第一版目录如下：
-
-```text
-lake-root/
-  lake.yaml
-  warehouse/
-    loopai.db/
-      datasets/
-        _schema.json
-        data/*.parquet
-      assets/
-        _schema.json
-        data/*.parquet
-      records/
-        _schema.json
-        data/*.parquet
-      record_tags/
-        _schema.json
-        data/*.parquet
-      record_lineage/
-        _schema.json
-        data/*.parquet
-      embeddings/
-        _schema.json
-        data/*.parquet
-      quality_findings/
-        _schema.json
-        data/*.parquet
-      ingest_runs/
-        _schema.json
-        data/*.parquet
-      exports/
-        _schema.json
-        data/*.parquet
-  staging/
-  quarantine/
-  reports/
-  locks/
+```bash
+loopai-obtainercli dm --lake .loopai/lake.yaml stats --json
 ```
 
-核心表含义：
+先扫描项目目录、`outputs`、`.loopai` 和常见 LoopAI 缓存目录中的候选
+DataMixer lake：
 
-| 表 | 用途 |
-| --- | --- |
-| `datasets` | 逻辑数据集元信息，例如 `code_seed`、`math_seed` |
-| `assets` | 原始入湖资产，例如某个 JSONL 文件 |
-| `records` | 标准化后的训练/清洗记录 |
-| `record_tags` | 标签倒排表，用于高基数标签筛选和采样 |
-| `record_lineage` | 预留的记录血缘表 |
-| `embeddings` | 每条 record 的 embedding 结果 |
-| `quality_findings` | 质量检查、合成多样性、污染检测等发现 |
-| `ingest_runs` | 每次入湖任务审计记录 |
-| `exports` | 每次出湖采样任务审计记录 |
+```bash
+loopai-obtainercli dm lake scan --link .loopai/lake.yaml --project-root .
+```
 
-## 4. 输入数据格式
+从扫描结果中选择已有 warehouse，加载为当前项目的数据湖指针：
 
-当前 `ingest path` 支持 JSONL 文件，每行必须是 JSON object。
+```bash
+loopai-obtainercli dm lake load \
+  --warehouse /data/lakes/code_sft/warehouse \
+  --link .loopai/lake.yaml
+```
 
-最小格式：
+查看当前指针：
+
+```bash
+loopai-obtainercli dm lake current --link .loopai/lake.yaml
+```
+
+卸载当前项目指针但保留可复用 warehouse：
+
+```bash
+loopai-obtainercli dm lake delete --link .loopai/lake.yaml
+```
+
+只有明确要删除真实 DataMixer warehouse 文件时才使用：
+
+```bash
+loopai-obtainercli dm lake delete --link .loopai/lake.yaml --delete-warehouse --yes
+```
+
+## 3. 数据搜集、下载与入湖 Worker
+
+Analyzer 报告进入 Codex SDK 后，应启用 Obtainer skill，并优先用
+`dataset-acquisition-agent` 启动隔离 worker。外层 Codex 不需要直接编排
+SearchAgent、download 和 ingest 细节。
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent start \
+  --run ./outputs/acquisition_run \
+  --analysis-report ./outputs/analyzer_report.md \
+  --objective "collect buggy and fixed Python code-pair datasets covering syntax, logic, runtime, and assertion failures for SFT training" \
+  --keywords "program repair dataset, buggy fixed code pairs, Python SyntaxError fix, runtime exception repair, assertion failure repair" \
+  --target-datasets 8 \
+  --max-rows-per-dataset 100000 \
+  --max-bytes-per-dataset 2147483648 \
+  --discovery-mode auto \
+  --json
+```
+
+默认后台运行，立即返回 PID、日志路径和 run 目录。轮询状态：
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent status \
+  --run ./outputs/acquisition_run \
+  --json
+```
+
+继续同一个内部 Codex thread：
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent resume \
+  --run ./outputs/acquisition_run \
+  --message "Remove unrelated datasets from the filtered manifest, then continue ingest." \
+  --json
+```
+
+默认不要传 `--model`；worker 会从 Starter 模型池读取配置好的 Codex 默认模型。
+只有用户明确要求本次覆盖模型时才使用 `--model`。
+
+Worker 内部策略会要求：先把报告解析成明确搜集意图，候选列表先与原始需求
+校对并写 rejections，再下载；单数据集最多 100000 行，且本地 JSONL
+输出默认最多 2GiB；下载后规范 JSONL；
+入湖必须走 DataMixer `ingest` 或 `agent-ingest`；最终写 `final_report.json`。
+
+底层 SearchAgent 与下载命令仍保留为采集桥，但只供 worker 内部调用或人工调试。
+外层 Codex 在正常工作流中不要创建 task JSON、不要直接调用 `searchagent`，也不要直接调用 `download manifest`。
+
+检查 `searchagent_manifest.json` 后，先剔除不相关数据集并写 filtered manifest
+和 rejection report，再下载候选数据集。采集桥对单个数据集最多写出 100000 行和 2GiB 本地 JSONL：
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent status \
+  --run ./outputs/acquisition_run \
+  --json
+```
+
+worker 内部的 `download manifest` 会强制执行单数据集 100000 行上限和 2GiB 输出文件上限；即使传 `--max-rows 0`、更大的行数，或过大的 `--max-bytes-per-dataset`，也会按安全上限写出。达到字节上限时会中断当前数据集下载、保留已写出的部分 JSONL，并在结果里报告 `truncated`、`truncated_reason`、`rows_written` 和 `bytes_written`。生产 SFT 的最终规模、配比和出湖必须继续通过 DataMixer recipe 完成，不能把下载阶段的多个文件拼接为最终训练集。
+
+## 4. 入湖
+
+规范 JSONL 推荐把训练内容放在 `content`，把可过滤字段放在同一行 metadata：
 
 ```jsonl
-{"text":"def add(a, b): return a + b","source_uri":"file://repo/a.py"}
-{"text":"def sub(a, b): return a - b","source_uri":"file://repo/b.py"}
+{"content":{"instruction":"Fix the syntax error","output":"def add(a, b): return a + b"},"bug_type":"syntax","quality_score":0.95,"source_uri":"hf://dataset/train/0"}
+{"content":{"instruction":"Fix the runtime error","output":"return values[0] if values else None"},"bug_type":"runtime","quality_score":0.91,"source_uri":"hf://dataset/train/1"}
 ```
 
-常用字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `text` | string | 首选主文本字段，embedding 默认使用它 |
-| `instruction` | string | 指令数据字段 |
-| `input` | string | 输入字段 |
-| `output` | string | 输出字段 |
-| `messages` | array | chat/SFT 格式 |
-| `source_uri` | string | 原始来源 URI；缺省时使用 `input_path#line_no` |
-| `source_domain` | string | 来源域名，可作为标签或后续过滤条件 |
-| `split` | string | train/validation/test 等 |
-| `quality_score` | number | 质量分 |
-| `parent_record_ids` | array | 上游记录 ID |
-| `quality_findings` | array | 质量发现，会写入 `quality_findings` 表 |
-
-如果没有 `text`，系统会依次从 `output`、`content`、`instruction`、`messages` 或整行 JSON 中构造主文本。
-
-合成数据示例：
-
-```jsonl
-{"text":"synthetic instruction response","source_uri":"synthetic://run/1","quality_findings":[{"finding_type":"low_diversity","severity":"warning","score":0.42,"metric_name":"distinct_3","metric_value":0.18,"detector":"diversity_check","detector_version":"v1","details":{"window":128}}]}
-```
-
-## 5. 入湖
-
-基础入湖：
+入湖：
 
 ```bash
-loopai-obtainercli ingest path \
-  --lake .loopai/lake.yaml \
-  --input data/code_seed.jsonl \
-  --dataset code_seed \
-  --stage bronze \
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse ingest code_repair_mix \
+  --file ./outputs/downloads/code_repair.train.jsonl \
+  --content-key content \
+  --stage sft \
   --domain code \
-  --task-type PT \
-  --processing-level raw_web \
-  --source-kind web \
-  --tags lang=python,quality=medium \
-  --idempotency-key code-seed-20260602
-```
-
-常用维度建议：
-
-| 维度 | 示例 | 说明 |
-| --- | --- | --- |
-| `stage` | `bronze` / `silver` / `gold` | 数据湖层级 |
-| `domain` | `code` / `math` / `general` | 垂域 |
-| `processing_level` | `raw_web` / `extracted_text` / `pretrain_ready` / `postprocessed_high_quality` / `synthetic_validated` | 处理程度 |
-| `source_kind` | `web` / `local` / `api` / `synthetic` | 来源类型 |
-| `task_type` | `PT` / `SFT` / `RL` / `EVAL` | 任务类型 |
-| `tags` | `lang=python,quality=high` | 额外标签，逗号分隔 |
-
-入湖时会写入：
-
-```text
-datasets
-assets
-records
-record_tags
-quality_findings
-ingest_runs
-```
-
-### 去重语义
-
-当前有两层 ID：
-
-| 字段 | 语义 |
-| --- | --- |
-| `record_id` | 物理唯一 ID，由 `dataset_id + source_uri + processing_level + payload` 哈希得到 |
-| `dedup_key` | 语义去重 key，由规范化主文本哈希得到 |
-
-因此，同一内容进入两个 dataset 会得到不同 `record_id`，但可能共享同一个 `dedup_key`。第一版不会自动删除语义重复项，只把 `dedup_key` 写入 `records`，供后续 silver/gold 去重流程使用。
-
-### 幂等入湖
-
-建议每次入湖都传稳定的 `--idempotency-key`：
-
-```bash
-loopai-obtainercli ingest path \
-  --lake .loopai/lake.yaml \
-  --input data/code_seed.jsonl \
-  --dataset code_seed \
-  --idempotency-key code-seed-v1
-```
-
-同一个 `idempotency_key` 已成功入湖后，再次执行会返回：
-
-```json
-{
-  "ok": true,
-  "status": "success_with_warnings",
-  "rows_written": 0,
-  "warnings": [
-    {
-      "code": "DUPLICATE_INGEST_SKIPPED"
-    }
-  ]
-}
-```
-
-## 6. 自动 Embedding
-
-`lake init` 默认写入：
-
-```yaml
-auto_embed: true
-embedding_provider: openai-compatible
-embedding_base_url: http://127.0.0.1:8000/v1
-embedding_model: BAAI/bge-small-zh-v1.5
-embedding_backend: local-jsonl
-embedding_text_field: text
-```
-
-因此，当 `ingest path` 成功写入新 records 后，会自动调用 `index embed`。如果 embedding 服务不可用，入湖本身不会回滚，命令会返回 `success_with_warnings`，并带有：
-
-```json
-{
-  "code": "POST_INDEX_EMBEDDING_FAILED"
-}
-```
-
-单次入湖禁用自动索引：
-
-```bash
-loopai-obtainercli ingest path \
-  --lake .loopai/lake.yaml \
-  --input data/code_seed.jsonl \
-  --dataset code_seed \
-  --no-post-index
-```
-
-强制指定本次 embedding 参数：
-
-```bash
-loopai-obtainercli ingest path \
-  --lake .loopai/lake.yaml \
-  --input data/code_seed.jsonl \
-  --dataset code_seed \
-  --post-index embedding \
-  --embedding-provider openai-compatible \
-  --embedding-base-url http://127.0.0.1:8000/v1 \
-  --embedding-model BAAI/bge-small-zh-v1.5 \
-  --embedding-text-field text
-```
-
-## 7. 启动本地 Embedding Server
-
-ObtainerCLI 的 embedding client 调用 OpenAI-compatible `/v1/embeddings` 接口。当前仓库提供两种启动方式。
-
-### 7.1 Python/Transformers 方式
-
-适合普通 CUDA/CPU 环境：
-
-```bash
-python scripts/obtainercli_embedding_server.py \
-  --model-dir /mnt/paper2any/xbr/loopai0531/models/BAAI/bge-small-zh-v1.5 \
-  --model-name BAAI/bge-small-zh-v1.5 \
-  --host 127.0.0.1 \
-  --port 8000 \
-  --device auto \
-  --dtype auto \
-  --max-length 512
-```
-
-环境变量等价写法：
-
-```bash
-export OBTAINERCLI_EMBED_MODEL_DIR=/mnt/paper2any/xbr/loopai0531/models/BAAI/bge-small-zh-v1.5
-export OBTAINERCLI_EMBED_MODEL_NAME=BAAI/bge-small-zh-v1.5
-export OBTAINERCLI_EMBED_PORT=8000
-python scripts/obtainercli_embedding_server.py
-```
-
-健康检查：
-
-```bash
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/v1/models
-```
-
-手动请求：
-
-```bash
-curl http://127.0.0.1:8000/v1/embeddings \
-  -H 'content-type: application/json' \
-  -d '{"model":"BAAI/bge-small-zh-v1.5","input":["hello","world"]}'
-```
-
-### 7.2 Docker/vLLM 方式
-
-适合使用定制 torch/vLLM 镜像的开发机，例如沐曦环境。脚本不会猜测你的镜像名，需要显式设置：
-
-```bash
-export OBTAINERCLI_VLLM_IMAGE=your-custom-vllm-image:tag
-export OBTAINERCLI_EMBED_MODEL_DIR=/mnt/paper2any/xbr/loopai0531/models/BAAI/bge-small-zh-v1.5
-export OBTAINERCLI_EMBED_MODEL_NAME=BAAI/bge-small-zh-v1.5
-export OBTAINERCLI_EMBED_PORT=8000
-export OBTAINERCLI_DOCKER_GPU_ARGS="--privileged"
-
-bash scripts/obtainercli_vllm_embedding_server.sh
-```
-
-脚本会以 host network 暴露：
-
-```text
-http://127.0.0.1:8000/v1/embeddings
-```
-
-如果你的容器内部启动命令不是 `python -m vllm.entrypoints.openai.api_server`，可以覆盖：
-
-```bash
-export OBTAINERCLI_VLLM_CMD="python -m vllm.entrypoints.openai.api_server"
-```
-
-## 8. 手动 Embedding 索引
-
-即使初始化时关闭了自动 embedding，也可以手动索引：
-
-```bash
-loopai-obtainercli index embed \
-  --lake .loopai/lake.yaml \
-  --dataset code_seed \
-  --provider openai-compatible \
-  --base-url http://127.0.0.1:8000/v1 \
-  --model BAAI/bge-small-zh-v1.5 \
-  --backend local-jsonl \
-  --text-field text
-```
-
-如果只是测试流程，不想依赖真实模型，可以用 deterministic hash embedding：
-
-```bash
-loopai-obtainercli index embed \
-  --lake .loopai/lake.yaml \
-  --dataset code_seed \
-  --provider local-hash \
-  --model local-hash-v1 \
-  --backend local-jsonl \
-  --text-field text
-```
-
-`index embed` 会跳过已经存在的 `(record_id, embedding_model, text_field, index_backend)` 组合，因此重复执行通常不会重复写入。
-
-## 9. 查看状态和标签
-
-查看各表行数和路径：
-
-```bash
-loopai-obtainercli lake status --lake .loopai/lake.yaml
-```
-
-查看标签分布：
-
-```bash
-loopai-obtainercli tag list --lake .loopai/lake.yaml
-```
-
-标签来自两部分：
-
-1. 核心列自动生成：`domain`、`processing_level`、`source_kind`、`task_type`
-2. 入湖时 `--tags` 传入的键值对，例如 `lang=python`、`quality=high`
-
-## 10. 出湖采样
-
-按核心维度出湖：
-
-```bash
-loopai-obtainercli sample \
-  --lake .loopai/lake.yaml \
-  --output exports/code_pretrain.jsonl \
-  --domain code \
-  --processing-level pretrain_ready \
-  --source-kind web \
-  --task-type PT \
-  --n 1000 \
-  --seed 42
-```
-
-按标签过滤：
-
-```bash
-loopai-obtainercli sample \
-  --lake .loopai/lake.yaml \
-  --output exports/python_high_quality.jsonl \
-  --domain code \
-  --processing-level postprocessed_high_quality \
-  --include-tag lang=python \
-  --include-tag quality=high \
-  --exclude-tag license=unknown \
-  --n 500 \
-  --seed 7
-```
-
-候选不足但允许导出较小集合：
-
-```bash
-loopai-obtainercli sample \
-  --lake .loopai/lake.yaml \
-  --output exports/small.jsonl \
-  --domain code \
-  --include-tag quality=high \
-  --n 1000 \
-  --allow-smaller
-```
-
-返回会包含 warning：
-
-```json
-{
-  "status": "success_with_warnings",
-  "warnings": [
-    {
-      "code": "ALLOW_SMALLER_TRIGGERED"
-    }
-  ]
-}
-```
-
-分层采样：
-
-```bash
-loopai-obtainercli sample \
-  --lake .loopai/lake.yaml \
-  --output exports/balanced_by_domain.jsonl \
-  --domain code \
-  --processing-level postprocessed_high_quality \
-  --include-tag quality=high \
-  --strategy stratified \
-  --balance-by tag:source_domain \
-  --n 1000 \
-  --seed 11
-```
-
-第一版 `--strategy stratified` 只支持 `--balance-by tag:<tag_name>`。
-
-## 11. 出湖匹配策略
-
-当前实现先用 records 的核心列做过滤：
-
-```text
-domain
-processing_level
-source_kind
-task_type
-```
-
-再用 `record_tags` 对 `--include-tag` / `--exclude-tag` 做集合求交或排除。这样保留了未来迁移到 Iceberg/Parquet 后按核心列裁剪的空间，同时把高基数标签放在标签表中处理。
-
-## 12. Exit Code 和错误
-
-| exit code | 含义 |
-| --- | --- |
-| `0` | 命令执行完成；如果有 warning，会在 JSON 的 `warnings` 字段体现 |
-| `1` | 未捕获异常 |
-| `2` | 参数错误或通用 ObtainerCLI 错误 |
-| `6` | 采样候选不足，错误码 `CANDIDATE_NOT_ENOUGH` |
-
-注意：当前第一版没有单独的“成功但有警告” exit code。`success_with_warnings` 仍返回 `0`，调用方应读取 JSON 中的 `status` 和 `warnings`。
-
-错误响应格式：
-
-```json
-{
-  "ok": false,
-  "error_code": "CANDIDATE_NOT_ENOUGH",
-  "message": "Requested 100 records but only 3 matched.",
-  "hint": "Relax filters or use --allow-smaller."
-}
-```
-
-## 13. 常见工作流
-
-### 13.1 原始网页入湖
-
-```bash
-loopai-obtainercli ingest path \
-  --lake .loopai/lake.yaml \
-  --input data/raw_web.jsonl \
-  --dataset raw_web_20260602 \
-  --stage bronze \
-  --domain general \
-  --task-type PT \
-  --processing-level raw_web \
-  --source-kind web \
-  --tags crawl_batch=20260602 \
-  --idempotency-key raw-web-20260602
-```
-
-### 13.2 抽取正文后的网页入湖
-
-```bash
-loopai-obtainercli ingest path \
-  --lake .loopai/lake.yaml \
-  --input data/extracted_text.jsonl \
-  --dataset extracted_web_20260602 \
-  --stage silver \
-  --domain general \
-  --task-type PT \
-  --processing-level extracted_text \
-  --source-kind web \
-  --tags extractor=trafilatura \
-  --idempotency-key extracted-web-20260602
-```
-
-### 13.3 预训练数据入湖
-
-```bash
-loopai-obtainercli ingest path \
-  --lake .loopai/lake.yaml \
-  --input data/pretrain_ready_code.jsonl \
-  --dataset code_pretrain_ready_v1 \
-  --stage silver \
-  --domain code \
-  --task-type PT \
-  --processing-level pretrain_ready \
-  --source-kind web \
-  --tags lang=python,quality=medium \
-  --idempotency-key code-pretrain-ready-v1
-```
-
-### 13.4 高质量后处理数据入湖
-
-```bash
-loopai-obtainercli ingest path \
-  --lake .loopai/lake.yaml \
-  --input data/code_hq.jsonl \
-  --dataset code_hq_v1 \
-  --stage gold \
-  --domain code \
+  --lang python \
+  --source huggingface \
+  --license unknown \
   --task-type SFT \
-  --processing-level postprocessed_high_quality \
-  --source-kind synthetic \
-  --tags generator=qwen,quality=high \
-  --idempotency-key code-hq-v1
+  --processing-level normalized \
+  --source-kind huggingface \
+  --loop-uuid "$LOOP_UUID" \
+  --version-id "$VERSION_ID" \
+  --tag source_dataset=owner/name \
+  --tokenizer tiktoken:o200k_base \
+  --json
 ```
 
-### 13.5 导出垂域数据
+非 JSONL 或 schema 未规范的数据，先用 DataMixer `agent-ingest`：
 
 ```bash
-loopai-obtainercli sample \
-  --lake .loopai/lake.yaml \
-  --output exports/code_hq_sft.jsonl \
-  --domain code \
-  --processing-level postprocessed_high_quality \
-  --task-type SFT \
-  --include-tag quality=high \
-  --n 10000 \
-  --allow-smaller \
-  --seed 20260602
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse agent-ingest ./outputs/downloads/raw_file \
+  --engine builtin \
+  --dataset code_repair_mix \
+  --json
 ```
 
-## 14. 并发和锁
+## 5. 查询、处理、索引与召回
 
-当前第一版用 `locks/commit.lock` 做本地文件锁，保护写表阶段。建议仍按“单 lake 串行 commit”使用：
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse query \
+  --filter "domain = 'code' AND task_type = 'SFT'" \
+  --limit 20 \
+  --json
 
-1. 下载、爬取、清洗、合成可以并行产出 JSONL。
-2. 入湖写入同一个 lake 时尽量串行，或由外层调度器排队。
-3. 不建议多个进程同时对同一个 lake 做高频入湖和索引。
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dist domain --json
 
-## 15. 当前边界
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse op list --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse op run quality_score --dataset code_repair_mix --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse op run minhash_dedup --dataset code_repair_mix --arg k=5 --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse contam add --name benchmark --file benchmark.txt --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse decontaminate --against benchmark --json
 
-当前 v2 第一版已经实现：
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataflow agent-run \
+  --target "score GSM8K answer-focused SFT rows and keep high-quality rows" \
+  --dataset math_sft \
+  --trial-rows 20 \
+  --expected-outputs math_answer_quality \
+  --apply \
+  --json
 
-- 外部 lake root + repo 内指针配置
-- JSONL 数据入湖
-- 核心列和标签写入
-- `record_id`/`dedup_key` 双层去重标识
-- `quality_findings` 写入
-- 自动 embedding 和手动 embedding
-- OpenAI-compatible embedding server
-- 标签统计
-- 随机采样和按 tag 分层采样
-- 出湖审计记录
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse index build --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recall \
+  --query "buggy and fixed Python code pairs for runtime exception repair" \
+  --filter "domain = 'code' AND task_type = 'SFT'" \
+  --limit 50 \
+  --json
+```
 
-尚未实现或后续可替换：
+如果下游任务需要 DataFlow 算子链，不要手工盲选单个 DataFlow operator。`dataflow agent-run` 会让 Codex SDK 先导出试跑样本、按 DataFlow-Skills 规则规划算子链、生成并试跑 pipeline，再按 `sample_id` merge 回 DataMixer。低层 `op run dataflow --arg op=<DataFlowClassName>` 只适合已经明确知道要跑哪个 DataFlow 算子的场景。
 
-- Iceberg/PyIceberg catalog
-- 跨 part 的 compaction 和 Parquet 分区布局优化
-- Parquet column stats 驱动的查询裁剪
-- 向量库 ANN 检索
-- 自动语义去重删除
-- 多 writer 高并发事务
-- 更完整的数据质量规则引擎
+自定义标签过滤使用受控 `json_extract(tags_json, '$."tag_name"')` 形式。
+
+## 6. 生产 SFT 出湖 Worker
+
+生产 SFT 出湖必须使用 DataMixer recipe，但外层 Codex 不再直接手写和反复
+调用 `recipe validate/plan/preview/export`。使用单命令 wrapper 启动隔离的
+内部 Codex SDK worker；wrapper 会把 DataMixer recipe、schema、snapshot、
+纯 Alpaca 校验和失败处理规则注入到 worker 上下文。
+
+启动新 worker：
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse sft-export-agent start \
+  --run ./outputs/code_failure_repair_sft_v1 \
+  --analysis-report ./outputs/analyzer_report.md \
+  --format alpaca \
+  --target-records 100000 \
+  --out ./outputs/code_failure_repair_sft_v1/export
+```
+
+`start` 默认把内部 Codex SDK worker 放到后台运行，立即返回 PID、日志路径
+和 run 目录。只有需要阻塞等待时才加 `--foreground`。
+
+查看状态：
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse sft-export-agent status \
+  --run ./outputs/code_failure_repair_sft_v1
+```
+
+在同一个内部 Codex thread 上继续修复：
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse sft-export-agent resume \
+  --run ./outputs/code_failure_repair_sft_v1 \
+  --message "Remove buckets whose output falls back to text, then re-export."
+```
+
+默认不要传 `--model`；worker 会从 Starter 模型池读取配置好的 Codex 默认模型。
+只有用户明确要求本次覆盖模型时才使用 `--model`。
+
+`resume` 同样默认后台运行；外层 Codex 用 `status` 轮询，不需要长时间占住
+上下文。
+
+外层 Codex 只负责监督：读取 `status.json` 和 `final_report.json`，决定
+`resume` 当前 worker，还是 `start` 一个新 worker。详细 recipe 规划、schema
+修复、DataFlow 规范化、`recipe export --snapshot`、manifest/snapshot/digest
+记录和最终 JSONL 校验都由 worker wrapper 内部策略控制。
+
+Wrapper 对 Alpaca SFT 的硬约束包括：
+
+- 最终训练 JSONL 每行只能有 `instruction`、`input`、`output`。
+- `output.sources` 禁止使用 `text`、`raw_content`、`content` 或整段记录 fallback。
+- `instruction == output` 必须阻断。
+- 若 Q/A 混在单个 text 字段里，必须先用 DataMixer/DataFlow 规范化，或排除该 bucket。
+- 若 Analyzer 或用户没有明确 SFT 规模，默认至少 `100000` records。
+- failure taxonomy 配比必须依赖语义标签，如 `bug_type=syntax/logic/runtime/assertion`。
+- 所有成功出湖必须有 manifest、recipe fingerprint、dataset digest 和 snapshot id。
+
+## 7. Lineage 与 Snapshot
+
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse snapshot create --name sft_mix_v1 --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse snapshot list --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse lineage list --json
+```
+
+最终汇报至少包含：warehouse 路径、SearchAgent manifest、下载 manifest、入湖数据集、处理命令、index/recall 检查、recipe fingerprint、snapshot id、export manifest 和导出路径。

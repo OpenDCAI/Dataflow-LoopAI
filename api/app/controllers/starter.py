@@ -1,12 +1,14 @@
 import os
 import json
 import asyncio
-from fastapi import APIRouter
+from typing import Any
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from tortoise.expressions import Q
 from ..models.body import (
     response_body,
     StarterCodexRequest,
+    StarterLooperRequest,
 )
 from ..models.db_models import StarterConfig, TaskModel
 from ..services.starter import (
@@ -17,6 +19,7 @@ from ..services.starter import (
     parse_task_state,
 )
 from ..services.task import build_initial_task_state, list_latest_task_runtimes
+from loopai.skills.Looper import parse_looper_command, run_looper_once
 from ..utils.monitor.hw_stat import get_nvidia_gpu_usage, get_huawei_npu_usage, get_cpu_usage, get_memory_usage
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +29,65 @@ DB_PATH = os.path.join(BASE_DIR, "db", "db.sqlite3")
 DEFAULT_OUTPUTS_DIR = os.path.join(LoopAI_DIR, "outputs")
 
 router = APIRouter(tags=["starter"])
+
+
+def _looper_error_response(exc: Exception):
+    message = str(exc).strip() or "Looper execution failed"
+    data: dict[str, Any] = {"error": message}
+
+    if message.startswith("Looper LLM HTTP "):
+        suffix = message[len("Looper LLM HTTP "):]
+        code_text, _, detail = suffix.partition(":")
+        try:
+            status_code = int(code_text.strip())
+        except ValueError:
+            status_code = 502
+        if detail.strip():
+            data["upstream_error"] = detail.strip()
+        return response_body(
+            code=status_code,
+            status="error",
+            message="Looper upstream model request failed",
+            data=data,
+        )()
+
+    if message.startswith("Looper LLM connection error:"):
+        reason = message.partition(":")[2].strip()
+        if reason:
+            data["upstream_error"] = reason
+        return response_body(
+            code=503,
+            status="error",
+            message="Looper upstream model connection failed",
+            data=data,
+        )()
+
+    if message == "Looper model configuration is incomplete.":
+        return response_body(
+            code=400,
+            status="error",
+            message="Looper model configuration is incomplete",
+            data=data,
+        )()
+
+    if (
+        message.startswith("Looper output JSON is invalid:")
+        or message.startswith("No JSON object found in Looper output:")
+        or message == "Looper output JSON must be an object."
+    ):
+        return response_body(
+            code=422,
+            status="error",
+            message="Looper returned invalid JSON",
+            data=data,
+        )()
+
+    return response_body(
+        code=500,
+        status="error",
+        message="Looper execution failed",
+        data=data,
+    )()
 
 
 @router.post("/codex/stream", operation_id="starterCodexStream", summary="Submit codex prompt")
@@ -83,7 +145,7 @@ async def starter_codex_session(session_id: str):
 
 
 @router.get("/codex/session/{session_id}/stream", operation_id="starterCodexSessionStream", summary="Stream codex session events")
-async def starter_codex_session_stream(session_id: str):
+async def starter_codex_session_stream(session_id: str, request: Request):
     session = codex_session_store.get(session_id)
     if session is None:
         return response_body(
@@ -94,10 +156,20 @@ async def starter_codex_session_stream(session_id: str):
             },
         )()
     async def event_stream():
-        last_index = 0
+        last_event_id = request.headers.get("last-event-id") or request.query_params.get("last_event_id")
+        try:
+            last_index = max(0, int(last_event_id) + 1) if last_event_id is not None else 0
+        except (TypeError, ValueError):
+            last_index = 0
 
-        def wrap_sse_data(data):
-            return f"data: {json.dumps(response_body(data=data)(), ensure_ascii=False)}\n\n"
+        def wrap_sse_data(data, event_id: int | None = None):
+            payload = dict(data or {})
+            if event_id is not None:
+                payload.setdefault("_event_index", event_id)
+            encoded = json.dumps(response_body(data=payload)(), ensure_ascii=False)
+            if event_id is None:
+                return f"data: {encoded}\n\n"
+            return f"id: {event_id}\ndata: {encoded}\n\n"
 
         while True:
             current = codex_session_store.get(session_id)
@@ -112,7 +184,7 @@ async def starter_codex_session_stream(session_id: str):
             events = current.get("events", [])
             while last_index < len(events):
                 payload = events[last_index].get("payload", {})
-                yield wrap_sse_data(payload)
+                yield wrap_sse_data(payload, last_index)
                 last_index += 1
 
             if current.get("status") not in {"submitted", "running", "finishing"}:
@@ -120,7 +192,7 @@ async def starter_codex_session_stream(session_id: str):
                     "type": "session.snapshot",
                     "session_id": session_id,
                     "session": current,
-                })
+                }, len(events))
                 return
 
             await asyncio.sleep(0.5)
@@ -172,6 +244,103 @@ async def starter_codex_session_reset(session_id: str):
     if isinstance(session, dict):
         session["ai_thread_id"] = None
     return response_body(message="Codex session reset", data=session)()
+
+
+
+@router.post("/codex/session/{session_id}/looper", operation_id="starterCodexSessionLooper", summary="Run looper once and optionally execute its command")
+async def starter_codex_session_looper(session_id: str, req: StarterLooperRequest | None = None):
+    task = await TaskModel.get_or_none(task_id=session_id)
+    if task is None:
+        return response_body(code=404, status="error", message="Task not found")()
+
+    request_payload = req or StarterLooperRequest()
+    os.environ["DB_PATH"] = DB_PATH
+    os.environ["TASK_ID"] = session_id
+    system_config = await load_starter_system_config()
+    service = CodexStarterService(system_config=system_config, session_store=codex_session_store)
+
+    session = codex_session_store.get(session_id)
+    if session is None:
+        session = await service.restore_session_snapshot(session_id)
+
+    state = parse_task_state(task.state)
+    if not isinstance(state, dict):
+        state = await build_initial_task_state(session_id)
+    else:
+        state.setdefault("task_id", session_id)
+        state.setdefault("messages", [])
+
+    runtime_status = await list_latest_task_runtimes(session_id)
+    conversation = []
+    if isinstance(session, dict):
+        conversation = session.get("conversation") or []
+
+    try:
+        looper_state = await run_looper_once(
+            task_id=session_id,
+            state=state,
+            system_config=system_config,
+            conversation=conversation,
+            session=session,
+            runtime_status=runtime_status,
+            output_dir=DEFAULT_OUTPUTS_DIR,
+        )
+    except Exception as exc:
+        return _looper_error_response(exc)
+
+    raw_command = (looper_state.get("looper") or {}).get("command") or ""
+    try:
+        command = parse_looper_command(raw_command)
+    except Exception as exc:
+        return response_body(code=500, status="error", message=f"Invalid looper command: {exc}", data={"state": looper_state, "raw_command": raw_command})()
+
+    action: dict[str, Any] | None = None
+    if request_payload.execute_command:
+        latest_session = codex_session_store.get(session_id) or session
+        latest_status = str((latest_session or {}).get("status") or "")
+        if command["op"] == "query":
+            if latest_status in {"submitted", "running", "finishing", "terminating"}:
+                action = {
+                    "type": "deferred_running",
+                    "message": "Codex session is still running; looper command was planned but not auto-submitted.",
+                    "session_status": latest_status,
+                    "command": command,
+                }
+            else:
+                action = await service.submit(
+                    prompt=command["message"],
+                    workspace=request_payload.workspace or (latest_session or {}).get("workspace"),
+                    session_id=session_id,
+                    env_overrides={
+                        "DB_PATH": DB_PATH,
+                        "TASK_ID": session_id,
+                    },
+                )
+        elif command["op"] == "stop":
+            action = await service.terminate(session_id)
+
+    return response_body(
+        message="Looper finished one planning pass",
+        data={
+            "session_id": session_id,
+            "command": command,
+            "action": action,
+            "state": looper_state,
+        },
+    )()
+
+
+@router.post("/codex/session/{session_id}/terminate", operation_id="starterCodexSessionTerminate", summary="Terminate codex session")
+async def starter_codex_session_terminate(session_id: str):
+    system_config = await load_starter_system_config()
+    service = CodexStarterService(system_config=system_config, session_store=codex_session_store)
+    payload = await service.terminate(session_id)
+
+    if payload.get("type") == "not_found":
+        return response_body(code=404, status="error", message=payload.get("message", "Codex session not found"), data=payload)()
+    if payload.get("type") == "not_running":
+        return response_body(code=409, status="error", message=payload.get("message", "Codex session is not running"), data=payload)()
+    return response_body(message="Codex session termination requested", data=payload)()
 
 
 async def load_config(task_id=None):

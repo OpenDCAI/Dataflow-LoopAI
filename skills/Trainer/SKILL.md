@@ -1,20 +1,20 @@
 ---
 name: trainer
-description: Use this skill when the user wants LoopAI to validate training data, generate LLaMA-Factory training configs, start SFT/training through TrainerAgent, monitor Trainer progress events, or inspect Trainer failures from starter.yaml or runtime state.
+description: Use this skill when the user wants LoopAI to validate training data, generate and approve LLaMA-Factory training YAML, start SFT/training, monitor Trainer progress events, or inspect Trainer failures from starter.yaml or runtime state.
 ---
 
 # Trainer Skill
 
 ## Purpose
 
-Trainer Skill is the Codex-facing entry point for LoopAI model training. It wraps the existing `loopai/agents/Trainer` implementation instead of duplicating training logic.
+Trainer Skill is the Codex-facing entry point and the canonical Python implementation for LoopAI model training.
 
 Use this skill for:
 
-- Starting SFT or TrainerAgent training from `starter.yaml`
+- Starting SFT or Trainer training from `starter.yaml`
 - Validating Trainer configuration and dataset paths
 - Generating LLaMA-Factory training YAML
-- Running TrainerAgent and reading structured StreamEvent progress
+- Running Trainer and reading structured StreamEvent progress
 - Returning structured Trainer errors
 
 Do not use this skill for Judger, Analyzer, data crawling, or broad project refactors.
@@ -23,13 +23,14 @@ Do not use this skill for Judger, Analyzer, data crawling, or broad project refa
 
 ```text
 loopai/skills/Trainer/
-├── __init__.py        # run() / load_events() / analyze_results() / prefill_guide()
+├── __init__.py        # prepare() / run_prepared() / run() / result helpers
+├── trainer_agent.py   # LangGraph subgraph used by Starter and the skill runner
+├── nodes/             # data validation, config generation, training execution
+├── utils/             # events, task manager, parsers, training utilities
+├── templates/         # bundled training templates
 ├── results.py         # parses metrics and selects the best checkpoint
-├── runner.py          # skill entry that calls TrainerAgent
+├── runner.py          # skill entry that runs the Trainer subgraph
 └── runtime_config.py  # resolves kwargs/env/state/starter.yaml
-
-loopai/agents/Trainer/
-└── ...                # existing TrainerAgent implementation
 ```
 
 The root skill description lives at:
@@ -38,26 +39,54 @@ The root skill description lives at:
 skills/Trainer/SKILL.md
 ```
 
+## Mandatory YAML Approval
+
+For every user-initiated training round, use this two-stage workflow:
+
+1. Call `prepare()` to validate the data and generate the final training YAML. This stage must not start training.
+2. Read `result["trainer"]["trainer_result"]["data"]` and show the user:
+   - `config_path`
+   - the complete `config_yaml` in a YAML code block
+   - the important values such as dataset/model paths, learning rate, epochs, batch size, LoRA fields, devices, output directory, and `save_total_limit`
+3. Stop and wait for explicit user approval. Do not treat a previous round's approval as approval for a new round.
+4. If the user requests edits, update the generated YAML, call `inspect_prepared_config()`, show the complete updated YAML, and wait for approval again.
+5. Only after approval, call `run_prepared()` with the displayed `config_path`, its displayed `config_sha256`, and the `trainer_version_id` returned by `prepare()`.
+6. Keep `run_prepared()` in the foreground until training reaches `completed`, `failed`, or `cancelled`.
+
+Never call `run()` directly for an interactive, user-initiated training request. Keep `run()` only as a backward-compatible entry point for explicitly non-interactive callers that intentionally opt out of human approval.
+
+The SHA-256 check is part of the approval boundary. If the YAML changes after it is shown, `run_prepared()` must reject it; show the changed YAML and request approval again.
+
 ## Quick Start
 
 ### Python API
 
 ```python
-from loopai.skills.Trainer import run
+from loopai.skills.Trainer import prepare, run_prepared
 
-result = run(
+prepared = prepare(
     config_path="starter.yaml",
     thread_id="trainer_task_001",
 )
-print(result["trainer"].get("trainer_result"))
+approval = prepared["trainer"]["trainer_result"]["data"]
+print(approval["config_yaml"])
+
+# Stop here. Ask the user to approve the complete YAML above.
+
+result = run_prepared(
+    prepared_config_path=approval["config_path"],
+    expected_config_sha256=approval["config_sha256"],
+    thread_id="trainer_task_001",
+    version_id=approval["trainer_version_id"],
+)
 ```
 
 ### Explicit State
 
 ```python
-from loopai.skills.Trainer import run
+from loopai.skills.Trainer import prepare
 
-result = run(
+prepared = prepare(
     state={
         "task_id": "trainer_task_001",
         "output_dir": "./outputs",
@@ -131,7 +160,7 @@ Required Trainer fields:
 
 Each Trainer run owns one `version_id`.
 
-By default, `run()` generates a fresh UUID. You can override it with:
+By default, `prepare()` or `run()` asks its event writer to generate a fresh `version_id`. Pass the ID returned by `prepare()` into `run_prepared()` so configuration preparation and training remain one logical Trainer run. You can override it with:
 
 - `version_id=...`
 - `trainer_version_id=...`
@@ -193,7 +222,7 @@ If `guide["user_required_fields"]` is non-empty, ask the user or Configer to fil
 
 ## Events
 
-TrainerAgent emits structured `StreamEvent` entries with:
+Trainer Skill emits structured `StreamEvent` entries with:
 
 - `current`
 - `node`
@@ -268,11 +297,27 @@ When comparing multiple Trainer runs, call `analyze_results()` for each run and 
 
 Prefer reporting the selected checkpoint path from `trainer_best_checkpoint_path` or `update_model_path` as the model candidate for the next Judger or Analyzer step.
 
-## Invocation Guidance
+## Execution Lifetime
 
-Prefer calling the local Trainer skill or its script/runner entrypoints directly.
+Trainer runs synchronously in the foreground. A Trainer invocation is not
+complete when the training process has merely started; it is complete only
+after the training status becomes `completed`, `failed`, or `cancelled` and
+the local Trainer runner exits.
 
-When you need to inspect or confirm task config first, read the task-scoped trainer section through Configer before launching training.
+- Do not launch the Trainer runner with `&`, `nohup`, or a detached shell.
+- If a command execution yields a running cell/session id, keep waiting on
+  that same execution until it exits.
+- Do not finish the Codex turn while the Trainer command is still running.
+- Progress events with status `running` are intermediate updates, not a final
+  tool result.
+
+## MCP Status (Disabled)
+
+The local LoopAI MCP route is currently disabled. Do not call or register
+`trainer_run` / `trainer_load_events`, and do not start `loopai.mcp.server`.
+Call the local Trainer skill or its script/runner entrypoints directly.
+
+Read the task-scoped trainer section through Configer before preparing the YAML. Treat task-state confirmation and final YAML approval as separate gates: the first confirms the task inputs; the second approves the exact executable training configuration.
 
 ## Errors
 
