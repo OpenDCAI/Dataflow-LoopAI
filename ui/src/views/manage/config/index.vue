@@ -46,7 +46,6 @@
                             :probe-loading="modelPoolProbeLoading"
                             :probe-message="modelPoolProbeMessage"
                             @probe="handleProbe"
-                            @show-detail="show.modelPool = true"
                         ></model-pool-panel>
                         <hr v-if="modelPoolAvailable" />
                         <div
@@ -122,11 +121,6 @@
             mode="read"
             @confirm="handleDatasetConfirm"
         ></resource-panel>
-        <model-pool-detail-panel
-            v-model="show.modelPool"
-            :config="config"
-            :status="modelPoolStatus"
-        ></model-pool-detail-panel>
     </div>
 </template>
 
@@ -138,14 +132,12 @@ import { useTheme } from '@/stores/theme'
 import { useLoopAI } from '@/stores/loopAI'
 
 import ModelPoolPanel from '@/components/manage/config/modelPool/index.vue'
-import ModelPoolDetailPanel from '@/components/manage/config/modelPool/detailPanel.vue'
 import valueInput from '@/components/manage/config/valueInput/index.vue'
 import resourcePanel from '@/components/manage/mainFlow/panels/resourcePanel/index.vue'
 
 export default {
     components: {
         ModelPoolPanel,
-        ModelPoolDetailPanel,
         valueInput,
         resourcePanel
     },
@@ -161,8 +153,7 @@ export default {
                 update: true
             },
             show: {
-                dataset: false,
-                modelPool: false
+                dataset: false
             },
             modelPoolStatus: {},
             modelPoolProbeLoading: false,
@@ -671,7 +662,6 @@ export default {
             if (this.modelPoolProbeLoading) return
             this.modelPoolProbeLoading = true
             this.modelPoolProbeMessage = this.local('Probing models...')
-            this.show.modelPool = true
             try {
                 await this.persistConfig({ silent: true })
                 await this.loadModelPoolStatus(true)

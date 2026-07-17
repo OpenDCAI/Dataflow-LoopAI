@@ -25,7 +25,7 @@
                     icon="OpenPane"
                     border-radius="6"
                     style="width: 86px"
-                    @click="$emit('show-detail')"
+                    @click="showDetailPanel = true"
                 >
                     {{ local('Details') }}
                 </fv-button>
@@ -184,6 +184,11 @@
             ></model-pool-item>
         </div>
         <p v-if="probeMessage" class="model-probe-message">{{ probeMessage }}</p>
+        <model-pool-detail-panel
+            v-model="showDetailPanel"
+            :config="config"
+            :status="modelPoolStatus"
+        ></model-pool-detail-panel>
     </div>
 </template>
 
@@ -192,11 +197,13 @@ import { mapState } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme.js'
 import ModelPoolItem from './modelPoolItem.vue'
+import ModelPoolDetailPanel from './detailPanel.vue'
 
 export default {
     name: 'ModelPool',
     components: {
-        ModelPoolItem
+        ModelPoolItem,
+        ModelPoolDetailPanel
     },
     props: {
         config: { type: Object, required: true },
@@ -204,9 +211,10 @@ export default {
         probeLoading: { type: Boolean, default: false },
         probeMessage: { type: String, default: '' }
     },
-    emits: ['probe', 'show-detail'],
+    emits: ['probe'],
     data() {
         return {
+            showDetailPanel: false,
             tierOptions: [
                 { key: 'high', text: 'high' },
                 { key: 'medium', text: 'medium' },
