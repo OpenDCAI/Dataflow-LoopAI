@@ -11,6 +11,7 @@
                     :width="76"
                     :height="25"
                     :inside-content="true"
+                    :switch-on-background="color"
                 ></fv-toggle-switch>
                 <fv-button
                     theme="dark"
@@ -31,8 +32,8 @@
                     v-model="tierModel"
                     :placeholder="local('Select Tier')"
                     :options="tierOptions"
+                    :choosen-slider-background="color"
                     border-radius="6"
-                    :is-box-shadow="true"
                     style="width: 100%"
                 ></fv-combobox>
             </div>
@@ -40,9 +41,13 @@
                 <span>{{ local('Name') }}</span>
                 <fv-text-box
                     v-model="model.name"
-                    border-radius="6"
+                    border-radius="3"
+                    :border-width="2"
                     :reveal-border="true"
+                    :border-color="'rgba(120, 120, 120, 0.1)'"
+                    :focus-border-color="color"
                     :is-box-shadow="true"
+                    underline
                     style="width: 100%"
                 ></fv-text-box>
             </div>
@@ -50,9 +55,13 @@
                 <span>{{ local('Model Name') }}</span>
                 <fv-text-box
                     v-model="model.model_name"
-                    border-radius="6"
+                    border-radius="3"
+                    :border-width="2"
                     :reveal-border="true"
+                    :border-color="'rgba(120, 120, 120, 0.1)'"
+                    :focus-border-color="color"
                     :is-box-shadow="true"
+                    underline
                     style="width: 100%"
                 ></fv-text-box>
             </div>
@@ -60,9 +69,13 @@
                 <span>{{ local('Base URL') }}</span>
                 <fv-text-box
                     v-model="model.base_url"
-                    border-radius="6"
+                    border-radius="3"
+                    :border-width="2"
                     :reveal-border="true"
+                    :border-color="'rgba(120, 120, 120, 0.1)'"
+                    :focus-border-color="color"
                     :is-box-shadow="true"
+                    underline
                     style="width: 100%"
                 ></fv-text-box>
             </div>
@@ -70,9 +83,13 @@
                 <span>{{ local('API Key') }}</span>
                 <fv-text-box
                     v-model="model.api_key"
-                    border-radius="6"
+                    border-radius="3"
+                    :border-width="2"
                     :reveal-border="true"
+                    :border-color="'rgba(120, 120, 120, 0.1)'"
+                    :focus-border-color="color"
                     :is-box-shadow="true"
+                    underline
                     style="width: 100%"
                 ></fv-text-box>
             </div>
@@ -80,9 +97,13 @@
                 <span>{{ local('Max Worker') }}</span>
                 <fv-text-box
                     v-model="model.maxworker"
-                    border-radius="6"
+                    border-radius="3"
+                    :border-width="2"
                     :reveal-border="true"
+                    :border-color="'rgba(120, 120, 120, 0.1)'"
+                    :focus-border-color="color"
                     :is-box-shadow="true"
+                    underline
                     style="width: 100%"
                 ></fv-text-box>
             </div>
@@ -92,8 +113,8 @@
                     v-model="wireApiModel"
                     :placeholder="local('Select Response API')"
                     :options="wireApiOptions"
+                    :choosen-slider-background="color"
                     border-radius="6"
-                    :is-box-shadow="true"
                     style="width: 100%"
                 ></fv-combobox>
             </div>
@@ -103,8 +124,8 @@
                     v-model="responseFormatModel"
                     :placeholder="local('Select Response Format')"
                     :options="responseFormatOptions"
+                    :choosen-slider-background="color"
                     border-radius="6"
-                    :is-box-shadow="true"
                     style="width: 100%"
                 ></fv-combobox>
             </div>
@@ -113,6 +134,10 @@
 </template>
 
 <script>
+import { mapState } from 'pinia'
+import { useAppConfig } from '@/stores/appConfig'
+import { useTheme } from '@/stores/theme'
+
 export default {
     name: 'ModelPoolItem',
     props: {
@@ -120,11 +145,12 @@ export default {
         model: { type: Object, required: true },
         tierOptions: { type: Array, required: true },
         wireApiOptions: { type: Array, required: true },
-        responseFormatOptions: { type: Array, required: true },
-        local: { type: Function, required: true }
+        responseFormatOptions: { type: Array, required: true }
     },
     emits: ['remove'],
     computed: {
+        ...mapState(useAppConfig, ['local']),
+        ...mapState(useTheme, ['theme', 'color']),
         tierModel: {
             get() {
                 let item = this.tierOptions.find((tier) => tier.key === this.model.tier)

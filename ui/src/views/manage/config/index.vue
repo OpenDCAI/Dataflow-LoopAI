@@ -453,7 +453,7 @@ export default {
             return this.buildBarChart(
                 [this.local('Requests')],
                 [this.modelPoolModels.map((model) => model.stats?.requests || 0)],
-                ['rgba(45, 125, 210, 0.76)']
+                ['rgba(87, 99, 206, 0.76)']
             )
         },
         errorsChart() {
@@ -479,7 +479,7 @@ export default {
                             (model) => model.stats?.usage?.total_tokens || 0
                         ),
                         backgroundColor: [
-                            'rgba(45, 125, 210, 0.78)',
+                            'rgba(87, 99, 206, 0.78)',
                             'rgba(48, 156, 117, 0.78)',
                             'rgba(229, 154, 64, 0.78)',
                             'rgba(132, 92, 196, 0.78)',

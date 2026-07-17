@@ -88,21 +88,21 @@ export default {
             return this.buildBarChart(
                 [this.local('Requests')],
                 [this.modelPoolModels.map((model) => model.stats?.requests || 0)],
-                ['rgba(45, 125, 210, 0.76)']
+                ['rgba(87, 99, 206, 0.76)']
             )
         },
         errorsChart() {
             return this.buildBarChart(
                 [this.local('Errors')],
                 [this.modelPoolModels.map((model) => model.stats?.errors || 0)],
-                ['rgba(205, 76, 76, 0.76)']
+                ['rgba(111, 91, 195, 0.76)']
             )
         },
         latencyChart() {
             return this.buildBarChart(
                 [this.local('Avg Latency')],
                 [this.modelPoolModels.map((model) => model.stats?.avg_latency_ms || 0)],
-                ['rgba(48, 156, 117, 0.76)']
+                ['rgba(239, 192, 41, 0.76)']
             )
         },
         tokensChart() {
@@ -112,11 +112,11 @@ export default {
                     {
                         data: this.modelPoolModels.map((model) => model.stats?.usage?.total_tokens || 0),
                         backgroundColor: [
-                            'rgba(45, 125, 210, 0.78)',
-                            'rgba(48, 156, 117, 0.78)',
-                            'rgba(229, 154, 64, 0.78)',
-                            'rgba(132, 92, 196, 0.78)',
-                            'rgba(205, 76, 76, 0.78)'
+                            'rgba(87, 99, 206, 0.78)',
+                            'rgba(48, 156, 11, 0.78)',
+                            'rgba(239, 192, 41, 0.78)',
+                            'rgba(78, 173, 155, 0.78)',
+                            'rgba(210, 133, 158, 0.78)'
                         ],
                         borderWidth: 0
                     }

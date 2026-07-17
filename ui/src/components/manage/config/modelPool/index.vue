@@ -103,8 +103,8 @@
                 <fv-combobox
                     v-model="selectedModelOption"
                     :options="modelSelectOptions"
+                    :choosen-slider-background="color"
                     border-radius="6"
-                    :is-box-shadow="true"
                     style="width: 100%"
                 ></fv-combobox>
             </div>
@@ -113,8 +113,8 @@
                 <fv-combobox
                     v-model="codexModelOption"
                     :options="modelSelectOptions"
+                    :choosen-slider-background="color"
                     border-radius="6"
-                    :is-box-shadow="true"
                     style="width: 100%"
                 ></fv-combobox>
             </div>
@@ -123,8 +123,8 @@
                 <fv-combobox
                     v-model="analyzerModelOption"
                     :options="modelSelectOptions"
+                    :choosen-slider-background="color"
                     border-radius="6"
-                    :is-box-shadow="true"
                     style="width: 100%"
                 ></fv-combobox>
             </div>
@@ -133,8 +133,8 @@
                 <fv-combobox
                     v-model="looperModelOption"
                     :options="modelSelectOptions"
+                    :choosen-slider-background="color"
                     border-radius="6"
-                    :is-box-shadow="true"
                     style="width: 100%"
                 ></fv-combobox>
             </div>
@@ -144,8 +144,8 @@
                     v-model="defaultTierModel"
                     :placeholder="local('Select Default Tier')"
                     :options="tierOptions"
+                    :choosen-slider-background="color"
                     border-radius="6"
-                    :is-box-shadow="true"
                     style="width: 100%"
                 ></fv-combobox>
             </div>
@@ -153,9 +153,13 @@
                 <p class="serving-item-light-title">{{ local('Proxy URL') }}</p>
                 <fv-text-box
                     v-model="modelPoolConfig.proxy_base_url"
-                    border-radius="6"
+                    border-radius="3"
+                    :border-width="2"
                     :reveal-border="true"
+                    :border-color="'rgba(120, 120, 120, 0.1)'"
+                    :focus-border-color="color"
                     :is-box-shadow="true"
+                    underline
                     style="width: 100%"
                 ></fv-text-box>
             </div>
@@ -186,6 +190,7 @@
 <script>
 import { mapState } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
+import { useTheme } from '@/stores/theme.js'
 import ModelPoolItem from './modelPoolItem.vue'
 
 export default {
@@ -221,6 +226,7 @@ export default {
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
+        ...mapState(useTheme, ['theme', 'color']),
         modelPoolValue() {
             return this.config.system?.model?.value || null
         },
@@ -711,7 +717,7 @@ export default {
     border-top: 3px solid rgba(38, 166, 112, 1);
 }
 .model-tier-card.medium {
-    border-top: 3px solid rgba(45, 125, 210, 1);
+    border-top: 3px solid rgba(87, 99, 206, 1);
 }
 .model-tier-card.low {
     border-top: 3px solid rgba(229, 154, 64, 1);
@@ -725,7 +731,7 @@ export default {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: rgba(45, 125, 210, 1);
+    background: rgba(87, 99, 206, 1);
     flex-shrink: 0;
 }
 .model-tier-card.high .tier-dot {
