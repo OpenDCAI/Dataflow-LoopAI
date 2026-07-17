@@ -4,6 +4,7 @@ from tortoise.expressions import Q
 from ...models.db_models import StarterConfig
 from omegaconf import OmegaConf
 from loopai.schema.states import get_state_config_schema
+from loopai.schema.system import get_system_config_schema
 
 async def check_config_from_db(base_dir):
     # 判断sqliter中是否有config记录，如果一条也没有，读取./examples/starter.yaml转化为json然后存到数据库
@@ -40,12 +41,30 @@ async def get_system_config(base_dir):
     config = await check_config_from_db(base_dir)
     config_data = json.loads(config.config)
     system_config = config_data.get('system', {})
-    for key in system_config:
-        system_config[key] = wrap_attr(system_config[key])
+    states_data = config_data.get('default_states', {})
+    language = states_data.get('language', 'zh') if isinstance(states_data, dict) else 'zh'
+    system_schema = get_system_config_schema(language)
+    result = {}
+    for key in dict.fromkeys(list(system_config.keys()) + list(system_schema.keys())):
+        schema_val = system_schema.get(key, {})
+        if key in system_config:
+            cur_val = wrap_attr(system_config[key])
+        elif 'default' in schema_val:
+            cur_val = wrap_attr(schema_val['default'])
+        else:
+            cur_val = {
+                'value': None,
+                'default_value': None,
+                'type': 'none',
+            }
+        result[key] = {
+            **schema_val,
+            **cur_val,
+        }
     res = {
         'id': config.id,
         'name': config.name,
-        'config': system_config,
+        'config': result,
     }
     return res
 
