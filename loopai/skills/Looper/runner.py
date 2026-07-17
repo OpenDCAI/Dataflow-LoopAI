@@ -377,53 +377,45 @@ def _resolve_looper_model_config(system_config: dict[str, Any], state: dict[str,
     system = _unwrap_config_dict(system_config)
     looper = state.get("looper") if isinstance(state.get("looper"), dict) else {}
 
-    requested_model = str(_first_non_empty(
-        looper.get("model_path"),
-        system.get("looper_model"),
-        system.get("starter_model_path"),
-        system.get("starter_model_name"),
-        system.get("codex_model"),
-        "",
-    ) or "").strip()
+    pool = StarterModelPool(system)
+    requested_model = str(pool.looper_model or "").strip()
 
-    model_value = system.get("model")
-    has_explicit_pool = (
-        isinstance(model_value, list)
-        or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
-    )
-    if has_explicit_pool:
-        pool = StarterModelPool(system)
-        provider = pool.resolve_proxy_provider(requested_model or None, tier=pool.default_tier)
-        if provider is not None:
-            return LooperModelConfig(
-                model=provider.model,
-                api_url=responses_url(provider.base_url),
-                api_key=provider.api_key,
-                wire_api="responses",
-                temperature=_float_or_default(looper.get("temperature"), 0.2),
-                top_p=_float_or_default(looper.get("top_p"), 0.95),
-                max_tokens=_int_or_default(looper.get("max_completion_tokens"), 4096),
-                source=provider.source,
-            )
+    entry = pool.find_entry(requested_model or pool.default_model or None, tier=pool.default_tier)
+    if entry is not None:
+        if pool.has_proxy():
+            provider = pool.resolve_proxy_provider(requested_model or entry.name, tier=entry.tier)
+            if provider is not None:
+                return LooperModelConfig(
+                    model=provider.model,
+                    api_url=responses_url(provider.base_url),
+                    api_key=provider.api_key,
+                    wire_api="responses",
+                    temperature=_float_or_default(looper.get("temperature"), 0.2),
+                    top_p=_float_or_default(looper.get("top_p"), 0.95),
+                    max_tokens=_int_or_default(looper.get("max_completion_tokens"), 4096),
+                    source=provider.source,
+                )
+        wire_api = normalize_wire_api(_first_non_empty(looper.get("wire_api"), entry.wire_api, "chat"))
+        if wire_api == "auto":
+            wire_api = "chat"
+        api_url = responses_url(entry.base_url) if wire_api == "responses" else chat_completions_url(entry.base_url)
+        return LooperModelConfig(
+            model=entry.model_name,
+            api_url=api_url,
+            api_key=entry.resolved_api_key(),
+            wire_api=wire_api,
+            temperature=_float_or_default(looper.get("temperature"), 0.2),
+            top_p=_float_or_default(looper.get("top_p"), 0.95),
+            max_tokens=_int_or_default(looper.get("max_completion_tokens"), 4096),
+            source=entry.source,
+        )
 
-    base_url = str(_first_non_empty(
-        looper.get("base_url"),
-        system.get("codex_base_url"),
-        "",
-    ) or "").strip()
-    api_key = str(_first_non_empty(
-        looper.get("api_key"),
-        system.get("codex_api_key"),
-        "",
-    ) or "").strip()
+    base_url = str(looper.get("base_url") or "").strip()
+    api_key = str(looper.get("api_key") or "").strip()
     if not requested_model or not base_url:
         raise RuntimeError("Looper model configuration is incomplete.")
 
-    wire_api = normalize_wire_api(_first_non_empty(
-        looper.get("wire_api"),
-        system.get("codex_wire_api"),
-        "chat",
-    ))
+    wire_api = normalize_wire_api(_first_non_empty(looper.get("wire_api"), "chat"))
     if wire_api == "auto":
         wire_api = "chat"
     api_url = responses_url(base_url) if wire_api == "responses" else chat_completions_url(base_url)
@@ -435,7 +427,7 @@ def _resolve_looper_model_config(system_config: dict[str, Any], state: dict[str,
         temperature=_float_or_default(looper.get("temperature"), 0.2),
         top_p=_float_or_default(looper.get("top_p"), 0.95),
         max_tokens=_int_or_default(looper.get("max_completion_tokens"), 4096),
-        source="system",
+        source="looper",
     )
 
 

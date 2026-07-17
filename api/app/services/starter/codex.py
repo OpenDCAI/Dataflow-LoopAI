@@ -320,23 +320,25 @@ async def load_starter_system_config() -> dict[str, Any]:
     system_config = config.get("system", {})
     if isinstance(system_config, dict):
         system_config = dict(system_config)
-        model_value = system_config.get("model")
-        has_explicit_pool = (
-            isinstance(model_value, list)
-            or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
-        )
-        if has_explicit_pool:
-            pool = StarterModelPool(system_config)
-            provider = pool.resolve_proxy_provider(system_config.get("codex_model") or None, tier=pool.default_tier)
-            if provider is not None:
-                system_config["codex_base_url"] = provider.base_url
-                system_config["codex_api_key"] = provider.api_key
-                system_config["codex_model"] = provider.model
-                system_config["codex_wire_api"] = "responses"
-                system_config.setdefault("codex_model_provider", "loopai_model_pool_proxy")
-                system_config.setdefault("codex_provider_name", "LoopAI Model Pool Proxy")
-                system_config.setdefault("codex_api_key_env_key", "CODEX_API_KEY")
-                system_config.setdefault("codex_supports_websockets", False)
+        pool = StarterModelPool(system_config)
+        entry = pool.codex_entry()
+        if entry is not None:
+            if pool.has_proxy():
+                provider = pool.resolve_proxy_provider(entry.name, tier=entry.tier)
+                if provider is not None:
+                    system_config["codex_base_url"] = provider.base_url
+                    system_config["codex_api_key"] = provider.api_key
+                    system_config["codex_model"] = provider.model
+                    system_config["codex_wire_api"] = "responses"
+                    system_config.setdefault("codex_model_provider", "loopai_model_pool_proxy")
+                    system_config.setdefault("codex_provider_name", "LoopAI Model Pool Proxy")
+                    system_config.setdefault("codex_api_key_env_key", "CODEX_API_KEY")
+                    system_config.setdefault("codex_supports_websockets", False)
+            else:
+                system_config["codex_base_url"] = entry.base_url
+                system_config["codex_api_key"] = entry.resolved_api_key()
+                system_config["codex_model"] = entry.model_name
+                system_config["codex_wire_api"] = entry.wire_api
         return system_config
     return {}
 
