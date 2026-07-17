@@ -1766,13 +1766,13 @@ class LooperState(BaseModel):
         default_factory=list,
         title="Looper 内部消息",
         description="Looper 内部规划上下文消息列表，用于保留 planner 与 summary 节点最近几轮的输入输出，避免每次都从零规划。",
-        json_schema_extra={"ui_type": "json_viewer", "ui_group": "Looper"}
+        json_schema_extra={"ui_type": "msg_list", "ui_group": "Looper"}
     )
     historySummary: str = Field(
         default="",
         title="Codex 会话总结",
         description="基于当前 task_id 下最新 Codex conversation 生成的执行进展总结，应保留关键决策、已验证事实、失败原因、待继续动作等后续规划必需信息。",
-        json_schema_extra={"ui_type": "textarea", "ui_group": "Looper"}
+        json_schema_extra={"ui_type": "msg_item", "ui_group": "Looper"}
     )
     last_conv_id: str = Field(
         default="",
@@ -1784,7 +1784,7 @@ class LooperState(BaseModel):
         default="",
         title="输出指令",
         description='Looper 输出的下一步指令 JSON 字符串。目前支持 {"op":"query","message":"..."} 与 {"op":"stop"} 两种格式。',
-        json_schema_extra={"ui_type": "textarea", "ui_group": "Looper"}
+        json_schema_extra={"ui_type": "looper_command", "ui_group": "Looper"}
     )
 
 
