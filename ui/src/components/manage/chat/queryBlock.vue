@@ -99,7 +99,12 @@ export default {
         this.eventInit()
     },
     methods: {
-        ...mapActions(useLoopAI, ['getStatus', 'getMsgStream']),
+        ...mapActions(useLoopAI, [
+            'getStatus',
+            'getMsgStream',
+            'clearLooperTakeoverCountdown',
+            'setLooperTakeoverCountdown'
+        ]),
         imgInterceptor({ deleteNode }) {
             this.$nextTick(() => {
                 deleteNode()
@@ -119,6 +124,7 @@ export default {
         },
         submitQuery() {
             if (!this.lock.submit) return
+            this.clearLooperTakeoverCountdown()
             let msg = this.$refs.editor.saveMarkdown()
             msg = msg.trim()
             if (msg === '') return
@@ -129,6 +135,11 @@ export default {
                 })
                 return
             }
+            this.setLooperTakeoverCountdown({
+                seconds: 10,
+                duration: 10,
+                active: true
+            })
             this.lock.submit = false
             this.$api.starter
                 .starterCodexStream({ prompt: msg, session_id })
@@ -138,6 +149,7 @@ export default {
                         await this.getStatus(session_id)
                         this.lock.submit = true
                     } else {
+                        this.clearLooperTakeoverCountdown()
                         this.lock.submit = true
                         this.$barWarning(res.message, {
                             status: 'warning'
@@ -145,6 +157,7 @@ export default {
                     }
                 })
                 .catch((error) => {
+                    this.clearLooperTakeoverCountdown()
                     this.lock.submit = true
                     this.$barWarning(error.message, {
                         status: 'error'

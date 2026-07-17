@@ -57,13 +57,14 @@
                     </template>
                     <template v-slot:right-space>
                         <div class="command-bar-right-space">
+                            <looper-takeover-warning></looper-takeover-warning>
                             <fv-button
                                 v-show="!msgStreamModel.loading"
                                 theme="dark"
                                 :background="gradient"
                                 border-radius="50"
                                 font-size="12"
-                                style="width: 25px; height: 25px"
+                                style="width: 25px; height: 25px; flex-shrink: 0"
                                 @click="handleRefreshClick"
                             >
                                 <i class="ms-Icon ms-Icon--Refresh"></i>
@@ -74,7 +75,7 @@
                                 :background="gradient"
                                 border-radius="50"
                                 font-size="12"
-                                style="width: 25px; height: 25px"
+                                style="width: 25px; height: 25px; flex-shrink: 0"
                                 @click="handleStopClick"
                             >
                                 <i class="ms-Icon ms-Icon--Stop"></i>
@@ -124,12 +125,14 @@ import resourcePanel from '@/components/manage/mainFlow/panels/resourcePanel/ind
 import currentTaskBlock from '@/components/manage/mainFlow/tools/currentTaskBlock.vue'
 import detailNodePanel from '@/components/manage/mainFlow/panels/detailNodePanel.vue'
 import taskStatePanel from '@/components/manage/loopaiFlow/taskStatePanel.vue'
+import looperTakeoverWarning from '@/components/manage/loopaiFlow/looperTakeoverWarning.vue'
 
 import resourceIcon from '@/assets/flow/resources.svg'
 import pipelineIcon from '@/assets/flow/pipeline.svg'
 import adjustIcon from '@/assets/flow/adjust.svg'
 
 export default {
+    name: 'LoopaiFlow',
     components: {
         mainFlow,
         taskNav,
@@ -139,7 +142,8 @@ export default {
         resourcePanel,
         currentTaskBlock,
         detailNodePanel,
-        taskStatePanel
+        taskStatePanel,
+        looperTakeoverWarning
     },
     data() {
         return {
@@ -392,7 +396,8 @@ export default {
         'taskStatus.running'(val) {
             if (val) this.getStatus(this.currentTask?.task_id)
         },
-        currentTask(val, oldVal) {
+        currentTask(val) {
+            this.clearLooperTakeoverCountdown()
             if (val) this.getStatus(val.task_id)
         }
     },
@@ -424,7 +429,8 @@ export default {
             'getStateSchema',
             'setCurrentTask',
             'resetStarterCodexSession',
-            'terminateStarterCodexSession'
+            'terminateStarterCodexSession',
+            'clearLooperTakeoverCountdown'
         ]),
         setViewport() {
             const flow = useVueFlow(this.flowId)
@@ -450,6 +456,7 @@ export default {
             this.show.statePanel = true
         },
         handleRefreshClick() {
+            this.clearLooperTakeoverCountdown()
             if (!this.currentTask?.task_id) {
                 this.$barWarning(this.local('No active task to reset.'), {
                     status: 'warning'
@@ -482,6 +489,7 @@ export default {
             })
         },
         handleStopClick() {
+            this.clearLooperTakeoverCountdown()
             if (!this.currentTask?.task_id) {
                 this.$barWarning(this.local('No active task to terminate.'), {
                     status: 'warning'
@@ -520,6 +528,7 @@ export default {
     },
     beforeUnmount() {
         clearInterval(this.timer.healthCheck)
+        this.clearLooperTakeoverCountdown()
     }
 }
 </script>
@@ -642,6 +651,7 @@ export default {
                 height: 100%;
                 padding-right: 5px;
                 gap: 3px;
+                max-width: calc(100% - 8px);
 
                 .status-coin {
                     font-size: 10px;
