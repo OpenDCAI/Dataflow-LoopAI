@@ -112,6 +112,26 @@
                 ></fv-combobox>
             </div>
             <div class="model-setting-row">
+                <p class="serving-item-light-title">{{ local('Analyzer Model') }}</p>
+                <fv-combobox
+                    v-model="analyzerModelOption"
+                    :options="modelSelectOptions"
+                    border-radius="6"
+                    :is-box-shadow="true"
+                    style="width: 100%"
+                ></fv-combobox>
+            </div>
+            <div class="model-setting-row">
+                <p class="serving-item-light-title">{{ local('Looper Model') }}</p>
+                <fv-combobox
+                    v-model="looperModelOption"
+                    :options="modelSelectOptions"
+                    border-radius="6"
+                    :is-box-shadow="true"
+                    style="width: 100%"
+                ></fv-combobox>
+            </div>
+            <div class="model-setting-row">
                 <p class="serving-item-light-title">{{ local('Default Tier') }}</p>
                 <select v-model="modelPoolConfig.default_tier" class="model-select-native">
                     <option v-for="tier in tierOptions" :key="tier" :value="tier">{{ tier }}</option>
@@ -269,6 +289,10 @@ export default {
                 this.modelPoolValue || {
                     proxy_base_url: '',
                     proxy_api_key: 'loopai-local-proxy',
+                    default_model: '',
+                    codex_model: '',
+                    analyzer_model: '',
+                    looper_model: '',
                     default_tier: 'medium',
                     pool: []
                 }
@@ -347,19 +371,6 @@ export default {
                 }
             })
             if (!options.length) {
-                const legacyName =
-                    this.config.system?.starter_model_name?.value ||
-                    this.config.system?.starter_model_path?.value ||
-                    this.config.system?.codex_model?.value
-                if (legacyName) {
-                    options.push({
-                        key: legacyName,
-                        text: `medium · ${legacyName}`,
-                        model: { tier: 'medium', name: legacyName, model_name: legacyName }
-                    })
-                }
-            }
-            if (!options.length) {
                 options.push({
                     key: '__empty_model__',
                     text: '-',
@@ -376,12 +387,10 @@ export default {
         selectedModelOption: {
             get() {
                 const defaultTier = this.modelPoolConfig.default_tier
-                const starterModel =
-                    this.config.system?.starter_model_name?.value ||
-                    this.config.system?.starter_model_path?.value
+                const defaultModel = this.modelPoolConfig.default_model
                 return (
-                    this.modelSelectOptions.find((option) => option.model?.model_name === starterModel) ||
-                    this.modelSelectOptions.find((option) => option.model?.name === starterModel) ||
+                    this.modelSelectOptions.find((option) => option.model?.name === defaultModel) ||
+                    this.modelSelectOptions.find((option) => option.model?.model_name === defaultModel) ||
                     this.modelSelectOptions.find((option) => option.model?.tier === defaultTier) ||
                     this.modelSelectOptions[0] ||
                     null
@@ -390,22 +399,17 @@ export default {
             set(option) {
                 if (!option || option.placeholder) return
                 const model = option.model || {}
-                if (this.config.system?.model?.value && model.tier) {
-                    this.config.system.model.value.default_tier = model.tier
-                }
-                this.setSystemValue('starter_model_name', model.model_name || model.name || option.key)
-                this.setSystemValue('starter_model_path', model.model_name || model.name || option.key)
-                if (model.base_url) this.setSystemValue('starter_base_url', model.base_url)
-                if (model.api_key && !String(model.api_key).startsWith('env:')) {
-                    this.setSystemValue('starter_api_key', model.api_key)
+                if (this.config.system?.model?.value) {
+                    this.config.system.model.value.default_model = model.name || model.model_name || option.key
+                    if (model.tier) this.config.system.model.value.default_tier = model.tier
                 }
             }
         },
         codexModelOption: {
             get() {
-                const codexModel = this.config.system?.codex_model?.value
+                const codexModel = this.modelPoolConfig.codex_model
                 return (
-                    this.modelSelectOptions.find((option) => option.model?.name === codexModel) ||
+                this.modelSelectOptions.find((option) => option.model?.name === codexModel) ||
                     this.modelSelectOptions.find((option) => option.model?.model_name === codexModel) ||
                     this.modelSelectOptions.find((option) => option.model?.name === 'codex') ||
                     this.modelSelectOptions[0] ||
@@ -415,8 +419,49 @@ export default {
             set(option) {
                 if (!option || option.placeholder) return
                 const model = option.model || {}
-                this.setSystemValue('codex_model', model.name || model.model_name || option.key)
-                this.setSystemValue('codex_wire_api', 'responses')
+                if (this.config.system?.model?.value) {
+                    this.config.system.model.value.codex_model = model.name || model.model_name || option.key
+                }
+            }
+        },
+        analyzerModelOption: {
+            get() {
+                const analyzerModel = this.modelPoolConfig.analyzer_model || this.modelPoolConfig.default_model
+                return (
+                    this.modelSelectOptions.find((option) => option.model?.name === analyzerModel) ||
+                    this.modelSelectOptions.find((option) => option.model?.model_name === analyzerModel) ||
+                    this.selectedModelOption ||
+                    this.modelSelectOptions[0] ||
+                    null
+                )
+            },
+            set(option) {
+                if (!option || option.placeholder) return
+                const model = option.model || {}
+                if (this.config.system?.model?.value) {
+                    this.config.system.model.value.analyzer_model =
+                        model.name || model.model_name || option.key
+                }
+            }
+        },
+        looperModelOption: {
+            get() {
+                const looperModel = this.modelPoolConfig.looper_model || this.modelPoolConfig.default_model
+                return (
+                    this.modelSelectOptions.find((option) => option.model?.name === looperModel) ||
+                    this.modelSelectOptions.find((option) => option.model?.model_name === looperModel) ||
+                    this.selectedModelOption ||
+                    this.modelSelectOptions[0] ||
+                    null
+                )
+            },
+            set(option) {
+                if (!option || option.placeholder) return
+                const model = option.model || {}
+                if (this.config.system?.model?.value) {
+                    this.config.system.model.value.looper_model =
+                        model.name || model.model_name || option.key
+                }
             }
         },
         modelPoolTiers() {
@@ -441,6 +486,25 @@ export default {
         }
     },
     methods: {
+        resolvePreferredModelNames() {
+            const pool = Array.isArray(this.editableModelPool) ? this.editableModelPool : []
+            const firstEnabled =
+                pool.find((model) => model?.enabled !== false && (model.name || model.model_name)) ||
+                pool.find((model) => model.name || model.model_name) ||
+                null
+            const codexPreferred =
+                pool.find((model) => model?.name === 'codex') ||
+                pool.find((model) => model?.model_name === 'codex') ||
+                firstEnabled
+            const defaultName = firstEnabled?.name || firstEnabled?.model_name || ''
+            const codexName = codexPreferred?.name || codexPreferred?.model_name || defaultName
+            return {
+                defaultModel: defaultName,
+                codexModel: codexName,
+                analyzerModel: defaultName,
+                looperModel: defaultName
+            }
+        },
         setSystemValue(key, value) {
             if (!this.config.system) this.config.system = {}
             if (!this.config.system[key]) {
@@ -460,6 +524,24 @@ export default {
                         : typeof value === 'object' && value !== null
                           ? 'dict'
                           : typeof value)
+            }
+        },
+        normalizeModelConfig(current) {
+            if (!current || typeof current !== 'object' || Array.isArray(current)) return
+            if (!Array.isArray(current.pool)) {
+                current.pool = Array.isArray(current.models) ? current.models : []
+            }
+            const preferred = this.resolvePreferredModelNames()
+            if (!current.proxy_base_url) current.proxy_base_url = 'http://127.0.0.1:8855/responseProxy/v1'
+            if (!current.proxy_api_key) current.proxy_api_key = 'loopai-local-proxy'
+            if (!current.default_tier) current.default_tier = 'medium'
+            if (!current.default_model) current.default_model = preferred.defaultModel
+            if (!current.codex_model) current.codex_model = preferred.codexModel
+            if (!current.analyzer_model) {
+                current.analyzer_model = current.default_model || preferred.analyzerModel
+            }
+            if (!current.looper_model) {
+                current.looper_model = current.default_model || preferred.looperModel
             }
         },
         addModelPoolEntry() {
