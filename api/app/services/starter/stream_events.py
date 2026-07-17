@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from loopai.common.db_tool.runtime import list_latest_task_runtimes_sync
+from loopai.common.db_tool.base import require_db_path
 from loopai.common.event_tool import load_stream_event_groups
 
 
@@ -57,6 +59,21 @@ def serialize_stream_event(event: Any) -> dict[str, Any]:
     return {}
 
 
+def _latest_runtime_versions(task_id: str) -> dict[str, str]:
+    try:
+        runtimes = list_latest_task_runtimes_sync(require_db_path(), task_id)
+    except Exception:
+        return {}
+
+    version_by_node: dict[str, str] = {}
+    for runtime in runtimes:
+        node_name = str(runtime.get("node_name") or "").strip()
+        version = str(runtime.get("version") or "").strip()
+        if node_name and version:
+            version_by_node[node_name] = version
+    return version_by_node
+
+
 def _load_legacy_trainer_event_groups(
     task_id: str,
     state: dict[str, Any] | None,
@@ -100,14 +117,26 @@ def build_custom_info(
 ) -> dict[str, dict[str, Any]]:
     custom_info: dict[str, dict[str, Any]] = {}
     output_dir = resolve_output_dir(state, default_output_dir, project_root_dir)
+    runtime_versions = _latest_runtime_versions(task_id)
 
     for agent_name in STREAM_EVENT_AGENT_NAMES:
+        version_id = runtime_versions.get(agent_name)
         try:
-            event_groups = load_stream_event_groups(agent_name, task_id, log_file_path=output_dir)
+            event_groups = load_stream_event_groups(
+                agent_name,
+                task_id,
+                log_file_path=output_dir,
+                version_id=version_id or None,
+            )
         except Exception:
             continue
         if agent_name == "trainer" and not event_groups:
             event_groups = _load_legacy_trainer_event_groups(task_id, state, output_dir)
+        if not event_groups and not version_id:
+            try:
+                event_groups = load_stream_event_groups(agent_name, task_id, log_file_path=output_dir)
+            except Exception:
+                continue
 
         for current_key, events in event_groups.items():
             if not events:

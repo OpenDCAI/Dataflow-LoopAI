@@ -91,6 +91,52 @@ def test_first_persisted_event_gets_the_same_canonical_id(tmp_path: Path) -> Non
     assert custom_info["trainer.trainer"]["version_id"] == version_id
 
 
+def test_build_custom_info_uses_latest_runtime_version(monkeypatch, tmp_path: Path) -> None:
+    task_id = "task-1"
+    older_writer = get_event_writer(
+        name="looper",
+        context_id=task_id,
+        log_file_path=str(tmp_path),
+        version_id="zz-old",
+    )
+    older_writer.set_running({
+        "current": "looper.status",
+        "message": "older event",
+        "progress": 0.2,
+        "time": "2026-07-15T10:00:00Z",
+    })
+
+    newer_writer = get_event_writer(
+        name="looper",
+        context_id=task_id,
+        log_file_path=str(tmp_path),
+        version_id="aa-new",
+    )
+    newer_writer.set_running({
+        "current": "looper.status",
+        "message": "newer event",
+        "progress": 0.8,
+        "time": "2026-07-15T11:00:00Z",
+    })
+
+    monkeypatch.setattr(
+        "api.app.services.starter.stream_events._latest_runtime_versions",
+        lambda _task_id: {"looper": "aa-new"},
+    )
+
+    custom_info = build_custom_info(
+        task_id=task_id,
+        state={"task_id": task_id, "output_dir": str(tmp_path)},
+        default_output_dir=tmp_path,
+        project_root_dir=tmp_path,
+    )
+
+    payload = custom_info["looper.looper.status"]
+    assert payload["version_id"] == "aa-new"
+    assert payload["message"] == "newer event"
+    assert payload["progress"] == 0.8
+
+
 def test_status_reader_supports_legacy_versioned_event_path(tmp_path: Path) -> None:
     state = _state(tmp_path)
     legacy_dir = tmp_path / "task-1" / "trainer" / "legacy-version"

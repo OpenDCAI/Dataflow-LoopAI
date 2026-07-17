@@ -213,6 +213,76 @@ def _truncate_for_prompt(value: Any, *, depth: int = 0) -> Any:
     return value
 
 
+def _build_session_snapshot(session: dict[str, Any] | None) -> dict[str, Any]:
+    raw_session = session or {}
+    final_result = raw_session.get("final_result")
+    final_result_snapshot: dict[str, Any] | None = None
+    if isinstance(final_result, dict):
+        final_result_snapshot = {}
+        final_response = _preview_text(final_result.get("finalResponse"), 800)
+        if final_response:
+            final_result_snapshot["final_response"] = final_response
+        items = final_result.get("items")
+        if isinstance(items, list):
+            final_result_snapshot["items_count"] = len(items)
+            interesting_items: list[dict[str, str]] = []
+            for item in items[:3]:
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get("type") or "unknown")
+                item_text = _preview_text(
+                    item.get("message")
+                    or item.get("text")
+                    or item.get("aggregated_output")
+                    or item.get("command"),
+                    240,
+                )
+                if item_text:
+                    interesting_items.append({"type": item_type, "text": item_text})
+            if interesting_items:
+                final_result_snapshot["sample_items"] = interesting_items
+
+    pending_prompts = raw_session.get("pending_prompts")
+    pending_prompt_count = len(pending_prompts) if isinstance(pending_prompts, list) else 0
+    return {
+        "status": raw_session.get("status") or "not_started",
+        "active_prompt": _preview_text(raw_session.get("active_prompt"), 600),
+        "pending_prompt_count": pending_prompt_count,
+        "last_error": _preview_text(raw_session.get("last_error"), 400),
+        "final_result": final_result_snapshot,
+    }
+
+
+def _build_relevant_state_snapshot(state: dict[str, Any]) -> dict[str, Any]:
+    relevant_sections = [
+        "task_id",
+        "language",
+        "max_context_len",
+        "enable_looper",
+        "judger",
+        "analyzer",
+        "obtainer",
+        "constructor",
+        "trainer",
+        "webcrawler",
+        "configer",
+    ]
+    snapshot: dict[str, Any] = {}
+    for key in relevant_sections:
+        if key not in state:
+            continue
+        snapshot[key] = _truncate_for_prompt(state.get(key))
+
+    looper_state = state.get("looper")
+    if isinstance(looper_state, dict):
+        snapshot["looper"] = {
+            "historySummary": _preview_text(looper_state.get("historySummary"), 800),
+            "last_conv_id": str(looper_state.get("last_conv_id") or ""),
+            "command": _preview_text(looper_state.get("command"), 400),
+        }
+    return snapshot
+
+
 def _bytes_to_gib(value: Any) -> float:
     try:
         return round(float(value) / (1024 ** 3), 2)
@@ -633,17 +703,18 @@ def _build_planner_user_prompt(
 ) -> str:
     payload = {
         "task_id": task_id,
-        "session_status": (session or {}).get("status") or "not_started",
-        "active_prompt": (session or {}).get("active_prompt"),
-        "pending_prompts": (session or {}).get("pending_prompts"),
-        "final_result": (session or {}).get("final_result"),
-        "last_error": (session or {}).get("last_error"),
-        "runtime_status": runtime_status or [],
-        "previous_looper_history_summary": str((state.get("looper") or {}).get("historySummary") or ""),
-        "latest_codex_history_summary": latest_history_summary,
-        "state_snapshot": _truncate_for_prompt(state),
+        "session": _build_session_snapshot(session),
+        "runtime_status": _truncate_for_prompt(runtime_status or []),
+        "looper_context": {
+            "previous_history_summary": _preview_text(
+                (state.get("looper") or {}).get("historySummary"),
+                800,
+            ),
+            "latest_codex_history_summary": latest_history_summary,
+        },
+        "relevant_state": _build_relevant_state_snapshot(state),
         "machine_environment": machine_env,
-        "latest_conversation_excerpt": _format_conversation_excerpt(conversation),
+        "recent_conversation": _format_conversation_excerpt(conversation),
     }
     return json.dumps(_json_safe(payload), ensure_ascii=False)
 

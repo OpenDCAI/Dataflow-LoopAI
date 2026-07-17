@@ -123,6 +123,51 @@ def test_llm_json_retries_once_after_invalid_output(monkeypatch):
     assert "严格遵守以下要求" in retry_messages[-1]["content"]
 
 
+def test_build_planner_user_prompt_uses_compact_sections():
+    prompt = runner._build_planner_user_prompt(
+        task_id="task-compact",
+        state={
+            "task_id": "task-compact",
+            "language": "zh",
+            "judger": {"eval_task_type": "code"},
+            "looper": {
+                "messages": [{"role": "user", "content": "very noisy"}],
+                "historySummary": "previous summary",
+                "last_conv_id": "conv-9",
+                "command": '{"op":"query","message":"continue"}',
+            },
+        },
+        session={
+            "status": "completed",
+            "active_prompt": "run analyzer",
+            "pending_prompts": ["a", "b"],
+            "last_error": "",
+            "final_result": {
+                "finalResponse": "done",
+                "items": [
+                    {"type": "reasoning", "text": "thought"},
+                    {"type": "command_execution", "aggregated_output": "output"},
+                ],
+            },
+        },
+        conversation=[{"role": "assistant", "content": "latest reply"}],
+        runtime_status=[{"node": "judger", "status": "completed"}],
+        machine_env={"host": {"hostname": "demo"}},
+        latest_history_summary="fresh summary",
+    )
+
+    payload = json.loads(prompt)
+    assert payload["session"]["status"] == "completed"
+    assert payload["session"]["pending_prompt_count"] == 2
+    assert payload["session"]["final_result"]["items_count"] == 2
+    assert payload["looper_context"]["latest_codex_history_summary"] == "fresh summary"
+    assert payload["relevant_state"]["looper"]["last_conv_id"] == "conv-9"
+    assert "messages" not in payload["relevant_state"]["looper"]
+    assert payload["recent_conversation"].startswith("[1] role=assistant")
+    assert "state_snapshot" not in payload
+    assert "latest_conversation_excerpt" not in payload
+
+
 def test_looper_schema_is_exposed():
     schema = get_state_config_schema()
     assert "looper" in schema
