@@ -7,6 +7,7 @@ from typing import Any
 from omegaconf import OmegaConf
 
 from api.app.models.db_models import StarterConfig
+from loopai.schema.model_pool import StarterModelPool
 # 懒加载，避免 MCP 启动时级联导入 langgraph → torch
 
 from .base import _sqlite_connect, require_db_path
@@ -62,6 +63,11 @@ def _normalize_system_config(system_config: dict[str, Any]) -> dict[str, Any]:
         key: wrap_attr(value)
         for key, value in system_config.items()
     }
+
+
+def _resolve_model_pool_config(system_config: dict[str, Any], model_name: str | None = None, *, selector: str = "default_model") -> dict[str, Any]:
+    pool = StarterModelPool(system_config)
+    return pool.model_config_by_name(model_name, selector=selector, include_disabled=True)
 
 
 def _build_state_config(states_data: dict[str, Any], language: str | None = None) -> dict[str, Any]:
@@ -353,6 +359,64 @@ async def get_task_config(task_id: str) -> dict[str, Any]:
 
 async def get_task_system_config(task_id: str) -> dict[str, Any]:
     return get_task_system_config_sync(require_db_path(), task_id)
+
+
+def get_default_model_config_sync(
+    db_path: str | os.PathLike[str],
+    model_name: str | None = None,
+    *,
+    selector: str = "default_model",
+    starter_yaml_path: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    config_id, name, raw_config = _get_default_starter_row_sync(db_path, starter_yaml_path)
+    config_data = json.loads(raw_config or "{}")
+    system_config = config_data.get("system", {}) if isinstance(config_data.get("system"), dict) else {}
+    return {
+        "id": config_id,
+        "name": name,
+        "model": model_name or "",
+        "selector": selector,
+        "config": _resolve_model_pool_config(system_config, model_name, selector=selector),
+    }
+
+
+def get_task_model_config_sync(
+    db_path: str | os.PathLike[str],
+    task_id: str,
+    model_name: str | None = None,
+    *,
+    selector: str = "default_model",
+) -> dict[str, Any]:
+    task_config = get_task_config_sync(db_path, task_id)
+    system_config = task_config["config"].get("system", {})
+    if not isinstance(system_config, dict):
+        system_config = {}
+    return {
+        "id": task_config["id"],
+        "task_id": task_config["task_id"],
+        "name": task_config["name"],
+        "model": model_name or "",
+        "selector": selector,
+        "config": _resolve_model_pool_config(system_config, model_name, selector=selector),
+    }
+
+
+async def get_default_model_config(
+    model_name: str | None = None,
+    *,
+    selector: str = "default_model",
+    starter_yaml_path: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
+    return get_default_model_config_sync(require_db_path(), model_name, selector=selector, starter_yaml_path=starter_yaml_path)
+
+
+async def get_task_model_config(
+    task_id: str,
+    model_name: str | None = None,
+    *,
+    selector: str = "default_model",
+) -> dict[str, Any]:
+    return get_task_model_config_sync(require_db_path(), task_id, model_name, selector=selector)
 
 
 async def get_task_states_config(task_id: str, section_name: str | None = None) -> dict[str, Any]:

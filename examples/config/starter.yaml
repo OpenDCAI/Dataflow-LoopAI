@@ -1,49 +1,44 @@
 system:
   api_port: 8855
-  starter_api_key: "sk-..."
-  starter_model_path: "gpt-4o-mini"
-  starter_model_name: "gpt-4o-mini"
-  starter_base_url: "http://123.129.219.111:3000/v1"
   model:
     proxy_base_url: "http://127.0.0.1:8855/responseProxy/v1"
     proxy_api_key: "loopai-local-proxy"
+    default_model: "medium"
+    codex_model: "high"
+    looper_model: "medium"
     default_tier: "medium"
     pool:
       - tier: "high"
-        name: "high"
+        name: "A"
         api_key: "env:LOOPAI_HIGH_MODEL_API_KEY"
         base_url: "http://123.129.219.111:3000/v1"
         model_name: "gpt-4o-mini"
         maxworker: 2
-        wire_api: "auto"
+        wire_api: "responses"
+        response_format: ""
+        enabled: true
       - tier: "medium"
         name: "medium"
         api_key: "env:LOOPAI_MEDIUM_MODEL_API_KEY"
         base_url: "http://123.129.219.111:3000/v1"
         model_name: "gpt-4o-mini"
         maxworker: 4
-        wire_api: "auto"
+        wire_api: "chat"
+        response_format: ""
+        enabled: true
       - tier: "low"
-        name: "low"
+        name: "B"
         api_key: "env:LOOPAI_LOW_MODEL_API_KEY"
         base_url: "http://123.129.219.111:3000/v1"
         model_name: "gpt-4o-mini"
         maxworker: 8
-        wire_api: "auto"
-  codex_api_key: "sk-..."
-  codex_model: "gpt-4o-mini"
-  codex_base_url: "http://123.129.219.111:3000/v1"
-  analyzer_api_key: ""
-  analyzer_model: ""
-  analyzer_base_url: ""
+        wire_api: "chat"
+        response_format: ""
+        enabled: true
   codex_workspace: "/home/lpc/repos/Dataflow-LoopAI"
   codex_home: "/home/lpc/repos/Dataflow-LoopAI/codex_home"
   codex_run_timeout_ms: 300000
   codex_use_project_config: false
-  llamafactory_dir: "/mnt/paper2any/xbr/gitpush/loopai/Dataflow-LoopAI/"
-  llamafactory_env_path: "/mnt/paper2any/xbr/commit/debug1205/.venv/bin/"
-  CUDA_VISIBLE_DEVICES: "0,1"
-  swanlab_api_key: ""
   tavily_api_key: ""
   kaggle_username: "binrxu"
   kaggle_key: ""
@@ -57,18 +52,14 @@ default_states:
   judger:
     eval_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
     eval_base_url: "http://127.0.0.1:8911/v1"
-    eval_api_key: "EMPTY"
     eval_temperature: 0
     eval_top_p: 0.95
     eval_test_case_path: "./outputs/test.json"
     eval_problem_path: "./data/human-eval-v2-20210705-format.jsonl"
     eval_result_path: "./outputs/result.json"
-    eval_batch_size: 10
+    eval_batch_size: 20
 
   analyzer:
-    analyze_model_path: ""
-    analyze_base_url: ""
-    analyze_api_key: ""
     analyze_temperature: 0
     analyze_top_p: 0.95
     output_brief: true

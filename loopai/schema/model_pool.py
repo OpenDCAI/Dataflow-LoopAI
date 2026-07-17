@@ -88,6 +88,23 @@ def mask_secret(value: Any) -> str:
     return f"{text[:4]}***"
 
 
+def _normalize_loaded_system_config(system_config: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(system_config, dict):
+        return {}
+    normalized = dict(system_config)
+    pool = StarterModelPool(normalized)
+    normalized["model"] = {
+        "proxy_base_url": pool.proxy_base_url(),
+        "proxy_api_key": pool.proxy_api_key(),
+        "default_model": pool.default_model,
+        "codex_model": pool.codex_model,
+        "looper_model": pool.looper_model,
+        "default_tier": pool.default_tier,
+        "pool": [entry.config_dict(include_secret=True) for entry in pool.entries],
+    }
+    return normalized
+
+
 @dataclass
 class ModelPoolEntry:
     tier: str
@@ -152,6 +169,28 @@ class ModelPoolEntry:
         payload["aliases"] = sorted(self.aliases())
         return payload
 
+    def config_dict(self, *, include_secret: bool = True) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["api_key"] = self.resolved_api_key() if include_secret else mask_secret(self.api_key)
+        return payload
+
+    @classmethod
+    def empty(cls, *, name: str = "starter", tier: str = DEFAULT_TIER, source: str = "system.model.pool.empty") -> "ModelPoolEntry":
+        return cls(
+            tier=tier if tier in TIERS else DEFAULT_TIER,
+            name=name or "starter",
+            model_name="",
+            base_url="",
+            api_key="",
+            maxworker=1,
+            wire_api="chat",
+            enabled=False,
+            source=source,
+            response_format="",
+            note="",
+            extra={},
+        )
+
 
 @dataclass
 class ResolvedModelProvider:
@@ -194,6 +233,9 @@ class StarterModelPool:
         self.default_tier = str(self.model_config.get("default_tier") or DEFAULT_TIER).strip().lower()
         if self.default_tier not in TIERS:
             self.default_tier = DEFAULT_TIER
+        self.default_model = str(self.model_config.get("default_model") or "").strip()
+        self.codex_model = str(self.model_config.get("codex_model") or "").strip()
+        self.looper_model = str(self.model_config.get("looper_model") or "").strip()
 
     @staticmethod
     def _model_config(system_config: dict[str, Any]) -> dict[str, Any]:
@@ -212,83 +254,101 @@ class StarterModelPool:
                 raw = model_value.get(key)
                 if isinstance(raw, list):
                     return [item for item in raw if isinstance(item, dict)]
-        raw = system_config.get("models")
-        if isinstance(raw, list):
-            return [item for item in raw if isinstance(item, dict)]
         return []
 
     @classmethod
     def _entries_from_system(cls, system_config: dict[str, Any]) -> list[ModelPoolEntry]:
-        entries = [
+        return [
             ModelPoolEntry.from_raw(raw, index=index)
             for index, raw in enumerate(cls._raw_pool(system_config))
         ]
-        if entries:
-            return entries
-
-        legacy: list[ModelPoolEntry] = []
-        starter_model = _first_non_empty(system_config.get("starter_model_path"), system_config.get("starter_model_name"))
-        if starter_model and system_config.get("starter_base_url"):
-            legacy.append(ModelPoolEntry.from_raw(
-                {
-                    "tier": DEFAULT_TIER,
-                    "name": "starter",
-                    "model_name": starter_model,
-                    "base_url": system_config.get("starter_base_url"),
-                    "api_key": system_config.get("starter_api_key") or "",
-                    "maxworker": system_config.get("starter_maxworker") or 1,
-                    "wire_api": system_config.get("starter_wire_api") or "chat",
-                },
-                source="legacy.system.starter",
-            ))
-        codex_model = system_config.get("codex_model")
-        if codex_model and system_config.get("codex_base_url"):
-            legacy.append(ModelPoolEntry.from_raw(
-                {
-                    "tier": DEFAULT_TIER if not legacy else "high",
-                    "name": "codex",
-                    "model_name": codex_model,
-                    "base_url": system_config.get("codex_base_url"),
-                    "api_key": system_config.get("codex_api_key") or "",
-                    "maxworker": system_config.get("codex_maxworker") or 1,
-                    "wire_api": system_config.get("codex_wire_api") or "responses",
-                },
-                source="legacy.system.codex",
-            ))
-        return legacy
 
     def proxy_base_url(self) -> str:
-        configured = _first_non_empty(
-            self.model_config.get("proxy_base_url"),
-            self.system_config.get("model_proxy_base_url"),
-        )
+        configured = self.model_config.get("proxy_base_url")
         if configured:
             return normalize_v1_base_url(str(configured))
-        port = self.system_config.get("api_port") or 8855
-        return f"http://127.0.0.1:{port}/responseProxy/v1"
+        return ""
 
     def proxy_api_key(self) -> str:
-        return str(_first_non_empty(
-            self.model_config.get("proxy_api_key"),
-            self.system_config.get("model_proxy_api_key"),
-            DEFAULT_PROXY_API_KEY,
-        ))
+        return str(_first_non_empty(self.model_config.get("proxy_api_key"), DEFAULT_PROXY_API_KEY))
+
+    def has_proxy(self) -> bool:
+        return bool(self.proxy_base_url())
+
+    def empty_entry(self, *, name: str = "starter", tier: str | None = None) -> ModelPoolEntry:
+        return ModelPoolEntry.empty(name=name, tier=tier or self.default_tier)
 
     def public_entries(self) -> list[dict[str, Any]]:
         return [entry.public_dict() for entry in self.entries]
 
-    def find_entry(self, requested: str | None = None, *, tier: str | None = None) -> ModelPoolEntry | None:
-        candidates = [entry for entry in self.entries if entry.enabled]
+    def _candidates(self, *, include_disabled: bool = False) -> list[ModelPoolEntry]:
+        if include_disabled:
+            return list(self.entries)
+        return [entry for entry in self.entries if entry.enabled]
+
+    def get_entry_by_name(self, name: str | None, *, include_disabled: bool = False) -> ModelPoolEntry | None:
+        requested = str(name or "").strip()
+        if not requested:
+            return None
+        for entry in self._candidates(include_disabled=include_disabled):
+            if requested == entry.name:
+                return entry
+        for entry in self._candidates(include_disabled=include_disabled):
+            if requested == entry.model_name:
+                return entry
+        return None
+
+    def default_entry(self, *, include_disabled: bool = False) -> ModelPoolEntry | None:
+        entry = self.get_entry_by_name(self.default_model, include_disabled=include_disabled)
+        if entry is not None:
+            return entry
+        return self.find_entry(tier=self.default_tier, include_disabled=include_disabled)
+
+    def codex_entry(self, *, include_disabled: bool = False) -> ModelPoolEntry | None:
+        entry = self.get_entry_by_name(self.codex_model, include_disabled=include_disabled)
+        if entry is not None:
+            return entry
+        return self.default_entry(include_disabled=include_disabled)
+
+    def looper_entry(self, *, include_disabled: bool = False) -> ModelPoolEntry | None:
+        entry = self.get_entry_by_name(self.looper_model, include_disabled=include_disabled)
+        if entry is not None:
+            return entry
+        return self.default_entry(include_disabled=include_disabled)
+
+    def model_config_by_name(
+        self,
+        name: str | None = None,
+        *,
+        selector: str | None = None,
+        include_disabled: bool = True,
+    ) -> dict[str, Any]:
+        entry = None
+        if name:
+            entry = self.get_entry_by_name(name, include_disabled=include_disabled)
+        elif selector == "codex_model":
+            entry = self.codex_entry(include_disabled=include_disabled)
+        elif selector == "looper_model":
+            entry = self.looper_entry(include_disabled=include_disabled)
+        else:
+            entry = self.default_entry(include_disabled=include_disabled)
+        return (entry or self.empty_entry()).config_dict(include_secret=True)
+
+    def find_entry(
+        self,
+        requested: str | None = None,
+        *,
+        tier: str | None = None,
+        include_disabled: bool = False,
+    ) -> ModelPoolEntry | None:
+        candidates = self._candidates(include_disabled=include_disabled)
         if not candidates:
             return None
         requested = str(requested or "").strip()
         if requested:
-            for entry in candidates:
-                if requested in entry.aliases():
-                    return entry
-            for entry in candidates:
-                if requested == entry.model_name:
-                    return entry
+            matched = self.get_entry_by_name(requested, include_disabled=include_disabled)
+            if matched is not None:
+                return matched
             if requested.lower() not in TIERS and not tier:
                 return None
         resolved_tier = str(tier or requested or self.default_tier).strip().lower()
@@ -296,6 +356,10 @@ class StarterModelPool:
             for entry in candidates:
                 if entry.tier == resolved_tier:
                     return entry
+        if self.default_model:
+            matched = self.get_entry_by_name(self.default_model, include_disabled=include_disabled)
+            if matched is not None:
+                return matched
         for entry in candidates:
             if entry.tier == self.default_tier:
                 return entry
@@ -320,6 +384,9 @@ class StarterModelPool:
         return {
             "proxy_base_url": self.proxy_base_url(),
             "proxy_api_key": mask_secret(self.proxy_api_key()),
+            "default_model": self.default_model,
+            "codex_model": self.codex_model,
+            "looper_model": self.looper_model,
             "default_tier": self.default_tier,
             "pool": self.public_entries(),
         }
@@ -365,6 +432,10 @@ def load_starter_config_from_yaml(workspace: str | Path | None = None, starter_c
             continue
         loaded = load_yaml_config(path)
         if loaded:
+            system = loaded.get("system")
+            if isinstance(system, dict):
+                loaded = dict(loaded)
+                loaded["system"] = _normalize_loaded_system_config(system)
             return loaded
     return {}
 
@@ -393,6 +464,10 @@ def load_starter_config_from_db(workspace: str | Path | None = None) -> dict[str
         except json.JSONDecodeError:
             continue
         if isinstance(payload, dict):
+            system = payload.get("system")
+            if isinstance(system, dict):
+                payload = dict(payload)
+                payload["system"] = _normalize_loaded_system_config(system)
             return payload
     return {}
 
@@ -408,4 +483,6 @@ def load_starter_system_config_sync(
     if not payload:
         payload = load_starter_config_from_yaml(workspace=workspace, starter_config=explicit_config)
     system = payload.get("system", {}) if isinstance(payload, dict) else {}
-    return system if isinstance(system, dict) else {}
+    if not isinstance(system, dict):
+        return {}
+    return _normalize_loaded_system_config(system)

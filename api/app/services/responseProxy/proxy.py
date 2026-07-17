@@ -654,6 +654,8 @@ class ResponseProxyService:
 
     def _resolve_upstream(self, request_body: dict[str, Any]) -> tuple[str, str, str | None, ModelPoolEntry | None]:
         entry = self._resolve_pool_entry(request_body)
+        if entry is None and not str(request_body.get("model") or "").strip():
+            entry = self.model_pool.default_entry()
         if entry is not None:
             return (
                 normalize_v1_base_url(entry.base_url),
@@ -663,28 +665,21 @@ class ResponseProxyService:
             )
         base_url = (
             request_body.get("base_url")
-            or self.system_config.get("codex_base_url")
             or self.system_config.get("base_url")
             or "https://api.deepseek.com"
         )
         api_key = (
             request_body.get("api_key")
-            or self.system_config.get("codex_api_key")
             or self.system_config.get("api_key")
             or ""
         )
-        model = (
-            request_body.get("model")
-            or self.system_config.get("codex_model")
-            or self.system_config.get("model")
-        )
+        model = request_body.get("model") or self.system_config.get("model")
         return _normalize_upstream_v1(str(base_url)), str(api_key), str(model) if model else None, None
 
     def _resolve_wire_api(self, request_body: dict[str, Any], entry: ModelPoolEntry | None = None) -> str:
         configured = str(
             request_body.get("wire_api")
             or (entry.wire_api if entry is not None else None)
-            or self.system_config.get("codex_wire_api")
             or "chat"
         ).strip().lower()
         if configured == "auto" and entry is not None:
