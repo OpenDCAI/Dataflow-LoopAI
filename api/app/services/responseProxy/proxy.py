@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator
 import asyncio
 import httpx
 
-from loopai.utils.model_pool import (
+from loopai.schema.model_pool import (
     ModelPoolEntry,
     StarterModelPool,
     chat_completions_url,
@@ -663,7 +663,6 @@ class ResponseProxyService:
             )
         base_url = (
             request_body.get("base_url")
-            or self.system_config.get("codex_chat_proxy_url")
             or self.system_config.get("codex_base_url")
             or self.system_config.get("base_url")
             or "https://api.deepseek.com"

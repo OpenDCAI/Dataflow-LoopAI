@@ -27,7 +27,7 @@ from typing import Any, Callable
 
 import tomlkit
 
-from loopai.utils.model_pool import StarterModelPool, load_starter_system_config_sync
+from loopai.schema.model_pool import StarterModelPool, load_starter_system_config_sync
 from .models import ModelPool, ModelSpec
 
 

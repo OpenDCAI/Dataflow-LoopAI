@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from loopai.utils.model_pool import StarterModelPool, chat_completions_url
+from loopai.schema.model_pool import StarterModelPool, chat_completions_url
 from . import utils
 from .codex import CodexError, provider_from_model, run_via_sdk
 from .models import ModelPool

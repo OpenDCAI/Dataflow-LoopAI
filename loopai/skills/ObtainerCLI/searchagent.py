@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from loopai.utils.model_pool import StarterModelPool
+from loopai.schema.model_pool import StarterModelPool
 from .errors import ObtainerCliError
 from .models import utc_now
 

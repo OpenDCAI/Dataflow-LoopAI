@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from dataclasses import replace
 
-from loopai.utils.model_pool import (
+from loopai.schema.model_pool import (
     StarterModelPool,
     chat_completions_url,
     load_starter_system_config_sync,

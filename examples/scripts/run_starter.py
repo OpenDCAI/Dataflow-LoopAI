@@ -6,7 +6,7 @@ from loopai.agents import StarterAgent
 from loopai.memory import checkpointer, store
 from loopai.agents.Starter.tools.check_motivation import check_motivation
 from loopai.logger import get_logger, add_file_handler
-from loopai.utils.model_pool import StarterModelPool
+from loopai.schema.model_pool import StarterModelPool
 
 from rich.console import Console
 from rich.live import Live
