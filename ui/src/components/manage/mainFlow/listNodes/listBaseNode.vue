@@ -157,14 +157,6 @@ const thisData = computed(() => {
             align-items: center;
             box-shadow: 0px 1px 2px rgba(0, 0, 0, 0.1);
 
-            &:hover {
-                background: rgba(255, 255, 255, 1);
-            }
-
-            &:active {
-                background: rgba(252, 252, 252, 1);
-            }
-
             .icon-img {
                 width: auto;
                 height: 20px;

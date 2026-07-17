@@ -9,12 +9,15 @@
             style="width: 30px"
             @click="handleLooperTakeoverInterrupt"
         >
-            <i class="ms-Icon ms-Icon--Warning"></i>
+            <i class="ms-Icon ms-Icon--CheckboxFill"></i>
         </fv-button>
-        <p class="warning-text">
+        <p v-show="!runningMe" class="warning-text">
             {{ local('Looper will take over in') }}
             <span>{{ seconds }}s</span>
             {{ local('for the next action.') }}
+        </p>
+        <p v-show="runningMe" class="warning-text">
+            {{ local('Looper executing...') }}
         </p>
     </div>
 </template>
@@ -26,6 +29,11 @@ import { useLoopAI } from '@/stores/loopAI'
 
 export default {
     name: 'LooperTakeoverWarning',
+    data() {
+        return {
+            looperCancelSource: null
+        }
+    },
     watch: {
         'msgStreamModel.loading'(val, oldVal) {
             if (val) {
@@ -43,7 +51,7 @@ export default {
         ...mapState(useAppConfig, ['local']),
         ...mapState(useLoopAI, ['currentTask', 'taskStatus', 'msgStreamModel', 'looperTakeover']),
         visible() {
-            return !this.msgStreamModel.loading && this.looperTakeover.active && !this.runningMe
+            return !this.msgStreamModel.loading && this.looperTakeover.active
         },
         seconds() {
             return this.looperTakeover.seconds
@@ -98,8 +106,22 @@ export default {
             }, 1000)
         },
         handleLooperTakeoverInterrupt() {
+            if (this.runningMe) {
+                this.looperCancel()
+                return
+            }
+            this.looperInterrupt()
+        },
+        looperInterrupt() {
             this.clearLooperTakeoverCountdown()
             this.$barWarning(this.local('Looper takeover interrupted.'), {
+                status: 'warning'
+            })
+        },
+        looperCancel() {
+            this.looperCancelSource?.cancel('Interrupted by user.')
+            this.looperCancelSource = null
+            this.$barWarning(this.local('Looper takeover canceled.'), {
                 status: 'warning'
             })
         },

@@ -84,15 +84,18 @@ export default {
     computed: {
         ...mapState(useAppConfig, ['local', 'language']),
         ...mapState(useTheme, ['color', 'gradient']),
-        ...mapState(useLoopAI, ['msgStreamModel', 'currentTask']),
+        ...mapState(useLoopAI, ['msgStreamModel', 'currentTask', 'looperTakeover']),
         placeholder() {
             return this.local(`Ask me anything (Press Ctrl + Enter)`)
         },
         holdon() {
-            return !this.lock.submit
+            return !this.lock.submit || this.looperActive
         },
         runningLLM() {
             return this.msgStreamModel.loading
+        },
+        looperActive() {
+            return this.looperTakeover.active
         }
     },
     mounted() {
@@ -123,7 +126,7 @@ export default {
             }
         },
         submitQuery() {
-            if (!this.lock.submit) return
+            if (!this.lock.submit || this.looperActive) return
             this.clearLooperTakeoverCountdown()
             let msg = this.$refs.editor.saveMarkdown()
             msg = msg.trim()
