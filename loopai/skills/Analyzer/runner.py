@@ -10,6 +10,7 @@ from loopai.common.exception import (
     emit_error,
     emit_success,
 )
+from loopai.common.event_tool import StreamEvent, get_event_writer
 
 from .pipeline_runner import (
     ANALYZER_PIPELINE_STEPS,
@@ -110,17 +111,14 @@ def run_analyzer_standalone(
 
     writer = kwargs.get("writer")
     if writer is None:
-        from .event_tool import get_analyzer_event_writer
-
         output_dir = runtime["output_dir"] or state.get("output_dir") or (state.get("analyzer") or {}).get("output_dir") or "./outputs"
         writer_version_id = runtime["version_id"]
         if writer_version_id in ("", "default") and not explicit_version:
             writer_version_id = None
-        writer = get_analyzer_event_writer(
+        writer = get_event_writer(
+            name="analyzer",
             context_id=runtime["thread_id"],
             log_file_path=output_dir,
-            stdout=kwargs.get("stream_stdout"),
-            state=state,
             version_id=writer_version_id,
         )
         writer.set_running({
@@ -149,6 +147,12 @@ def run_analyzer_standalone(
             writer=writer,
         )
     except Exception as exc:
+        writer.set_failed(StreamEvent(
+            current="analyzer.failed",
+            progress=1.0,
+            message="Analyzer pipeline failed.",
+            data={"error": str(exc)},
+        ))
         if emit_status:
             emit_error(
                 exc,
@@ -174,6 +178,12 @@ def run_analyzer_standalone(
             exit_process=False,
             print_payload=False,
         )
+        writer.set_completed(StreamEvent(
+            current="analyzer.completed",
+            progress=1.0,
+            message="Analyzer pipeline completed.",
+            data={"task_id": runtime["thread_id"]},
+        ))
     return result
 
 
