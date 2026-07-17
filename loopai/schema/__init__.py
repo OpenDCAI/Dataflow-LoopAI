@@ -18,6 +18,7 @@ from .model_pool import (
     responses_url,
     starter_config_candidates,
 )
+from .system import SystemConfig, get_system_config_schema
 
 __all__ = [
     "AgentEvent",
@@ -28,7 +29,9 @@ __all__ = [
     "ModelPoolEntry",
     "ResolvedModelProvider",
     "StarterModelPool",
+    "SystemConfig",
     "chat_completions_url",
+    "get_system_config_schema",
     "load_starter_config_from_db",
     "load_starter_config_from_yaml",
     "load_starter_system_config_sync",

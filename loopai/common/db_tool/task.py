@@ -15,7 +15,11 @@ from .base import _sqlite_connect, require_db_path
 
 def wrap_attr(val: Any) -> dict[str, Any]:
     type_name = "str"
-    if type(val) is int:
+    if isinstance(val, dict):
+        type_name = "dict"
+    elif isinstance(val, list):
+        type_name = "list"
+    elif type(val) is int:
         type_name = "int"
     elif type(val) is bool:
         type_name = "bool"
@@ -59,10 +63,29 @@ def format_value(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_system_config(system_config: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: wrap_attr(value)
-        for key, value in system_config.items()
-    }
+    return _build_system_config(system_config)
+
+
+def _build_system_config(system_data: dict[str, Any], language: str | None = None) -> dict[str, Any]:
+    from loopai.schema.system import get_system_config_schema
+
+    language = language or "zh"
+    system_schema = get_system_config_schema(language)
+
+    result: dict[str, Any] = {}
+    for key in dict.fromkeys(list(system_data.keys()) + list(system_schema.keys())):
+        schema_val = system_schema.get(key, {})
+        if key in system_data:
+            cur_val = wrap_attr(system_data[key])
+        elif "default" in schema_val:
+            cur_val = wrap_attr(schema_val["default"])
+        else:
+            cur_val = {"value": None, "default_value": None, "type": "none"}
+        result[key] = {
+            **schema_val,
+            **cur_val,
+        }
+    return result
 
 
 def _resolve_model_pool_config(system_config: dict[str, Any], model_name: str | None = None, *, selector: str = "default_model") -> dict[str, Any]:
@@ -197,10 +220,12 @@ def get_default_system_config_sync(
 ) -> dict[str, Any]:
     config_id, name, raw_config = _get_default_starter_row_sync(db_path, starter_yaml_path)
     config_data = json.loads(raw_config or "{}")
+    states_data = config_data.get("default_states", {})
+    language = states_data.get("language", "zh") if isinstance(states_data, dict) else "zh"
     return {
         "id": config_id,
         "name": name,
-        "config": _normalize_system_config(config_data.get("system", {})),
+        "config": _build_system_config(config_data.get("system", {}), language),
     }
 
 
@@ -255,13 +280,20 @@ def get_task_config_sync(db_path: str | os.PathLike[str], task_id: str) -> dict[
 
 
 def get_task_system_config_sync(db_path: str | os.PathLike[str], task_id: str) -> dict[str, Any]:
-    task_config = get_task_config_sync(db_path, task_id)
-    system_config = task_config["config"].get("system", {})
+    row_id, row_task_id, name, raw_config, raw_state = _get_task_row_sync(db_path, task_id)
+    config_data = json.loads(raw_config or "{}")
+    state_data = json.loads(raw_state or "{}") if raw_state else {}
+    if not isinstance(state_data, dict):
+        state_data = {}
+    language = state_data.get("language", "zh")
+    system_config = config_data.get("system", {})
+    if not isinstance(system_config, dict):
+        system_config = {}
     return {
-        "id": task_config["id"],
-        "task_id": task_config["task_id"],
-        "name": task_config["name"],
-        "config": _normalize_system_config(system_config),
+        "id": row_id,
+        "task_id": row_task_id,
+        "name": name,
+        "config": _build_system_config(system_config, language),
     }
 
 
