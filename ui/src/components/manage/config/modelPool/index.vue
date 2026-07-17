@@ -3,7 +3,9 @@
         <div class="model-pool-head">
             <div>
                 <p class="model-pool-title">{{ local('Model Pool') }}</p>
-                <p class="model-pool-sub">{{ modelPoolStatus.proxy_base_url || modelPoolProxyBaseUrl || '-' }}</p>
+                <p class="model-pool-sub">
+                    {{ modelPoolStatus.proxy_base_url || modelPoolProxyBaseUrl || '-' }}
+                </p>
             </div>
             <div class="model-pool-overview-pill" :class="modelPoolOverview.statusClass">
                 <span></span>
@@ -48,7 +50,12 @@
             </div>
         </div>
         <div class="model-tier-strip">
-            <div class="model-tier-card" v-for="tier in modelPoolTiers" :key="tier.name" :class="tier.name">
+            <div
+                class="model-tier-card"
+                v-for="tier in modelPoolTiers"
+                :key="tier.name"
+                :class="tier.name"
+            >
                 <div class="tier-card-top">
                     <span class="tier-dot"></span>
                     <p class="tier-name">{{ tier.name }}</p>
@@ -133,9 +140,14 @@
             </div>
             <div class="model-setting-row">
                 <p class="serving-item-light-title">{{ local('Default Tier') }}</p>
-                <select v-model="modelPoolConfig.default_tier" class="model-select-native">
-                    <option v-for="tier in tierOptions" :key="tier" :value="tier">{{ tier }}</option>
-                </select>
+                <fv-combobox
+                    v-model="defaultTierModel"
+                    :placeholder="local('Select Default Tier')"
+                    :options="tierOptions"
+                    border-radius="6"
+                    :is-box-shadow="true"
+                    style="width: 100%"
+                ></fv-combobox>
             </div>
             <div class="model-setting-row">
                 <p class="serving-item-light-title">{{ local('Proxy URL') }}</p>
@@ -155,101 +167,17 @@
             </fv-button>
         </div>
         <div class="model-register-list">
-            <div class="model-register-row" v-for="(model, index) in editableModelPool" :key="index">
-                <div class="model-register-topbar">
-                    <span class="model-tier-badge" :class="model.tier">{{ model.tier }}</span>
-                    <p class="model-register-name">{{ model.name || local('Model Name') }}</p>
-                    <div class="model-register-controls">
-                        <fv-toggle-switch
-                            v-model="model.enabled"
-                            :on="local('Enabled')"
-                            :off="local('Disabled')"
-                            :width="65"
-                            :height="22"
-                        ></fv-toggle-switch>
-                        <fv-button
-                            border-radius="6"
-                            :title="local('Remove')"
-                            style="width: 32px; height: 32px"
-                            @click="removeModelPoolEntry(index)"
-                        >
-                            <i class="ms-Icon ms-Icon--Delete"></i>
-                        </fv-button>
-                    </div>
-                </div>
-                <div class="model-register-fields">
-                    <label>
-                        <span>{{ local('Tier') }}</span>
-                        <select v-model="model.tier" class="model-select-native">
-                            <option v-for="tier in tierOptions" :key="tier" :value="tier">{{ tier }}</option>
-                        </select>
-                    </label>
-                    <label>
-                        <span>{{ local('Name') }}</span>
-                        <fv-text-box
-                            v-model="model.name"
-                            border-radius="6"
-                            :reveal-border="true"
-                            :is-box-shadow="true"
-                            style="width: 100%"
-                        ></fv-text-box>
-                    </label>
-                    <label>
-                        <span>{{ local('Model Name') }}</span>
-                        <fv-text-box
-                            v-model="model.model_name"
-                            border-radius="6"
-                            :reveal-border="true"
-                            :is-box-shadow="true"
-                            style="width: 100%"
-                        ></fv-text-box>
-                    </label>
-                    <label class="wide">
-                        <span>{{ local('Base URL') }}</span>
-                        <fv-text-box
-                            v-model="model.base_url"
-                            border-radius="6"
-                            :reveal-border="true"
-                            :is-box-shadow="true"
-                            style="width: 100%"
-                        ></fv-text-box>
-                    </label>
-                    <label class="wide">
-                        <span>{{ local('API Key') }}</span>
-                        <fv-text-box
-                            v-model="model.api_key"
-                            border-radius="6"
-                            :reveal-border="true"
-                            :is-box-shadow="true"
-                            style="width: 100%"
-                        ></fv-text-box>
-                    </label>
-                    <label>
-                        <span>{{ local('Max Worker') }}</span>
-                        <fv-text-box
-                            v-model="model.maxworker"
-                            border-radius="6"
-                            :reveal-border="true"
-                            :is-box-shadow="true"
-                            style="width: 100%"
-                        ></fv-text-box>
-                    </label>
-                    <label>
-                        <span>{{ local('Response API') }}</span>
-                        <select v-model="model.wire_api" class="model-select-native">
-                            <option v-for="wire in wireApiOptions" :key="wire" :value="wire">{{ wire }}</option>
-                        </select>
-                    </label>
-                    <label>
-                        <span>{{ local('Response Format') }}</span>
-                        <select v-model="model.response_format" class="model-select-native">
-                            <option v-for="format in responseFormatOptions" :key="format.key" :value="format.key">
-                                {{ format.text }}
-                            </option>
-                        </select>
-                    </label>
-                </div>
-            </div>
+            <model-pool-item
+                v-for="(model, index) in editableModelPool"
+                :key="index"
+                :index="index"
+                :model="model"
+                :tier-options="tierOptions"
+                :wire-api-options="wireApiOptions"
+                :response-format-options="responseFormatOptions"
+                :local="local"
+                @remove="removeModelPoolEntry"
+            ></model-pool-item>
         </div>
         <p v-if="probeMessage" class="model-probe-message">{{ probeMessage }}</p>
     </div>
@@ -258,9 +186,13 @@
 <script>
 import { mapState } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
+import ModelPoolItem from './modelPoolItem.vue'
 
 export default {
     name: 'ModelPool',
+    components: {
+        ModelPoolItem
+    },
     props: {
         config: { type: Object, required: true },
         status: { type: Object, default: () => ({}) },
@@ -270,8 +202,16 @@ export default {
     emits: ['probe', 'show-detail'],
     data() {
         return {
-            tierOptions: ['high', 'medium', 'low'],
-            wireApiOptions: ['auto', 'responses', 'chat'],
+            tierOptions: [
+                { key: 'high', text: 'high' },
+                { key: 'medium', text: 'medium' },
+                { key: 'low', text: 'low' }
+            ],
+            wireApiOptions: [
+                { key: 'auto', text: 'auto' },
+                { key: 'responses', text: 'responses' },
+                { key: 'chat', text: 'chat' }
+            ],
             responseFormatOptions: [
                 { key: '', text: 'auto' },
                 { key: 'responses', text: 'responses' },
@@ -298,8 +238,19 @@ export default {
                 }
             )
         },
+        defaultTierModel: {
+            get() {
+                let item = this.tierOptions.find(
+                    (tier) => tier.key === this.modelPoolConfig.default_tier
+                )
+                return item || {}
+            },
+            set(value) {
+                this.modelPoolConfig.default_tier = value.key || ''
+            }
+        },
         editableModelPool() {
-            if (!Array.isArray(this.modelPoolConfig.pool)) this.modelPoolConfig.pool = []
+            if (!Array.isArray(this.modelPoolConfig.pool)) return []
             return this.modelPoolConfig.pool
         },
         statusModelPool() {
@@ -316,16 +267,31 @@ export default {
         },
         modelPoolOverview() {
             const total = this.modelPoolModels.length
-            const online = this.modelPoolModels.filter((model) => this.healthClass(model) === 'healthy').length
-            const unhealthy = this.modelPoolModels.filter((model) => this.healthClass(model) === 'unhealthy').length
-            const requests = this.modelPoolModels.reduce((sum, model) => sum + (model.stats?.requests || 0), 0)
-            const errors = this.modelPoolModels.reduce((sum, model) => sum + (model.stats?.errors || 0), 0)
-            const tokens = this.modelPoolModels.reduce((sum, model) => sum + (model.stats?.usage?.total_tokens || 0), 0)
+            const online = this.modelPoolModels.filter(
+                (model) => this.healthClass(model) === 'healthy'
+            ).length
+            const unhealthy = this.modelPoolModels.filter(
+                (model) => this.healthClass(model) === 'unhealthy'
+            ).length
+            const requests = this.modelPoolModels.reduce(
+                (sum, model) => sum + (model.stats?.requests || 0),
+                0
+            )
+            const errors = this.modelPoolModels.reduce(
+                (sum, model) => sum + (model.stats?.errors || 0),
+                0
+            )
+            const tokens = this.modelPoolModels.reduce(
+                (sum, model) => sum + (model.stats?.usage?.total_tokens || 0),
+                0
+            )
             const latencyItems = this.modelPoolModels
                 .map((model) => Number(model.stats?.avg_latency_ms || 0))
                 .filter((value) => value > 0)
             const avgLatency = latencyItems.length
-                ? Math.round(latencyItems.reduce((sum, value) => sum + value, 0) / latencyItems.length)
+                ? Math.round(
+                      latencyItems.reduce((sum, value) => sum + value, 0) / latencyItems.length
+                  )
                 : 0
             let statusClass = 'unknown'
             let statusText = this.local('Not Probed')
@@ -339,7 +305,17 @@ export default {
                 statusClass = 'unhealthy'
                 statusText = this.local('Unavailable')
             }
-            return { total, online, unhealthy, requests, errors, tokens, avgLatency, statusClass, statusText }
+            return {
+                total,
+                online,
+                unhealthy,
+                requests,
+                errors,
+                tokens,
+                avgLatency,
+                statusClass,
+                statusText
+            }
         },
         modelNodeRows() {
             return this.modelPoolModels.map((model, index) => {
@@ -352,7 +328,9 @@ export default {
                     healthClass: this.healthClass(model),
                     statusText: this.healthText(model),
                     api: selected || model.wire_api || 'auto',
-                    latency: model.stats?.avg_latency_ms ? `${model.stats.avg_latency_ms} ms` : '- ms',
+                    latency: model.stats?.avg_latency_ms
+                        ? `${model.stats.avg_latency_ms} ms`
+                        : '- ms',
                     requests: model.stats?.requests || 0,
                     errors: model.stats?.errors || 0,
                     tokens: model.stats?.usage?.total_tokens || 0
@@ -360,7 +338,9 @@ export default {
             })
         },
         modelSelectOptions() {
-            const source = this.editableModelPool.length ? this.editableModelPool : this.modelPoolModels
+            const source = this.editableModelPool.length
+                ? this.editableModelPool
+                : this.modelPoolModels
             const options = source.map((model) => {
                 const tier = model.tier || 'medium'
                 const label = `${tier} · ${model.name || model.model_name || 'model'}`
@@ -390,7 +370,9 @@ export default {
                 const defaultModel = this.modelPoolConfig.default_model
                 return (
                     this.modelSelectOptions.find((option) => option.model?.name === defaultModel) ||
-                    this.modelSelectOptions.find((option) => option.model?.model_name === defaultModel) ||
+                    this.modelSelectOptions.find(
+                        (option) => option.model?.model_name === defaultModel
+                    ) ||
                     this.modelSelectOptions.find((option) => option.model?.tier === defaultTier) ||
                     this.modelSelectOptions[0] ||
                     null
@@ -400,7 +382,8 @@ export default {
                 if (!option || option.placeholder) return
                 const model = option.model || {}
                 if (this.config.system?.model?.value) {
-                    this.config.system.model.value.default_model = model.name || model.model_name || option.key
+                    this.config.system.model.value.default_model =
+                        model.name || model.model_name || option.key
                     if (model.tier) this.config.system.model.value.default_tier = model.tier
                 }
             }
@@ -409,8 +392,10 @@ export default {
             get() {
                 const codexModel = this.modelPoolConfig.codex_model
                 return (
-                this.modelSelectOptions.find((option) => option.model?.name === codexModel) ||
-                    this.modelSelectOptions.find((option) => option.model?.model_name === codexModel) ||
+                    this.modelSelectOptions.find((option) => option.model?.name === codexModel) ||
+                    this.modelSelectOptions.find(
+                        (option) => option.model?.model_name === codexModel
+                    ) ||
                     this.modelSelectOptions.find((option) => option.model?.name === 'codex') ||
                     this.modelSelectOptions[0] ||
                     null
@@ -420,16 +405,22 @@ export default {
                 if (!option || option.placeholder) return
                 const model = option.model || {}
                 if (this.config.system?.model?.value) {
-                    this.config.system.model.value.codex_model = model.name || model.model_name || option.key
+                    this.config.system.model.value.codex_model =
+                        model.name || model.model_name || option.key
                 }
             }
         },
         analyzerModelOption: {
             get() {
-                const analyzerModel = this.modelPoolConfig.analyzer_model || this.modelPoolConfig.default_model
+                const analyzerModel =
+                    this.modelPoolConfig.analyzer_model || this.modelPoolConfig.default_model
                 return (
-                    this.modelSelectOptions.find((option) => option.model?.name === analyzerModel) ||
-                    this.modelSelectOptions.find((option) => option.model?.model_name === analyzerModel) ||
+                    this.modelSelectOptions.find(
+                        (option) => option.model?.name === analyzerModel
+                    ) ||
+                    this.modelSelectOptions.find(
+                        (option) => option.model?.model_name === analyzerModel
+                    ) ||
                     this.selectedModelOption ||
                     this.modelSelectOptions[0] ||
                     null
@@ -446,10 +437,13 @@ export default {
         },
         looperModelOption: {
             get() {
-                const looperModel = this.modelPoolConfig.looper_model || this.modelPoolConfig.default_model
+                const looperModel =
+                    this.modelPoolConfig.looper_model || this.modelPoolConfig.default_model
                 return (
                     this.modelSelectOptions.find((option) => option.model?.name === looperModel) ||
-                    this.modelSelectOptions.find((option) => option.model?.model_name === looperModel) ||
+                    this.modelSelectOptions.find(
+                        (option) => option.model?.model_name === looperModel
+                    ) ||
                     this.selectedModelOption ||
                     this.modelSelectOptions[0] ||
                     null
@@ -471,7 +465,10 @@ export default {
                     const selected = model.probe?.selected_wire_api
                     return selected || model.probe?.chat?.ok || model.probe?.responses?.ok
                 }).length
-                const requests = models.reduce((sum, model) => sum + (model.stats?.requests || 0), 0)
+                const requests = models.reduce(
+                    (sum, model) => sum + (model.stats?.requests || 0),
+                    0
+                )
                 const errors = models.reduce((sum, model) => sum + (model.stats?.errors || 0), 0)
                 const total = models.length
                 return {
@@ -489,7 +486,9 @@ export default {
         resolvePreferredModelNames() {
             const pool = Array.isArray(this.editableModelPool) ? this.editableModelPool : []
             const firstEnabled =
-                pool.find((model) => model?.enabled !== false && (model.name || model.model_name)) ||
+                pool.find(
+                    (model) => model?.enabled !== false && (model.name || model.model_name)
+                ) ||
                 pool.find((model) => model.name || model.model_name) ||
                 null
             const codexPreferred =
@@ -532,7 +531,8 @@ export default {
                 current.pool = Array.isArray(current.models) ? current.models : []
             }
             const preferred = this.resolvePreferredModelNames()
-            if (!current.proxy_base_url) current.proxy_base_url = 'http://127.0.0.1:8855/responseProxy/v1'
+            if (!current.proxy_base_url)
+                current.proxy_base_url = 'http://127.0.0.1:8855/responseProxy/v1'
             if (!current.proxy_api_key) current.proxy_api_key = 'loopai-local-proxy'
             if (!current.default_tier) current.default_tier = 'medium'
             if (!current.default_model) current.default_model = preferred.defaultModel
@@ -907,76 +907,6 @@ export default {
     flex-direction: column;
     gap: 10px;
 }
-.model-register-row {
-    width: 100%;
-    padding: 12px;
-    box-sizing: border-box;
-    border: 1px solid rgba(224, 226, 232, 1);
-    border-radius: 8px;
-    background: rgba(249, 250, 252, 1);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-.model-register-topbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-.model-register-name {
-    flex: 1;
-    min-width: 0;
-    font-size: 13px;
-    font-weight: 600;
-    color: rgba(44, 48, 60, 1);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.model-register-controls {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-shrink: 0;
-}
-.model-tier-badge {
-    flex-shrink: 0;
-    padding: 2px 8px;
-    border-radius: 10px;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 16px;
-    text-transform: uppercase;
-    background: rgba(240, 240, 244, 1);
-    color: rgba(96, 102, 120, 1);
-}
-.model-tier-badge.high {
-    background: rgba(224, 242, 233, 1);
-    color: rgba(28, 116, 86, 1);
-}
-.model-tier-badge.medium {
-    background: rgba(230, 238, 252, 1);
-    color: rgba(44, 90, 168, 1);
-}
-.model-register-fields {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 10px 12px;
-}
-.model-register-fields label {
-    grid-column: span 2;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-.model-register-fields label.wide {
-    grid-column: span 3;
-}
-.model-register-fields span {
-    font-size: 12px;
-    color: rgba(95, 95, 95, 1);
-}
 .model-select-native {
     width: 100%;
     height: 32px;
@@ -1019,13 +949,8 @@ export default {
     .model-pool-dashboard,
     .model-tier-strip,
     .model-node-grid,
-    .model-setting-grid,
-    .model-register-fields {
+    .model-setting-grid {
         grid-template-columns: 1fr;
-    }
-    .model-register-fields label,
-    .model-register-fields label.wide {
-        grid-column: span 1;
     }
 }
 </style>
