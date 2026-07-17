@@ -137,6 +137,7 @@ export default {
 .manage-container {
     @include app;
 
+    background: rgba(243, 243, 243, 1);
     display: flex;
     flex-direction: column;
 
