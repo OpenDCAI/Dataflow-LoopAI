@@ -11,10 +11,13 @@
         >
             <i class="ms-Icon ms-Icon--CheckboxFill"></i>
         </fv-button>
-        <p v-show="!runningMe" class="warning-text">
+        <p v-show="!runningMe && !waiting" class="warning-text">
             {{ local('Looper will take over in') }}
             <span>{{ seconds }}s</span>
             {{ local('for the next action.') }}
+        </p>
+        <p v-show="!runningMe && waiting" class="warning-text">
+            {{ local('Waiting for response...') }}
         </p>
         <p v-show="runningMe" class="warning-text">
             {{ local('Looper executing...') }}
@@ -55,6 +58,9 @@ export default {
         },
         seconds() {
             return this.looperTakeover.seconds
+        },
+        waiting() {
+            return this.looperTakeover.duration === this.looperTakeover.seconds
         },
         runningMe() {
             try {

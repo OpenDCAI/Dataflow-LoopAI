@@ -286,7 +286,7 @@ export default {
                 {
                     id: 'looper',
                     type: 'agent-node',
-                    position: { x: 1600, y: 95 },
+                    position: { x: -250, y: 95 },
                     data: {
                         label: 'Looper',
                         status: 'Agent',

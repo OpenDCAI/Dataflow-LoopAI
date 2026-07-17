@@ -10,6 +10,12 @@
             :model-value="thisValue"
             :language="editorLanguage"
         ></editor-preview>
+        <looper-command-preview
+            v-if="computedUIType === 'looper_command'"
+            :model-value="thisValue"
+        ></looper-command-preview>
+        <msg-item v-if="computedUIType === 'msg_item'" :model-value="thisValue"></msg-item>
+        <msg-list v-if="computedUIType === 'msg_list'" :model-value="thisValue"></msg-list>
         <fv-text-box
             v-if="computedUIType === 'text'"
             v-model="thisValue"
@@ -127,10 +133,20 @@ import { useTheme } from '@/stores/theme'
 
 import resPreviewPanel from './resPreviewPanel.vue'
 import editorPreview from './editorPreview.vue'
+import looperCommandPreview from './looperCommandPreview.vue'
+import msgItem from './msgPreview/msgItem.vue'
+import msgList from './msgPreview/msgList.vue'
 import directorySelector from '@/components/general/directorySelector.vue'
 
 export default {
-    components: { resPreviewPanel, directorySelector, editorPreview },
+    components: {
+        resPreviewPanel,
+        directorySelector,
+        editorPreview,
+        looperCommandPreview,
+        msgItem,
+        msgList
+    },
     props: {
         modelValue: { default: () => ({}) },
         modelKey: { default: '' },
@@ -174,6 +190,9 @@ export default {
             if (this.thisValue === null || this.thisValue === undefined) return 'none'
             if (this.schemaModel.ui_type === 'file_path') return 'dir'
             if (this.schemaModel.ui_type === 'textarea') return 'editor'
+            if (this.schemaModel.ui_type === 'looper_command') return 'looper_command'
+            if (this.schemaModel.ui_type === 'msg_item') return 'msg_item'
+            if (this.schemaModel.ui_type === 'msg_list') return 'msg_list'
             if (this.schemaModel.ui_type === 'text' || this.schemaModel.ui_type === 'password')
                 return 'text'
             if (

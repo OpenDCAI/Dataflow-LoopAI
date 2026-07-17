@@ -147,6 +147,7 @@ import valuePreview from './valuePreview/index.vue'
 import trainState from './statusPreview/trainState/index.vue'
 import WebcrawlerStatusPannel from './custom/webcrawlerStatusPannel.vue'
 import ObtainerStatusPannel from './custom/obtainerStatusPannel.vue'
+import LooperStatusPanel from './custom/LooperStatusPanel.vue'
 
 const { $api } = useGlobal()
 
@@ -241,6 +242,7 @@ const stateFiltered = computed(() => {
 const normalizedGraphPrefix = computed(() => String(thisData.value.graphClsPrefix || '').toLowerCase())
 const isObtainerNode = computed(() => normalizedGraphPrefix.value.includes('obtainer'))
 const isWebCrawlerNode = computed(() => normalizedGraphPrefix.value.includes('webcrawler'))
+const isLooperNode = computed(() => normalizedGraphPrefix.value.includes('looper'))
 const showGenericState = computed(() => {
     return Boolean(loopAIState.value) && !isObtainerNode.value
 })
@@ -270,7 +272,7 @@ const customInfoFiltered = computed(() => {
     return filter_list
 })
 
-const showGenericCustomInfo = computed(() => !isObtainerNode.value)
+const showGenericCustomInfo = computed(() => !isObtainerNode.value && !isLooperNode.value)
 
 // 自定义节点信息展示
 const customStatusPanel = computed(() => {
@@ -279,6 +281,9 @@ const customStatusPanel = computed(() => {
     }
     if (isObtainerNode.value) {
         return ObtainerStatusPannel
+    }
+    if (isLooperNode.value) {
+        return LooperStatusPanel
     }
     return null
 })
@@ -289,6 +294,7 @@ const showCustomInfoPanel = computed(() => {
 
 const customStatusTitle = computed(() => {
     if (isObtainerNode.value) return 'Obtainer Status'
+    if (isLooperNode.value) return 'Looper Status'
     return appConfig.local('Custom Info')
 })
 
