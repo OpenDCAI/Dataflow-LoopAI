@@ -131,7 +131,7 @@ default_states:
 
   trainer:
     train_framework: "llamafactory"
-    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/
+    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory"
     llamafactory_env_path: "/home/lpc/miniconda3/envs/lmf/bin/"
     CUDA_VISIBLE_DEVICES: "0,1"
     swanlab_api_key: ""

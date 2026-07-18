@@ -87,8 +87,8 @@ def _build_model_config(cfg: Dict[str, Any]) -> ModelConfig:
 
 def _generate_key_mapping(cfg: Dict[str, Any]) -> Dict[str, Any]:
     key_mapping: Dict[str, Any] = {}
-    eval_type = cfg["bench_dataflow_eval_type"]
-    eval_problem_path = cfg["eval_problem_path"]
+    eval_type = cfg.get("bench_dataflow_eval_type") or cfg.get("eval_type", "")
+    eval_problem_path = cfg.get("eval_problem_path") or cfg.get("problem_path", "")
     count = 0
     with open(eval_problem_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -303,33 +303,31 @@ def _check_output_health(
 # ---------------------------------------------------------------------------
 
 def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
-    """通用文本评测（One-Eval DataFlowEvalTool），无 LangGraph 依赖。
-
-    进度事件通过 ``writer`` 发送（PickleEventWriter），
-    评测结果存入 ``state["judger"]["bench"]`` 和 ``output_result_path``。
-    """
+    """通用文本评测（One-Eval DataFlowEvalTool），无 LangGraph 依赖。"""
     os.environ["CUDA_VISIBLE_DEVICES"] = (state.get("judger") or {}).get(
         "cuda_visible_devices", "2"
     )
 
     cfg: Dict[str, Any] = state.get("judger") or {}
+
+    bench_name = cfg.get("bench_name") or "general_text_eval"
     outdir = (
         Path(state.get("output_dir") or "./outputs")
         / (state.get("task_id") or "default_task")
         / "judger"
         / (writer.version_id or "")
+        / bench_name
     )
     outdir.mkdir(parents=True, exist_ok=True)
     run_ts = time.strftime("%Y%m%d_%H%M%S")
 
-    # 校验必填字段
     eval_result_path = cfg.get("eval_problem_path")
     if not eval_result_path:
         emit_error(
-            ValueError("缺少评测输入路径：请提供 judger.eval_problem_path"),
+            ValueError("缺少评测输入路径"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
             stream_writer=writer,
-            message="Missing judger.eval_problem_path for general_text evaluation.",
+            message="Missing eval_problem_path for general_text evaluation.",
         )
     if not os.path.exists(eval_result_path):
         emit_error(
@@ -342,10 +340,10 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     eval_type = cfg.get("bench_dataflow_eval_type")
     if not eval_type:
         emit_error(
-            ValueError("通用文本评测缺少 eval_type。请在 judger.bench_dataflow_eval_type 中提供"),
+            ValueError("通用文本评测缺少 eval_type"),
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
             stream_writer=writer,
-            message="Missing judger.bench_dataflow_eval_type for general_text evaluation.",
+            message="Missing bench_dataflow_eval_type for general_text evaluation.",
         )
 
     logger.info(f"[Judger/general_text] model={cfg.get('eval_model_path')} "
@@ -353,7 +351,6 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
                 f"tp_size={cfg.get('eval_vllm_tensor_parallel_size', 1)} "
                 f"problem_path={eval_result_path}")
 
-    # 解析 key_mapping
     key_mapping = cfg.get("key_mapping") or {}
     if isinstance(key_mapping, str):
         try:
@@ -362,8 +359,6 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
             key_mapping = _generate_key_mapping(cfg)
     if not key_mapping:
         key_mapping = _generate_key_mapping(cfg)
-
-    bench_name = cfg.get("bench_name") or "general_text_eval"
 
     writer(StreamEvent(
         current=state.get("current", "judger"), progress=0.0,
@@ -542,7 +537,6 @@ def run_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     bench.meta["artifact_paths"]["records_path"] = step2_file_path
     bench.meta["eval_detail_path"] = step2_file_path
 
-    # 回写 state
     state["judger"]["bench"] = {
         "bench_name": bench.bench_name,
         "dataset_cache": bench.dataset_cache,

@@ -134,27 +134,13 @@ def _load_config(config_path: str) -> Dict[str, Any]:
 def _extract_state_from_starter_yaml(config: Dict[str, Any]) -> Dict[str, Any]:
     """从 starter.yaml 格式提取 state 字典。
 
-    starter.yaml 结构：
-        default_states:
-          task_id: "..."
-          output_dir: "..."
-          judger:
-            eval_model_path: "..."
-            ...
-        system:
-          CUDA_VISIBLE_DEVICES: "..."
+    仅提取 task_id 和 output_dir，不提取 judger 配置。
+    Judger 配置优先从 DB (taskmodel) 读取。
     """
     defaults = config.get("default_states", {})
-    system = config.get("system", {})
-
-    judger = dict(defaults.get("judger", {}))
-
-    # 从 system 补充 GPU 配置
-    if "cuda_visible_devices" not in judger and "CUDA_VISIBLE_DEVICES" in system:
-        judger["cuda_visible_devices"] = str(system["CUDA_VISIBLE_DEVICES"])
 
     return {
-        "judger": judger,
+        "judger": {},
         "task_id": defaults.get("task_id", ""),
         "output_dir": defaults.get("output_dir", "./outputs"),
     }
