@@ -1040,19 +1040,6 @@ class JudgerState(BaseModel):
         description="评估模型每个问题的样例生成数量",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
-    # 统一vllm配置删除
-    # eval_env_configs: str = Field(
-    #    default='{"NCCL_P2P_DISABLE": "1","NCCL_IB_DISABLE": "1","NCCL_DEBUG": "INFO","NCCL_SOCKET_IFNAME": "lo","NCCL_BLOCKING_WAIT": "1"}',
-    #    title="评估模型vllm启动环境参数",
-    #    description="评估模型vllm启动环境参数，需要完整字符串配置，为空则认为已启动vllm将会跳过启动vllm的过程",
-    #    json_schema_extra={"ui_type": "textarea", "language": "json", "ui_group": "评估模型"}
-    # )
-    # eval_vllm_port: int = Field(
-    #    default=8911,
-    #    title="vllm本地启动参数——port",
-    #    description="vllm本地启动参数——port，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
-    #    json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
-    # )
     eval_vllm_tensor_parallel_size: int = Field(
         default=2,
         title="vllm本地启动参数——tensor_parallel_size",
@@ -1072,6 +1059,18 @@ class JudgerState(BaseModel):
     #    description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动。参数需要具体到python目录，格式应为<path>/miniconda3/envs/<env_name>/bin/python",
     #    json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     # )
+    benchlist: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        title="主任务评测集",
+        description="主任务评测集列表，每个元素包含 name、task_type、problem_path 等字段",
+        json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型"}
+    )
+    extra_benchlist: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        title="附加任务评测集",
+        description="附加任务评测集列表，格式同 benchlist。失败不影响主任务",
+        json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型"}
+    )
     bench_result: List[Dict[str, Any]] = Field(
         default_factory=list,
         title="主任务评测结果",
@@ -1098,18 +1097,7 @@ class JudgerState(BaseModel):
     #    description="是否通过 API 调用模型",
     #    json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
     # )
-    benchlist: List[Dict[str, Any]] = Field(
-        default_factory=list,
-        title="主任务评测集",
-        description="主任务评测集列表，每个元素包含 name、task_type、problem_path 等字段",
-        json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型"}
-    )
-    extra_benchlist: List[Dict[str, Any]] = Field(
-        default_factory=list,
-        title="附加任务评测集",
-        description="附加任务评测集列表，格式同 benchlist。失败不影响主任务",
-        json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型"}
-    )
+    
 
 
 class AnalyzerState(BaseModel):
