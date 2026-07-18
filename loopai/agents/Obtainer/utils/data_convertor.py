@@ -77,6 +77,9 @@ def _ensure_hf_cache_env(download_dir: Optional[str]) -> None:
     for path in (hf_cache_root, hub_dir, datasets_dir, transformers_dir):
         os.makedirs(path, exist_ok=True)
 
+    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    os.environ.setdefault("HF_HUB_ENDPOINT", os.environ["HF_ENDPOINT"])
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     os.environ.setdefault("HF_HOME", hf_cache_root)
     os.environ.setdefault("HUGGINGFACE_HUB_CACHE", hub_dir)
     os.environ.setdefault("HF_DATASETS_CACHE", datasets_dir)
@@ -1603,4 +1606,3 @@ Please identify which files are data files that should be processed. Return a JS
             processed_sources_list.append((f"{file_name}_({split_name})", split_record_count))
         
         return split_record_count
-

@@ -6,7 +6,7 @@ from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
 from loopai.schema.states import LoopAIState, get_state_config_schema
-from loopai.agents import BaseAgent
+from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.schema.events import StreamEvent
 
 from loopai.logger import get_logger

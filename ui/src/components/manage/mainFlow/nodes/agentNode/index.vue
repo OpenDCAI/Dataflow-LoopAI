@@ -1,6 +1,6 @@
 <template>
     <base-node v-bind="props" :data="thisData" :running="runningMe" :rowLayoutContent="true">
-        <div class="col-wrapper" style="width: 250px">
+        <div v-if="showGenericState" class="col-wrapper" style="width: 250px">
             <div class="fv-loading-block">
                 <fv-progress-ring
                     v-if="loading"
@@ -42,32 +42,34 @@
         </div>
 
         <div
-            v-if="customInfoFiltered.length > 0"
+            v-if="showCustomInfoPanel"
             class="col-wrapper"
             style="width: 250px; flex-shrink: 0"
         >
             <!-- Agent 的通用 CustomInfo 展示 -->
-            <template v-if="customInfoFiltered.length > 0">
+            <template v-if="showCustomInfoPanel">
                 <div class="node-row-item">
                     <span
                         class="info-title"
                         style="font-size: 13px"
                         :style="{ color: thisData.iconColor }"
-                        >{{ appConfig.local('Custom Info') }}</span
+                        >{{ customStatusTitle }}</span
                     >
                 </div>
                 <div
-                    v-if="customInfoFiltered.length > 0"
+                    v-if="showCustomInfoPanel"
                     class="node-group-item scroll-list"
                     @wheel.stop
                 >
                     <!-- 自定义 Node CustomInfo展示 -->
                     <component
+                        v-if="customStatusPanel"
                         :is="customStatusPanel"
                         :foreground="thisData.iconColor"
                         :graphClsPrefix="thisData.graphClsPrefix"
                     />
                     <div
+                        v-if="showGenericCustomInfo"
                         v-for="(custom_info, c_index) in customInfoFiltered"
                         :key="`custom_${c_index}`"
                         class="node-row-item col"
@@ -145,6 +147,7 @@ import valuePreview from './valuePreview/index.vue'
 import trainState from './statusPreview/trainState/index.vue'
 import WebcrawlerStatusPannel from './custom/webcrawlerStatusPannel.vue'
 import ObtainerStatusPannel from './custom/obtainerStatusPannel.vue'
+import LooperStatusPanel from './custom/LooperStatusPanel.vue'
 
 const { $api } = useGlobal()
 
@@ -236,6 +239,14 @@ const stateFiltered = computed(() => {
     return loopAIStateFiltered.value
 })
 
+const normalizedGraphPrefix = computed(() => String(thisData.value.graphClsPrefix || '').toLowerCase())
+const isObtainerNode = computed(() => normalizedGraphPrefix.value.includes('obtainer'))
+const isWebCrawlerNode = computed(() => normalizedGraphPrefix.value.includes('webcrawler'))
+const isLooperNode = computed(() => normalizedGraphPrefix.value.includes('looper'))
+const showGenericState = computed(() => {
+    return Boolean(loopAIState.value) && !isObtainerNode.value
+})
+
 const customInfo = computed(() => {
     return loopAI.taskStatus.custom_info
 })
@@ -261,16 +272,30 @@ const customInfoFiltered = computed(() => {
     return filter_list
 })
 
+const showGenericCustomInfo = computed(() => !isObtainerNode.value && !isLooperNode.value)
+
 // 自定义节点信息展示
 const customStatusPanel = computed(() => {
-    const { graphClsPrefix } = thisData.value || {}
-    if (graphClsPrefix === 'WebCrawlerAgent') {
+    if (isWebCrawlerNode.value) {
         return WebcrawlerStatusPannel
     }
-    if (graphClsPrefix === 'ObtainerAgent') {
+    if (isObtainerNode.value) {
         return ObtainerStatusPannel
     }
+    if (isLooperNode.value) {
+        return LooperStatusPanel
+    }
     return null
+})
+
+const showCustomInfoPanel = computed(() => {
+    return Boolean(customStatusPanel.value) || customInfoFiltered.value.length > 0
+})
+
+const customStatusTitle = computed(() => {
+    if (isObtainerNode.value) return 'Obtainer Status'
+    if (isLooperNode.value) return 'Looper Status'
+    return appConfig.local('Custom Info')
 })
 
 const runningMe = computed(() => {

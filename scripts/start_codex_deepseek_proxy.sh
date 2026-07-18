@@ -4,6 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROUTER_DIR="${ROOT_DIR}/codex-chat-router"
 CACHE_DIR="${ROOT_DIR}/.cache_codex"
+ENV_FILE="${CACHE_DIR}/deepseek_proxy.env"
+
+if [[ -f "${ENV_FILE}" ]]; then
+    # shellcheck source=/dev/null
+    source "${ENV_FILE}"
+fi
 
 mkdir -p \
     "${CACHE_DIR}/target" \

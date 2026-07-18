@@ -57,15 +57,28 @@
                     </template>
                     <template v-slot:right-space>
                         <div class="command-bar-right-space">
+                            <looper-takeover-warning></looper-takeover-warning>
                             <fv-button
+                                v-show="!msgStreamModel.loading"
                                 theme="dark"
                                 :background="gradient"
                                 border-radius="50"
                                 font-size="12"
-                                style="width: 25px; height: 25px"
+                                style="width: 25px; height: 25px; flex-shrink: 0"
                                 @click="handleRefreshClick"
                             >
                                 <i class="ms-Icon ms-Icon--Refresh"></i>
+                            </fv-button>
+                            <fv-button
+                                v-show="msgStreamModel.loading"
+                                theme="dark"
+                                :background="gradient"
+                                border-radius="50"
+                                font-size="12"
+                                style="width: 25px; height: 25px; flex-shrink: 0"
+                                @click="handleStopClick"
+                            >
+                                <i class="ms-Icon ms-Icon--Stop"></i>
                             </fv-button>
                             <i
                                 class="ms-Icon ms-Icon--FullCircleMask status-coin"
@@ -112,12 +125,14 @@ import resourcePanel from '@/components/manage/mainFlow/panels/resourcePanel/ind
 import currentTaskBlock from '@/components/manage/mainFlow/tools/currentTaskBlock.vue'
 import detailNodePanel from '@/components/manage/mainFlow/panels/detailNodePanel.vue'
 import taskStatePanel from '@/components/manage/loopaiFlow/taskStatePanel.vue'
+import looperTakeoverWarning from '@/components/manage/loopaiFlow/looperTakeoverWarning.vue'
 
 import resourceIcon from '@/assets/flow/resources.svg'
 import pipelineIcon from '@/assets/flow/pipeline.svg'
 import adjustIcon from '@/assets/flow/adjust.svg'
 
 export default {
+    name: 'LoopaiFlow',
     components: {
         mainFlow,
         taskNav,
@@ -127,7 +142,8 @@ export default {
         resourcePanel,
         currentTaskBlock,
         detailNodePanel,
-        taskStatePanel
+        taskStatePanel,
+        looperTakeoverWarning
     },
     data() {
         return {
@@ -158,24 +174,6 @@ export default {
                 }
             ],
             nodes: [
-                {
-                    id: 'configer',
-                    type: 'agent-node',
-                    position: { x: 1334, y: 683 },
-                    data: {
-                        label: 'Configer',
-                        status: 'Agent',
-                        stateKey: 'configer',
-                        graphClsPrefix: 'configer',
-                        include_nodes: ['configer'],
-                        icon: 'Settings',
-                        nodeInfo: 'Configer Agent for configuring the state of sub agents.',
-                        iconColor: 'rgba(45, 45, 45, 1)',
-                        background:
-                            'linear-gradient(130deg, rgba(201, 122, 162, 0.8), rgba(252, 252, 252, 0.8))',
-                        borderColor: 'rgba(201, 122, 162, 0.8)'
-                    }
-                },
                 {
                     id: 'trainer',
                     type: 'agent-node',
@@ -286,24 +284,17 @@ export default {
                     }
                 },
                 {
-                    id: 'starter',
+                    id: 'looper',
                     type: 'agent-node',
-                    position: { x: 1334, y: 889 },
+                    position: { x: -250, y: 95 },
                     data: {
-                        label: 'Starter',
+                        label: 'Looper',
                         status: 'Agent',
-                        stateKey: 'default',
-                        defaultStateKey: [
-                            'current',
-                            'next_to',
-                            'exception',
-                            'output_dir',
-                            'automated_query'
-                        ],
-                        graphClsPrefix: 'starter',
-                        include_nodes: ['query', 'feedback'],
+                        stateKey: 'looper',
+                        graphClsPrefix: 'looper',
+                        include_nodes: ['looper'],
                         icon: 'Robot',
-                        nodeInfo: 'Starter Agent for Supervision',
+                        nodeInfo: 'Looper Agent for Automation',
                         iconColor: 'rgba(45, 45, 45, 1)',
                         background:
                             'linear-gradient(130deg, rgba(129, 208, 246, 0.8), rgba(252, 252, 252, 0.8))',
@@ -405,7 +396,8 @@ export default {
         'taskStatus.running'(val) {
             if (val) this.getStatus(this.currentTask?.task_id)
         },
-        currentTask(val, oldVal) {
+        currentTask(val) {
+            this.clearLooperTakeoverCountdown()
             if (val) this.getStatus(val.task_id)
         }
     },
@@ -436,7 +428,9 @@ export default {
             'getStatus',
             'getStateSchema',
             'setCurrentTask',
-            'resetStarterCodexSession'
+            'resetStarterCodexSession',
+            'terminateStarterCodexSession',
+            'clearLooperTakeoverCountdown'
         ]),
         setViewport() {
             const flow = useVueFlow(this.flowId)
@@ -450,39 +444,7 @@ export default {
             clearInterval(this.timer.healthCheck)
             this.timer.healthCheck = setInterval(async () => {
                 await this.getStatus(this.currentTask?.task_id)
-                this.recoverTask()
             }, 5000)
-        },
-        recoverTask() {
-            try {
-                let running = this.taskStatus.running
-                if (running && !this.taskStatus.state && !this.currentTask) {
-                    this.stop()
-                    this.$barWarning(this.local('Detect running task without task id, stop it.'), {
-                        status: 'default'
-                    })
-                    return
-                }
-                let task_id = this.taskStatus.state.task_id
-                if (running && task_id && !this.currentTask) {
-                    this.$barWarning(this.local('Detect running task, obtaining task info.'), {
-                        status: 'default'
-                    })
-                    this.$api.task.getTask(task_id).then((res) => {
-                        if (res.code === 200) {
-                            this.currentTask = res.data
-                            this.$barWarning(this.local('Running task info obtained'), {
-                                status: 'correct'
-                            })
-                        } else {
-                            this.stop()
-                            this.$barWarning(res.message, {
-                                status: 'warning'
-                            })
-                        }
-                    })
-                }
-            } catch (e) {}
         },
         handleAdjustStatesClick() {
             if (!this.currentTask?.task_id) {
@@ -494,6 +456,7 @@ export default {
             this.show.statePanel = true
         },
         handleRefreshClick() {
+            this.clearLooperTakeoverCountdown()
             if (!this.currentTask?.task_id) {
                 this.$barWarning(this.local('No active task to reset.'), {
                     status: 'warning'
@@ -511,9 +474,12 @@ export default {
                             })
                             return
                         }
-                        this.$barWarning(res?.message || this.local('Failed to reset conversation.'), {
-                            status: 'warning'
-                        })
+                        this.$barWarning(
+                            res?.message || this.local('Failed to reset conversation.'),
+                            {
+                                status: 'warning'
+                            }
+                        )
                     } catch (error) {
                         this.$barWarning(this.local('Failed to reset conversation.'), {
                             status: 'error'
@@ -522,12 +488,36 @@ export default {
                 }
             })
         },
-        stop() {
-            this.$api.starter.stopAgent().then((res) => {
-                if (res.code === 200) {
-                    this.$barWarning(this.local('Stop signal sent'), {
-                        status: 'correct'
-                    })
+        handleStopClick() {
+            this.clearLooperTakeoverCountdown()
+            if (!this.currentTask?.task_id) {
+                this.$barWarning(this.local('No active task to terminate.'), {
+                    status: 'warning'
+                })
+                return
+            }
+            this.$infoBox(this.local('Are you sure to terminate this conversation?'), {
+                status: 'warning',
+                confirm: async () => {
+                    try {
+                        const res = await this.terminateStarterCodexSession()
+                        if (res?.code === 200) {
+                            this.$barWarning(this.local('Conversation terminated successfully.'), {
+                                status: 'correct'
+                            })
+                            return
+                        }
+                        this.$barWarning(
+                            res?.message || this.local('Failed to terminated conversation.'),
+                            {
+                                status: 'warning'
+                            }
+                        )
+                    } catch (error) {
+                        this.$barWarning(this.local('Failed to terminated conversation.'), {
+                            status: 'error'
+                        })
+                    }
                 }
             })
         },
@@ -538,6 +528,7 @@ export default {
     },
     beforeUnmount() {
         clearInterval(this.timer.healthCheck)
+        this.clearLooperTakeoverCountdown()
     }
 }
 </script>
@@ -660,6 +651,7 @@ export default {
                 height: 100%;
                 padding-right: 5px;
                 gap: 3px;
+                max-width: calc(100% - 8px);
 
                 .status-coin {
                     font-size: 10px;

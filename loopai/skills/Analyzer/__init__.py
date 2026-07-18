@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from loopai.common.exception import ErrorCode, emit_error, emit_success
+from loopai.common.event_tool import StreamEvent, get_event_writer, load_stream_events
 
 
 def run(
@@ -37,7 +38,6 @@ def run(
             message="TASK_ID environment variable is not set.",
         )
 
-    from .event_tool import get_analyzer_event_writer
     from .runtime_config import resolve_analyzer_runtime_config
     from .state_bridge import load_analyzer_state_from_configer
     from loopai.skills.Analyzer.runner import run_analyzer_standalone
@@ -55,10 +55,10 @@ def run(
         writer_version_id = runtime["version_id"]
         if writer_version_id in ("", "default") and not explicit_version:
             writer_version_id = None
-        writer = get_analyzer_event_writer(
+        writer = get_event_writer(
+            name="analyzer",
             context_id=runtime["thread_id"],
             log_file_path=runtime["output_dir"],
-            state=state,
             version_id=writer_version_id,
         )
         writer.set_running({
@@ -90,6 +90,13 @@ def run(
             **runner_kwargs,
         )
     except (ValueError, TypeError) as exc:
+        if locals().get("writer") is not None:
+            writer.set_failed(StreamEvent(
+                current="analyzer.failed",
+                progress=1.0,
+                message="Analyzer input contract validation failed.",
+                data={"error": str(exc)},
+            ))
         emit_error(
             exc,
             code=ErrorCode.INVALID_INPUT,
@@ -98,6 +105,13 @@ def run(
             stream_writer=locals().get("writer"),
         )
     except RuntimeError as exc:
+        if locals().get("writer") is not None:
+            writer.set_failed(StreamEvent(
+                current="analyzer.failed",
+                progress=1.0,
+                message="Analyzer runtime configuration is incomplete.",
+                data={"error": str(exc)},
+            ))
         emit_error(
             exc,
             code=ErrorCode.CONFIG_ERROR,
@@ -106,6 +120,13 @@ def run(
             stream_writer=locals().get("writer"),
         )
     except Exception as exc:
+        if locals().get("writer") is not None:
+            writer.set_failed(StreamEvent(
+                current="analyzer.failed",
+                progress=1.0,
+                message="Analyzer crashed with an unhandled exception.",
+                data={"error": str(exc)},
+            ))
         emit_error(
             exc,
             code=ErrorCode.UNHANDLED_EXCEPTION,
@@ -115,6 +136,14 @@ def run(
         )
 
     analyzer = final_state.get("analyzer", {}) if isinstance(final_state, dict) else {}
+    # common.emit_success passes a response envelope without ``current``.
+    # Emit the terminal StreamEvent explicitly so the shared writer records it.
+    writer.set_completed(StreamEvent(
+        current="analyzer.completed",
+        progress=1.0,
+        message="Analyzer pipeline completed.",
+        data={"task_id": task_id},
+    ))
     emit_success(
         data={
             "task_id": final_state.get("task_id") if isinstance(final_state, dict) else task_id,
@@ -140,13 +169,11 @@ def load_events(
     事件在流水线执行期间实时写入 pickle 文件（``analyzer.pkl``），
     执行完成后可调用此函数获取完整事件列表，用于前端展示或日志分析。
     """
-    from .event_tool import load_analyzer_events
-
-    return load_analyzer_events(
-        task_id=task_id,
-        output_dir=output_dir,
-        version_id=version_id,
-    )
+    return [event.json() for event in load_stream_events(
+        name="analyzer",
+        context_id=task_id,
+        log_file_path=output_dir,
+    ) if version_id is None or event.version_id == version_id]
 
 
 __all__ = ["run", "load_events"]

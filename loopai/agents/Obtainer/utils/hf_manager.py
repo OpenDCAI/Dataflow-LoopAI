@@ -29,11 +29,17 @@ class HuggingFaceManager:
         temp_base_dir: Optional[str] = None,
     ):
         """Initialize HuggingFace Manager"""
-        self.hf_endpoint = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
+        self.hf_endpoint = (
+            os.getenv("HF_ENDPOINT")
+            or os.getenv("HF_HUB_ENDPOINT")
+            or "https://hf-mirror.com"
+        )
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.disable_cache = disable_cache
         os.environ["HF_ENDPOINT"] = self.hf_endpoint
+        os.environ["HF_HUB_ENDPOINT"] = self.hf_endpoint
+        os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
         # Set up temp directory
         self.temp_base_dir = os.getenv("DF_TEMP_DIR") or temp_base_dir
@@ -245,4 +251,3 @@ class HuggingFaceManager:
         except Exception as e:
             logger.info(f"[HuggingFace] Download failed for {dataset_id}: {e}")
             return None
-

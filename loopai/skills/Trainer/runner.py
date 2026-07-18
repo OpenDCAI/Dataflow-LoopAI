@@ -1,19 +1,22 @@
 from __future__ import annotations
 
+import hashlib
 import os
-import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from loopai.common.event_tool import get_event_writer
+import yaml
+
 from loopai.common.exception import ErrorCode, emit_error, emit_success
 from loopai.skills.Trainer.runtime_config import (
     build_trainer_prefill_guide,
     resolve_trainer_runtime_config,
 )
+from loopai.skills.Trainer.utils.stream_events import prepare_trainer_run
 
 
 _TRAINER_TASK_STATE_UPDATE_FIELDS = {
+    "trainer_task_id",
     "data_check_passed",
     "data_check_result",
     "data_check_report_path",
@@ -142,29 +145,44 @@ def _fallback_output_dir(state: Optional[Dict[str, Any]], kwargs: Dict[str, Any]
     ))
 
 
-def _resolve_trainer_version_id(kwargs: Dict[str, Any]) -> str:
-    return str(_first_non_empty(
+def _resolve_trainer_version_id(kwargs: Dict[str, Any]) -> str | None:
+    version_id = _first_non_empty(
         kwargs.get("version_id"),
         kwargs.get("trainer_version_id"),
         os.getenv("VERSION_ID"),
-        str(uuid.uuid4()),
-    ))
+    )
+    return str(version_id) if version_id else None
 
 
-def _resolve_trainer_output_dir(
-    *,
-    output_root: str,
-    task_id: str,
-    version_id: str,
-    kwargs: Dict[str, Any],
-) -> str:
+def _resolve_explicit_trainer_output_dir(kwargs: Dict[str, Any]) -> str | None:
     explicit_dir = _first_non_empty(
         kwargs.get("trainer_output_dir"),
         os.getenv("TRAINER_OUTPUT_DIR"),
     )
     if explicit_dir:
         return str(Path(str(explicit_dir)).resolve())
-    return str((Path(output_root) / task_id / "trainer" / version_id).resolve())
+    return None
+
+
+def inspect_prepared_trainer_config(config_path: str) -> Dict[str, Any]:
+    """Return the exact YAML text and digest used by the approval workflow."""
+    path = Path(config_path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"prepared Trainer config does not exist: {path}")
+    if path.suffix.lower() not in {".yaml", ".yml"}:
+        raise ValueError(f"prepared Trainer config must be YAML: {path}")
+
+    config_yaml = path.read_text(encoding="utf-8")
+    parsed = yaml.safe_load(config_yaml)
+    if not isinstance(parsed, dict):
+        raise ValueError(f"prepared Trainer config must contain a YAML mapping: {path}")
+
+    return {
+        "config_path": str(path),
+        "config_yaml": config_yaml,
+        "config": parsed,
+        "config_sha256": hashlib.sha256(config_yaml.encode("utf-8")).hexdigest(),
+    }
 
 
 def _update_trainer_task_state(runtime: Dict[str, Any], trainer_state: Dict[str, Any]) -> None:
@@ -200,7 +218,13 @@ def run_trainer_standalone(
     emit_result: bool = False,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Run the existing TrainerAgent from the skill layer."""
+    """Run the Trainer pipeline from the skill layer."""
+    prepare_only = bool(kwargs.get("prepare_only", False))
+    prepared_config_path = kwargs.get("prepared_config_path")
+    expected_config_sha256 = str(kwargs.get("expected_config_sha256") or "").strip().lower()
+    if prepare_only and prepared_config_path:
+        raise ValueError("prepare_only and prepared_config_path cannot be used together")
+
     try:
         runtime = resolve_trainer_runtime_config(
             state=state,
@@ -211,21 +235,20 @@ def run_trainer_standalone(
     except Exception as exc:
         fallback_task_id = _fallback_context_id(state, thread_id, kwargs)
         fallback_output_root = _fallback_output_dir(state, kwargs)
-        fallback_version_id = _resolve_trainer_version_id(kwargs)
-        fallback_output_dir = _resolve_trainer_output_dir(
-            output_root=fallback_output_root,
-            task_id=fallback_task_id,
-            version_id=fallback_version_id,
-            kwargs=kwargs,
+        explicit_version_id = _resolve_trainer_version_id(kwargs)
+        fallback_state = {
+            "task_id": fallback_task_id,
+            "output_dir": fallback_output_root,
+            "trainer": dict((state or {}).get("trainer") or {}) if isinstance(state, dict) else {},
+        }
+        fallback_writer = prepare_trainer_run(
+            fallback_state,
+            version_id=explicit_version_id,
+            trainer_output_dir=_resolve_explicit_trainer_output_dir(kwargs),
+            force_new=explicit_version_id is None,
         )
-        Path(fallback_output_dir).mkdir(parents=True, exist_ok=True)
-        fallback_writer = get_event_writer(
-            name="trainer",
-            context_id=fallback_task_id,
-            log_file_path=fallback_output_root,
-            version_id=fallback_version_id,
-            event_dir=fallback_output_dir,
-        )
+        fallback_version_id = str(fallback_writer.version_id)
+        fallback_output_dir = fallback_state["trainer"]["trainer_output_dir"]
         fallback_writer.set_running({
             "current": "trainer.run",
             "message": "Trainer skill started.",
@@ -249,27 +272,15 @@ def run_trainer_standalone(
 
     resolved_state = runtime["state"]
     trainer_state = resolved_state.setdefault("trainer", {})
-    output_root = str(resolved_state.get("output_dir") or "./outputs")
-    version_id = _resolve_trainer_version_id(kwargs)
-    trainer_output_dir = _resolve_trainer_output_dir(
-        output_root=output_root,
-        task_id=runtime["thread_id"],
-        version_id=version_id,
-        kwargs=kwargs,
+    explicit_version_id = _resolve_trainer_version_id(kwargs)
+    event_writer = prepare_trainer_run(
+        resolved_state,
+        version_id=explicit_version_id,
+        trainer_output_dir=_resolve_explicit_trainer_output_dir(kwargs),
+        force_new=explicit_version_id is None,
     )
-    trainer_state["trainer_version_id"] = version_id
-    trainer_state["trainer_output_dir"] = trainer_output_dir
-    trainer_state["trainer_task_id"] = trainer_state.get("trainer_task_id") or version_id
-    trainer_state["output_dir"] = trainer_output_dir
-    Path(trainer_output_dir).mkdir(parents=True, exist_ok=True)
-
-    event_writer = get_event_writer(
-        name="trainer",
-        context_id=runtime["thread_id"],
-        log_file_path=output_root,
-        version_id=version_id,
-        event_dir=trainer_output_dir,
-    )
+    version_id = str(event_writer.version_id)
+    trainer_output_dir = trainer_state["trainer_output_dir"]
     event_writer.set_running({
         "current": "trainer.run",
         "message": "Trainer skill started.",
@@ -302,8 +313,43 @@ def run_trainer_standalone(
         _update_trainer_task_state(runtime, trainer_state)
         raise exc
 
-    from loopai.agents.Trainer.trainer_agent import TrainerAgent
+    # Always set both graph-control flags so a reused LangGraph thread cannot
+    # inherit approval-mode state from an earlier invocation.
+    trainer_state["_trainer_prepare_only"] = prepare_only
+    trainer_state["_trainer_use_prepared_config"] = False
+
+    if prepared_config_path:
+        try:
+            prepared_config = inspect_prepared_trainer_config(str(prepared_config_path))
+            actual_digest = prepared_config["config_sha256"]
+            if not expected_config_sha256:
+                raise ValueError("expected_config_sha256 is required for an approved Trainer config")
+            if actual_digest != expected_config_sha256:
+                raise ValueError(
+                    "prepared Trainer config changed after approval: "
+                    f"expected sha256 {expected_config_sha256}, got {actual_digest}"
+                )
+            trainer_state["train_output_config_path"] = prepared_config["config_path"]
+            trainer_state["train_config"] = prepared_config["config"]
+            trainer_state["trainer_config_generation_success"] = True
+            trainer_state["_trainer_use_prepared_config"] = True
+        except Exception as exc:
+            payload = emit_error(
+                exc,
+                code=ErrorCode.CONFIG_ERROR,
+                recoverable=True,
+                stream_writer=event_writer,
+                message="Prepared Trainer config validation failed.",
+                exit_process=emit_result,
+                print_payload=emit_result,
+            )
+            trainer_state["trainer_result"] = payload
+            trainer_state["trainer_last_error"] = payload["error"]
+            _update_trainer_task_state(runtime, trainer_state)
+            raise
+
     from loopai.memory import checkpointer, store
+    from loopai.skills.Trainer.trainer_agent import TrainerAgent
 
     trainer = TrainerAgent(checkpointer=checkpointer, store=store)
     graph = trainer()
@@ -331,6 +377,49 @@ def run_trainer_standalone(
         raise
 
     trainer_state = result.setdefault("trainer", {}) if isinstance(result, dict) else {}
+    trainer_state.pop("_trainer_prepare_only", None)
+    trainer_state.pop("_trainer_use_prepared_config", None)
+
+    if prepare_only:
+        try:
+            prepared_config = inspect_prepared_trainer_config(
+                str(trainer_state.get("train_output_config_path") or "")
+            )
+        except Exception as exc:
+            payload = emit_error(
+                exc,
+                code=ErrorCode.CONFIG_ERROR,
+                recoverable=True,
+                stream_writer=event_writer,
+                message="Trainer config preparation failed.",
+                exit_process=emit_result,
+                print_payload=emit_result,
+            )
+            trainer_state["trainer_result"] = payload
+            trainer_state["trainer_last_error"] = payload["error"]
+            _update_trainer_task_state(runtime, trainer_state)
+            raise
+
+        preparation_data = {
+            "task_id": runtime["thread_id"],
+            "trainer_version_id": trainer_state.get("trainer_version_id"),
+            "trainer_output_dir": trainer_state.get("trainer_output_dir"),
+            "approval_required": True,
+            **prepared_config,
+        }
+        payload = emit_success(
+            data=preparation_data,
+            message="Trainer config prepared; explicit user approval is required before training.",
+            stream_writer=event_writer,
+            exit_process=emit_result,
+            print_payload=emit_result,
+        )
+        trainer_state["trainer_result"] = payload
+        trainer_state["trainer_last_error"] = {}
+        trainer_state["trainer_event_log_path"] = str(event_writer.event_path)
+        _update_trainer_task_state(runtime, trainer_state)
+        return result
+
     if isinstance(result, dict):
         try:
             from loopai.skills.Trainer.results import analyze_results

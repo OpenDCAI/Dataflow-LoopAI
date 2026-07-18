@@ -1,0 +1,1 @@
+请根据下述 Text2SQL 任务信息给出 1~3 句中文短评，格式： 【结论】：...；【主要问题】：...；【改进建议】：...。【自然语言问题】{prompt_head}【模型生成 SQL】{completion_head}【参考标准 SQL】{test_head}【执行结果 stdout(尾部)】{stdout_tail}【执行错误 stderr(头部)】{stderr_head}【元信息(JSON)】{meta_json}

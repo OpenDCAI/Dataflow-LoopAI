@@ -30,6 +30,7 @@ DEFAULT_PROMPT = (
     "The file content must be exactly:\n"
     "HELLO_FROM_CODEX\n"
 )
+SUBPROCESS_STREAM_LIMIT = 16 * 1024 * 1024
 
 
 async def run_codex_task(
@@ -62,6 +63,7 @@ async def run_codex_task(
         env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=SUBPROCESS_STREAM_LIMIT,
     )
 
     assert proc.stdout is not None

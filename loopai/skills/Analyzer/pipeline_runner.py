@@ -7,7 +7,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional
 
-from loopai.schema.events import StreamEvent
+from loopai.common.event_tool import StreamEvent
 from .state_bridge import load_analyzer_state_from_configer, update_analyzer_state_via_configer
 
 
@@ -465,11 +465,15 @@ def run_analyzer_pipeline(
                 step_percent = _progress_percent(step_end)
                 writer(StreamEvent(
                     current=f"analyzer.{step_name}",
-                    progress=round(step_end, 4),
-                    progress_num=step_percent,
+                    progress=1.0,
+                    progress_num=100,
                     total=100,
                     message=f"步骤完成: {step_name}",
-                    data={"step": step_name, "progress_percent": step_percent},
+                    data={
+                        "step": step_name,
+                        "progress_percent": step_percent,
+                        "step_progress_percent": 100,
+                    },
                 ))
                 _emit_pipeline_progress(
                     writer,

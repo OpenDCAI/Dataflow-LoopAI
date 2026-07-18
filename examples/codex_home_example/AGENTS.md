@@ -74,7 +74,13 @@
 - `judge` 优先使用 Judger Skill 或 `examples/scripts/run_judger_standalone.py`
 - 用户要求查看 Judger 过程或评测明细时，优先读取 `judger.pkl` 事件流
 - `train` 优先使用 Trainer Skill
+- `obtain`、训练前数据获取、SFT 数据集构造、能力定向提升数据规划，优先读取 Obtainer Skill：`skills/obtainer/SKILL.md`
+- 涉及 DataMixer、数据湖入湖、SFT recipe/export、按 math/code/text2sql/reasoning 域找数据时，先按 `skills/obtainer/SKILL.md` 和其中的 ObtainerCLI 流程执行，不要从 `outputs/` 里的旧 run 或旧 recipe 反推当前流程
+- 执行数据搜集/下载/入湖时，starter 外层只能通过 CLI wrapper 启动 `dataset-acquisition-agent`；如果运行环境不是当前 shell 的 Python，先设置 `LOOPAI_PYTHON_EXECUTABLE=/path/to/loopai-env/bin/python`，再用 `${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm ... dataset-acquisition-agent start`，或在 start 命令上显式传 `--python-executable /path/to/loopai-env/bin/python`；然后轮询/续跑。不要使用通用 `spawn_agent` worker，不要在外层自己创建 SearchAgent task JSON、调用 `searchagent`、调用 `download manifest` 或直接入湖
 - 用户要求查看 Trainer 过程或训练事件时，优先读取 Trainer 事件输出
+- 每一轮训练都必须先调用 Trainer Skill 的 `prepare()`，向用户完整展示生成的 YAML；只有用户明确确认后才能调用 `run_prepared()`，不得对交互式训练直接调用兼容入口 `run()`
+- Trainer 必须以前台同步方式运行；训练进入 `completed`、`failed` 或 `cancelled` 前，不得结束当前执行
+- 如果长时间命令返回运行中的 cell/session id，必须持续等待同一执行结束，不能把“训练已启动”当成完成
 
 注意：
 

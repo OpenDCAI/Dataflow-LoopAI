@@ -92,7 +92,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     taskStatus.value.waiting_llm = false
                 }
             })
-            .catch((error) => {
+            .catch(() => {
                 taskStatus.value.running = false
                 taskStatus.value.waiting_llm = false
                 proxy.$barWarning('server connection error', {
@@ -106,12 +106,40 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         loading: false,
         status: 'stale'
     })
+    const looperTakeover = ref({
+        timer: null,
+        seconds: 5,
+        duration: 5,
+        active: false
+    })
+    const clearLooperTakeoverCountdown = ({ resetSeconds = true, keepActive = false } = {}) => {
+        if (looperTakeover.value.timer) {
+            clearInterval(looperTakeover.value.timer)
+            looperTakeover.value.timer = null
+        }
+        looperTakeover.value.active = keepActive ? looperTakeover.value.active : false
+        if (resetSeconds) {
+            looperTakeover.value.seconds = looperTakeover.value.duration
+        }
+    }
+    const setLooperTakeoverCountdown = ({
+        seconds = looperTakeover.value.seconds,
+        duration = looperTakeover.value.duration,
+        active = looperTakeover.value.active
+    } = {}) => {
+        looperTakeover.value.duration = duration
+        looperTakeover.value.seconds = seconds
+        looperTakeover.value.active = active
+    }
+    
     const msgEventSource = ref(null)
+    const msgEventKeys = ref(new Set())
 
 
     const setCurrentTask = async (task) => {
         currentTask.value = task || null
         closeMsgStream()
+        clearLooperTakeoverCountdown()
         await getMessages()
     }
     const getMessages = async () => {
@@ -134,9 +162,11 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     taskMessages.value = (res.data?.conversation || []).map((item) =>
                         normalizeConversationMessage(item)
                     )
-                    msgStreamModel.value.status = res?.data?.status || 'stale'
-                    msgStreamModel.value.loading = res?.data?.status === 'running'
-                    if (res?.data?.status === 'running' && !msgEventSource.value) {
+                    const streamStatus = res?.data?.status || 'stale'
+                    const shouldStream = ['submitted', 'running', 'finishing'].includes(streamStatus)
+                    msgStreamModel.value.status = streamStatus
+                    msgStreamModel.value.loading = shouldStream
+                    if (shouldStream && !msgEventSource.value) {
                         getMsgStream()
                     }
                 }
@@ -157,6 +187,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     msgStreamModel.value.status = 'stale'
                     msgStreamModel.value.loading = false
                     msgStreamModel.value.msgs = []
+                    msgEventKeys.value = new Set()
                     await getMessages()
                 }
                 return res
@@ -168,13 +199,45 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         return resp
     }
 
+    const terminateStarterCodexSession = async () => {
+        if (!currentTask.value?.task_id) return null
+        const resp = await proxy.$api.starter.starterCodexSessionTerminate(currentTask.value.task_id).then(async res => {
+            if (res.code === 200) {
+                closeMsgStream()
+            }
+            return res
+        })
+        return resp;
+    }
+
     const closeMsgStream = ({ keepMessage = false } = {}) => {
         if (msgEventSource.value) {
             msgEventSource.value.close()
             msgEventSource.value = null
         }
         msgStreamModel.value.loading = false
-        if (!keepMessage) msgStreamModel.value.msgs = []
+        if (!keepMessage) {
+            msgStreamModel.value.msgs = []
+            msgEventKeys.value = new Set()
+        }
+    }
+    const buildStreamEventKey = (data, event) => {
+        const sessionId = data?.session_id || currentTask.value?.task_id || ''
+        const eventIndex = data?._event_index ?? event?.lastEventId
+        if (eventIndex !== undefined && eventIndex !== null && String(eventIndex) !== '') {
+            return `${sessionId}:event-index:${eventIndex}`
+        }
+        const codexEvent = data?.event || {}
+        const item = codexEvent?.item || {}
+        const itemId = item?.id || item?.call_id || item?.thread_id
+        if (data?.type === 'event' && codexEvent?.type && itemId) {
+            return `${sessionId}:item:${codexEvent.type}:${itemId}`
+        }
+        if (data?.type === 'event' && codexEvent?.type && item?.type === 'command_execution' && item?.command) {
+            return `${sessionId}:command:${codexEvent.type}:${item.command}`
+        }
+        if (data?.type && data?.message) return `${sessionId}:message:${data.type}:${data.message}`
+        return null
     }
     const getMsgStream = async () => {
         if (!currentTask.value?.task_id) return
@@ -193,6 +256,11 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     status: 'warning'
                 })
                 return
+            }
+            const eventKey = buildStreamEventKey(resData.data, event)
+            if (eventKey) {
+                if (msgEventKeys.value.has(eventKey)) return
+                msgEventKeys.value.add(eventKey)
             }
             msgStreamModel.value.msgs.push(resData.data)
         }
@@ -247,10 +315,14 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         getStatus,
         taskMessages,
         msgStreamModel,
+        looperTakeover,
         currentMsg,
         getMessages,
         resetStarterCodexSession,
+        terminateStarterCodexSession,
         getMsgStream,
+        clearLooperTakeoverCountdown,
+        setLooperTakeoverCountdown,
         stateSchema,
         getStateSchema,
         getTaskStateConfig,

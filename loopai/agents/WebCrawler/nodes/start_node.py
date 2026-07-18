@@ -39,7 +39,7 @@ def start_node(state: LoopAIState) -> LoopAIState:
     # 调试：打印实际收到的 state
     logger.info(f"[DEBUG] start_node 收到的 state 包含的键: {list(state.keys())[:20]}")
     logger.info(f"[DEBUG] webcrawler 配置: {list(webcrawler.keys()) if webcrawler else '(空)'}")
-    logger.info(f"[DEBUG] deepseek_api_key 是否存在: {'deepseek_api_key' in webcrawler}")
+    logger.info(f"[DEBUG] DEEPSEEK_API_KEY env 是否存在: {bool(os.getenv('DEEPSEEK_API_KEY'))}")
     
     writer = get_webcrawler_event_writer(state)
     # 输出开始事件
@@ -137,8 +137,12 @@ def start_node(state: LoopAIState) -> LoopAIState:
     if webcrawler.get("debug") is None:
         webcrawler["debug"] = False
     
+    # API key 仅使用环境变量，不写入 state
+    deepseek_api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    tavily_api_key = os.getenv("TAVILY_API_KEY", "").strip()
+
     # 验证必要的API密钥
-    if not webcrawler.get("deepseek_api_key"):
+    if not deepseek_api_key:
         logger.error("Missing DEEPSEEK_API_KEY")
         state["exception"] = "Missing required configuration: DEEPSEEK_API_KEY"
         writer(StreamEvent(
@@ -148,7 +152,7 @@ def start_node(state: LoopAIState) -> LoopAIState:
         ).json())
         return state
     
-    if not webcrawler.get("tavily_api_key"):
+    if not tavily_api_key:
         logger.error("Missing TAVILY_API_KEY")
         state["exception"] = "Missing required configuration: TAVILY_API_KEY"
         writer(StreamEvent(
@@ -157,9 +161,6 @@ def start_node(state: LoopAIState) -> LoopAIState:
             data={"error": "Missing TAVILY_API_KEY"}
         ).json())
         return state
-    
-    # 设置Tavily API Key到环境变量
-    os.environ["TAVILY_API_KEY"] = webcrawler["tavily_api_key"]
     
     logger.info(f"WebCrawlerAgent: Configuration initialized - model: {webcrawler.get('model')}, "
                f"max_pages: {webcrawler.get('max_pages')}, depth: {webcrawler.get('crawl_depth')}, "

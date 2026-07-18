@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from loopai.skills.ObtainerCLI.config import read_lake_config_for_lake, resolve_lake_root
+from loopai.skills.ObtainerCLI.monitor_state import benchmark_monitor_state
 from loopai.skills.ObtainerCLI.tables import TABLES, read_table, table_path
 
 
@@ -42,29 +43,20 @@ def _read_table_safe(lake_root: Path, table: str) -> tuple[list[dict], dict]:
     path = table_path(lake_root, table)
     warnings: list[dict] = []
     rows: list[dict] = []
-    if path.exists():
-        try:
-            rows = read_table(lake_root, table)
-        except Exception as exc:
-            warnings.append(
-                {
-                    "code": "TABLE_READ_ERROR",
-                    "table": table,
-                    "message": str(exc),
-                }
-            )
-    else:
+    try:
+        rows = read_table(lake_root, table)
+    except Exception as exc:
         warnings.append(
             {
-                "code": "TABLE_FILE_MISSING",
+                "code": "TABLE_READ_ERROR",
                 "table": table,
-                "message": f"Table file does not exist: {path}",
+                "message": str(exc),
             }
         )
     return rows, {
         "name": table,
         "path": str(path),
-        "exists": path.exists(),
+        "exists": path.exists() or bool(rows),
         "count": len(rows),
         "size_bytes": _path_size(path),
         "modified_at": _modified_at(path),
@@ -227,6 +219,7 @@ def build_lake_monitor(*, lake: str | Path, latest_limit: int = 8) -> dict:
     exports = rows_by_table["exports"]
     tag_rows = rows_by_table["record_tags"]
     embedding = _embedding_summary(records, embeddings, config)
+    benchmarks = benchmark_monitor_state(lake_root)
 
     if records and embedding["coverage"] < 1:
         warnings.append(
@@ -253,6 +246,8 @@ def build_lake_monitor(*, lake: str | Path, latest_limit: int = 8) -> dict:
         "quality_findings": len(quality_findings),
         "ingest_runs": len(ingest_runs),
         "exports": len(exports),
+        "benchmarks": int(benchmarks.get("count") or 0),
+        "benchmark_rows": int(benchmarks.get("total_rows") or 0),
         "embedding_coverage": embedding["coverage"],
         "warnings": len(warnings),
         "health_score": _health_score(warnings, records, embedding, quality_findings),
@@ -273,6 +268,7 @@ def build_lake_monitor(*, lake: str | Path, latest_limit: int = 8) -> dict:
         "summary": summary,
         "tables": tables,
         "embedding": embedding,
+        "benchmarks": benchmarks,
         "charts": {
             "ingest_trend": _ingest_trend(ingest_runs),
             "composition": {

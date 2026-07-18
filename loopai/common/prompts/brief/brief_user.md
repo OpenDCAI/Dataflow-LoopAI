@@ -1,0 +1,1 @@
+请根据下述信息给出 1~3 句中文短评，格式： 【结论】：...；【原因要点】：...；【建议】：...。【题目片段】{prompt_head}【被测生成代码片段】{completion_head}【测试代码片段】{test_head}【OJ输出-stdout(尾)】{stdout_tail}【OJ输出-stderr(头)】{stderr_head}【已解析关键信息(JSON)】{meta_json}

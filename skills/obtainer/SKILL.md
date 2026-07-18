@@ -1,303 +1,479 @@
 ---
 name: obtainer
-description: Use this skill when the user wants LoopAI to inspect or initialize a data lake, find and collect datasets for a data need, ingest downloaded or local data into the lake, index embeddings, tag data, or sample/export a mixed dataset for training or evaluation.
+description: Use this skill when LoopAI needs dataset discovery, acquisition, DataMixer lakehouse operations, data processing, indexing, recipe planning, or production training-data export. In long-running Codex SDK loops, when Analyzer produces an analysis report, failure taxonomy, or user request that implies new training data is needed, Codex must activate this Obtainer skill, interpret the data need, and start the managed dataset-acquisition-agent worker. The outer Codex context must not run SearchAgent, download manifest, or ingest directly for normal acquisition.
 ---
 
 # Obtainer Skill
 
 ## Purpose
 
-ObtainerCLI Skill is the agent-facing workflow for LoopAI data acquisition and lakehouse operations. Use it to turn a user's data requirement into a traceable data-lake workflow:
+Obtainer is the agent-facing workflow for turning a data need into a production
+training-data artifact. SearchAgent handles dataset discovery. DataMixer is the
+only data-lake command surface for storage, ingest, processing, indexing,
+sampling, recipe planning, export, snapshots, and lineage.
 
-1. Check the current data lake status.
-2. Initialize a lake if no usable lake exists.
-3. Search for relevant datasets or confirm local inputs.
-4. Download or collect the selected data.
-5. Normalize the data to supported JSONL records.
-6. Ingest the data into the lake with required metadata and tags.
-7. Index embeddings when needed.
-8. Sample/export a dataset mix according to the user's target proportions.
+When a long-running Codex SDK loop receives an Analyzer report, failure taxonomy,
+training recipe, or next-iteration data request, treat it as an Obtainer input,
+not a generic coding task:
 
-Do not treat this skill as only a thin CLI wrapper. The agent must manage the whole data flow and keep each source, tag, and export decision explicit.
+1. Identify whether the report needs dataset acquisition, production export, or both.
+2. For acquisition/download/ingest, start the managed
+   `dataset-acquisition-agent` worker instead of manually driving
+   SearchAgent/download/ingest from the outer Codex context.
+3. Poll worker status and decide whether to resume the same worker or start a
+   fresh worker.
+4. Run DataMixer processing, quality, decontamination, deduplication, indexing,
+   and recall operations required by the recipe.
+5. For production SFT outflow, start the managed `sft-export-agent` worker.
+6. Report warehouse path, datasets, record counts, recipe/export artifacts,
+   lineage, manifests, and snapshots.
 
-## Python Implementation
 
-```text
-loopai/skills/ObtainerCLI/
-├── __main__.py
-├── cli.py
-├── config.py
-├── catalog.py
-├── ingest.py
-├── index.py
-├── lake_init.py
-├── lake_status.py
-├── sample.py
-├── tables.py
-└── tags.py
-```
+## Hard Constraints
 
-The root skill description lives at:
+- **DataMixer-only lakehouse.** Do not use non-DataMixer lake logic, standalone
+  table sampling, compatibility shims, or hand-written tiny fixtures for lake
+  operations. If a DataMixer command cannot satisfy the request, stop and report
+  the blocker.
+- **Outer Codex must delegate acquisition.** For any normal dataset discovery,
+  download, normalization, or ingest request, the outer Codex context must start
+  the CLI wrapper `loopai-obtainercli dm ... dataset-acquisition-agent start`
+  or run `${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm ... dataset-acquisition-agent
+  start`. If the outer shell is not using the LoopAI environment, set
+  `LOOPAI_PYTHON_EXECUTABLE=/path/to/loopai-env/bin/python` or pass
+  `--python-executable /path/to/loopai-env/bin/python`, then poll/resume that worker.
+  Do not use a generic `spawn_agent`
+  worker for data acquisition. Do not create a SearchAgent task JSON, call
+  `searchagent`, call `download manifest`, normalize files, or ingest rows from
+  the outer Codex context. Those operations belong inside the CLI worker policy.
+- **DataMixer is the only lake command surface.** Use
+  `loopai-obtainercli dm ...` for initialization, schema inspection, dataset
+  registry, ingest, query, processing operators, indexing, recall, recipes,
+  snapshots, lineage, and export.
+- **Reuse the active DataMixer warehouse.** Treat `.loopai/lake.yaml` as a
+  project pointer to a reusable DataMixer warehouse. Do not create a new lake per
+  task unless the user explicitly asks for a new warehouse. Use `dm lake load`
+  to point the project at an existing warehouse and `dm lake delete` to unload
+  the pointer; deletion preserves the warehouse unless `--delete-warehouse
+  --yes` is explicitly supplied. Prefer `dm lake scan` before choosing a
+  warehouse, so the agent sees project and cache candidates instead of guessing
+  paths.
+- **Prepare worker intent before acquiring from a report.** First recognize the
+  dataset-acquisition intent: target sample shape, task types, domains, source
+  hints, proportions, quality gates, and concrete search objectives. Pass that
+  intent to `dataset-acquisition-agent start` via `--objective`, `--keywords`,
+  `--target-datasets`, and `--message`. The worker may then use SearchAgent
+  internally. Never pass the raw Analyzer report as the only search target.
+- **Objectives describe dataset shape, not only error keywords.** Use objectives
+  like "buggy and fixed Python code pairs for syntax error repair", not only
+  "SyntaxError" or "missing".
+- **Worker search order:** inside the acquisition worker, use
+  deepsearch/research context first, then provider search such as Hugging Face
+  and Kaggle. The final download list must be grounded in current external
+  sources.
+- **Worker must inspect `searchagent_manifest.json` before downloading.** If
+  errors are non-empty, the download list is empty, candidates are unrelated to
+  the interpreted intent, or sources cannot satisfy the requested sample shape,
+  the worker refines the search once. If still unsuitable, stop and report the
+  mismatch.
+- **Worker must prune unrelated candidates before download.** After internal
+  SearchAgent returns a download list, the worker compares every candidate
+  against the original user request and interpreted dataset intent. Remove
+  datasets that are clearly unrelated in domain, task type, language, source
+  family, target label shape, or training purpose before the worker runs
+  `download manifest`. Write a filtered manifest and a rejection list with
+  explicit reasons; do not download the raw manifest when it contains unrelated
+  candidates.
+- **Worker stops on download failure.** If internal `download manifest` fails,
+  is interrupted, or creates partial/empty files for selected datasets, stop
+  before ingest. Report the command, exit code, produced files, and blocker.
+- **Acquisition download cap.** Internal `download manifest` writes at most
+  100,000 rows and 2GiB of local JSONL output per dataset, even if `--max-rows
+  0`, a larger row value, or an oversized `--max-bytes-per-dataset` value is
+  supplied. If the byte cap is reached, keep the partial JSONL and report
+  `truncated`, `truncated_reason`, `rows_written`, and `bytes_written`. Treat
+  this as the bounded acquisition bridge into DataMixer, not as final
+  production SFT output.
+- **Production SFT budget.** If the Analyzer report or user gives no explicit
+  SFT target, set and report a production default before export: at least
+  100,000 total records, or an explicit token budget when token counts are
+  available.
+- **Plan recipe proportions from the current need.** Do not assume a fixed
+  bucket mix from examples or prior runs. The worker must choose and justify
+  bucket proportions from the current user goal, Analyzer failure taxonomy,
+  available lake inventory, quality filters, and record/token budget. For
+  token-budget recipes, allocate against `total_tokens`; for sample-budget
+  recipes, allocate against `total_samples`.
+- **Use semantic recipe filters.** Failure-taxonomy exports must use meaningful
+  tags or columns such as `bug_type=syntax`, `bug_type=logic`,
+  `bug_type=runtime`, and `bug_type=assertion`. If those tags do not exist in
+  enough volume, stop and report that the lake cannot guarantee the requested
+  mix. Do not replace them with broad proxies such as only `lang=python`.
+- **Complete metadata on ingest.** Preserve source platform, source dataset
+  id/name, source URI, license, language, domain, task type, processing level,
+  source kind, split, loop UUID, and version id. Unknown values must be explicit,
+  for example `license=unknown`; do not silently omit required provenance.
+- **Dataset cards and additive derivation on ingest.** For every acquired
+  dataset, the acquisition worker must write and register a Markdown dataset
+  card describing source, license, split, row count, original fields, derived
+  fields, derivation rules, validation checks, intended training use, and known
+  risks. Dataset-specific derived fields are allowed for embedded complex
+  formats such as step traces, multi-turn conversations, or question+options,
+  but derivation must be additive: preserve every original field, keep the row
+  count unchanged, and validate that every declared derived field is non-empty
+  before ingest succeeds.
+- **Never overwrite or hide provenance.** Keep dataset lineage, loop/version
+  tags, recipe fingerprints, export manifests, and snapshots.
 
-```text
-skills/obtainer/SKILL.md
-```
+## Command Surface
 
-## CLI
-
-Main command:
+Obtainer has one production data-lake command surface:
 
 ```bash
-loopai-obtainercli --help
-python -m loopai.skills.ObtainerCLI --help
+loopai-obtainercli dm --root /path/to/datamixer-warehouse <datamixer-command> --json
+loopai-obtainercli dm --lake .loopai/lake.yaml <datamixer-command> --json
 ```
 
-Supported commands:
+Use `--root` when operating directly on a DataMixer warehouse. Use `--lake` only
+when a LoopAI lake pointer already exists and should resolve to the integrated
+DataMixer warehouse. All `dm` commands emit machine-readable JSON.
 
-```text
-loopai-obtainercli lake init
-loopai-obtainercli lake status
-loopai-obtainercli ingest path
-loopai-obtainercli index embed
-loopai-obtainercli tag list
-loopai-obtainercli sample
-```
-
-All CLI commands emit JSON. Prefer parsing the JSON result instead of scraping text.
-
-## Stream Events
-
-ObtainerCLI can persist `StreamEvent` entries through `loopai.common.event_tool`.
-
-Enable events by passing a task id, or by setting `TASK_ID`:
+Manage the project pointer to a reusable DataMixer warehouse:
 
 ```bash
-loopai-obtainercli lake status \
-  --lake .loopai/lake.yaml \
-  --task-id data_task_001 \
-  --output-dir ./outputs \
+loopai-obtainercli dm lake scan --link .loopai/lake.yaml --project-root .
+loopai-obtainercli dm lake current --link .loopai/lake.yaml
+loopai-obtainercli dm lake load --warehouse /path/to/warehouse --link .loopai/lake.yaml
+loopai-obtainercli dm lake delete --link .loopai/lake.yaml
+```
+
+`dm lake delete` unloads only the pointer by default. Use
+`--delete-warehouse --yes` only when the actual reusable warehouse should be
+removed.
+
+SearchAgent and provider download are internal acquisition bridges. In the
+normal product workflow, outer Codex reaches them only by starting
+`dataset-acquisition-agent`. Do not call low-level `searchagent` or
+`download manifest` from the outer Codex context.
+
+## Dataset Acquisition Worker
+
+For dataset discovery, candidate pruning, download, normalization, and DataMixer
+ingest, outer Codex must use the managed acquisition worker CLI wrapper. Here
+"worker" means the `dataset-acquisition-agent start` command below, not a
+generic spawned Codex worker.
+
+Start a new worker:
+
+```bash
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent start \
+  --run ./outputs/acquisition_run \
+  --analysis-report ./outputs/analyzer_report.md \
+  --objective "collect general-domain instruction and QA datasets" \
+  --keywords "instruction tuning dataset, open QA dataset, summarization dataset" \
+  --target-datasets 30 \
+  --max-rows-per-dataset 100000 \
+  --max-bytes-per-dataset 2147483648 \
+  --discovery-mode auto \
+  --python-executable /path/to/loopai-env/bin/python
+```
+
+`start` runs the inner Codex SDK worker in the background by default and returns
+PID plus log paths. Use `--foreground` only when the caller intentionally wants
+to block. If `loopai-obtainercli` is not installed as a console script, use the
+`${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli ...` form.
+
+Poll status:
+
+```bash
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent status \
+  --run ./outputs/acquisition_run
+```
+
+Resume the same worker:
+
+```bash
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent resume \
+  --run ./outputs/acquisition_run \
+  --message "Remove unrelated datasets from the filtered manifest, then continue ingest."
+```
+
+Do not pass `--model` to `dataset-acquisition-agent` unless the user explicitly
+requests a one-off override. By default the wrapper resolves the Codex worker
+model from Starter's model pool, preferring the configured Codex default model.
+
+The worker wrapper injects the detailed acquisition policy: explicit objective
+and keywords, candidate list review against the original request before
+download, rejection report, 100,000-row and 2GiB JSONL-output per-dataset caps,
+normalized JSONL, DataMixer-only ingest/status/query/index operations, complete
+provenance tags, and `final_report.json`.
+
+## DataMixer Lake Operations
+
+Initialize and inspect:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse init --json
+loopai-obtainercli dm --root /path/to/warehouse status --json
+loopai-obtainercli dm --root /path/to/warehouse schema --json
+loopai-obtainercli dm --root /path/to/warehouse columns --json
+loopai-obtainercli dm --root /path/to/warehouse stats --json
+```
+
+Dataset registry and ingest:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse dataset add \
+  --name code_repair_mix \
+  --source huggingface \
+  --license unknown \
+  --description "buggy/fixed code repair datasets" \
+  --json
+
+loopai-obtainercli dm --root /path/to/warehouse ingest code_repair_mix \
+  --file ./downloads/records/dataset.train.jsonl \
+  --content-key content \
+  --dataset-card ./manifest/dataset_cards/code_repair_mix.md \
+  --derived-field train_output \
+  --source-row-count 100000 \
+  --stage sft \
+  --domain code \
+  --lang python \
+  --source huggingface \
+  --license unknown \
+  --task-type SFT \
+  --tokenizer tiktoken:o200k_base \
   --json
 ```
 
-Events are written to:
+If the downloaded file is not already normalized JSONL, use DataMixer
+`agent-ingest`:
 
-```text
-<output_dir>/<task_id>/obtainercli.pkl
+```bash
+loopai-obtainercli dm --root /path/to/warehouse agent-ingest ./downloads/raw_file \
+  --engine builtin \
+  --dataset code_repair_mix \
+  --json
 ```
 
-Read them from Python:
+Query, coverage, and distributions:
 
-```python
-from loopai.skills.ObtainerCLI import load_events
+```bash
+loopai-obtainercli dm --root /path/to/warehouse query \
+  --filter "domain = 'code' AND task_type = 'SFT'" \
+  --limit 20 \
+  --json
 
-events = load_events(task_id="data_task_001", output_dir="./outputs")
+loopai-obtainercli dm --root /path/to/warehouse dist \
+  --column domain \
+  --json
+
+loopai-obtainercli dm --root /path/to/warehouse grade \
+  --filter "domain = 'code' AND task_type = 'SFT'" \
+  --column quality_score \
+  --json
 ```
 
-Each event uses:
+Processing, quality, safety, and deletion:
 
-- `current="obtainercli"`
-- `node` as the command path, such as `lake.status`, `lake.init`, `ingest.path`, `index.embed`, or `sample`
-- `status` as `started`, `running`, `completed`, or `failed`
-- `progress` from `0.0` to `1.0` where the command can report phases
+```bash
+loopai-obtainercli dm --root /path/to/warehouse op list --json
+loopai-obtainercli dm --root /path/to/warehouse op run quality_score --dataset code_repair_mix --json
+loopai-obtainercli dm --root /path/to/warehouse op run minhash_dedup --dataset code_repair_mix --arg k=5 --json
+loopai-obtainercli dm --root /path/to/warehouse op run semantic_dedup --dataset code_repair_mix --json
+loopai-obtainercli dm --root /path/to/warehouse contam add --name benchmark --file benchmark.txt --json
+loopai-obtainercli dm --root /path/to/warehouse decontaminate --against benchmark --json
+loopai-obtainercli dm --root /path/to/warehouse pii-redact --dataset code_repair_mix --dry-run --json
+loopai-obtainercli dm --root /path/to/warehouse erase <sample_id> --reason "user request" --json
+```
 
-Use `--no-events` to suppress event persistence even when `TASK_ID` is set.
+For downstream-task specific DataFlow processing, do not blindly select one
+DataFlow operator by hand. Use the integrated Codex SDK orchestration so the
+agent can inspect trial rows, plan the operator chain, generate a DataFlow
+pipeline, trial-run it, and optionally merge the processed JSONL back:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse dataflow agent-run \
+  --target "score GSM8K answer-focused SFT rows and keep high-quality rows" \
+  --dataset math_sft \
+  --trial-rows 20 \
+  --expected-outputs math_answer_quality \
+  --apply \
+  --json
+```
+
+The low-level `op run dataflow --arg op=<DataFlowClassName>` bridge is only for
+manual/operator-specific runs when the operator choice is already known.
+
+Index and recall:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse index build --json
+loopai-obtainercli dm --root /path/to/warehouse recall \
+  --query "buggy and fixed Python code pairs for runtime exception repair" \
+  --filter "domain = 'code' AND task_type = 'SFT'" \
+  --limit 50 \
+  --json
+```
+
+Lineage and snapshots:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse snapshot create --name sft_mix_v1 --json
+loopai-obtainercli dm --root /path/to/warehouse lineage list --json
+```
+
+## Internal SearchAgent Bridge
+
+This low-level discovery bridge is for the isolated acquisition worker and for
+human debugging only. If you are the outer Codex agent responding to a user
+workflow request, skip this section and start `dataset-acquisition-agent`
+instead. Do not create task JSON or run this command from the outer Codex
+context.
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent start \
+  --run ./outputs/acquisition_run \
+  --objective "collect buggy and fixed Python code-pair datasets covering syntax, logic, runtime, and assertion failures for SFT training" \
+  --keywords "program repair dataset, buggy fixed code pairs, Python SyntaxError fix, runtime exception repair" \
+  --target-datasets 8 \
+  --max-rows-per-dataset 100000 \
+  --max-bytes-per-dataset 2147483648 \
+  --discovery-mode auto \
+  --json
+```
+
+For multi-domain requests such as text2sql + math + code, describe the domain
+split in `--objective` / `--keywords` / `--message`; the worker policy will
+create isolated SearchAgent tasks internally and use parallelism where
+appropriate. 尽量使用镜像源；当 Hugging Face/Kaggle 等主站访问慢或不稳定时，
+优先选择可用镜像或缓存源，并在 manifest/report 里记录实际来源。
+
+## Manifest Download
+
+This is the low-level download bridge used by the acquisition worker. Outer
+Codex must not call `download manifest` during a normal workflow. Let
+`dataset-acquisition-agent` materialize SearchAgent candidates into local
+lake-ready files. It is not a lake operation.
+
+Before downloading, compare the manifest against the original user request and
+write a pruned manifest, for example `searchagent_manifest.filtered.json`.
+Remove clearly unrelated candidates and keep a rejection report such as
+`searchagent_manifest.rejections.json` with dataset id, reason, and the mismatch
+dimension. Examples of rejection reasons: wrong domain, wrong task type, wrong
+language, unrelated source family, missing target label shape, license blocker,
+or provider failure risk.
+
+For human debugging only, use `loopai-obtainercli download manifest ...` after
+writing a filtered manifest and rejection report.
+
+The downloader enforces a 100,000-row cap and a 2GiB local JSONL output cap per
+dataset. `--max-rows 0` is also capped to 100,000 rows per dataset for safety.
+When the byte cap is reached, the partial JSONL remains usable and the download
+result must report the truncation. Production SFT sizing and final mixing must
+be handled later through DataMixer recipes.
+
+## Production SFT Export
+
+For production SFT outflow, outer Codex should use the managed export worker
+wrapper instead of manually driving `recipe validate/plan/preview/export`.
+The wrapper starts an isolated Codex SDK worker and injects the detailed
+DataMixer recipe, schema, validation, snapshot, and failure-handling policy into
+that worker's context.
+
+For heterogeneous SFT exports, schema mapping must be dataset/bucket-aware.
+Do not use one global `output.sources` fallback order across datasets whose
+fields have different semantics. Prefer bucket-level schema blocks such as
+`recipe.buckets[].schema.fields` or `recipe.buckets[].export.schema.fields`.
+Fields may be composed with templates when the final training row needs several
+source fields, for example `output.template: "<think>{chain}</think>{answer}"`
+for reasoning + answer, or for text2sql:
+`instruction.template: "{question}"` and
+`input.template: "{evidence}\n{sql_schema}\n{sql_block}"`.
+
+Start a new isolated worker:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse sft-export-agent start \
+  --run ./outputs/sft_export_run \
+  --analysis-report ./outputs/analyzer_report.md \
+  --format alpaca \
+  --target-records 100000 \
+  --out ./outputs/sft_export_run/export
+```
+
+`start` returns after launching a background worker by default. Use
+`--foreground` only when the caller intentionally wants to block until the
+inner Codex SDK worker finishes.
+
+Check a worker:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse sft-export-agent status \
+  --run ./outputs/sft_export_run
+```
+
+Continue the same inner Codex thread when the final report exposes a repairable
+schema or quality problem:
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse sft-export-agent resume \
+  --run ./outputs/sft_export_run \
+  --message "Exclude buckets whose output field falls back to text, then re-export."
+```
+
+`resume` also runs in the background by default and returns a PID plus log
+paths. Poll with `status`.
+
+Do not pass `--model` to `sft-export-agent` unless the user explicitly requests
+a one-off override. The worker should use Starter's configured Codex model by
+default.
+
+Outer Codex decides between `resume` and a fresh `start`:
+
+- Use `resume` when the same worker understood the target but needs a bounded
+  correction to recipe mapping, bucket filters, normalization, or validation.
+- Use a fresh `start` when the worker context is polluted, picked the wrong
+  task, or needs a different high-level strategy.
+
+The worker wrapper owns the detailed constraints. In particular, for Alpaca SFT
+it requires final rows to contain exactly `instruction`, `input`, and `output`,
+forbids `output` fallback to whole-record text fields, rejects
+`instruction == output`, requires DataMixer recipe export with snapshot, and
+writes `final_report.json` with manifest, snapshot, digest, validation evidence,
+and blockers. For datasets where a field like `output` is a noisy trace and
+`answer` is the gold label, the worker must define that bucket's schema
+explicitly instead of letting a global mapping choose the wrong source.
 
 ## End-To-End Agent Workflow
 
-### 1. Understand The Data Need
+1. Read the Analyzer report or user request and extract the dataset intent.
+2. Start `dataset-acquisition-agent` for discovery, candidate pruning,
+   download, normalization, and DataMixer ingest.
+3. Poll `dataset-acquisition-agent status`; resume or restart based on
+   `final_report.json` and blockers.
+4. Run DataMixer operators for quality, deduplication, safety, and post-training
+   validity tags. For downstream-task specific processing, prefer
+   `dm dataflow agent-run` so Codex SDK plans and trial-runs the DataFlow
+   operator chain before merge-back.
+5. Build indexes when semantic recall or semantic deduplication is needed.
+6. Start `sft-export-agent` for production recipe planning and export.
+7. Poll `sft-export-agent status`; resume or restart based on blockers.
+8. Report warehouse path, datasets, record counts, processing results, recipe
+    fingerprint, snapshot id, export path, and manifest path.
 
-Before searching or ingesting, extract the user's target:
+## Failure Handling
 
-- Domain, such as code, math, general, finance, medical, legal, multilingual, web, synthetic.
-- Task type, such as `PT`, `SFT`, `RL`, or `EVAL`.
-- Processing level, such as `raw_web`, `extracted_text`, `pretrain_ready`, `postprocessed_high_quality`, or `synthetic_validated`.
-- Source kind, such as `web`, `local`, `api`, `huggingface`, `kaggle`, or `synthetic`.
-- Size target and mix proportions, such as 70% code + 20% math + 10% general.
-- Quality constraints, licenses, language, freshness, contamination concerns, and required output format.
-
-If a requested dataset may have legal, privacy, license, or safety implications, verify source terms before ingesting and preserve license/source tags.
-
-### 2. Check Lake Status First
-
-Always check whether a usable lake already exists before creating a new one:
-
-```bash
-loopai-obtainercli lake status --lake .loopai/lake.yaml --json
-```
-
-Use the status result to decide:
-
-- If the lake exists and is healthy, reuse it.
-- If `.loopai/lake.yaml` is missing or points to a broken root, initialize or ask for the desired root.
-- If records already satisfy the user need, sample/export directly instead of downloading duplicate data.
-- If embeddings are missing but semantic sampling/search is needed, run indexing first.
-
-### 3. Initialize The Lake When Needed
-
-Create the lake outside the repo when possible and keep only `.loopai/lake.yaml` in the repo:
-
-```bash
-loopai-obtainercli lake init \
-  --root /path/to/lake-root \
-  --link .loopai/lake.yaml \
-  --if-not-exists \
-  --auto-embed \
-  --embedding-provider openai-compatible \
-  --embedding-base-url http://127.0.0.1:8000/v1 \
-  --embedding-model BAAI/bge-small-zh-v1.5
-```
-
-If no embedding service is available, either initialize with `--no-auto-embed` or use the local hash provider later for lightweight indexing.
-
-### 4. Search And Select Data Sources
-
-ObtainerCLI currently ingests local files; it does not yet provide dedicated `ingest hf`, `ingest kaggle`, or `ingest web` commands. The agent is responsible for source discovery and download before ingestion.
-
-Recommended source-selection process:
-
-- Search datasets that match the user need, license, domain, task type, language, and recency requirements.
-- Prefer primary dataset pages and official mirrors over reposts.
-- Record source URL, dataset name, version or snapshot date, license, and filtering assumptions.
-- Avoid downloading data that is clearly unrelated, duplicated, private, or license-incompatible.
-- For web collection, use the WebCrawler skill or an existing crawler pipeline, then treat the collected output as local input for ingestion.
-
-Downloaded or generated data must be converted to JSONL before ingestion. Each line should be a JSON object.
-
-Minimum input shape:
-
-```jsonl
-{"text":"example text","source_uri":"file:///path/or/source/url"}
-```
-
-Useful fields:
-
-- `text`
-- `instruction`
-- `input`
-- `output`
-- `messages`
-- `source_uri`
-- `source_domain`
-- `split`
-- `quality_score`
-- `quality_findings`
-- `parent_record_ids`
-
-### 5. Ingest Data With Required Metadata
-
-Use `ingest path` for every normalized JSONL file:
-
-```bash
-loopai-obtainercli ingest path \
-  --lake .loopai/lake.yaml \
-  --input /path/to/data.jsonl \
-  --dataset dataset_name_or_batch_id \
-  --stage bronze \
-  --domain code \
-  --task-type PT \
-  --processing-level raw_web \
-  --source-kind local \
-  --tags source=huggingface,license=apache-2.0,lang=python \
-  --idempotency-key dataset_name_snapshot_20260622 \
-  --json
-```
-
-Metadata rules:
-
-- `dataset` should be stable and descriptive.
-- `idempotency-key` should include dataset name and version/snapshot where possible.
-- `domain`, `task-type`, `processing-level`, and `source-kind` must reflect the user's need and the actual source.
-- `tags` should preserve license, language, quality level, source platform, benchmark name, or any filtering decision needed for later sampling.
-- Do not ingest unreviewed raw downloads as `gold` or `postprocessed_high_quality`.
-
-If auto-embedding is enabled, ingestion may run embedding indexing after records are written. If it fails, inspect the warning and decide whether to retry indexing manually.
-
-### 6. Index Embeddings When Needed
-
-Run embedding indexing when semantic retrieval, coverage checks, or downstream sampling needs embeddings:
-
-```bash
-loopai-obtainercli index embed \
-  --lake .loopai/lake.yaml \
-  --dataset dataset_name_or_batch_id \
-  --provider openai-compatible \
-  --base-url http://127.0.0.1:8000/v1 \
-  --model BAAI/bge-small-zh-v1.5 \
-  --backend local-jsonl \
-  --text-field text \
-  --json
-```
-
-For lightweight local testing:
-
-```bash
-loopai-obtainercli index embed \
-  --lake .loopai/lake.yaml \
-  --dataset dataset_name_or_batch_id \
-  --provider local-hash \
-  --model local-hash-v1 \
-  --json
-```
-
-### 7. Inspect Tags And Coverage
-
-Before exporting, inspect available tags and lake status:
-
-```bash
-loopai-obtainercli tag list --lake .loopai/lake.yaml --json
-loopai-obtainercli lake status --lake .loopai/lake.yaml --json
-```
-
-Use this to confirm that requested domains, licenses, quality levels, and processing levels exist in enough volume.
-
-### 8. Sample And Export According To The Required Mix
-
-Use `sample` to export a deterministic JSONL file:
-
-```bash
-loopai-obtainercli sample \
-  --lake .loopai/lake.yaml \
-  --output outputs/datasets/code_seed_sample.jsonl \
-  --domain code \
-  --processing-level pretrain_ready \
-  --task-type PT \
-  --include-tag lang=python \
-  --exclude-tag license=unknown \
-  --n 1000 \
-  --seed 42 \
-  --strategy random \
-  --json
-```
-
-For mixed datasets, run one sample command per slice and then merge the resulting JSONL files in the requested proportions. Keep the slice definitions explicit in the final answer:
-
-```text
-70% code: domain=code, task_type=PT, processing_level=pretrain_ready, n=7000
-20% math: domain=math, task_type=SFT, processing_level=postprocessed_high_quality, n=2000
-10% general: domain=general, task_type=PT, processing_level=pretrain_ready, n=1000
-```
-
-Use a fixed seed for reproducibility. If a slice has insufficient records, report the shortage and either use `--allow-smaller` or adjust the mix only with user approval.
-
-## Required Agent Behavior
-
-- Start from lake status unless the user explicitly asks only for help text or documentation.
-- Initialize only when there is no usable lake or the user requests a new lake.
-- Search/download only after clarifying the target data requirement enough to avoid irrelevant data.
-- Preserve provenance through `source_uri`, dataset names, idempotency keys, and tags.
-- Prefer deterministic commands and fixed seeds for repeatable exports.
-- Do not silently change requested mix proportions; report shortages.
-- Do not overwrite existing export files unless the user requested that path.
-- Summarize final outputs with lake path, ingested datasets, record counts, tags, index status, and export paths.
-
-## Common Failure Handling
-
-- Missing lake pointer: run `lake init` or ask for the target root.
-- Broken lake root: report the bad path and initialize a new root only with clear intent.
-- Empty ingest result: verify input JSONL, filters, and idempotency key.
-- Embedding failure: check provider, base URL, API key, model, and service health; ingestion may still have succeeded.
-- Not enough records for a mix slice: report actual availability and propose a smaller export or relaxed filters.
-- Unknown license or source: tag it as unknown and avoid using it for restricted training exports unless approved.
+- Missing warehouse: run DataMixer `init` at the intended `--root`.
+- Missing or unreliable semantic tags: do not export the requested taxonomy mix;
+  tag/process more data first.
+- Insufficient bucket size: report the exact bucket, available count/tokens, and
+  target count/tokens from `recipe plan`.
+- Download failure or empty selected file: stop before ingest.
+- Unknown license or source: tag as unknown and avoid restricted training export
+  unless explicitly approved.
+- Embedding/index failure: report the failed DataMixer command and continue only
+  if the requested recipe does not depend on semantic recall/deduplication.
 
 ## References
 

@@ -12,7 +12,7 @@ from loopai.skills.Trainer import load_events, run
         "Run LoopAI Trainer skill for a task. "
         "Use this after reading trainer config with configer_get_task or configer_get. "
         "When task_id is provided, Trainer loads that task's trainer state through Configer, "
-        "runs the existing TrainerAgent pipeline, emits Trainer stream events, and writes "
+        "runs the Trainer skill pipeline, emits Trainer stream events, and writes "
         "structured trainer_result/trainer_last_error and training status back to task state."
     ),
 )

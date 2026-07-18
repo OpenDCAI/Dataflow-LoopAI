@@ -36,3 +36,6 @@ codex_home/
 .loopai
 codex-chat-router/target
 .vscode
+codex_home_worker/
+catalog.db
+datamixer.toml

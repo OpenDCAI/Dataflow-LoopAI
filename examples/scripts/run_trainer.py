@@ -1,7 +1,7 @@
 # %%
 """
-TrainerAgent 测试脚本
-演示如何使用 TrainerAgent 进行模型训练
+Trainer Skill 测试脚本
+演示如何使用 Trainer Skill 进行模型训练
 
 功能特性：
 1. 配置生成：直接生成YAML格式的配置文件，基于qwen2.5-coder模板
@@ -14,8 +14,8 @@ TrainerAgent 测试脚本
 - 训练任务通过本地 TaskManager 执行
 """
 
-from loopai.agents import TrainerAgent
 from loopai.memory import checkpointer, store
+from loopai.skills.Trainer.trainer_agent import TrainerAgent
 from rich.console import Console
 from rich.live import Live
 from rich.text import Text
@@ -41,7 +41,7 @@ training_state = {
         'llamafactory_dir': '/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/',
         'train_input_dataset_path': "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json",  # 使用 JSON 格式数据集
         'train_input_task_description': '训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务',
-        'train_input_config_template_path': "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
+        'train_input_config_template_path': "loopai/skills/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
         'train_input_model_name': '/jizhicfs/hymiezhao/models/Qwen2.5-1.5B',
         'output_dir': './output/training_test',
 
