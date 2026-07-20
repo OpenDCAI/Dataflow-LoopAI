@@ -36,8 +36,8 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 | `eval_model_path` | 无 | 模型路径（必填） |
 | `eval_temperature` | `0` | 采样温度 |
 | `eval_top_p` | `0.95` | Top-P 采样 |
-| `eval_batch_size` | `10` | 批处理大小 |
-| `eval_case_num` | `10` | 每问题样本数 |
+| `eval_batch_size` | `10` | 批处理大小，bench 可覆盖 |
+| `eval_case_num` | `10` | 每问题样本数，bench 可覆盖 |
 | `eval_vllm_tensor_parallel_size` | `1` | vLLM 张量并行数 |
 | `eval_vllm_gpu_memory_utilization` | `0.9` | vLLM GPU 显存利用率 |
 | `cuda_visible_devices` | `"0"` | 指定 GPU |

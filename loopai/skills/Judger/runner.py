@@ -506,9 +506,13 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
 def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
     """将 bench entry 的字段注入到 state["judger"]，使标准 pipeline 可直接运行。"""
     judger = state.setdefault("judger", {})
+    # 清除上一个 bench 的字段，避免残留
+    for k in ("eval_format_type", "eval_text2sql_dir",
+              "bench_dataflow_eval_type", "key_mapping"):
+        judger.pop(k, None)
     judger["eval_task_type"] = bench.get("task_type", "code")
     judger["eval_problem_path"] = bench.get("problem_path", "")
-    judger["bench_name"] = bench.get("name", "unname_bench")
+    judger["bench_name"] = bench.get("name", "")
     if bench.get("case_num") is not None:
         judger["eval_case_num"] = bench["case_num"]
     else:
@@ -516,9 +520,7 @@ def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
     if bench.get("batch_size") is not None:
         judger["eval_batch_size"] = bench["batch_size"]
     else:
-        judger.setdefault("eval_batch_size", 4)
-    if bench.get("format_type"):
-        judger["eval_format_type"] = bench["format_type"]
+        judger.setdefault("eval_batch_size", 10)
     if bench.get("text2sql_dir"):
         judger["eval_text2sql_dir"] = bench["text2sql_dir"]
     if bench.get("eval_type"):
