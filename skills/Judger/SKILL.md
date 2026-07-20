@@ -101,7 +101,7 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 | | 主任务 | 附加任务 |
 |---|---|---|
 | 执行顺序 | 先 | 后 |
-| 失败策略 | `emit_error` 退出 | 记录失败，继续 |
+| 失败策略 | 记录失败 + `_save_task_progress` + 退出 | 记录失败，继续 |
 
 ### 预填写流程
 
