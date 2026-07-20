@@ -310,11 +310,6 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
                 message=f"Problem file {problem_path} has invalid fields for task type {task_type}.",
             )
 
-    # 6. 重置输出路径
-    state["judger"]["output_result_path"] = ""
-    state["judger"]["output_case_path"] = ""
-    state["judger"]["output_problem_path"] = ""
-
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="配置校验通过",
         data={"task_type": task_type, "problem_path": problem_path}))
@@ -513,7 +508,7 @@ def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
     judger = state.setdefault("judger", {})
     judger["eval_task_type"] = bench.get("task_type", "code")
     judger["eval_problem_path"] = bench.get("problem_path", "")
-    judger["bench_name"] = bench.get("name", "")
+    judger["bench_name"] = bench.get("name", "unname_bench")
     if bench.get("case_num") is not None:
         judger["eval_case_num"] = bench["case_num"]
     else:
@@ -521,7 +516,7 @@ def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
     if bench.get("batch_size") is not None:
         judger["eval_batch_size"] = bench["batch_size"]
     else:
-        judger.setdefault("eval_batch_size", 10)
+        judger.setdefault("eval_batch_size", 4)
     if bench.get("format_type"):
         judger["eval_format_type"] = bench["format_type"]
     if bench.get("text2sql_dir"):
@@ -554,7 +549,7 @@ def _run_single_bench(
         data={"bench_name": bench_name, "task_type": task_type}))
 
     for step_name in steps:
-        state["current"] = f"judger.{bench_name}.{step_name}"
+        state["current"] = f"{bench_name}.{step_name}"
         logger.info(f"[Judger] [{bench_name}] step {step_name}")
         if step_name == "finish":
             break
@@ -585,7 +580,7 @@ def _run_single_bench(
         }
 
     writer(StreamEvent(
-        current=state["current"], progress=1.0,
+        current="judger", progress=1.0,
         message=f"Bench 完成: {bench_name}",
         data={"bench_name": bench_name, "result": result}))
     logger.info(f"[Judger] bench {bench_name} done")
@@ -699,6 +694,14 @@ def run_judger_pipeline(
     benchlist = _parse_benchlist(judger_cfg.get("benchlist")) or []
     extra_benchlist = _parse_benchlist(judger_cfg.get("extra_benchlist")) or []
 
+    if not benchlist and not extra_benchlist:
+        emit_error(
+            ValueError("benchlist 和 extra_benchlist 都为空，请至少配置一个评测集"),
+            code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
+            message="Both benchlist and extra_benchlist are empty. Please configure at least one bench.",
+        )
+
     writer(StreamEvent(
         current="judger", progress=0.0, message="Judger pipeline started",
         data={"task_id": task_id, "resume": resume}))
@@ -712,13 +715,30 @@ def run_judger_pipeline(
     state["judger"]["bench_result"] = bench_results
     state["judger"]["extra_bench_result"] = secondary_results
 
-    # 主任务
+    # 主任务（失败记录后退出）
     for bench in benchlist:
-        result = _run_single_bench(state, bench, writer)
-        bench_results.append(result)
-        _save_task_progress(state, task_id)
+        try:
+            result = _run_single_bench(state, bench, writer)
+            bench_results.append(result)
+            _save_task_progress(state, task_id)
+        except SystemExit:
+            bench_results.append({
+                "bench_name": bench.get("name", "unknown"),
+                "eval_status": "failed",
+                "meta": {"error": "Bench evaluation failed"},
+            })
+            _save_task_progress(state, task_id)
+            raise
+        except Exception as exc:
+            bench_results.append({
+                "bench_name": bench.get("name", "unknown"),
+                "eval_status": "failed",
+                "meta": {"error": str(exc)},
+            })
+            _save_task_progress(state, task_id)
+            raise
 
-    # 附加任务
+    # 附加任务（失败记录后继续）
     for bench in extra_benchlist:
         try:
             result = _run_single_bench(state, bench, writer)
@@ -740,6 +760,6 @@ def run_judger_pipeline(
     state["last_completed"] = "finish"
     _save_task_progress(state, task_id)
     writer(StreamEvent(
-        current="judger.finish", progress=1.0, message="流水线完成"))
+        current="finish", progress=1.0, message="流水线完成"))
     logger.info(f"[Judger] pipeline finished")
     return state
