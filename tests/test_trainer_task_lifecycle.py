@@ -3,7 +3,10 @@ import os
 import signal
 from unittest.mock import Mock, patch
 
-from loopai.skills.Trainer.nodes.training_execution_node import training_execution_node
+from loopai.skills.Trainer.nodes.training_execution_node import (
+    _training_execution_inline,
+    training_execution_node,
+)
 from loopai.skills.Trainer.utils.task_manager import TaskManager
 from loopai.skills.Trainer.utils.task_status import TaskStatus
 
@@ -19,6 +22,8 @@ def _manager(tmp_path) -> TaskManager:
 
 def test_llamafactory_uses_dedicated_process_group(tmp_path) -> None:
     manager = _manager(tmp_path)
+    config_path = tmp_path / "train.yaml"
+    config_path.write_text("report_to: none\n", encoding="utf-8")
     task_info = {
         "status": TaskStatus.RUNNING,
         "process": None,
@@ -35,7 +40,7 @@ def test_llamafactory_uses_dedicated_process_group(tmp_path) -> None:
     ) as popen:
         manager._run_llamafactory_training(
             task_info,
-            str(tmp_path / "train.yaml"),
+            str(config_path),
             str(tmp_path / "train.log"),
             log_parser,
         )
@@ -80,7 +85,10 @@ def test_wait_for_completion_joins_training_future(tmp_path) -> None:
 
 
 def test_training_node_has_no_fixed_one_hour_early_exit() -> None:
-    source = inspect.getsource(training_execution_node)
+    source = inspect.getsource(_training_execution_inline)
 
     assert "max_wait_time" not in source
     assert "wait_for_completion" in source
+
+    wrapper_source = inspect.getsource(training_execution_node)
+    assert "wait_for_persistent_worker" in wrapper_source

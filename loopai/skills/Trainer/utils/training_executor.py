@@ -1,15 +1,19 @@
 """
 训练执行工具
-调用 LlamaFactory 进行模型微调并集成 SwanLab 监控
+调用 LlamaFactory 进行模型微调并使用本地日志监控
 """
 
 import os
 import subprocess
 import sys
-import json
 import time
-from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
+import yaml
+
+from loopai.common.tracking import (
+    assert_no_retired_tracking,
+    strip_retired_tracking_environment,
+)
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -26,8 +30,6 @@ class TrainingExecutor:
         self,
         config_path: str,
         output_dir: str,
-        use_swanlab: bool = True,
-        swanlab_project: str = "llamafactory_training"
     ) -> Dict[str, Any]:
         """
         执行 LlamaFactory 训练
@@ -35,8 +37,6 @@ class TrainingExecutor:
         Args:
             config_path: 训练配置文件路径
             output_dir: 输出目录
-            use_swanlab: 是否使用 SwanLab 监控
-            swanlab_project: SwanLab 项目名称
         
         Returns:
             训练结果字典
@@ -48,7 +48,6 @@ class TrainingExecutor:
             "config_path": config_path,
             "output_dir": output_dir,
             "log_file": None,
-            "swanlab_url": None,
             "error_message": None,
             "training_time": 0
         }
@@ -58,9 +57,12 @@ class TrainingExecutor:
             if not os.path.exists(config_path):
                 result["error_message"] = f"配置文件不存在: {config_path}"
                 return result
-            
-            # 准备环境
-            # self._prepare_environment(use_swanlab, swanlab_project)
+
+            with open(config_path, "r", encoding="utf-8") as config_file:
+                config = yaml.safe_load(config_file) or {}
+            if not isinstance(config, dict):
+                raise ValueError(f"training config must be a mapping: {config_path}")
+            assert_no_retired_tracking(config)
             
             # 创建输出目录
             os.makedirs(output_dir, exist_ok=True)
@@ -84,7 +86,6 @@ class TrainingExecutor:
             
             if success:
                 result["success"] = True
-                result["swanlab_url"] = self._get_swanlab_url(swanlab_project) if use_swanlab else None
                 logger.info("训练完成!")
             else:
                 result["error_message"] = "训练过程中发生错误，请查看日志文件"
@@ -154,14 +155,9 @@ class TrainingExecutor:
             except Exception as e:
                 logger.error(f"停止训练进程时发生错误: {str(e)}")
     
-    def _prepare_environment(self, use_swanlab: bool, swanlab_project: str):
+    def _prepare_environment(self):
         """准备训练环境"""
-        
-        # 设置环境变量
-        if use_swanlab:
-            os.environ["SWANLAB_PROJECT"] = swanlab_project
-            os.environ["SWANLAB_EXPERIMENT_NAME"] = f"llamafactory_{int(time.time())}"
-        
+
         # 检查 LlamaFactory 是否安装
         try:
             import llamafactory
@@ -170,15 +166,6 @@ class TrainingExecutor:
             logger.warning("LlamaFactory 未安装，尝试安装...")
             self._install_llamafactory()
         
-        # 检查 SwanLab 是否安装
-        if use_swanlab:
-            try:
-                import swanlab
-                logger.info(f"SwanLab 版本: {swanlab.__version__}")
-            except ImportError:
-                logger.warning("SwanLab 未安装，尝试安装...")
-                self._install_swanlab()
-    
     def _install_llamafactory(self):
         """安装 LlamaFactory"""
         try:
@@ -189,17 +176,6 @@ class TrainingExecutor:
             logger.info("LlamaFactory 安装成功")
         except subprocess.CalledProcessError as e:
             logger.error(f"安装 LlamaFactory 失败: {str(e)}")
-            raise
-    
-    def _install_swanlab(self):
-        """安装 SwanLab"""
-        try:
-            subprocess.check_call([
-                sys.executable, "-m", "pip", "install", "swanlab"
-            ])
-            logger.info("SwanLab 安装成功")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"安装 SwanLab 失败: {str(e)}")
             raise
     
     def _build_training_command(self, config_path: str, log_file: str) -> List[str]:
@@ -222,7 +198,8 @@ class TrainingExecutor:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     universal_newlines=True,
-                    bufsize=1
+                    bufsize=1,
+                    env=strip_retired_tracking_environment(os.environ),
                 )
                 
                 # 实时写入日志
@@ -266,18 +243,6 @@ class TrainingExecutor:
         
         return progress
     
-    def _get_swanlab_url(self, project_name: str) -> Optional[str]:
-        """获取 SwanLab 项目 URL"""
-        
-        try:
-            # 这里需要根据 SwanLab 的 API 来获取项目 URL
-            # 暂时返回默认格式
-            return f"https://swanlab.cn/project/{project_name}"
-        except Exception as e:
-            logger.warning(f"获取 SwanLab URL 时发生错误: {str(e)}")
-            return None
-
-
 def validate_training_environment() -> Dict[str, Any]:
     """验证训练环境"""
     
@@ -291,7 +256,7 @@ def validate_training_environment() -> Dict[str, Any]:
     
     # 检查必要的包
     required_packages = ["torch", "transformers", "datasets"]
-    optional_packages = ["llamafactory", "swanlab"]
+    optional_packages = ["llamafactory"]
     
     for package in required_packages + optional_packages:
         try:
@@ -339,10 +304,6 @@ def generate_training_report(result: Dict[str, Any]) -> str:
     # 日志文件
     if result.get("log_file"):
         report.append(f"日志文件: {result['log_file']}")
-    
-    # SwanLab 链接
-    if result.get("swanlab_url"):
-        report.append(f"SwanLab 监控: {result['swanlab_url']}")
     
     # 错误信息
     if result.get("error_message"):

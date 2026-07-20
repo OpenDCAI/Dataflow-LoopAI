@@ -36,6 +36,6 @@
   "ddp_timeout": 180000000,
   "include_num_input_tokens_seen": true,
   "plot_loss": true,
-  "report_to": ["swanlab"],
+  "report_to": "none",
   "run_name": "llamafactory_training"
 }

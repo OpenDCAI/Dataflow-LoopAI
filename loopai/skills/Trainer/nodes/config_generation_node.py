@@ -8,6 +8,11 @@ import yaml
 from pathlib import Path
 from loopai.schema.states import LoopAIState
 from loopai.skills.Trainer.utils.config_generator import ConfigGenerator, generate_config_explanation
+from loopai.skills.Trainer.utils.verl_config_generator import (
+    generate_verl_config_explanation,
+    generate_verl_grpo_config,
+    save_verl_grpo_config,
+)
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -25,8 +30,6 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
             - train_input_dataset_path: 训练数据集路径
             - train_input_model_name: 基础模型名称（可选，默认 qwen2.5-7b-instruct）
             - train_input_config_template_path: 配置模板路径（可选）
-            - train_input_use_swanlab: 是否使用 SwanLab（可选，默认 True）
-            - train_input_swanlab_project: SwanLab 项目名称（可选）
             - output_dir: 输出目录
     
     Returns:
@@ -58,8 +61,6 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
         training_output_dir = os.path.abspath(
             state.get('trainer', {}).get('output_dir') or './output/training'
         )
-        use_swanlab = state.get('trainer', {}).get('train_input_use_swanlab', True)
-        swanlab_project = state.get('trainer', {}).get('train_input_swanlab_project', 'llamafactory_training')
         
         framework = state.get('trainer', {}).get('train_framework')
 
@@ -75,8 +76,6 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
                 model_name=model_name,
                 output_dir=training_output_dir,
                 template_path=template_path,
-                use_swanlab=use_swanlab,
-                swanlab_project=swanlab_project
             )
             config["output_dir"] = os.path.abspath(str(config.get("output_dir") or training_output_dir))
 
@@ -141,17 +140,37 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
                 logger.info(f"  LoRA Rank: {config.get('lora_r')}")
                 logger.info(f"  LoRA Alpha: {config.get('lora_alpha')}")
             
-            if use_swanlab:
-                logger.info(f"  SwanLab 项目: {swanlab_project}")
         elif framework == 'verl':
-            # logger.info("配置生成跳过: Verl 框架当前不支持自动配置生成，请手动提供配置文件")
-            state.setdefault('trainer', {})['trainer_config_generation_success'] = True
-            # 直接使用模板配置
+            stage = state.get('trainer', {}).get('train_stage')
+            if stage != 'grpo':
+                raise ValueError(f"Verl 当前只支持 GRPO，收到 train_stage={stage}")
+
             template_path = state.get('trainer', {}).get('train_input_config_template_path')
             if not template_path or not os.path.exists(template_path):
-                raise ValueError("Verl 框架需要提供有效的配置模板路径 (train_input_config_template_path)")
-            state.setdefault('trainer', {})['train_output_config_path'] = template_path
-            logger.info("✅ Verl 框架配置生成跳过，已使用提供的配置模板")
+                raise ValueError("Verl GRPO 需要有效的 YAML 模板路径 (train_input_config_template_path)")
+
+            output_dir = os.path.abspath(
+                state.get('trainer', {}).get('trainer_output_dir')
+                or state.get('trainer', {}).get('output_dir')
+                or './output/trainer'
+            )
+            os.makedirs(output_dir, exist_ok=True)
+            config_output_path = state.get('trainer', {}).get('train_output_config_path')
+            if not config_output_path or Path(str(config_output_path)).suffix.lower() not in {'.yaml', '.yml'}:
+                config_output_path = os.path.join(output_dir, 'training_config.yaml')
+
+            config = generate_verl_grpo_config(state, template_path)
+            config_output_path = save_verl_grpo_config(config, config_output_path)
+            explanation_path = os.path.join(output_dir, 'config_explanation.txt')
+            with open(explanation_path, 'w', encoding='utf-8') as f:
+                f.write(generate_verl_config_explanation(config))
+
+            trainer_state = state.setdefault('trainer', {})
+            trainer_state['train_config'] = config
+            trainer_state['train_output_config_path'] = config_output_path
+            trainer_state['trainer_config_explanation_path'] = explanation_path
+            trainer_state['trainer_config_generation_success'] = True
+            logger.info(f"✅ Verl GRPO YAML 已生成: {config_output_path}")
         else:
             raise ValueError(f"未知的训练框架: {framework}")
         

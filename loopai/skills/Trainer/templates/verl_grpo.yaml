@@ -1,0 +1,66 @@
+# LoopAI Verl GRPO launch specification.
+# Trainer generates a task-scoped copy and asks for user approval before execution.
+
+framework: verl
+stage: grpo
+entrypoint: verl.trainer.main_ppo
+
+environment:
+  verl_dir: ""
+  verl_env_path: ""
+  cuda_visible_devices: "0"
+  metrics_jsonl: ""
+
+# Flat Hydra overrides passed to the selected Verl entrypoint.
+overrides:
+  algorithm.adv_estimator: grpo
+  algorithm.use_kl_in_reward: false
+  data.train_files: []
+  data.val_files: []
+  data.train_batch_size: 128
+  data.max_prompt_length: 2048
+  data.max_response_length: 2048
+  data.filter_overlong_prompts: true
+  data.truncation: error
+  actor_rollout_ref.model.path: ""
+  actor_rollout_ref.model.use_remove_padding: true
+  actor_rollout_ref.model.enable_gradient_checkpointing: true
+  actor_rollout_ref.actor.optim.lr: 1.0e-6
+  actor_rollout_ref.actor.ppo_mini_batch_size: 64
+  actor_rollout_ref.actor.use_dynamic_bsz: true
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu: 24576
+  actor_rollout_ref.actor.use_kl_loss: true
+  actor_rollout_ref.actor.kl_loss_coef: 0.001
+  actor_rollout_ref.actor.kl_loss_type: low_var_kl
+  actor_rollout_ref.actor.checkpoint.save_contents:
+    - model
+    - optimizer
+    - extra
+  actor_rollout_ref.rollout.name: vllm
+  actor_rollout_ref.rollout.n: 4
+  actor_rollout_ref.rollout.tensor_model_parallel_size: 1
+  actor_rollout_ref.rollout.gpu_memory_utilization: 0.6
+  actor_rollout_ref.rollout.log_prob_use_dynamic_bsz: true
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu: 24576
+  actor_rollout_ref.ref.log_prob_use_dynamic_bsz: true
+  actor_rollout_ref.ref.log_prob_max_token_len_per_gpu: 24576
+  actor_rollout_ref.ref.fsdp_config.param_offload: true
+  trainer.project_name: loopai-grpo
+  trainer.experiment_name: loopai-grpo
+  trainer.default_local_dir: ""
+  trainer.n_gpus_per_node: 8
+  trainer.nnodes: 1
+  trainer.save_freq: 2
+  trainer.test_freq: 2
+  trainer.total_epochs: 1
+  trainer.max_actor_ckpt_to_keep: 10
+  trainer.logger:
+    - console
+    - file
+  reward.custom_reward_function.path: null
+  reward.custom_reward_function.name: compute_score
+
+result:
+  selection_metric: val-core/*/acc/mean@*
+  selection_mode: max
+  export_huggingface: true

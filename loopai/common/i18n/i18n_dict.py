@@ -1202,10 +1202,6 @@ i18n_dict = {
         "en": "CUDA Visible Devices",
         "zh": "CUDA 可见设备"
     },
-    "SwanLab API Key": {
-        "en": "SwanLab API Key",
-        "zh": "SwanLab API Key"
-    },
     "训练数据集路径": {
         "en": "Training Dataset Path",
         "zh": "训练数据集路径"

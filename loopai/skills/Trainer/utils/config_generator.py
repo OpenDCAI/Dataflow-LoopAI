@@ -11,6 +11,7 @@ from typing import Dict, List, Any, Optional
 from langchain_openai import ChatOpenAI
 from loopai.logger import get_logger
 from loopai.common.prompts import PromptLoader
+from loopai.common.tracking import force_local_training_metrics
 
 logger = get_logger()
 
@@ -69,8 +70,6 @@ class ConfigGenerator:
         model_name: str = "qwen2.5-7b",
         output_dir: str = "./output",
         template_path: Optional[str] = None,
-        use_swanlab: bool = True,
-        swanlab_project: str = "llamafactory_training"
     ) -> Dict[str, Any]:
         """
         根据任务描述生成训练配置
@@ -81,8 +80,6 @@ class ConfigGenerator:
             model_name: 基础模型名称
             output_dir: 输出目录
             template_path: 配置模板路径（可选）
-            use_swanlab: 是否使用 SwanLab 监控
-            swanlab_project: SwanLab 项目名称
         
         Returns:
             生成的配置字典
@@ -100,8 +97,6 @@ class ConfigGenerator:
             dataset_path=dataset_path,
             model_name=model_name,
             output_dir=output_dir,
-            use_swanlab=use_swanlab,
-            swanlab_project=swanlab_project
         )
         
         return config
@@ -251,8 +246,6 @@ class ConfigGenerator:
         dataset_path: str,
         model_name: str,
         output_dir: str,
-        use_swanlab: bool,
-        swanlab_project: str
     ) -> Dict[str, Any]:
         """根据任务描述定制配置"""
         config = template.copy()
@@ -274,10 +267,13 @@ class ConfigGenerator:
             logger.info("大模型不可用，使用规则式生成配置参数")
             # 使用原有的规则式方法
             config = self._customize_config_with_rules(
-                config, task_description, use_swanlab, swanlab_project
+                config, task_description
             )
-        
-        return config
+
+        # Metrics are parsed from local files.  Apply this after every config
+        # generation path so a template or LLM response cannot re-enable an
+        # external experiment tracker.
+        return force_local_training_metrics(config)
     
     def _generate_config_with_llm(
         self,
@@ -513,8 +509,6 @@ class ConfigGenerator:
         self,
         config: Dict[str, Any],
         task_description: str,
-        use_swanlab: bool,
-        swanlab_project: str
     ) -> Dict[str, Any]:
         """使用规则式方法定制配置（备用方法）"""
         
@@ -541,12 +535,6 @@ class ConfigGenerator:
                 config["lora_r"] = 8
                 config["lora_alpha"] = 16
                 config["lora_target"] = "q_proj,v_proj"
-          # SwanLab 监控设置 (YAML格式)
-        if use_swanlab:
-            config["report_to"] = "swanlab"
-        else:
-            config["report_to"] = "none"
-        
         return config
     def _get_dataset_name(self, dataset_path: str) -> str:
         """从数据集路径获取数据集名称"""
@@ -584,13 +572,6 @@ def generate_config_explanation(config: Dict[str, Any], task_description: str) -
         explanation.append(f"  LoRA Rank: {config.get('lora_r', 'N/A')}")
         explanation.append(f"  LoRA Alpha: {config.get('lora_alpha', 'N/A')}")
         explanation.append(f"  LoRA Target: {config.get('lora_target', 'N/A')}")
-        explanation.append("")
-    
-    report_to = config.get('report_to', 'none')
-    if report_to == 'swanlab' or (isinstance(report_to, list) and 'swanlab' in report_to):
-        explanation.append("SwanLab 监控:")
-        explanation.append("  已启用SwanLab监控")
-        explanation.append(f"  日志步数: {config.get('logging_steps', 'N/A')}")
         explanation.append("")
     
     explanation.append("配置调整说明:")

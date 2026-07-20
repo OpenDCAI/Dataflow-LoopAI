@@ -25,9 +25,7 @@ save_total_limit: 10
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
-report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
-use_swanlab: true
-swanlab_mode: local
+report_to: none
 
 ### train
 per_device_train_batch_size: 1
