@@ -8,10 +8,13 @@ const appConfig = useAppConfig()
 const loopAI = useLoopAI()
 
 const hint = computed(() => {
-  if (appConfig.page === 'tasks') {
-    return '/now  /new <name>  /rename <name>  /delete  /refresh'
+  if (appConfig.page === 'home') {
+    return '/tasks  /now  /quit'
   }
-  return '/tasks  /refresh  h/l or ←/→ nodes  j/k logs  type query and Enter'
+  if (appConfig.page === 'tasks') {
+    return '/now  /new <name>  /rename <name>  /delete  /refresh  /quit'
+  }
+  return '/tasks  /refresh  /quit  h/l or ←/→ nodes  j/k logs  type query and Enter'
 })
 const footerStatus = computed(() => (loopAI.loading ? '[loading]' : `[${loopAI.toast}]`))
 </script>

@@ -52,7 +52,12 @@ export function useAppShell() {
         return
       }
       if (key.return) {
-        if (page.value === 'tasks' && inputBuffer.value.trim() === '') {
+        const command = inputBuffer.value.trim()
+        if (command === '/quit') {
+          app.exit()
+          return
+        }
+        if (page.value === 'tasks' && command === '') {
           await loopAI.activateSelectedTask()
           return
         }

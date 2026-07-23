@@ -7,8 +7,14 @@ import { useLoopAI } from '../../stores/loopAI.js'
 const appConfig = useAppConfig()
 const loopAI = useLoopAI()
 
-const title = computed(() => (appConfig.page === 'tasks' ? '/tasks' : '/now'))
+const title = computed(() => {
+  if (appConfig.page === 'home') return '/home'
+  return appConfig.page === 'tasks' ? '/tasks' : '/now'
+})
 const subtitle = computed(() => {
+  if (appConfig.page === 'home') {
+    return `LoopAI TUI  ${appConfig.local('Tasks')}=${loopAI.tasks.length}`
+  }
   if (appConfig.page === 'tasks') {
     return `${appConfig.local('Tasks')}=${loopAI.tasks.length}`
   }

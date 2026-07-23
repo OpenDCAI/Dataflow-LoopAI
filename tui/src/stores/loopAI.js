@@ -168,6 +168,11 @@ export const useLoopAI = defineStore('loopAI', () => {
     const [command, ...args] = raw.split(' ')
     const rest = args.join(' ').trim()
 
+    if (command === '/home') {
+      appConfig.setPage('home')
+      toast.value = local('Synced')
+      return true
+    }
     if (command === '/tasks') {
       appConfig.setPage('tasks')
       toast.value = local('Synced')
@@ -197,6 +202,9 @@ export const useLoopAI = defineStore('loopAI', () => {
     if (command === '/delete') {
       await deleteCurrentTask()
       return true
+    }
+    if (command === '/quit') {
+      return 'quit'
     }
     throw new Error(`${local('Unknown')}: ${command}`)
   }
