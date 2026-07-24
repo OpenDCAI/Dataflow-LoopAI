@@ -4,6 +4,7 @@ from tortoise.expressions import Q
 from ...models.db_models import StarterConfig
 from omegaconf import OmegaConf
 from loopai.schema.states import get_state_config_schema
+from loopai.schema.system_runtime import migrate_legacy_credentials
 
 async def check_config_from_db(base_dir):
     # 判断sqliter中是否有config记录，如果一条也没有，读取./examples/starter.yaml转化为json然后存到数据库
@@ -13,6 +14,14 @@ async def check_config_from_db(base_dir):
         config_obj = OmegaConf.to_container(cfg, resolve=True)
         await StarterConfig.create(name='starter', config=json.dumps(config_obj))
         config = await StarterConfig.filter(Q(name='starter')).first()
+    if config and config.config:
+        config_obj = json.loads(config.config)
+        original = json.dumps(config_obj, sort_keys=True, ensure_ascii=False)
+        migrate_legacy_credentials(config_obj)
+        migrated = json.dumps(config_obj, sort_keys=True, ensure_ascii=False)
+        if migrated != original:
+            config.config = json.dumps(config_obj, ensure_ascii=False)
+            await config.save()
     return config
 
 def wrap_attr(val):

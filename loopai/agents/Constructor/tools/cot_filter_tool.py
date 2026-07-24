@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from loopai.agents.Constructor.tools.data_filter_tools import BaseCleanResult
 from loopai.logger import get_logger
+from loopai.agents.Constructor.runtime_config import resolve_constructor_api_key
 from loopai.schema.states import LoopAIState
 
 logger = get_logger()
@@ -495,7 +496,7 @@ def norma_filter_and_add_cot(data_path: str, state: LoopAIState) -> BaseCleanRes
     constructor_cfg: Dict[str, Any] = state.get("constructor") or {}
     model_name = (constructor_cfg.get("model_path") or state.get("analyze_model_path") or "").strip()
     base_url = (constructor_cfg.get("base_url") or state.get("analyze_base_url") or "").strip()
-    api_key = (constructor_cfg.get("api_key") or state.get("analyze_api_key") or "").strip()
+    api_key = (resolve_constructor_api_key(state) or state.get("analyze_api_key") or "").strip()
 
     if not (model_name and base_url and api_key):
         logger.warning("[norma_filter_and_add_cot] missing LLM config, skipping")

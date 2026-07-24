@@ -72,12 +72,6 @@ class ObtainerState(BaseModel):
         description="模型 API 的 Base URL",
         json_schema_extra={"ui_type": "text", "ui_group": "Agent配置"}
     )
-    api_key: Optional[str] = Field(
-        default=None,
-        title="API Key",
-        description="模型 API Key",
-        json_schema_extra={"ui_type": "password", "ui_group": "Agent配置"}
-    )
     temperature: float = Field(
         default=0.7,
         title="采样温度",
@@ -97,12 +91,6 @@ class ObtainerState(BaseModel):
             "options": ["tavily", "google", "bing", "duckduckgo"],
             "ui_group": "搜索设置"
         }
-    )
-    tavily_api_key: str = Field(
-        default="",
-        title="Tavily Key",
-        description="Tavily 搜索引擎的 API Key",
-        json_schema_extra={"ui_type": "password", "ui_group": "搜索设置"}
     )
     max_urls: int = Field(
         default=10,
@@ -265,26 +253,6 @@ class ObtainerState(BaseModel):
         description="RAG 服务 Base URL",
         json_schema_extra={"ui_type": "text", "ui_group": "RAG配置"}
     )
-    rag_api_key: str = Field(
-        default="",
-        title="RAG API Key",
-        description="RAG 服务 API Key",
-        json_schema_extra={"ui_type": "password", "ui_group": "RAG配置"}
-    )
-
-    # --- External Auth (外部认证) ---
-    kaggle_username: str = Field(
-        default="",
-        title="Kaggle 用户名",
-        description="Kaggle 用户名",
-        json_schema_extra={"ui_type": "text", "ui_group": "外部认证"}
-    )
-    kaggle_key: str = Field(
-        default="",
-        title="Kaggle Key",
-        description="Kaggle API Key",
-        json_schema_extra={"ui_type": "password", "ui_group": "外部认证"}
-    )
 
     # --- Mapping Subgraph (映射子图参数) ---
     default_mapping_format: str = Field(
@@ -437,12 +405,6 @@ class ConstructorState(BaseModel):
         title="API Base URL",
         description="Constructor 模型 API Base URL",
         json_schema_extra={"ui_type": "text", "ui_group": "Agent配置"}
-    )
-    api_key: Optional[str] = Field(
-        default=None,
-        title="API Key",
-        description="Constructor 模型 API Key",
-        json_schema_extra={"ui_type": "password", "ui_group": "Agent配置"}
     )
     temperature: float = Field(
         default=0.7,
@@ -735,19 +697,8 @@ class WebCrawlerState(BaseModel):
     WebCrawler 模块的专用状态管理类
     用于网页爬取、内容提取和数据集生成
     """
-    # === API 配置 (API密钥) ===
-    deepseek_api_key: str = Field(
-        default="",
-        title="DeepSeek API Key",
-        description="DeepSeek API 密钥，用于 LLM 调用",
-        json_schema_extra={"ui_type": "password", "ui_group": "API配置"}
-    )
-    tavily_api_key: str = Field(
-        default="",
-        title="Tavily API Key",
-        description="Tavily API 密钥，用于网页搜索",
-        json_schema_extra={"ui_type": "password", "ui_group": "API配置"}
-    )
+    # API credentials are resolved at runtime from system.model and
+    # system.integrations. They intentionally stay out of public task state.
     deepseek_api_base: str = Field(
         default="https://api.deepseek.com/v1",
         title="DeepSeek API Base URL",

@@ -233,8 +233,6 @@ def webcrawler_dataset_node(state: LoopAIState) -> LoopAIState:
                 ctor["model_path"] = model_name
             if not ctor.get("base_url") and base_url:
                 ctor["base_url"] = base_url
-            if not ctor.get("api_key") and api_key:
-                ctor["api_key"] = api_key
             logger.info(
                 f"WebCrawler Dataset: constructor state prepared for downstream pipeline "
                 f"(intermediate_data_path={dataset_dir}, category={ctor.get('category')})"

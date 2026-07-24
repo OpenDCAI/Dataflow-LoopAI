@@ -160,6 +160,9 @@ agent = WebCrawlerAgent(
 # 创建图
 graph = agent()
 
+# 模型凭据配置在 system.model，Tavily 凭据配置在 system.integrations，
+# 不再写入任务 State。
+
 # 准备初始 State
 initial_state = {
     'task_id': 'webcrawler_001',
@@ -170,10 +173,7 @@ initial_state = {
     'automated_query': '',
     'messages': [HumanMessage(content="搜索 Python 异步编程最佳实践")],
     
-    # API 配置（必需）
     'webcrawler': {
-        'deepseek_api_key': 'your-deepseek-api-key',
-        'tavily_api_key': 'your-tavily-api-key',
         'deepseek_api_base': 'https://api.deepseek.com/v1',
         'model': 'deepseek-chat',
     }
@@ -209,9 +209,6 @@ initial_state = {
     'messages': [HumanMessage(content="搜索机器学习模型训练最佳实践")],
 
     'webcrawler': {
-        # API 配置
-        'deepseek_api_key': 'your-deepseek-api-key',
-        'tavily_api_key': 'your-tavily-api-key',
         'deepseek_api_base': 'https://api.deepseek.com/v1',
         'model': 'deepseek-chat',
         'temperature': 0.7,
@@ -263,8 +260,6 @@ initial_state = {
 |-------|------|-----|--------|-----|
 | `messages` | List[Message] | ✅ | - | 用户任务描述的消息列表 |
 | `automated_query` | str | ❌ | - | 由大模型自动化生成的查询字符串 |
-| `webcrawler.deepseek_api_key` | str | ✅ | - | DeepSeek API 密钥 |
-| `webcrawler.tavily_api_key` | str | ✅ | - | Tavily API 密钥 |
 | `webcrawler.deepseek_api_base` | str | ❌ | `https://api.deepseek.com/v1` | DeepSeek API 基础 URL |
 | `webcrawler.model` | str | ❌ | `deepseek-chat` | 使用的模型名称 |
 | `webcrawler.temperature` | float | ❌ | 0.7 | LLM 温度参数 |
@@ -291,10 +286,9 @@ initial_state = {
 | `output_dir` | str | ❌ | `./output` | 输出目录路径 |
 | `prompt_template_dir` | str | ❌ | None | Prompt 模板目录路径 |
 
-**注意：** 如果未设置 `webcrawler` 相关配置，系统会尝试从 `analyzer` 配置中获取：
-- `webcrawler.model` ← `analyzer.analyze_model_path`
-- `webcrawler.deepseek_api_base` ← `analyzer.analyze_base_url`
-- `webcrawler.deepseek_api_key` ← `analyzer.analyze_api_key`
+**注意：** 模型、Base URL 和模型 API Key 由 `system.model` 模型池解析；Tavily Key
+由 `system.integrations.tavily.api_key` 解析。旧任务 State 中的凭据仅用于迁移兼容，
+不会再出现在公开 State Schema 中。
 
 ### 输出字段
 

@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from playwright.async_api import Page
 
 from loopai.logger import get_logger
+from loopai.schema.system_runtime import load_runtime_system_config, resolve_integration_value
 
 logger = get_logger()
 
@@ -20,38 +21,21 @@ class KaggleManager:
     @staticmethod
     def _load_credentials_from_config() -> tuple:
         """Try to load Kaggle credentials from config file"""
-        username = ""
-        key = ""
-        
-        # Try common config file paths
-        config_paths = [
-            os.path.join(os.getcwd(), "examples", "config", "starter.yaml"),
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "examples", "config", "starter.yaml"),
-            os.path.expanduser("~/.config/loopai/starter.yaml"),
-        ]
-        
-        for config_path in config_paths:
-            if os.path.exists(config_path):
-                try:
-                    from omegaconf import OmegaConf
-                    cfg = OmegaConf.load(config_path)
-                    
-                    # Try to get from starter.kaggle_username and starter.kaggle_key
-                    if hasattr(cfg, 'starter'):
-                        starter_cfg = cfg.starter
-                        if hasattr(starter_cfg, 'kaggle_username'):
-                            username = getattr(starter_cfg, 'kaggle_username', '') or ''
-                        if hasattr(starter_cfg, 'kaggle_key'):
-                            key = getattr(starter_cfg, 'kaggle_key', '') or ''
-                        
-                        if username and key:
-                            logger.info(f"[Kaggle] Loaded credentials from config file: {config_path}")
-                            break
-                except Exception as e:
-                    logger.debug(f"[Kaggle] Failed to load config from {config_path}: {e}")
-                    continue
-        
-        return username, key
+        system = load_runtime_system_config()
+        return (
+            resolve_integration_value(
+                system,
+                "kaggle",
+                "username",
+                legacy_system_keys=("kaggle_username",),
+            ),
+            resolve_integration_value(
+                system,
+                "kaggle",
+                "key",
+                legacy_system_keys=("kaggle_key",),
+            ),
+        )
 
     def __init__(
         self,
