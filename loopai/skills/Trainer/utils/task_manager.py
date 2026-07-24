@@ -12,17 +12,23 @@ import os
 import signal
 import subprocess
 import shutil
-from datetime import datetime
-from typing import Dict, Optional, List
+from pathlib import Path
+from typing import Dict, Optional
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import json
 import yaml
 
 from loopai.logger import get_logger
+from loopai.common.tracking import (
+    assert_no_retired_tracking,
+    contains_retired_tracking_reference,
+    strip_retired_tracking_environment,
+)
 from .task_status import TaskStatus
 from .task_tools import ensure_directory_exists, get_current_timestamp
 from .realtime_log_parser import RealTimeLogParser
+from .verl_launcher import build_verl_launch
 
 logger = get_logger()
 
@@ -60,7 +66,6 @@ class TaskManager:
                 - verl_dir: verl 安装目录
                 - llamafactory_env_path: LlamaFactory 虚拟环境路径
                 - CUDA_VISIBLE_DEVICES: GPU 设备号
-                - swanlab_api_key: SwanLab API 密钥
         """
         self.configs_dir = configs_dir
         self.logs_dir = logs_dir
@@ -133,7 +138,7 @@ class TaskManager:
 
     def _get_safe_env(self) -> dict:
         """获取安全的环境变量配置"""
-        env = os.environ.copy()
+        env = strip_retired_tracking_environment(os.environ)
 
         # 从配置中获取
         env["CUDA_VISIBLE_DEVICES"] = self.app_config.get("CUDA_VISIBLE_DEVICES", "0,1")
@@ -145,13 +150,6 @@ class TaskManager:
             env["LLAMAFACTORY_ENV_PATH"] = llamafactory_env_path
         else:
             logger.warning("未找到LLAMAFACTORY_ENV_PATH配置，将使用系统默认的llamafactory-cli")
-
-        # 检查必需的API密钥
-        swanlab_key = self.app_config.get("swanlab_api_key", "")
-        if swanlab_key:
-            env["SWANLAB_API_KEY"] = swanlab_key
-        else:
-            logger.warning("未找到SWANLAB_API_KEY配置，某些功能可能无法正常工作")
 
         return env
 
@@ -198,6 +196,12 @@ class TaskManager:
 
     def _run_llamafactory_training(self, task_info: dict, config_path: str, log_path: str, log_parser: RealTimeLogParser) -> None:
         """执行 LlamaFactory 训练"""
+        with open(config_path, "r", encoding="utf-8") as config_file:
+            config = yaml.safe_load(config_file) or {}
+        if not isinstance(config, dict):
+            raise ValueError(f"LLaMA-Factory config must be a mapping: {config_path}")
+        assert_no_retired_tracking(config)
+
         env = self._get_safe_env()
         config_env_path = self.app_config.get("llamafactory_env_path", "")
         env_path = env.get("LLAMAFACTORY_ENV_PATH") or config_env_path
@@ -295,20 +299,29 @@ class TaskManager:
 
     def _run_verl_training(self, task_info: dict, config_path: str, log_path: str, log_parser: RealTimeLogParser) -> None:
         """执行 verl 训练"""
-        env = self._get_safe_env()
-
-        # verl 环境配置 - 可通过 app_config 传入
-        verl_env_path = self.app_config.get("verl_env_path", "")
-        if verl_env_path:
-            env["PYTHONPATH"] = os.path.join(verl_env_path, "lib/python3.10/site-packages")
-            env["PATH"] = f"{os.path.join(verl_env_path, 'bin')}:{env.get('PATH', '')}"
-        env["PYTHONNOUSERSITE"] = "True"
-
-        cmd = ["bash", config_path]
-        logger.info(f"训练命令: {' '.join(cmd)}")
-
-        # 启动实时日志解析
-        log_parser.start_monitoring()
+        suffix = os.path.splitext(config_path)[1].lower()
+        if suffix in {".yaml", ".yml"}:
+            cmd, cwd, env = build_verl_launch(config_path, self.app_config)
+            logger.info(
+                f"Verl GRPO 命令已由审批 YAML 安全生成: {' '.join(cmd[:3])} "
+                f"({len(cmd) - 3} 个 Hydra overrides)"
+            )
+        elif suffix == ".sh":
+            # Compatibility for historical tasks. New Trainer-generated configs
+            # always use the shell-free YAML path above.
+            script_text = Path(config_path).read_text(encoding="utf-8", errors="ignore")
+            if contains_retired_tracking_reference(script_text):
+                raise ValueError(
+                    "legacy Verl shell config references the retired experiment tracker; "
+                    "prepare a new YAML config before training"
+                )
+            env = self._get_safe_env()
+            env["PYTHONNOUSERSITE"] = "True"
+            cmd = ["bash", config_path]
+            cwd = self.verl_dir
+            logger.warning("正在执行旧版 Verl shell 配置；新任务应使用审批后的 YAML")
+        else:
+            raise ValueError(f"Unsupported Verl config format: {config_path}")
 
         with open(log_path, 'w', encoding='utf-8') as log_file:
             process = subprocess.Popen(
@@ -316,7 +329,7 @@ class TaskManager:
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
-                cwd=self.verl_dir,
+                cwd=cwd,
                 env=env,
                 start_new_session=(os.name == "posix"),
             )
@@ -328,6 +341,11 @@ class TaskManager:
             if task_info.get('cancel_requested'):
                 self._terminate_task_process(task_info)
                 return
+
+            try:
+                log_parser.start_monitoring()
+            except Exception as exc:
+                logger.error(f"启动 Verl 日志监控失败: {exc}")
 
             return_code = process.wait()
 
@@ -418,68 +436,6 @@ class TaskManager:
 
             for task_id, _ in tasks_to_remove:
                 del self.tasks[task_id]
-
-    def get_train_output_swanlab_log_path(self, task_id: str) -> Optional[str]:
-        """获取指定任务的SwanLab日志文件夹路径"""
-        if task_id not in self.tasks:
-            return None
-
-        task_info = self.tasks[task_id]
-        swanlog_dir = os.path.join(self.llamafactory_dir, "swanlog")
-
-        if not os.path.exists(swanlog_dir):
-            return None
-
-        started_at = task_info.get('started_at')
-        if not started_at:
-            return None
-
-        try:
-            task_start_time = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
-
-            log_folders = []
-            for item in os.listdir(swanlog_dir):
-                item_path = os.path.join(swanlog_dir, item)
-                if os.path.isdir(item_path) and item.startswith('run-'):
-                    folder_create_time = datetime.fromtimestamp(os.path.getctime(item_path))
-
-                    if folder_create_time >= task_start_time:
-                        log_folders.append((item_path, folder_create_time))
-
-            if log_folders:
-                log_folders.sort(key=lambda x: x[1])
-                return log_folders[-1][0]
-
-        except Exception as e:
-            logger.error(f"Error finding SwanLab log folder for task {task_id}: {e}")
-
-        return None
-
-    def get_all_swanlab_logs(self) -> List[Dict[str, str]]:
-        """获取所有SwanLab日志文件夹"""
-        swanlog_dir = os.path.join(self.llamafactory_dir, "swanlog")
-
-        if not os.path.exists(swanlog_dir):
-            return []
-
-        log_folders = []
-        try:
-            for item in os.listdir(swanlog_dir):
-                item_path = os.path.join(swanlog_dir, item)
-                if os.path.isdir(item_path) and item.startswith('run-'):
-                    folder_create_time = datetime.fromtimestamp(os.path.getctime(item_path))
-                    log_folders.append({
-                        'folder_name': item,
-                        'folder_path': item_path,
-                        'created_at': folder_create_time.isoformat()
-                    })
-
-            log_folders.sort(key=lambda x: x['created_at'], reverse=True)
-
-        except Exception as e:
-            logger.error(f"Error listing SwanLab log folders: {e}")
-
-        return log_folders
 
     def get_task_metrics(self, task_id: str, count: int = 100) -> Optional[Dict]:
         """获取任务的训练指标数据"""

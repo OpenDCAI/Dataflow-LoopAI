@@ -6,19 +6,29 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from loopai.common.tracking import is_retired_tracking_key, strip_retired_tracking_fields
+from loopai.skills.Trainer.rewards import normalize_reward_preset
+
 
 _DEFAULT_OUTPUT_DIR = "./outputs"
 _DEFAULT_THREAD_ID = "trainer-default"
 _DEFAULT_TRAIN_FRAMEWORK = "llamafactory"
+_DEFAULT_TRAIN_STAGE = "sft"
 _DEFAULT_CUDA_VISIBLE_DEVICES = "0"
 _DEFAULT_TEMPLATE_PATH = (
     Path(__file__).resolve().parent
     / "templates"
     / "qwen2_5_coder_bird_full_sft.yaml"
 )
+_DEFAULT_VERL_GRPO_TEMPLATE_PATH = (
+    Path(__file__).resolve().parent
+    / "templates"
+    / "verl_grpo.yaml"
+)
 
 _REQUIRED_TRAINER_FIELDS = (
     "train_framework",
+    "train_stage",
     "train_input_dataset_path",
     "train_input_task_description",
     "train_input_config_template_path",
@@ -30,7 +40,13 @@ _TRAINER_FIELD_HINTS: Dict[str, Dict[str, Any]] = {
         "required": True,
         "source": "auto",
         "default": _DEFAULT_TRAIN_FRAMEWORK,
-        "description": "Training backend. Use llamafactory for SFT by default.",
+        "description": "Training backend: llamafactory for SFT or verl for GRPO.",
+    },
+    "train_stage": {
+        "required": True,
+        "source": "auto",
+        "default": _DEFAULT_TRAIN_STAGE,
+        "description": "Training stage. Supported values are sft and grpo.",
     },
     "train_input_dataset_path": {
         "required": True,
@@ -54,10 +70,10 @@ _TRAINER_FIELD_HINTS: Dict[str, Dict[str, Any]] = {
         "required": True,
         "source": "auto",
         "default": str(_DEFAULT_TEMPLATE_PATH),
-        "description": "LLaMA-Factory YAML template. The default SFT template is used when omitted.",
+        "description": "Backend-specific YAML template; Trainer selects the SFT or GRPO default when omitted.",
     },
     "llamafactory_dir": {
-        "required": True,
+        "required": False,
         "source": "user_or_system",
         "description": "Local LLaMA-Factory repository directory.",
         "example": "/path/to/LLaMA-Factory/",
@@ -68,17 +84,66 @@ _TRAINER_FIELD_HINTS: Dict[str, Dict[str, Any]] = {
         "description": "Python environment bin directory for LLaMA-Factory.",
         "example": "/path/to/miniconda3/envs/llamafactory/bin/",
     },
+    "verl_dir": {
+        "required": False,
+        "source": "user_or_system",
+        "description": "Local verl repository directory, required for GRPO.",
+        "example": "/path/to/verl/",
+    },
+    "verl_env_path": {
+        "required": False,
+        "source": "user_or_system",
+        "default": "verl",
+        "description": "Conda environment name or Python environment path used by verl.",
+        "example": "verl",
+    },
+    "train_input_eval_dataset_path": {
+        "required": False,
+        "source": "user",
+        "description": "Validation parquet required by the initial verl GRPO adapter.",
+        "example": "/path/to/validation.parquet",
+    },
+    "verl_reward_function_path": {
+        "required": False,
+        "source": "user",
+        "description": "Optional custom reward function Python file for verl GRPO.",
+        "example": "/path/to/reward.py",
+    },
+    "verl_reward_function_name": {
+        "required": False,
+        "source": "auto",
+        "default": "compute_score",
+        "description": "Callable name in verl_reward_function_path.",
+    },
+    "verl_reward_mode": {
+        "required": False,
+        "source": "auto",
+        "default": "auto",
+        "description": "Reward source: auto, preset, or custom.",
+    },
+    "verl_reward_preset": {
+        "required": False,
+        "source": "auto",
+        "default": "auto",
+        "description": "Named LoopAI reward preset used by auto/preset mode.",
+    },
+    "verl_reward_kwargs": {
+        "required": False,
+        "source": "user",
+        "default": {},
+        "description": "Optional keyword arguments passed to the selected reward.",
+    },
     "CUDA_VISIBLE_DEVICES": {
         "required": False,
         "source": "auto",
         "default": _DEFAULT_CUDA_VISIBLE_DEVICES,
         "description": "CUDA devices used by training. Defaults to single GPU 0.",
     },
-    "train_input_use_swanlab": {
+    "trainer_persistent_worker": {
         "required": False,
         "source": "auto",
-        "default": False,
-        "description": "Whether to enable SwanLab logging.",
+        "default": True,
+        "description": "Keep training, progress persistence, and finalization alive after the caller disconnects.",
     },
 }
 
@@ -98,6 +163,30 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, (int, float)):
         return bool(value)
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _as_int(value: Any, default: int) -> int:
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_dict(value: Any, field_name: str) -> Dict[str, Any]:
+    if value is None or value == "":
+        return {}
+    if isinstance(value, dict):
+        return copy.deepcopy(value)
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field_name} must be a JSON object") from exc
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError(f"{field_name} must be a mapping")
 
 
 def _unwrap_config_value(value: Any) -> Any:
@@ -167,25 +256,60 @@ def _system(state: Dict[str, Any]) -> Dict[str, Any]:
     return state["system"]
 
 
-def _existing_default_template_path() -> str:
-    return str(_DEFAULT_TEMPLATE_PATH) if _DEFAULT_TEMPLATE_PATH.exists() else ""
+def _normalize_train_stage(value: Any, framework: str) -> str:
+    raw = str(value or "").strip().lower()
+    aliases = {
+        "rl": "grpo",
+        "reinforcement_learning": "grpo",
+        "reinforcement-learning": "grpo",
+    }
+    raw = aliases.get(raw, raw)
+    if not raw:
+        return "grpo" if framework == "verl" else _DEFAULT_TRAIN_STAGE
+    if raw not in {"sft", "grpo"}:
+        raise ValueError(f"unsupported Trainer stage: {raw}; expected sft or grpo")
+    return raw
+
+
+def _validate_backend_stage(framework: str, stage: str) -> None:
+    expected = {
+        "sft": "llamafactory",
+        "grpo": "verl",
+    }[stage]
+    if framework != expected:
+        raise ValueError(
+            f"unsupported Trainer backend/stage combination: "
+            f"train_framework={framework}, train_stage={stage}; "
+            f"use {expected} for {stage}"
+        )
+
+
+def _existing_default_template_path(framework: str = _DEFAULT_TRAIN_FRAMEWORK, stage: str = _DEFAULT_TRAIN_STAGE) -> str:
+    template_path = _DEFAULT_VERL_GRPO_TEMPLATE_PATH if framework == "verl" and stage == "grpo" else _DEFAULT_TEMPLATE_PATH
+    return str(template_path) if template_path.exists() else ""
 
 
 def build_trainer_prefill_guide(
     state: Optional[Dict[str, Any]] = None,
     *,
-    task_type: str = "sft",
+    task_type: str | None = None,
 ) -> Dict[str, Any]:
     """Build a guide that tells Codex/user how to complete Trainer config."""
     state = copy.deepcopy(state) if isinstance(state, dict) else {"trainer": {}}
+    state = strip_retired_tracking_fields(state)
     trainer = _trainer(state)
+    requested_task = str(task_type or "").strip().lower()
+    inferred_framework = "verl" if requested_task in {"grpo", "rl", "reinforcement_learning"} else _DEFAULT_TRAIN_FRAMEWORK
+    framework = str(trainer.get("train_framework") or inferred_framework).strip().lower()
+    stage = _normalize_train_stage(trainer.get("train_stage") or task_type, framework)
+    _validate_backend_stage(framework, stage)
     defaults = {
-        "train_framework": trainer.get("train_framework") or _DEFAULT_TRAIN_FRAMEWORK,
+        "train_framework": framework,
+        "train_stage": stage,
         "train_input_config_template_path": (
-            trainer.get("train_input_config_template_path") or _existing_default_template_path()
+            trainer.get("train_input_config_template_path") or _existing_default_template_path(framework, stage)
         ),
         "CUDA_VISIBLE_DEVICES": trainer.get("CUDA_VISIBLE_DEVICES") or _DEFAULT_CUDA_VISIBLE_DEVICES,
-        "train_input_use_swanlab": _as_bool(trainer.get("train_input_use_swanlab"), default=False),
     }
     for key, value in defaults.items():
         if value is not None and value != "":
@@ -206,17 +330,27 @@ def build_trainer_prefill_guide(
         "minimal_state": {
             "trainer": {
                 "train_framework": defaults["train_framework"],
-                "train_input_dataset_path": "/path/to/data.json",
+                "train_stage": defaults["train_stage"],
+                "train_input_dataset_path": (
+                    "/path/to/train.parquet" if stage == "grpo" else "/path/to/data.json"
+                ),
                 "train_input_model_name": "/path/to/base-model",
-                "train_input_task_description": "SFT a chat assistant for the target task.",
+                "train_input_task_description": (
+                    "Optimize the target task with GRPO." if stage == "grpo"
+                    else "SFT a chat assistant for the target task."
+                ),
                 "train_input_config_template_path": defaults["train_input_config_template_path"],
-                "llamafactory_dir": "/path/to/LLaMA-Factory/",
                 "CUDA_VISIBLE_DEVICES": defaults["CUDA_VISIBLE_DEVICES"],
+                **(
+                    {"verl_dir": "/path/to/verl/"}
+                    if stage == "grpo"
+                    else {"llamafactory_dir": "/path/to/LLaMA-Factory/"}
+                ),
             }
         }
     }
     return {
-        "task_type": task_type,
+        "task_type": stage,
         "ready": not missing_fields,
         "missing_fields": missing_fields,
         "user_required_fields": user_required_fields,
@@ -245,6 +379,11 @@ def resolve_trainer_runtime_config(
     else:
         state = copy.deepcopy(state)
 
+    # Existing databases and caller-provided states may still contain the
+    # retired tracker secret.  Remove it before the state can reach a worker,
+    # event, API response, or pickle payload.
+    state = strip_retired_tracking_fields(state)
+
     trainer = _trainer(state)
     system = _system(state)
 
@@ -265,7 +404,7 @@ def resolve_trainer_runtime_config(
         trainer.update({
             key: value
             for key, value in db_trainer_config.items()
-            if value is not None and value != ""
+            if value is not None and value != "" and not is_retired_tracking_key(key)
         })
         if db_path:
             state["DB_PATH"] = str(db_path)
@@ -292,12 +431,27 @@ def resolve_trainer_runtime_config(
         kwargs.get("prompt_template_dir") or state.get("prompt_template_dir") or "./loopai/common/prompts",
     )
 
-    trainer["train_framework"] = _first_non_empty(
+    trainer["train_framework"] = str(_first_non_empty(
         kwargs.get("train_framework"),
         os.getenv("TRAIN_FRAMEWORK"),
         trainer.get("train_framework"),
         _DEFAULT_TRAIN_FRAMEWORK,
+    )).strip().lower()
+    if trainer["train_framework"] not in {"llamafactory", "verl"}:
+        raise ValueError(
+            f"unsupported Trainer framework: {trainer['train_framework']}; "
+            "expected llamafactory or verl"
+        )
+    trainer["train_stage"] = _normalize_train_stage(
+        _first_non_empty(
+            kwargs.get("train_stage"),
+            kwargs.get("task_type"),
+            os.getenv("TRAIN_STAGE"),
+            trainer.get("train_stage"),
+        ),
+        trainer["train_framework"],
     )
+    _validate_backend_stage(trainer["train_framework"], trainer["train_stage"])
     trainer["train_input_dataset_path"] = _first_non_empty(
         kwargs.get("train_input_dataset_path"),
         kwargs.get("dataset_path"),
@@ -316,12 +470,18 @@ def resolve_trainer_runtime_config(
         os.getenv("TRAIN_TASK_DESCRIPTION"),
         trainer.get("train_input_task_description"),
     )
+    trainer["train_input_eval_dataset_path"] = _first_non_empty(
+        kwargs.get("train_input_eval_dataset_path"),
+        kwargs.get("eval_dataset_path"),
+        os.getenv("TRAIN_EVAL_DATASET_PATH"),
+        trainer.get("train_input_eval_dataset_path"),
+    )
     trainer["train_input_config_template_path"] = _first_non_empty(
         kwargs.get("train_input_config_template_path"),
         kwargs.get("config_template_path"),
         os.getenv("TRAIN_CONFIG_TEMPLATE_PATH"),
         trainer.get("train_input_config_template_path"),
-        _existing_default_template_path(),
+        _existing_default_template_path(trainer["train_framework"], trainer["train_stage"]),
     )
     trainer["llamafactory_dir"] = _first_non_empty(
         kwargs.get("llamafactory_dir"),
@@ -335,6 +495,115 @@ def resolve_trainer_runtime_config(
         trainer.get("llamafactory_env_path"),
         system.get("llamafactory_env_path"),
     )
+    trainer["verl_dir"] = _first_non_empty(
+        kwargs.get("verl_dir"),
+        os.getenv("VERL_DIR"),
+        trainer.get("verl_dir"),
+        system.get("verl_dir"),
+    )
+    trainer["verl_env_path"] = _first_non_empty(
+        kwargs.get("verl_env_path"),
+        kwargs.get("verl_conda_env"),
+        os.getenv("VERL_ENV_PATH"),
+        os.getenv("VERL_CONDA_ENV"),
+        trainer.get("verl_env_path"),
+        system.get("verl_env_path"),
+        "verl",
+    )
+    trainer["verl_algorithm"] = str(_first_non_empty(
+        kwargs.get("verl_algorithm"),
+        os.getenv("VERL_ALGORITHM"),
+        trainer.get("verl_algorithm"),
+        "grpo",
+    )).strip().lower()
+    if trainer["train_stage"] == "grpo" and trainer["verl_algorithm"] != "grpo":
+        raise ValueError("the initial verl integration only supports verl_algorithm=grpo")
+    trainer["verl_entrypoint"] = str(_first_non_empty(
+        kwargs.get("verl_entrypoint"),
+        os.getenv("VERL_ENTRYPOINT"),
+        trainer.get("verl_entrypoint"),
+        "verl.trainer.main_ppo",
+    ))
+    trainer["verl_rollout_backend"] = str(_first_non_empty(
+        kwargs.get("verl_rollout_backend"),
+        os.getenv("VERL_ROLLOUT_BACKEND"),
+        trainer.get("verl_rollout_backend"),
+        "vllm",
+    )).strip().lower()
+    if trainer["verl_rollout_backend"] not in {"vllm", "sglang"}:
+        raise ValueError("verl_rollout_backend must be vllm or sglang")
+    trainer["verl_model_backend"] = str(_first_non_empty(
+        kwargs.get("verl_model_backend"),
+        os.getenv("VERL_MODEL_BACKEND"),
+        trainer.get("verl_model_backend"),
+        "fsdp",
+    )).strip().lower()
+    if trainer["verl_model_backend"] != "fsdp":
+        raise ValueError("the initial verl GRPO integration only supports verl_model_backend=fsdp")
+    trainer["verl_reward_function_path"] = _first_non_empty(
+        kwargs.get("verl_reward_function_path"),
+        os.getenv("VERL_REWARD_FUNCTION_PATH"),
+        trainer.get("verl_reward_function_path"),
+    )
+    trainer["verl_reward_function_name"] = str(_first_non_empty(
+        kwargs.get("verl_reward_function_name"),
+        os.getenv("VERL_REWARD_FUNCTION_NAME"),
+        trainer.get("verl_reward_function_name"),
+        "compute_score",
+    ))
+    raw_reward_mode = _first_non_empty(
+        kwargs.get("verl_reward_mode"),
+        os.getenv("VERL_REWARD_MODE"),
+        trainer.get("verl_reward_mode"),
+    )
+    # A path without the new mode field is the legacy custom-reward contract.
+    if not raw_reward_mode:
+        raw_reward_mode = "custom" if trainer.get("verl_reward_function_path") else "auto"
+    trainer["verl_reward_mode"] = str(raw_reward_mode).strip().lower()
+    if trainer["verl_reward_mode"] not in {"auto", "preset", "custom"}:
+        raise ValueError("verl_reward_mode must be auto, preset, or custom")
+
+    if trainer["verl_reward_mode"] == "auto":
+        trainer["verl_reward_preset"] = "auto"
+    elif trainer["verl_reward_mode"] == "preset":
+        trainer["verl_reward_preset"] = normalize_reward_preset(_first_non_empty(
+            kwargs.get("verl_reward_preset"),
+            os.getenv("VERL_REWARD_PRESET"),
+            trainer.get("verl_reward_preset"),
+            "auto",
+        ))
+    else:
+        trainer["verl_reward_preset"] = ""
+    trainer["verl_reward_kwargs"] = _as_dict(
+        _first_non_empty(
+            kwargs.get("verl_reward_kwargs"),
+            os.getenv("VERL_REWARD_KWARGS"),
+            trainer.get("verl_reward_kwargs"),
+        ),
+        "verl_reward_kwargs",
+    )
+    trainer["verl_selection_metric"] = str(_first_non_empty(
+        kwargs.get("verl_selection_metric"),
+        os.getenv("VERL_SELECTION_METRIC"),
+        trainer.get("verl_selection_metric"),
+        "val-core/*/acc/mean@*",
+    ))
+    trainer["verl_selection_mode"] = str(_first_non_empty(
+        kwargs.get("verl_selection_mode"),
+        os.getenv("VERL_SELECTION_MODE"),
+        trainer.get("verl_selection_mode"),
+        "max",
+    )).strip().lower()
+    if trainer["verl_selection_mode"] not in {"max", "min"}:
+        raise ValueError("verl_selection_mode must be max or min")
+    trainer["verl_max_actor_ckpt_to_keep"] = _as_int(
+        _first_non_empty(
+            kwargs.get("verl_max_actor_ckpt_to_keep"),
+            os.getenv("VERL_MAX_ACTOR_CKPT_TO_KEEP"),
+            trainer.get("verl_max_actor_ckpt_to_keep"),
+        ),
+        default=10,
+    )
     trainer["CUDA_VISIBLE_DEVICES"] = str(
         _first_non_empty(
             kwargs.get("cuda_visible_devices"),
@@ -345,31 +614,18 @@ def resolve_trainer_runtime_config(
             _DEFAULT_CUDA_VISIBLE_DEVICES,
         )
     )
-    trainer["swanlab_api_key"] = _first_non_empty(
-        kwargs.get("swanlab_api_key"),
-        os.getenv("SWANLAB_API_KEY"),
-        trainer.get("swanlab_api_key"),
-        system.get("swanlab_api_key"),
-        "",
-    )
-    trainer["train_input_use_swanlab"] = _as_bool(
+    trainer["trainer_persistent_worker"] = _as_bool(
         _first_non_empty(
-            kwargs.get("train_input_use_swanlab"),
-            kwargs.get("use_swanlab"),
-            os.getenv("TRAIN_USE_SWANLAB"),
-            trainer.get("train_input_use_swanlab"),
+            kwargs.get("trainer_persistent_worker"),
+            os.getenv("TRAINER_PERSISTENT_WORKER"),
+            trainer.get("trainer_persistent_worker"),
+            system.get("trainer_persistent_worker"),
         ),
-        default=False,
+        default=True,
     )
-    if kwargs.get("train_input_swanlab_project") or kwargs.get("swanlab_project"):
-        trainer["train_input_swanlab_project"] = _first_non_empty(
-            kwargs.get("train_input_swanlab_project"),
-            kwargs.get("swanlab_project"),
-        )
-
     prefill_guide = build_trainer_prefill_guide(
         state,
-        task_type=str(kwargs.get("task_type") or trainer.get("task_type") or "sft"),
+        task_type=trainer["train_stage"],
     )
     trainer["trainer_missing_fields"] = prefill_guide["missing_fields"]
     trainer["trainer_prefill_guide"] = prefill_guide
@@ -389,4 +645,14 @@ def get_missing_trainer_fields(state: Dict[str, Any]) -> list[str]:
     missing = [field for field in _REQUIRED_TRAINER_FIELDS if not trainer.get(field)]
     if trainer.get("train_framework") == "llamafactory" and not trainer.get("llamafactory_dir"):
         missing.append("llamafactory_dir")
+    if trainer.get("train_framework") == "verl" and not trainer.get("verl_dir"):
+        missing.append("verl_dir")
+    if trainer.get("train_framework") == "verl" and not trainer.get("train_input_eval_dataset_path"):
+        missing.append("train_input_eval_dataset_path")
+    if (
+        trainer.get("train_framework") == "verl"
+        and trainer.get("verl_reward_mode") == "custom"
+        and not trainer.get("verl_reward_function_path")
+    ):
+        missing.append("verl_reward_function_path")
     return missing

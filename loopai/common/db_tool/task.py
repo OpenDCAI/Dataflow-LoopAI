@@ -7,6 +7,7 @@ from typing import Any
 from omegaconf import OmegaConf
 
 from api.app.models.db_models import StarterConfig
+from loopai.common.tracking import strip_retired_tracking_fields
 from loopai.schema.model_pool import StarterModelPool
 # 懒加载，避免 MCP 启动时级联导入 langgraph → torch
 
@@ -62,6 +63,16 @@ def format_value(item: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def _clean_retired_tracking_json(raw_value: str | None) -> str | None:
+    if not isinstance(raw_value, str) or not raw_value:
+        return raw_value
+    original = json.loads(raw_value)
+    cleaned = strip_retired_tracking_fields(original)
+    if cleaned == original:
+        return raw_value
+    return json.dumps(cleaned, ensure_ascii=False)
+
+
 def _normalize_system_config(system_config: dict[str, Any]) -> dict[str, Any]:
     return _build_system_config(system_config)
 
@@ -69,6 +80,7 @@ def _normalize_system_config(system_config: dict[str, Any]) -> dict[str, Any]:
 def _build_system_config(system_data: dict[str, Any], language: str | None = None) -> dict[str, Any]:
     from loopai.schema.system import get_system_config_schema
 
+    system_data = strip_retired_tracking_fields(system_data)
     language = language or "zh"
     system_schema = get_system_config_schema(language)
 
@@ -96,6 +108,7 @@ def _resolve_model_pool_config(system_config: dict[str, Any], model_name: str | 
 def _build_state_config(states_data: dict[str, Any], language: str | None = None) -> dict[str, Any]:
     from loopai.schema.states import get_state_config_schema  # 懒加载，避免 MCP 级联导入
 
+    states_data = strip_retired_tracking_fields(states_data)
     language = language or states_data.get("language", "zh")
     nested_states_schema = get_state_config_schema(language)
     default_schema = nested_states_schema.get("default", {})
@@ -171,7 +184,9 @@ def _ensure_default_starter_config_sync(
             return row
 
         cfg = OmegaConf.load(str(starter_yaml_path))
-        config_obj = OmegaConf.to_container(cfg, resolve=True)
+        config_obj = strip_retired_tracking_fields(
+            OmegaConf.to_container(cfg, resolve=True)
+        )
         config_json = json.dumps(config_obj, ensure_ascii=False)
         cur = con.execute(
             "insert into starterconfig(name, config) values(?, ?)",
@@ -188,15 +203,25 @@ def _get_default_starter_row_sync(
     starter_yaml_path: str | os.PathLike[str] | None = None,
 ) -> tuple[int, str, str]:
     if starter_yaml_path is not None:
-        return _ensure_default_starter_config_sync(db_path, starter_yaml_path)
+        row = _ensure_default_starter_config_sync(db_path, starter_yaml_path)
+    else:
+        con = _sqlite_connect(db_path)
+        try:
+            row = con.execute("select id, name, config from starterconfig where name=?", ("starter",)).fetchone()
+        finally:
+            con.close()
 
-    con = _sqlite_connect(db_path)
-    try:
-        row = con.execute("select id, name, config from starterconfig where name=?", ("starter",)).fetchone()
-    finally:
-        con.close()
     if row is None:
         raise ValueError("starter config not found")
+    cleaned_config = _clean_retired_tracking_json(row[2])
+    if cleaned_config != row[2]:
+        con = _sqlite_connect(db_path)
+        try:
+            con.execute("update starterconfig set config=? where id=?", (cleaned_config, row[0]))
+            con.commit()
+        finally:
+            con.close()
+        row = (row[0], row[1], cleaned_config)
     return row
 
 
@@ -207,6 +232,16 @@ def _get_task_row_sync(db_path: str | os.PathLike[str], task_id: str) -> tuple[i
             "select id, task_id, name, config, state from taskmodel where task_id=?",
             (task_id,),
         ).fetchone()
+        if row is not None:
+            cleaned_config = _clean_retired_tracking_json(row[3])
+            cleaned_state = _clean_retired_tracking_json(row[4])
+            if cleaned_config != row[3] or cleaned_state != row[4]:
+                con.execute(
+                    "update taskmodel set config=?, state=? where id=?",
+                    (cleaned_config, cleaned_state, row[0]),
+                )
+                con.commit()
+                row = (row[0], row[1], row[2], cleaned_config, cleaned_state)
     finally:
         con.close()
     if row is None:
@@ -219,7 +254,7 @@ def get_default_system_config_sync(
     starter_yaml_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     config_id, name, raw_config = _get_default_starter_row_sync(db_path, starter_yaml_path)
-    config_data = json.loads(raw_config or "{}")
+    config_data = strip_retired_tracking_fields(json.loads(raw_config or "{}"))
     states_data = config_data.get("default_states", {})
     language = states_data.get("language", "zh") if isinstance(states_data, dict) else "zh"
     return {
@@ -235,7 +270,7 @@ def get_default_states_config_sync(
     section_name: str | None = None,
 ) -> dict[str, Any]:
     config_id, name, raw_config = _get_default_starter_row_sync(db_path, starter_yaml_path)
-    config_data = json.loads(raw_config or "{}")
+    config_data = strip_retired_tracking_fields(json.loads(raw_config or "{}"))
     states_config = _build_state_config(config_data.get("default_states", {}))
     return {
         "id": config_id,
@@ -251,7 +286,7 @@ def update_default_state_section_config_sync(
     starter_yaml_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     config_id, _, raw_config = _get_default_starter_row_sync(db_path, starter_yaml_path)
-    config_data = json.loads(raw_config or "{}")
+    config_data = strip_retired_tracking_fields(json.loads(raw_config or "{}"))
     default_states = config_data.setdefault("default_states", {})
     _merge_state_section(default_states, section_name, updates)
 
@@ -270,7 +305,7 @@ def update_default_state_section_config_sync(
 
 def get_task_config_sync(db_path: str | os.PathLike[str], task_id: str) -> dict[str, Any]:
     row_id, row_task_id, name, raw_config, _ = _get_task_row_sync(db_path, task_id)
-    config_data = json.loads(raw_config or "{}")
+    config_data = strip_retired_tracking_fields(json.loads(raw_config or "{}"))
     return {
         "id": row_id,
         "task_id": row_task_id,
@@ -281,8 +316,8 @@ def get_task_config_sync(db_path: str | os.PathLike[str], task_id: str) -> dict[
 
 def get_task_system_config_sync(db_path: str | os.PathLike[str], task_id: str) -> dict[str, Any]:
     row_id, row_task_id, name, raw_config, raw_state = _get_task_row_sync(db_path, task_id)
-    config_data = json.loads(raw_config or "{}")
-    state_data = json.loads(raw_state or "{}") if raw_state else {}
+    config_data = strip_retired_tracking_fields(json.loads(raw_config or "{}"))
+    state_data = strip_retired_tracking_fields(json.loads(raw_state or "{}")) if raw_state else {}
     if not isinstance(state_data, dict):
         state_data = {}
     language = state_data.get("language", "zh")
@@ -303,7 +338,7 @@ def get_task_states_config_sync(
     section_name: str | None = None,
 ) -> dict[str, Any]:
     row_id, row_task_id, name, _, raw_state = _get_task_row_sync(db_path, task_id)
-    state_data = json.loads(raw_state or "{}") if raw_state else {}
+    state_data = strip_retired_tracking_fields(json.loads(raw_state or "{}")) if raw_state else {}
     if not isinstance(state_data, dict):
         state_data = {}
     states_config = _build_state_config(state_data)
@@ -330,7 +365,7 @@ def update_task_state_section_config_sync(
     updates: dict[str, Any],
 ) -> dict[str, Any]:
     row_id, _, _, _, raw_state = _get_task_row_sync(db_path, task_id)
-    state_data = json.loads(raw_state or "{}") if raw_state else {}
+    state_data = strip_retired_tracking_fields(json.loads(raw_state or "{}")) if raw_state else {}
     if not isinstance(state_data, dict):
         state_data = {}
     _merge_state_section(state_data, section_name, updates)
@@ -401,7 +436,7 @@ def get_default_model_config_sync(
     starter_yaml_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     config_id, name, raw_config = _get_default_starter_row_sync(db_path, starter_yaml_path)
-    config_data = json.loads(raw_config or "{}")
+    config_data = strip_retired_tracking_fields(json.loads(raw_config or "{}"))
     system_config = config_data.get("system", {}) if isinstance(config_data.get("system"), dict) else {}
     return {
         "id": config_id,

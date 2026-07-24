@@ -250,11 +250,23 @@ class TrainerAgent(BaseAgent):
             "report_path": result_state.get('trainer', {}).get('train_output_training_report_path')
         }
         if not success:
-            error_payload = build_trainer_error_payload(
-                RuntimeError(result_state.get('trainer', {}).get('train_output_training_error') or "training execution failed"),
-                recoverable=True,
-                message="Trainer training execution failed.",
-            )
+            result_trainer = result_state.get('trainer', {})
+            existing_payload = result_trainer.get('trainer_result')
+            final_status = result_trainer.get('trainer_training_final_status') or {}
+            terminal_status = str(final_status.get('status') or 'failed').lower()
+            if isinstance(existing_payload, dict) and existing_payload.get('ok') is False:
+                error_payload = existing_payload
+            else:
+                error_payload = build_trainer_error_payload(
+                    RuntimeError(result_trainer.get('train_output_training_error') or "training execution failed"),
+                    code=(
+                        ErrorCode.INTERRUPTED
+                        if terminal_status == 'cancelled'
+                        else ErrorCode.UNHANDLED_EXCEPTION
+                    ),
+                    recoverable=terminal_status != 'cancelled',
+                    message="Trainer training execution failed.",
+                )
             record_trainer_result(result_state, error_payload)
             training_error = error_payload["error"]
         else:
@@ -267,7 +279,11 @@ class TrainerAgent(BaseAgent):
             writer,
             result_state,
             "training_execution",
-            "completed" if success else "failed",
+            "completed" if success else (
+                "cancelled"
+                if str((result_data.get("final_status") or {}).get("status") or "").lower() == "cancelled"
+                else "failed"
+            ),
             progress=1.0,
             message=f"训练任务{'成功完成' if success else '执行失败'}",
             data=result_data,
@@ -405,7 +421,6 @@ class TrainerAgent(BaseAgent):
                     "log_path": state.get('trainer', {}).get('train_output_training_log_path'),
                     "report_path": state.get('trainer', {}).get('train_output_training_report_path'),
                     "error": state.get('trainer', {}).get('train_output_training_error'),
-                    "train_output_swanlab_log_path": state.get('trainer', {}).get('train_output_swanlab_log_path')
                 }
             },
             "final_status": "success" if state.get('trainer', {}).get('trainer_training_success', False) else "failed",
