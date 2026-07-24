@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -19,7 +20,11 @@ from .pipeline_runner import (
     run_analyzer_pipeline,
     _resume_step_from_state,
 )
-from .runtime_config import resolve_analyzer_runtime_config
+from .runtime_config import (
+    find_latest_version_checkpoint,
+    get_version_checkpoint_path,
+    resolve_analyzer_runtime_config,
+)
 from .state_bridge import load_analyzer_state_from_configer
 
 ANALYZER_NODE_NAMES = ANALYZER_PIPELINE_STEPS
@@ -53,6 +58,15 @@ def get_analyzer_checkpoint_state(
         require_api_key=False,
         **kwargs,
     )
+
+    if not runtime.get("version_id"):
+        latest = find_latest_version_checkpoint(runtime["output_dir"], runtime["thread_id"])
+        if latest:
+            runtime["version_id"], runtime["checkpoint_path"] = latest
+    elif runtime.get("version_id"):
+        runtime["checkpoint_path"] = get_version_checkpoint_path(
+            runtime["output_dir"], runtime["thread_id"], runtime["version_id"]
+        )
     return load_analyzer_checkpoint(
         runtime["thread_id"],
         runtime["checkpoint_path"],
@@ -83,11 +97,32 @@ def run_analyzer_standalone(
         **kwargs,
     )
 
-    explicit_version = kwargs.get("version_id") or kwargs.get("run_id")
-    if resume and not explicit_version and runtime.get("version_id") in ("", "default"):
-        latest_version = _latest_runtime_version(runtime["thread_id"])
-        if latest_version:
-            runtime["version_id"] = latest_version
+    explicit_version = (
+        kwargs.get("version_id")
+        or kwargs.get("run_id")
+        or os.getenv("ANALYZER_VERSION_ID")
+        or os.getenv("VERSION_ID")
+    )
+    if not explicit_version:
+        # A non-resume call is always a new run. A resume call selects the
+        # newest checkpoint for this task instead of inheriting stale state.
+        runtime["version_id"] = ""
+
+    if resume and not explicit_version and not runtime.get("version_id"):
+        latest_checkpoint = find_latest_version_checkpoint(
+            runtime["output_dir"], runtime["thread_id"]
+        )
+        if latest_checkpoint:
+            runtime["version_id"], runtime["checkpoint_path"] = latest_checkpoint
+        else:
+            latest_version = _latest_runtime_version(runtime["thread_id"])
+            if latest_version:
+                runtime["version_id"] = latest_version
+
+    if runtime.get("version_id"):
+        runtime["checkpoint_path"] = get_version_checkpoint_path(
+            runtime["output_dir"], runtime["thread_id"], runtime["version_id"]
+        )
 
     start_node = normalize_analyzer_step(from_node) if from_node else None
     if resume:
@@ -127,8 +162,14 @@ def run_analyzer_standalone(
             "message": "Analyzer initializing.",
         })
         runtime["version_id"] = str(writer.version_id)
+        runtime["checkpoint_path"] = get_version_checkpoint_path(
+            output_dir,
+            runtime["thread_id"],
+            runtime["version_id"],
+        )
         state["version_id"] = runtime["version_id"]
         state.setdefault("analyzer", {})["version_id"] = runtime["version_id"]
+        state["analyzer"]["checkpoint_path"] = runtime["checkpoint_path"]
         state["analyzer"]["runtime_output_dir"] = str(
             Path(output_dir)
             / runtime["thread_id"]
@@ -140,7 +181,7 @@ def run_analyzer_standalone(
             state=state,
             thread_id=runtime["thread_id"],
             checkpoint_path=runtime["checkpoint_path"],
-            resume=False,
+            resume=resume,
             from_node=start_node,
             baseline_result_path=baseline_result_path,
             version_id=runtime["version_id"],

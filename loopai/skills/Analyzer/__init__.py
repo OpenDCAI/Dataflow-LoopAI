@@ -39,6 +39,7 @@ def run(
         )
 
     from .runtime_config import resolve_analyzer_runtime_config
+    from .runtime_config import get_version_checkpoint_path
     from .state_bridge import load_analyzer_state_from_configer
     from loopai.skills.Analyzer.runner import run_analyzer_standalone
 
@@ -51,7 +52,14 @@ def run(
             baseline_result_path=baseline_result_path,
             **kwargs,
         )
-        explicit_version = kwargs.get("version_id") or kwargs.get("run_id")
+        explicit_version = (
+            kwargs.get("version_id")
+            or kwargs.get("run_id")
+            or os.getenv("ANALYZER_VERSION_ID")
+            or os.getenv("VERSION_ID")
+        )
+        if not explicit_version:
+            runtime["version_id"] = ""
         writer_version_id = runtime["version_id"]
         if writer_version_id in ("", "default") and not explicit_version:
             writer_version_id = None
@@ -67,8 +75,14 @@ def run(
             "message": "Analyzer initializing.",
         })
         runtime["version_id"] = str(writer.version_id)
+        runtime["checkpoint_path"] = get_version_checkpoint_path(
+            runtime["output_dir"],
+            runtime["thread_id"],
+            runtime["version_id"],
+        )
         state["version_id"] = runtime["version_id"]
         state.setdefault("analyzer", {})["version_id"] = runtime["version_id"]
+        state["analyzer"]["checkpoint_path"] = runtime["checkpoint_path"]
         state["analyzer"]["runtime_output_dir"] = str(
             Path(runtime["output_dir"])
             / runtime["thread_id"]
