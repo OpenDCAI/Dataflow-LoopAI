@@ -141,7 +141,7 @@
     "@babel/helper-string-parser" "^7.29.7"
     "@babel/helper-validator-identifier" "^7.29.7"
 
-"@creatorsn/powereditor3@^0.2.10":
+"@creatorsn/powereditor3@^0.2.13":
   version "0.2.13"
   resolved "https://registry.yarnpkg.com/@creatorsn/powereditor3/-/powereditor3-0.2.13.tgz#982ee398653351fd48580df7e454406e65a4ef94"
   integrity sha512-Ka27AORJes3biCYJ0/Pb//Pf0LexJ5kwY4gYXuxcWtWDbAIENv9z1SGw1+h6+T88gAq5/04GfFps/hY5ReNTbQ==
@@ -189,10 +189,22 @@
     url "^0.11.4"
     vue "^3.5.13"
 
-"@creatorsn/vfluent3@^0.3.89", "@creatorsn/vfluent3@^0.3.90":
+"@creatorsn/vfluent3@^0.3.90":
   version "0.3.90"
   resolved "https://registry.yarnpkg.com/@creatorsn/vfluent3/-/vfluent3-0.3.90.tgz#d01273f6dce663eebab17768393450483c7ccbe0"
   integrity sha512-Hps9TbUY1z0gGyyavaixVr1VCFS/6VNAbrRdS/YXFaNpdvxn8vu+DnqnZCs5hY1BBCGJQUCmgJ62seGSc0z/IQ==
+  dependencies:
+    "@vue/shared" "^3.4.20"
+    gsap "3.1.1"
+    onecolor "3.1.0"
+    pinia "^2.1.7"
+    swiper "8.3.2"
+    vue "^3.4.20"
+
+"@creatorsn/vfluent3@^0.3.92":
+  version "0.3.92"
+  resolved "https://registry.yarnpkg.com/@creatorsn/vfluent3/-/vfluent3-0.3.92.tgz#51be108c6c0e47b8cd8f4400ad56a2cfc7d3811b"
+  integrity sha512-YiJ/4eMd6nCAvykTfJcmxK7n9FfKbleKp33dPiw2IyC/8b+NMyvsFX4hCtdbtN8Tnzpeg47iuAs+OKDU3t9yEQ==
   dependencies:
     "@vue/shared" "^3.4.20"
     gsap "3.1.1"

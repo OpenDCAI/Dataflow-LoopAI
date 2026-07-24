@@ -3,7 +3,9 @@ import json
 from tortoise.expressions import Q
 from ...models.db_models import StarterConfig
 from omegaconf import OmegaConf
+from loopai.common.tracking import strip_retired_tracking_fields
 from loopai.schema.states import get_state_config_schema
+from loopai.schema.system import get_system_config_schema
 from loopai.schema.system_runtime import migrate_legacy_credentials
 
 async def check_config_from_db(base_dir):
@@ -11,17 +13,25 @@ async def check_config_from_db(base_dir):
     config = await StarterConfig.filter(Q(name='starter')).first()
     if not config:
         cfg = OmegaConf.load(os.path.join(base_dir, "starter.yaml"))
-        config_obj = OmegaConf.to_container(cfg, resolve=True)
+        config_obj = strip_retired_tracking_fields(
+            OmegaConf.to_container(cfg, resolve=True)
+        )
         await StarterConfig.create(name='starter', config=json.dumps(config_obj))
         config = await StarterConfig.filter(Q(name='starter')).first()
     if config and config.config:
-        config_obj = json.loads(config.config)
-        original = json.dumps(config_obj, sort_keys=True, ensure_ascii=False)
-        migrate_legacy_credentials(config_obj)
-        migrated = json.dumps(config_obj, sort_keys=True, ensure_ascii=False)
-        if migrated != original:
-            config.config = json.dumps(config_obj, ensure_ascii=False)
-            await config.save()
+        # Normalize legacy credentials and remove retired tracker fields for
+        # both newly created and existing StarterConfig rows.
+        try:
+            original = json.loads(config.config)
+            cleaned = strip_retired_tracking_fields(original)
+            migrate_legacy_credentials(cleaned)
+            if cleaned != original:
+                config.config = json.dumps(cleaned, ensure_ascii=False)
+                await config.save(update_fields=["config"])
+        except Exception:
+            # Preserve the existing validation/error behavior for malformed DB
+            # rows; callers will surface the parse failure in the normal path.
+            pass
     return config
 
 def wrap_attr(val):
@@ -48,13 +58,31 @@ async def get_system_config(base_dir):
     """获取配置"""
     config = await check_config_from_db(base_dir)
     config_data = json.loads(config.config)
-    system_config = config_data.get('system', {})
-    for key in system_config:
-        system_config[key] = wrap_attr(system_config[key])
+    system_config = strip_retired_tracking_fields(config_data.get('system', {}))
+    states_data = strip_retired_tracking_fields(config_data.get('default_states', {}))
+    language = states_data.get('language', 'zh') if isinstance(states_data, dict) else 'zh'
+    system_schema = get_system_config_schema(language)
+    result = {}
+    for key in dict.fromkeys(list(system_config.keys()) + list(system_schema.keys())):
+        schema_val = system_schema.get(key, {})
+        if key in system_config:
+            cur_val = wrap_attr(system_config[key])
+        elif 'default' in schema_val:
+            cur_val = wrap_attr(schema_val['default'])
+        else:
+            cur_val = {
+                'value': None,
+                'default_value': None,
+                'type': 'none',
+            }
+        result[key] = {
+            **schema_val,
+            **cur_val,
+        }
     res = {
         'id': config.id,
         'name': config.name,
-        'config': system_config,
+        'config': result,
     }
     return res
 
@@ -62,7 +90,7 @@ async def get_state_config(base_dir):
     """获取Starter状态配置"""
     config = await check_config_from_db(base_dir)
     config_data = json.loads(config.config)
-    states_data = config_data.get('default_states', {})
+    states_data = strip_retired_tracking_fields(config_data.get('default_states', {}))
     language = states_data.get('language', 'zh')
     nested_states_schema = get_state_config_schema(language)
     default_schema = nested_states_schema.get('default', {})

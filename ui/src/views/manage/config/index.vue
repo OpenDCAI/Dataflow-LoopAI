@@ -46,7 +46,6 @@
                             :probe-loading="modelPoolProbeLoading"
                             :probe-message="modelPoolProbeMessage"
                             @probe="handleProbe"
-                            @show-detail="show.modelPool = true"
                         ></model-pool-panel>
                         <hr v-if="modelPoolAvailable" />
                         <div
@@ -122,11 +121,6 @@
             mode="read"
             @confirm="handleDatasetConfirm"
         ></resource-panel>
-        <model-pool-detail-panel
-            v-model="show.modelPool"
-            :config="config"
-            :status="modelPoolStatus"
-        ></model-pool-detail-panel>
     </div>
 </template>
 
@@ -138,14 +132,12 @@ import { useTheme } from '@/stores/theme'
 import { useLoopAI } from '@/stores/loopAI'
 
 import ModelPoolPanel from '@/components/manage/config/modelPool/index.vue'
-import ModelPoolDetailPanel from '@/components/manage/config/modelPool/detailPanel.vue'
 import valueInput from '@/components/manage/config/valueInput/index.vue'
 import resourcePanel from '@/components/manage/mainFlow/panels/resourcePanel/index.vue'
 
 export default {
     components: {
         ModelPoolPanel,
-        ModelPoolDetailPanel,
         valueInput,
         resourcePanel
     },
@@ -161,8 +153,7 @@ export default {
                 update: true
             },
             show: {
-                dataset: false,
-                modelPool: false
+                dataset: false
             },
             modelPoolStatus: {},
             modelPoolProbeLoading: false,
@@ -209,6 +200,10 @@ export default {
                 this.modelPoolValue || {
                     proxy_base_url: '',
                     proxy_api_key: 'loopai-local-proxy',
+                    default_model: '',
+                    codex_model: '',
+                    analyzer_model: '',
+                    looper_model: '',
                     default_tier: 'medium',
                     pool: []
                 }
@@ -319,19 +314,6 @@ export default {
                 }
             })
             if (!options.length) {
-                const legacyName =
-                    this.config.system?.starter_model_name?.value ||
-                    this.config.system?.starter_model_path?.value ||
-                    this.config.system?.codex_model?.value
-                if (legacyName) {
-                    options.push({
-                        key: legacyName,
-                        text: `medium · ${legacyName}`,
-                        model: { tier: 'medium', name: legacyName, model_name: legacyName }
-                    })
-                }
-            }
-            if (!options.length) {
                 options.push({
                     key: '__empty_model__',
                     text: '-',
@@ -348,14 +330,12 @@ export default {
         selectedModelOption: {
             get() {
                 const defaultTier = this.modelPoolConfig.default_tier
-                const starterModel =
-                    this.config.system?.starter_model_name?.value ||
-                    this.config.system?.starter_model_path?.value
+                const defaultModel = this.modelPoolConfig.default_model
                 const matched =
+                    this.modelSelectOptions.find((option) => option.model?.name === defaultModel) ||
                     this.modelSelectOptions.find(
-                        (option) => option.model?.model_name === starterModel
+                        (option) => option.model?.model_name === defaultModel
                     ) ||
-                    this.modelSelectOptions.find((option) => option.model?.name === starterModel) ||
                     this.modelSelectOptions.find((option) => option.model?.tier === defaultTier) ||
                     this.modelSelectOptions[0]
                 return matched || null
@@ -363,26 +343,15 @@ export default {
             set(option) {
                 if (!option || option.placeholder) return
                 const model = option.model || {}
-                if (this.config.system?.model?.value && model.tier) {
-                    this.config.system.model.value.default_tier = model.tier
-                }
-                this.setSystemValue(
-                    'starter_model_name',
-                    model.model_name || model.name || option.key
-                )
-                this.setSystemValue(
-                    'starter_model_path',
-                    model.model_name || model.name || option.key
-                )
-                if (model.base_url) this.setSystemValue('starter_base_url', model.base_url)
-                if (model.api_key && !String(model.api_key).startsWith('env:')) {
-                    this.setSystemValue('starter_api_key', model.api_key)
+                if (this.config.system?.model?.value) {
+                    this.config.system.model.value.default_model = model.name || model.model_name || option.key
+                    if (model.tier) this.config.system.model.value.default_tier = model.tier
                 }
             }
         },
         codexModelOption: {
             get() {
-                const codexModel = this.config.system?.codex_model?.value
+                const codexModel = this.modelPoolConfig.codex_model
                 const matched =
                     this.modelSelectOptions.find((option) => option.model?.name === codexModel) ||
                     this.modelSelectOptions.find(
@@ -395,8 +364,51 @@ export default {
             set(option) {
                 if (!option || option.placeholder) return
                 const model = option.model || {}
-                this.setSystemValue('codex_model', model.name || model.model_name || option.key)
-                this.setSystemValue('codex_wire_api', 'responses')
+                if (this.config.system?.model?.value) {
+                    this.config.system.model.value.codex_model = model.name || model.model_name || option.key
+                }
+            }
+        },
+        analyzerModelOption: {
+            get() {
+                const analyzerModel = this.modelPoolConfig.analyzer_model || this.modelPoolConfig.default_model
+                const matched =
+                    this.modelSelectOptions.find((option) => option.model?.name === analyzerModel) ||
+                    this.modelSelectOptions.find(
+                        (option) => option.model?.model_name === analyzerModel
+                    ) ||
+                    this.selectedModelOption ||
+                    this.modelSelectOptions[0]
+                return matched || null
+            },
+            set(option) {
+                if (!option || option.placeholder) return
+                const model = option.model || {}
+                if (this.config.system?.model?.value) {
+                    this.config.system.model.value.analyzer_model =
+                        model.name || model.model_name || option.key
+                }
+            }
+        },
+        looperModelOption: {
+            get() {
+                const looperModel = this.modelPoolConfig.looper_model || this.modelPoolConfig.default_model
+                const matched =
+                    this.modelSelectOptions.find((option) => option.model?.name === looperModel) ||
+                    this.modelSelectOptions.find(
+                        (option) => option.model?.model_name === looperModel
+                    ) ||
+                    this.selectedModelOption ||
+                    this.modelSelectOptions[0]
+                return matched || null
+            },
+            set(option) {
+                if (!option || option.placeholder) return
+                const model = option.model || {}
+                if (this.config.system?.model?.value) {
+                    this.config.system.model.value.looper_model =
+                        model.name || model.model_name || option.key
+                }
             }
         },
         modelPoolTiers() {
@@ -432,7 +444,7 @@ export default {
             return this.buildBarChart(
                 [this.local('Requests')],
                 [this.modelPoolModels.map((model) => model.stats?.requests || 0)],
-                ['rgba(45, 125, 210, 0.76)']
+                ['rgba(87, 99, 206, 0.76)']
             )
         },
         errorsChart() {
@@ -458,7 +470,7 @@ export default {
                             (model) => model.stats?.usage?.total_tokens || 0
                         ),
                         backgroundColor: [
-                            'rgba(45, 125, 210, 0.78)',
+                            'rgba(87, 99, 206, 0.78)',
                             'rgba(48, 156, 117, 0.78)',
                             'rgba(229, 154, 64, 0.78)',
                             'rgba(132, 92, 196, 0.78)',
@@ -550,46 +562,35 @@ export default {
             if (!item) return fallback
             return item.value === undefined || item.value === null ? fallback : item.value
         },
-        buildLegacyModelPoolConfig() {
-            const apiPort = this.systemValue('api_port', 8855)
-            const pool = []
-            const starterModel =
-                this.systemValue('starter_model_path', '') ||
-                this.systemValue('starter_model_name', '')
-            const starterBaseUrl = this.systemValue('starter_base_url', '')
-            if (starterModel || starterBaseUrl) {
-                pool.push({
-                    tier: 'medium',
-                    name: 'starter',
-                    api_key: this.systemValue('starter_api_key', ''),
-                    base_url: starterBaseUrl,
-                    model_name: starterModel,
-                    maxworker: this.systemValue('starter_maxworker', 1),
-                    wire_api: this.systemValue('starter_wire_api', 'chat'),
-                    response_format: '',
-                    enabled: true
-                })
-            }
-            const codexModel = this.systemValue('codex_model', '')
-            const codexBaseUrl = this.systemValue('codex_base_url', '')
-            if (codexModel || codexBaseUrl) {
-                pool.push({
-                    tier: pool.length ? 'high' : 'medium',
-                    name: 'codex',
-                    api_key: this.systemValue('codex_api_key', ''),
-                    base_url: codexBaseUrl,
-                    model_name: codexModel,
-                    maxworker: this.systemValue('codex_maxworker', 1),
-                    wire_api: this.systemValue('codex_wire_api', 'responses'),
-                    response_format: '',
-                    enabled: true
-                })
-            }
+        resolvePreferredModelNames(pool = this.editableModelPool) {
+            const items = Array.isArray(pool) ? pool : []
+            const firstEnabled =
+                items.find((model) => model?.enabled !== false && (model.name || model.model_name)) ||
+                items.find((model) => model.name || model.model_name) ||
+                null
+            const codexPreferred =
+                items.find((model) => model?.name === 'codex') ||
+                items.find((model) => model?.model_name === 'codex') ||
+                firstEnabled
+            const defaultName = firstEnabled?.name || firstEnabled?.model_name || ''
+            const codexName = codexPreferred?.name || codexPreferred?.model_name || defaultName
             return {
-                proxy_base_url: `http://127.0.0.1:${apiPort || 8855}/responseProxy/v1`,
+                defaultModel: defaultName,
+                codexModel: codexName,
+                analyzerModel: defaultName,
+                looperModel: defaultName
+            }
+        },
+        buildLegacyModelPoolConfig() {
+            return {
+                proxy_base_url: 'http://127.0.0.1:8855/responseProxy/v1',
                 proxy_api_key: 'loopai-local-proxy',
-                default_tier: pool.some((model) => model.tier === 'medium') ? 'medium' : 'high',
-                pool
+                default_model: '',
+                codex_model: '',
+                analyzer_model: '',
+                looper_model: '',
+                default_tier: 'medium',
+                pool: []
             }
         },
         ensureModelPoolConfig() {
@@ -613,14 +614,19 @@ export default {
                 if (!current.proxy_api_key) current.proxy_api_key = 'loopai-local-proxy'
                 if (!current.default_tier) current.default_tier = 'medium'
             }
-            if (!this.editableModelPool.length) this.addModelPoolEntry()
-            const codexModel = this.systemValue('codex_model', '')
-            if (!codexModel && this.editableModelPool[0]) {
-                this.setSystemValue(
-                    'codex_model',
-                    this.editableModelPool[0].name || this.editableModelPool[0].model_name
-                )
+            const normalized = this.config.system.model?.value
+            const preferred = this.resolvePreferredModelNames(normalized?.pool)
+            if (normalized) {
+                if (!normalized.default_model) normalized.default_model = preferred.defaultModel
+                if (!normalized.codex_model) normalized.codex_model = preferred.codexModel
+                if (!normalized.analyzer_model) {
+                    normalized.analyzer_model = normalized.default_model || preferred.analyzerModel
+                }
+                if (!normalized.looper_model) {
+                    normalized.looper_model = normalized.default_model || preferred.looperModel
+                }
             }
+            if (!this.editableModelPool.length) this.addModelPoolEntry()
         },
         addModelPoolEntry() {
             const index = this.editableModelPool.length + 1
@@ -656,7 +662,6 @@ export default {
             if (this.modelPoolProbeLoading) return
             this.modelPoolProbeLoading = true
             this.modelPoolProbeMessage = this.local('Probing models...')
-            this.show.modelPool = true
             try {
                 await this.persistConfig({ silent: true })
                 await this.loadModelPoolStatus(true)

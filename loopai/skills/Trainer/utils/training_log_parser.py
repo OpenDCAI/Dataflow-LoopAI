@@ -4,6 +4,7 @@
 """
 
 import os
+import json
 import re
 from typing import Optional, Tuple, Dict
 
@@ -18,6 +19,69 @@ class TrainingLogParser:
             r'\|\s*(\d+)/(\d+)\s*\[(\d{2}:\d{2})<(\d{2}:\d{2}),\s*[\d.]+s/it\]'
         )
         self.total_steps = None  # 用于区分训练和评估进度
+        self.verl_step_pattern = re.compile(r'(?:^|\s-\s)step:(\d+)')
+        self.verl_total_pattern = re.compile(
+            r'(?:total_training_steps|total steps)\s*[:=]\s*([\d,]+)',
+            re.IGNORECASE,
+        )
+        self.tqdm_step_pattern = re.compile(
+            r'Training Progress:.*?\|\s*(\d+)/(\d+)\s*\[',
+            re.IGNORECASE,
+        )
+
+    def parse_verl_metrics_progress(
+        self,
+        log_path: str,
+        metrics_path: str,
+    ) -> Optional[Dict[str, str]]:
+        """Read Verl's structured JSONL metrics instead of its tqdm output."""
+        if not os.path.isfile(metrics_path):
+            return None
+
+        total_steps = None
+        if os.path.isfile(log_path):
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="ignore") as log_file:
+                    for line in log_file:
+                        for match in self.verl_total_pattern.finditer(line):
+                            total_steps = int(match.group(1).replace(",", ""))
+                        for match in self.tqdm_step_pattern.finditer(line):
+                            total_steps = int(match.group(2))
+            except OSError:
+                total_steps = None
+
+        try:
+            with open(metrics_path, "r", encoding="utf-8", errors="ignore") as metrics_file:
+                lines = metrics_file.readlines()
+        except OSError:
+            return None
+
+        current_step = None
+        for line in reversed(lines):
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(record, dict):
+                continue
+            data = record.get("data") if isinstance(record.get("data"), dict) else record
+            raw_step = data.get("training/global_step", data.get("global_step", record.get("step")))
+            try:
+                current_step = int(float(raw_step))
+            except (TypeError, ValueError, OverflowError):
+                continue
+            break
+
+        if current_step is None or not total_steps:
+            return None
+        return {
+            "current_step": str(current_step),
+            "total_steps": str(total_steps),
+            "elapsed_time": "",
+            "remaining_time": "",
+            "progress_text": f"{current_step}/{total_steps}",
+            "time_text": "Verl metrics",
+        }
         
     def parse_training_progress(self, log_path: str) -> Optional[Dict[str, str]]:
         """
@@ -47,28 +111,52 @@ class TrainingLogParser:
             with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
                 lines = f.readlines()
             
-            # 从后往前查找进度信息
-            for line in reversed(lines):
-                match = self.progress_pattern.search(line)
-                if match:
-                    current_step = match.group(1)
-                    total_steps = match.group(2)
-                    elapsed_time = match.group(3)
-                    remaining_time = match.group(4)
-                    
-                    # 如果是第一次解析，记录总步数用于区分训练和评估
-                    if self.total_steps is None:
-                        self.total_steps = total_steps
-                    
-                    # 只返回与训练总步数匹配的进度（忽略评估进度）
-                    if total_steps == self.total_steps:
+            # tqdm uses carriage returns, so many refreshes can occupy one
+            # logical line. Pick the last match for the largest total (the
+            # training loop) instead of the first match such as 1/58.
+            progress_matches = [
+                match
+                for line in lines
+                for match in self.progress_pattern.finditer(line)
+            ]
+            if progress_matches:
+                training_total = max(int(match.group(2)) for match in progress_matches)
+                match = next(
+                    match
+                    for match in reversed(progress_matches)
+                    if int(match.group(2)) == training_total
+                )
+                current_step = match.group(1)
+                total_steps = match.group(2)
+                elapsed_time = match.group(3)
+                remaining_time = match.group(4)
+                self.total_steps = total_steps
+                return {
+                    'current_step': current_step,
+                    'total_steps': total_steps,
+                    'elapsed_time': elapsed_time,
+                    'remaining_time': remaining_time,
+                    'progress_text': f"{current_step}/{total_steps}",
+                    'time_text': f"{elapsed_time}<{remaining_time}"
+                }
+
+            total_steps = None
+            for line in lines:
+                total_match = self.verl_total_pattern.search(line)
+                if total_match:
+                    total_steps = int(total_match.group(1).replace(',', ''))
+            if total_steps:
+                for line in reversed(lines):
+                    step_match = self.verl_step_pattern.search(line)
+                    if step_match:
+                        current_step = int(step_match.group(1))
                         return {
-                            'current_step': current_step,
-                            'total_steps': total_steps,
-                            'elapsed_time': elapsed_time,
-                            'remaining_time': remaining_time,
+                            'current_step': str(current_step),
+                            'total_steps': str(total_steps),
+                            'elapsed_time': '',
+                            'remaining_time': '',
                             'progress_text': f"{current_step}/{total_steps}",
-                            'time_text': f"{elapsed_time}<{remaining_time}"
+                            'time_text': 'Verl GRPO',
                         }
                         
         except Exception as e:

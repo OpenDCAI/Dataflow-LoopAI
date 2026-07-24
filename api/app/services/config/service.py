@@ -8,6 +8,7 @@ from tortoise.expressions import Q
 from ...models.body import ConfigModel
 from ...models.db_models import StarterConfig
 from ...utils.config.config import format_value, get_state_config, get_system_config
+from loopai.common.tracking import strip_retired_tracking_fields
 from loopai.schema.system_runtime import migrate_legacy_credentials
 
 
@@ -37,7 +38,7 @@ async def get_starter_config() -> dict[str, Any]:
 
 def _parse_config_payload(raw_config: str) -> dict[str, Any]:
     try:
-        return json.loads(raw_config)
+        return strip_retired_tracking_fields(json.loads(raw_config))
     except Exception as exc:
         raise ConfigServiceError("config格式错误") from exc
 
@@ -74,7 +75,7 @@ async def update_starter_config(config: ConfigModel) -> dict[str, Any]:
     if not original_config:
         raise ConfigServiceError("config不存在")
 
-    original_config_obj = json.loads(original_config.config)
+    original_config_obj = strip_retired_tracking_fields(json.loads(original_config.config))
     _apply_system_config(original_config_obj, config_obj.get("system", {}))
     _apply_states_config(original_config_obj, config_obj.get("states", {}))
     migrate_legacy_credentials(original_config_obj)

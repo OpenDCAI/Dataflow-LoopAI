@@ -45,7 +45,7 @@ def _system() -> dict:
     }
 
 
-def test_state_schema_excludes_runtime_credentials_but_keeps_trainer_key():
+def test_state_schema_excludes_runtime_and_retired_credentials():
     schema = get_state_config_schema("en")
 
     assert "api_key" not in schema["obtainer"]
@@ -55,7 +55,7 @@ def test_state_schema_excludes_runtime_credentials_but_keeps_trainer_key():
     assert "api_key" not in schema["constructor"]
     assert "deepseek_api_key" not in schema["webcrawler"]
     assert "tavily_api_key" not in schema["webcrawler"]
-    assert "swanlab_api_key" in schema["trainer"]
+    assert "swanlab_api_key" not in schema["trainer"]
 
 
 def test_migrate_legacy_credentials_moves_integrations_and_leaves_trainer():
@@ -156,7 +156,7 @@ def test_webcrawler_resolves_system_credentials_without_storing_them(monkeypatch
     assert __import__("os").environ["TAVILY_API_KEY"] == "tavily-key"
 
 
-def test_sqlite_migration_removes_task_credentials_and_keeps_trainer(tmp_path):
+def test_sqlite_migration_removes_task_and_retired_credentials(tmp_path):
     db_path = tmp_path / "config.sqlite3"
     config = {
         "system": {"tavily_api_key": "tavily-key"},
@@ -191,4 +191,6 @@ def test_sqlite_migration_removes_task_credentials_and_keeps_trainer(tmp_path):
     assert "api_key" not in task_config["default_states"]["obtainer"]
     assert "api_key" not in task_state["obtainer"]
     assert "deepseek_api_key" not in task_state["webcrawler"]
-    assert task_state["trainer"]["swanlab_api_key"] == "swanlab-key"
+    assert "swanlab_api_key" not in starter["default_states"]["trainer"]
+    assert "swanlab_api_key" not in task_config["default_states"]["trainer"]
+    assert "swanlab_api_key" not in task_state["trainer"]

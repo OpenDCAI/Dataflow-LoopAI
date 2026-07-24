@@ -1,0 +1,26 @@
+{
+  "name": "loopai-tui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "yarn@4.9.2",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "node dist/main.js",
+    "api": "api-cli get http://127.0.0.1:8855/openapi.json -d ./src/axios"
+  },
+  "dependencies": {
+    "@vue-tui/runtime": "^0.1.1",
+    "@vue/devtools-api": "^8.1.5",
+    "axios": "^1.18.1",
+    "pinia": "^4.0.2",
+    "vue": "^3.5.40"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue-tui/vite": "^0.2.0",
+    "axios-swagger-helper": "^0.0.56",
+    "vite": "^8.1.5"
+  }
+}

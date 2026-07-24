@@ -982,5 +982,265 @@ export default {
     "Recipe Export": {
         "en": "Recipe Export",
         "zh": "配方导出"
+    },
+    "##### Run Failed, Please Retry": {
+        "en": "##### Run Failed, Please Retry",
+        "zh": "##### 运行失败，请重试"
+    },
+    "Analyzer Model": {
+        "en": "Analyzer Model",
+        "zh": "Analyzer模型"
+    },
+    "Are you sure to reset this conversation?": {
+        "en": "Are you sure to reset this conversation?",
+        "zh": "确定要重置此对话吗？"
+    },
+    "Are you sure to terminate this conversation?": {
+        "en": "Are you sure to terminate this conversation?",
+        "zh": "确定要终止此对话吗？"
+    },
+    "Assistant": {
+        "en": "Assistant",
+        "zh": "AI助手"
+    },
+    "Benchmark": {
+        "en": "Benchmark",
+        "zh": "基准测试"
+    },
+    "Benchmark Guard": {
+        "en": "Benchmark Guard",
+        "zh": "基准守卫"
+    },
+    "Collapse": {
+        "en": "Collapse",
+        "zh": "折叠"
+    },
+    "Command": {
+        "en": "Command",
+        "zh": "命令"
+    },
+    "Command Execution": {
+        "en": "Command Execution",
+        "zh": "命令执行"
+    },
+    "Completed": {
+        "en": "Completed",
+        "zh": "已完成"
+    },
+    "Conversation reset successfully.": {
+        "en": "Conversation reset successfully.",
+        "zh": "对话重置成功。"
+    },
+    "Conversation terminated successfully.": {
+        "en": "Conversation terminated successfully.",
+        "zh": "对话终止成功。"
+    },
+    "Copied": {
+        "en": "Copied",
+        "zh": "已复制"
+    },
+    "DataMixer": {
+        "en": "DataMixer",
+        "zh": "数据混合器"
+    },
+    "Default": {
+        "en": "Default",
+        "zh": "默认"
+    },
+    "Expand": {
+        "en": "Expand",
+        "zh": "展开"
+    },
+    "Failed": {
+        "en": "Failed",
+        "zh": "失败"
+    },
+    "Failed to let Looper take over.": {
+        "en": "Failed to let Looper take over.",
+        "zh": "让Looper接管失败。"
+    },
+    "Failed to reset conversation.": {
+        "en": "Failed to reset conversation.",
+        "zh": "重置对话失败。"
+    },
+    "Failed to terminated conversation.": {
+        "en": "Failed to terminated conversation.",
+        "zh": "终止对话失败。"
+    },
+    "File Change": {
+        "en": "File Change",
+        "zh": "文件更改"
+    },
+    "Finishing": {
+        "en": "Finishing",
+        "zh": "正在完成"
+    },
+    "History Summary": {
+        "en": "History Summary",
+        "zh": "历史摘要"
+    },
+    "Info": {
+        "en": "Info",
+        "zh": "信息"
+    },
+    "Lake": {
+        "en": "Lake",
+        "zh": "湖"
+    },
+    "Lake monitor cache failed": {
+        "en": "Lake monitor cache failed",
+        "zh": "数据湖监控缓存失败"
+    },
+    "Lake monitor cache is missing": {
+        "en": "Lake monitor cache is missing",
+        "zh": "数据湖监控缓存缺失"
+    },
+    "Lake monitor cache is rebuilding": {
+        "en": "Lake monitor cache is rebuilding",
+        "zh": "数据湖监控缓存正在重建"
+    },
+    "Lake monitor cache is stale": {
+        "en": "Lake monitor cache is stale",
+        "zh": "数据湖监控缓存已过时"
+    },
+    "Lake runtime has warnings": {
+        "en": "Lake runtime has warnings",
+        "zh": "数据湖运行时存在警告"
+    },
+    "Lake runtime is ready": {
+        "en": "Lake runtime is ready",
+        "zh": "数据湖运行时已就绪"
+    },
+    "Load a DataMixer lake or scan available warehouses.": {
+        "en": "Load a DataMixer lake or scan available warehouses.",
+        "zh": "加载数据混合器数据湖或扫描可用仓库。"
+    },
+    "Looper Model": {
+        "en": "Looper Model",
+        "zh": "Looper模型"
+    },
+    "Looper executing...": {
+        "en": "Looper executing...",
+        "zh": "Looper正在执行..."
+    },
+    "Looper takeover canceled.": {
+        "en": "Looper takeover canceled.",
+        "zh": "Looper接管已取消。"
+    },
+    "Looper takeover interrupted.": {
+        "en": "Looper takeover interrupted.",
+        "zh": "Looper接管已中断。"
+    },
+    "Looper will take over in": {
+        "en": "Looper will take over in",
+        "zh": "Looper将在"
+    },
+    "No DataMixer lake loaded": {
+        "en": "No DataMixer lake loaded",
+        "zh": "未加载数据混合器数据湖"
+    },
+    "No Message": {
+        "en": "No Message",
+        "zh": "无消息"
+    },
+    "No Messages": {
+        "en": "No Messages",
+        "zh": "无消息"
+    },
+    "No active task to reset.": {
+        "en": "No active task to reset.",
+        "zh": "没有可重置的活动任务。"
+    },
+    "No active task to terminate.": {
+        "en": "No active task to terminate.",
+        "zh": "没有可终止的活动任务。"
+    },
+    "No active task to view states.": {
+        "en": "No active task to view states.",
+        "zh": "没有可查看状态的活动任务。"
+    },
+    "No benchmark guard sets registered": {
+        "en": "No benchmark guard sets registered",
+        "zh": "未注册基准守卫集"
+    },
+    "No state config available.": {
+        "en": "No state config available.",
+        "zh": "无可用状态配置。"
+    },
+    "Operation": {
+        "en": "Operation",
+        "zh": "操作"
+    },
+    "Please select a task first.": {
+        "en": "Please select a task first.",
+        "zh": "请先选择一个任务。"
+    },
+    "Processed": {
+        "en": "Processed",
+        "zh": "已处理"
+    },
+    "Rebuild": {
+        "en": "Rebuild",
+        "zh": "重建"
+    },
+    "Select Default Tier": {
+        "en": "Select Default Tier",
+        "zh": "选择默认层级"
+    },
+    "Select Response API": {
+        "en": "Select Response API",
+        "zh": "选择响应API"
+    },
+    "Select Response Format": {
+        "en": "Select Response Format",
+        "zh": "选择响应格式"
+    },
+    "Select Tier": {
+        "en": "Select Tier",
+        "zh": "选择层级"
+    },
+    "Show Messages": {
+        "en": "Show Messages",
+        "zh": "显示消息"
+    },
+    "Tool": {
+        "en": "Tool",
+        "zh": "工具"
+    },
+    "Unknown": {
+        "en": "Unknown",
+        "zh": "未知"
+    },
+    "Update Config Failed.": {
+        "en": "Update Config Failed.",
+        "zh": "更新配置失败。"
+    },
+    "Updated": {
+        "en": "Updated",
+        "zh": "已更新"
+    },
+    "User": {
+        "en": "User",
+        "zh": "用户"
+    },
+    "Waiting for response...": {
+        "en": "Waiting for response...",
+        "zh": "等待响应..."
+    },
+    "for the next action.": {
+        "en": "for the next action.",
+        "zh": "用于下一步操作。"
+    },
+    "registered benchmark sets": {
+        "en": "registered benchmark sets",
+        "zh": "已注册的基准测试集"
+    },
+    "rows": {
+        "en": "rows",
+        "zh": "行"
+    },
+    "sets": {
+        "en": "sets",
+        "zh": "集"
     }
 }

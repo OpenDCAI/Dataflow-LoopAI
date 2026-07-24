@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from loopai.schema.model_pool import StarterModelPool
+
 from .state_bridge import load_system_runtime_config
 
 _DEFAULT_CHECKPOINT_PATH = "outputs/analyzer_checkpoints.sqlite"
@@ -78,12 +80,37 @@ def resolve_analyzer_runtime_config(
     analyzer = _analyzer(state)
     system_runtime = _system_runtime(state, kwargs)
 
+    pool = StarterModelPool(system_runtime)
+    pooled_request = _first_non_empty(
+        kwargs.get("analyzer_model"),
+        kwargs.get("model"),
+        system_runtime.get("analyzer_model"),
+        system_runtime.get("analyze_model"),
+        analyzer.get("analyze_model_path"),
+        analyzer.get("model"),
+        pool.default_model,
+    )
+    pooled_entry = pool.find_entry(pooled_request or None, tier=pool.default_tier)
+    pooled_model = ""
+    pooled_base_url = ""
+    pooled_api_key = ""
+    if pooled_entry is not None:
+        if pool.has_proxy():
+            provider = pool.resolve_proxy_provider(pooled_request or pooled_entry.name, tier=pooled_entry.tier)
+            if provider is not None:
+                pooled_model = provider.model
+                pooled_base_url = provider.base_url
+                pooled_api_key = provider.api_key
+        else:
+            pooled_model = pooled_entry.model_name
+            pooled_base_url = pooled_entry.base_url
+            pooled_api_key = pooled_entry.resolved_api_key()
+
     env_api_key = os.getenv("ANALYZER_API_KEY")
     system_api_key = _first_non_empty(
         system_runtime.get("analyzer_api_key"),
         system_runtime.get("analyze_api_key"),
-        system_runtime.get("starter_api_key"),
-        system_runtime.get("codex_api_key"),
+        pooled_api_key,
         system_runtime.get("api_key"),
     )
     legacy_api_key = analyzer.get("analyze_api_key") or analyzer.get("api_key")
@@ -100,8 +127,7 @@ def resolve_analyzer_runtime_config(
         kwargs.get("model"),
         system_runtime.get("analyzer_model"),
         system_runtime.get("analyze_model"),
-        system_runtime.get("starter_model_name"),
-        system_runtime.get("starter_model_path"),
+        pooled_model,
         os.getenv("ANALYZER_MODEL"),
         analyzer.get("analyze_model_path"),
         analyzer.get("model"),
@@ -111,7 +137,7 @@ def resolve_analyzer_runtime_config(
         kwargs.get("base_url"),
         system_runtime.get("analyzer_base_url"),
         system_runtime.get("analyze_base_url"),
-        system_runtime.get("starter_base_url"),
+        pooled_base_url,
         os.getenv("ANALYZER_BASE_URL"),
         analyzer.get("analyze_base_url"),
         analyzer.get("base_url"),

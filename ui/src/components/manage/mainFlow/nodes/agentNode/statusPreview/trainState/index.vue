@@ -68,14 +68,26 @@ export default {
             return this.statusList.map((item) => item.step)
         },
         chartDataAttrs() {
-            let arr = []
-            for (let key in this.statusList[0]) {
-                if (key === 'step') continue
-                if (typeof this.statusList[0][key] === 'number') {
-                    arr.push(key)
-                }
-            }
-            return arr
+            if (!this.statusList.length) return []
+            const keys = new Set()
+            this.statusList.forEach((item) => {
+                Object.keys(item).forEach((key) => {
+                    if (key !== 'step' && typeof item[key] === 'number') keys.add(key)
+                })
+            })
+            const preferred = [
+                'loss',
+                'eval_loss',
+                'reward',
+                'val_score',
+                'policy_loss',
+                'accuracy',
+                'learning_rate'
+            ]
+            return [
+                ...preferred.filter((key) => keys.has(key)),
+                ...Array.from(keys).filter((key) => !preferred.includes(key))
+            ].slice(0, 8)
         }
     },
     mounted() {
@@ -130,7 +142,10 @@ export default {
                 if (item.log_line) {
                     this.loglines.push(item.log_line)
                 }
-                if (item.loss != undefined && item.step != undefined) {
+                const hasNumericMetric = Object.keys(item).some(
+                    (key) => key !== 'step' && typeof item[key] === 'number'
+                )
+                if (item.step != undefined && hasNumericMetric) {
                     this.statusList.push(item)
                 }
             })
