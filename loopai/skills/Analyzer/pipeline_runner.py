@@ -199,6 +199,33 @@ class _AnalyzerProgressWriter:
         total_failed_samples = data.get("total_failed_samples")
         is_heartbeat = bool(data.get("heartbeat"))
 
+        # Waiting heartbeats are the latest durable indication of progress
+        # while an LLM request is in flight. Persist them so resume does not
+        # fall back to the node-start percentage.
+        event_progress = event_dict.get("progress")
+        if (
+            is_heartbeat
+            and self._checkpoint_callback is not None
+            and self._state is not None
+            and isinstance(event_progress, (int, float))
+        ):
+            if self._step_name == "analyze_result":
+                overall_progress = float(event_progress)
+            else:
+                overall_progress = _map_step_progress(
+                    self._step_name,
+                    float(event_progress),
+                )
+            self._checkpoint_callback(
+                self._state,
+                overall_progress,
+                stage=self._step_name,
+                data={
+                    "heartbeat": True,
+                    "waiting_seconds": data.get("waiting_seconds"),
+                },
+            )
+
         # Do not convert arbitrary local node progress into global progress.
         # It caused jumps such as 4% -> 63% when a node reported "local 60%".
         # Only real completed work units should move the global bar.
@@ -434,8 +461,11 @@ def run_analyzer_pipeline(
     if start_step is None:
         start_step = ANALYZER_PIPELINE_STEPS[0]
     start_at = _start_index(start_step)
+    initial_resume_progress = (
+        resume_progress if resume and from_node is None else 0.0
+    )
     progress_state: Dict[str, Any] = {
-        "last_percent": -1,
+        "last_percent": _progress_percent(initial_resume_progress) - 1,
         "cap_percent": 0,
         "step": None,
         "ticker_message": "Analyzer 运行中",
@@ -444,7 +474,7 @@ def run_analyzer_pipeline(
     if writer:
         _emit_pipeline_progress(
             writer,
-            0.0,
+            initial_resume_progress,
             "Analyzer pipeline started",
             data={
                 "task_id": thread_id,
@@ -484,28 +514,47 @@ def run_analyzer_pipeline(
 
         for step_name in ANALYZER_PIPELINE_STEPS[start_at:]:
             state["current"] = step_name
+            step_resume_progress = (
+                resume_progress
+                if resume and from_node is None and step_name == start_step
+                else 0.0
+            )
             save_analyzer_checkpoint(
                 state,
                 thread_id,
                 checkpoint_path,
                 version_id=version_id,
-                node_progress=0.0,
-                node_checkpoint={"stage": step_name, "data": {}},
+                node_progress=step_resume_progress,
+                node_checkpoint={
+                    "stage": step_name,
+                    "data": {"resumed_from_progress": step_resume_progress}
+                    if step_resume_progress
+                    else {},
+                },
             )
             _set_pipeline_step_cap(progress_state, step_name, message=f"{step_name} 运行中")
 
             if writer:
                 writer(StreamEvent(
                     current=f"analyzer.{step_name}",
-                    progress=_STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
-                    progress_num=_progress_percent(_STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0]),
+                    progress=max(
+                        step_resume_progress,
+                        _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                    ),
+                    progress_num=_progress_percent(max(
+                        step_resume_progress,
+                        _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                    )),
                     total=100,
                     message=f"步骤开始: {step_name}",
                     data={"step": step_name},
                 ))
                 _emit_pipeline_progress(
                     writer,
-                    _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                    max(
+                        step_resume_progress,
+                        _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                    ),
                     f"开始 {step_name}",
                     data={"step": step_name},
                     progress_state=progress_state,

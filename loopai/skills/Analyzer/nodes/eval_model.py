@@ -18,7 +18,10 @@ from loopai.skills.Analyzer.utils.openai_compat_llm import OpenAICompatChat
 logger = get_logger()
 from types import SimpleNamespace  
 from loopai.common.event_tool import StreamEvent
-from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.skills.Analyzer.utils.stream import (
+    get_analyzer_resume_progress,
+    get_safe_stream_writer,
+)
 # ===== PromptLoader 单例 & 模板缓存 =====
 _PROMPT_LOADER: PromptLoader | None = None
 _TEMPLATE_CACHE: dict[tuple[str, str], str] = {}
@@ -200,6 +203,52 @@ def _ensure_analyzer_outdir(state: LoopAIState) -> Path:
     outdir = base_outdir / task_id / "analyzer"
     outdir.mkdir(parents=True, exist_ok=True)
     return outdir
+
+
+def _batch_checkpoint_path(state: LoopAIState) -> Path:
+    return _ensure_analyzer_outdir(state) / "eval_model_batch_checkpoint.json"
+
+
+def _write_batch_checkpoint(
+    path: Path,
+    *,
+    next_batch: int,
+    total_batches: int,
+    failed_results: List[Dict[str, Any]],
+) -> None:
+    """Persist completed eval batches without changing the public state shape."""
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    temp_path.write_text(
+        json.dumps(
+            {
+                "next_batch": next_batch,
+                "total_batches": total_batches,
+                "failed_results": failed_results,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    os.replace(temp_path, path)
+
+
+def _load_batch_checkpoint(
+    path: Path,
+    *,
+    expected_count: int,
+) -> tuple[int, List[Dict[str, Any]]] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        saved_results = payload.get("failed_results")
+        next_batch = int(payload.get("next_batch", 0))
+        if not isinstance(saved_results, list) or len(saved_results) != expected_count:
+            return None
+        return max(0, next_batch), saved_results
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        logger.warning("无法读取 Analyzer 批次 checkpoint，将从当前节点重新开始。")
+        return None
 
 def _runtime_api_key(cfg: dict) -> str:
     return (
@@ -809,14 +858,38 @@ def eval_model_node(state: LoopAIState):
     # 仅失败样本做判因
     failed_results = [r for r in result_content if not r.get("passed")]
     total_failed = len(failed_results)
+    batch_checkpoint_path = _batch_checkpoint_path(state)
     # 初始化 LLM
-    batch_size = int(cfg.get("analyze_batch_size", 20))
+    batch_size = max(1, int(cfg.get("analyze_batch_size", 20)))
     llm = init_model(state)
     total_batches = (len(failed_results) + batch_size - 1) // batch_size
     start_p = 0.05   # 判因阶段起点
     end_p = 0.70     # 判因阶段终点
     span = end_p - start_p
     completed_failed = 0
+    start_batch = 0
+    resume_progress = get_analyzer_resume_progress()
+    if resume_progress > 0:
+        saved_batch = _load_batch_checkpoint(
+            batch_checkpoint_path,
+            expected_count=total_failed,
+        )
+        if saved_batch is not None:
+            start_batch, failed_results = saved_batch
+            completed_failed = min(start_batch * batch_size, total_failed)
+            if writer:
+                writer(StreamEvent(
+                    current="analyzer.eval_model",
+                    progress=round(start_p + span * (completed_failed / max(total_failed, 1)), 3),
+                    message=f"恢复判因分析 ({completed_failed}/{total_failed})",
+                    data={
+                        "resumed": True,
+                        "next_batch": start_batch,
+                        "total_batches": total_batches,
+                        "processed_samples": completed_failed,
+                        "total_failed_samples": total_failed,
+                    },
+                ).json())
 
     def _emit_judge_progress(done: int, total: int, *, batch_no: int, total_batches: int) -> None:
         if not writer:
@@ -850,7 +923,7 @@ def eval_model_node(state: LoopAIState):
     if total_failed == 0:
         _emit_judge_progress(0, 0, batch_no=0, total_batches=0)
 
-    for i in tqdm(range(0, total_failed, batch_size)):
+    for i in tqdm(range(start_batch * batch_size, total_failed, batch_size)):
         batch = failed_results[i:i + batch_size]
         batch_no = i // batch_size + 1
 
@@ -929,6 +1002,12 @@ def eval_model_node(state: LoopAIState):
             total_failed,
             batch_no=batch_no,
             total_batches=total_batches,
+        )
+        _write_batch_checkpoint(
+            batch_checkpoint_path,
+            next_batch=batch_no,
+            total_batches=total_batches,
+            failed_results=failed_results,
         )
 
     # ===== quick_brief：仅对失败样本生成短评（失败<=20全量；失败>20抽样20条覆盖错误类型）=====
@@ -1077,4 +1156,8 @@ def eval_model_node(state: LoopAIState):
         message="评测流程完成",
         data=None
        ).json())
+    try:
+        batch_checkpoint_path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("无法清理 Analyzer 批次 checkpoint：%s", batch_checkpoint_path)
     return state

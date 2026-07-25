@@ -14,6 +14,7 @@ def run(
     resume: bool = False,
     from_node: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
+    analyze_batch_size: Optional[int] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Run Analyzer skill (Codex / subprocess entry point).
@@ -40,8 +41,14 @@ def run(
 
     from .runtime_config import resolve_analyzer_runtime_config
     from .runtime_config import get_version_checkpoint_path
+    from .runtime_config import find_latest_version_checkpoint
+    from .runtime_config import cleanup_old_analyzer_checkpoints
+    from .pipeline_runner import load_analyzer_checkpoint, _is_finished
     from .state_bridge import load_analyzer_state_from_configer
-    from loopai.skills.Analyzer.runner import run_analyzer_standalone
+    from loopai.skills.Analyzer.runner import (
+        find_latest_incomplete_version_checkpoint,
+        run_analyzer_standalone,
+    )
 
     try:
         if state is None:
@@ -50,6 +57,7 @@ def run(
             state,
             thread_id=task_id,
             baseline_result_path=baseline_result_path,
+            analyze_batch_size=analyze_batch_size,
             **kwargs,
         )
         explicit_version = (
@@ -57,9 +65,43 @@ def run(
             or kwargs.get("run_id")
             or os.getenv("ANALYZER_VERSION_ID")
             or os.getenv("VERSION_ID")
+            or (state.get("version_id") if isinstance(state, dict) else None)
+            or ((state.get("analyzer") or {}).get("version_id") if isinstance(state, dict) else None)
         )
-        if not explicit_version:
-            runtime["version_id"] = ""
+        if resume and not explicit_version:
+            latest_checkpoint = find_latest_version_checkpoint(
+                runtime["output_dir"], runtime["thread_id"]
+            )
+            if latest_checkpoint:
+                runtime["version_id"], runtime["checkpoint_path"] = latest_checkpoint
+            else:
+                runtime["version_id"] = ""
+        elif not explicit_version:
+            if not kwargs.get("new_version") and not kwargs.get("force_new_version"):
+                latest_checkpoint = find_latest_incomplete_version_checkpoint(
+                    runtime["output_dir"], runtime["thread_id"]
+                )
+                if latest_checkpoint:
+                    runtime["version_id"], runtime["checkpoint_path"] = latest_checkpoint
+                    resume = True
+                else:
+                    runtime["version_id"] = ""
+            else:
+                runtime["version_id"] = ""
+        if runtime.get("version_id"):
+            runtime["checkpoint_path"] = get_version_checkpoint_path(
+                runtime["output_dir"], runtime["thread_id"], runtime["version_id"]
+            )
+            if not resume and os.path.exists(runtime["checkpoint_path"]):
+                candidate_state = load_analyzer_checkpoint(
+                    runtime["thread_id"],
+                    runtime["checkpoint_path"],
+                    version_id=runtime["version_id"],
+                )
+                if candidate_state and not _is_finished(candidate_state):
+                    resume = True
+                elif candidate_state and _is_finished(candidate_state):
+                    runtime["version_id"] = ""
         writer_version_id = runtime["version_id"]
         if writer_version_id in ("", "default") and not explicit_version:
             writer_version_id = None
@@ -69,12 +111,30 @@ def run(
             log_file_path=runtime["output_dir"],
             version_id=writer_version_id,
         )
+        resume_progress = 0.0
+        if resume and runtime.get("version_id") and os.path.exists(runtime["checkpoint_path"]):
+            checkpoint_state = load_analyzer_checkpoint(
+                runtime["thread_id"],
+                runtime["checkpoint_path"],
+                version_id=runtime["version_id"],
+            )
+            resume_progress = float(
+                (checkpoint_state.get("_analyzer_checkpoint") or {}).get(
+                    "node_progress", 0.0
+                )
+                or 0.0
+            )
         writer.set_running({
             "current": "analyzer.initializing",
-            "progress": 0.0,
-            "message": "Analyzer initializing.",
+            "progress": resume_progress,
+            "message": "Analyzer resuming." if resume and resume_progress else "Analyzer initializing.",
         })
         runtime["version_id"] = str(writer.version_id)
+        cleanup_old_analyzer_checkpoints(
+            runtime["output_dir"],
+            runtime["thread_id"],
+            runtime["version_id"],
+        )
         runtime["checkpoint_path"] = get_version_checkpoint_path(
             runtime["output_dir"],
             runtime["thread_id"],
@@ -90,17 +150,28 @@ def run(
             / runtime["version_id"]
         )
         runner_kwargs = dict(kwargs)
-        runner_kwargs.pop("version_id", None)
-        runner_kwargs.pop("run_id", None)
+        for control_key in (
+            "version_id",
+            "run_id",
+            "resume",
+            "from_node",
+            "checkpoint_path",
+            "baseline_result_path",
+            "analyze_batch_size",
+            "writer",
+            "emit_status",
+        ):
+            runner_kwargs.pop(control_key, None)
+        runner_kwargs["version_id"] = runtime["version_id"]
         final_state = run_analyzer_standalone(
             state=state,
             thread_id=runtime["thread_id"],
             resume=resume,
             from_node=from_node,
             baseline_result_path=baseline_result_path,
+            analyze_batch_size=analyze_batch_size,
             writer=writer,
             emit_status=False,
-            version_id=runtime["version_id"],
             **runner_kwargs,
         )
     except (ValueError, TypeError) as exc:
@@ -190,4 +261,25 @@ def load_events(
     ) if version_id is None or event.version_id == version_id]
 
 
-__all__ = ["run", "load_events"]
+def resume_run(
+    state: Optional[Dict[str, Any]] = None,
+    thread_id: Optional[str] = None,
+    from_node: Optional[str] = None,
+    baseline_result_path: Optional[str] = None,
+    analyze_batch_size: Optional[int] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Explicit continuation entry point; always resumes the latest checkpoint."""
+    kwargs.pop("resume", None)
+    return run(
+        state=state,
+        thread_id=thread_id,
+        resume=True,
+        from_node=from_node,
+        baseline_result_path=baseline_result_path,
+        analyze_batch_size=analyze_batch_size,
+        **kwargs,
+    )
+
+
+__all__ = ["run", "resume_run", "load_events"]

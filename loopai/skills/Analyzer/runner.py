@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import json
+import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -19,8 +21,10 @@ from .pipeline_runner import (
     normalize_analyzer_step,
     run_analyzer_pipeline,
     _resume_step_from_state,
+    _is_finished,
 )
 from .runtime_config import (
+    cleanup_old_analyzer_checkpoints,
     find_latest_version_checkpoint,
     get_version_checkpoint_path,
     resolve_analyzer_runtime_config,
@@ -43,6 +47,40 @@ def _latest_runtime_version(task_id: str, node_name: str = "analyzer") -> Option
             return str(runtime["version"])
     except Exception:
         return None
+    return None
+
+
+def find_latest_incomplete_version_checkpoint(
+    output_dir: str,
+    task_id: str,
+) -> Optional[tuple[str, str]]:
+    """Return the newest unfinished version checkpoint for a task."""
+    analyzer_dir = Path(output_dir) / str(task_id) / "analyzer"
+    candidates = []
+    for version_dir in analyzer_dir.iterdir() if analyzer_dir.is_dir() else []:
+        checkpoint = version_dir / "state_checkpoint.sqlite"
+        if version_dir.is_dir() and checkpoint.exists():
+            candidates.append((checkpoint.stat().st_mtime, version_dir.name, str(checkpoint)))
+    for _, version_id, checkpoint_path in sorted(candidates, reverse=True):
+        try:
+            with sqlite3.connect(checkpoint_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT state_json FROM analyzer_checkpoints_v2
+                    WHERE thread_id = ? AND version_id = ?
+                    LIMIT 1
+                    """,
+                    (task_id, version_id),
+                ).fetchone()
+            # Empty, legacy, or incompatible SQLite files must not fall back
+            # to Configer state and masquerade as a valid version checkpoint.
+            if row is None:
+                continue
+            candidate_state = json.loads(row[0])
+        except (OSError, sqlite3.DatabaseError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if candidate_state and not _is_finished(candidate_state):
+            return version_id, checkpoint_path
     return None
 
 
@@ -81,6 +119,7 @@ def run_analyzer_standalone(
     from_node: Optional[str] = None,
     checkpoint_path: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
+    analyze_batch_size: Optional[int] = None,
     emit_status: bool = True,
     **kwargs: Any,
 ) -> Dict[str, Any]:
@@ -102,27 +141,55 @@ def run_analyzer_standalone(
         or kwargs.get("run_id")
         or os.getenv("ANALYZER_VERSION_ID")
         or os.getenv("VERSION_ID")
+        or (state.get("version_id") if isinstance(state, dict) else None)
+        or ((state.get("analyzer") or {}).get("version_id") if isinstance(state, dict) else None)
     )
-    if not explicit_version:
-        # A non-resume call is always a new run. A resume call selects the
-        # newest checkpoint for this task instead of inheriting stale state.
-        runtime["version_id"] = ""
+    force_new_version = bool(
+        kwargs.get("new_version") or kwargs.get("force_new_version")
+    )
 
-    if resume and not explicit_version and not runtime.get("version_id"):
-        latest_checkpoint = find_latest_version_checkpoint(
+    if not force_new_version and not runtime.get("version_id"):
+        latest_checkpoint = find_latest_incomplete_version_checkpoint(
             runtime["output_dir"], runtime["thread_id"]
         )
         if latest_checkpoint:
             runtime["version_id"], runtime["checkpoint_path"] = latest_checkpoint
-        else:
-            latest_version = _latest_runtime_version(runtime["thread_id"])
-            if latest_version:
-                runtime["version_id"] = latest_version
+            resume = True
+        elif resume:
+            latest_checkpoint = find_latest_version_checkpoint(
+                runtime["output_dir"], runtime["thread_id"]
+            )
+            if latest_checkpoint:
+                runtime["version_id"], runtime["checkpoint_path"] = latest_checkpoint
+            else:
+                latest_version = _latest_runtime_version(runtime["thread_id"])
+                if latest_version:
+                    runtime["version_id"] = latest_version
+        elif not explicit_version:
+            runtime["version_id"] = ""
+    elif force_new_version and not explicit_version:
+        runtime["version_id"] = ""
 
-    if runtime.get("version_id"):
+    if not force_new_version and runtime.get("version_id"):
         runtime["checkpoint_path"] = get_version_checkpoint_path(
             runtime["output_dir"], runtime["thread_id"], runtime["version_id"]
         )
+        if os.path.exists(runtime["checkpoint_path"]):
+            candidate_state = load_analyzer_checkpoint(
+                runtime["thread_id"],
+                runtime["checkpoint_path"],
+                version_id=runtime["version_id"],
+            )
+            if candidate_state and not _is_finished(candidate_state):
+                resume = True
+                state = candidate_state
+            elif candidate_state and _is_finished(candidate_state) and not resume:
+                runtime["version_id"] = ""
+
+    if force_new_version:
+        resume = False
+        if not explicit_version:
+            runtime["version_id"] = ""
 
     start_node = normalize_analyzer_step(from_node) if from_node else None
     if resume:
@@ -143,6 +210,10 @@ def run_analyzer_standalone(
 
     if state is None:
         state = load_analyzer_state_from_configer(task_id=runtime["thread_id"])
+    if analyze_batch_size is not None:
+        if int(analyze_batch_size) < 1:
+            raise ValueError("analyze_batch_size must be at least 1")
+        state.setdefault("analyzer", {})["analyze_batch_size"] = int(analyze_batch_size)
 
     writer = kwargs.get("writer")
     if writer is None:
@@ -156,12 +227,27 @@ def run_analyzer_standalone(
             log_file_path=output_dir,
             version_id=writer_version_id,
         )
+        checkpoint_progress = 0.0
+        if resume and isinstance(state, dict):
+            checkpoint_progress = float(
+                (state.get("_analyzer_checkpoint") or {}).get("node_progress", 0.0)
+                or 0.0
+            )
         writer.set_running({
             "current": "analyzer.initializing",
-            "progress": 0.0,
-            "message": "Analyzer initializing.",
+            "progress": checkpoint_progress,
+            "message": (
+                "Analyzer resuming."
+                if resume and checkpoint_progress
+                else "Analyzer initializing."
+            ),
         })
         runtime["version_id"] = str(writer.version_id)
+        cleanup_old_analyzer_checkpoints(
+            output_dir,
+            runtime["thread_id"],
+            runtime["version_id"],
+        )
         runtime["checkpoint_path"] = get_version_checkpoint_path(
             output_dir,
             runtime["thread_id"],
@@ -235,6 +321,7 @@ def run_analyzer_standalone_payload(
     from_node: Optional[str] = None,
     checkpoint_path: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
+    analyze_batch_size: Optional[int] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Run Analyzer and return the unified success/error payload."""
@@ -246,6 +333,7 @@ def run_analyzer_standalone_payload(
             from_node=from_node,
             checkpoint_path=checkpoint_path,
             baseline_result_path=baseline_result_path,
+            analyze_batch_size=analyze_batch_size,
             **kwargs,
         )
     except (ValueError, TypeError) as exc:
@@ -286,4 +374,27 @@ def run_analyzer_standalone_payload(
             "state": final_state,
         },
         message="Analyzer completed.",
+    )
+
+
+def resume_analyzer_standalone(
+    state: Optional[Dict[str, Any]] = None,
+    thread_id: Optional[str] = None,
+    from_node: Optional[str] = None,
+    checkpoint_path: Optional[str] = None,
+    baseline_result_path: Optional[str] = None,
+    analyze_batch_size: Optional[int] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Explicit in-process continuation entry point."""
+    kwargs.pop("resume", None)
+    return run_analyzer_standalone(
+        state=state,
+        thread_id=thread_id,
+        resume=True,
+        from_node=from_node,
+        checkpoint_path=checkpoint_path,
+        baseline_result_path=baseline_result_path,
+        analyze_batch_size=analyze_batch_size,
+        **kwargs,
     )

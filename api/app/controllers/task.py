@@ -1,5 +1,4 @@
 import os
-import json
 from fastapi import APIRouter
 from ..models.body import response_body, TaskItem, TaskStateConfigModel
 from ..services.task import (
@@ -112,11 +111,8 @@ async def get_latest_runtimes(task_id: str):
 async def get_train_status(output_dir: str, task_id: str, train_task_id: str):
     """获取训练状态"""
     output_dir = _resolve_output_dir(output_dir)
-    watch_path = os.path.join(output_dir, task_id, 'trainer', train_task_id)
-    final_path = os.path.join(watch_path, 'metrics', 'metrics.json')
-    if os.path.exists(final_path):
-        with open(final_path, 'r') as f:
-            metrics = json.load(f)
-            return response_body(data=metrics)()
-    else:
-        return response_body(code=404, status='error', message='训练状态文件不存在:' + final_path)()
+    try:
+        metrics = get_train_status_service(output_dir, task_id, train_task_id)
+        return response_body(data=metrics)()
+    except TaskServiceError as exc:
+        return response_body(code=exc.code, status='error', message=exc.message)()

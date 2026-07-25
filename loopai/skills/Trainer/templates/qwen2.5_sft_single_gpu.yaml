@@ -20,12 +20,11 @@ dataloader_num_workers: 2
 output_dir: ./outputs
 logging_steps: 10
 save_steps: 100
+save_total_limit: 10
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
 report_to: none
-use_swanlab: true
-swanlab_mode: local
 
 ### train
 per_device_train_batch_size: 4
