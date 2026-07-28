@@ -7,6 +7,7 @@ from langgraph.config import get_stream_writer
 from loopai.schema.states import LoopAIState
 from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.schema.events import StreamEvent
+from loopai.skills.WebCrawler.runtime_config import resolve_webcrawler_runtime_config
 from loopai.logger import get_logger
 from .nodes import start_node as _start_node, crawl_node as _crawl_node, webcrawler_dataset_node as _webcrawler_dataset_node, end_node as _end_node
 
@@ -33,6 +34,20 @@ class WebCrawlerAgent(BaseAgent):
     @BaseAgent.set_current
     def start_node(state: LoopAIState) -> LoopAIState:
         return _start_node(state)
+
+    def get_start_node(self):
+        @BaseAgent.set_current
+        def start_node(state: LoopAIState) -> LoopAIState:
+            resolve_webcrawler_runtime_config(
+                state,
+                thread_id=state.get("task_id"),
+                webcrawler_model=self.model_name,
+                webcrawler_deepseek_api_base=self.base_url,
+                webcrawler_deepseek_api_key=self.api_key,
+            )
+            return _start_node(state)
+
+        return start_node
     
     @staticmethod
     @BaseAgent.set_current
@@ -51,7 +66,7 @@ class WebCrawlerAgent(BaseAgent):
 
     def init_graph(self, **kwargs):
         builder = StateGraph(LoopAIState)
-        builder.add_node("start_node", self.start_node)
+        builder.add_node("start_node", self.get_start_node())
         builder.add_node("crawl_node", self.crawl_node)
         builder.add_node("webcrawler_dataset_node", self.webcrawler_dataset_node)
         builder.add_node("end_node", self.end_node)

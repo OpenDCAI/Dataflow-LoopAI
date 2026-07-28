@@ -1,0 +1,68 @@
+pipeline:
+  name: webpage_l1_to_initial_sft_l3
+  source:
+    dataset: webpage_demo_l1
+    filter: quality_level = 'L1'
+  operators:
+    - name: webpage_to_pt
+      args:
+        engine: mineru
+        min_chars: 300
+        max_chars: 120000
+        mineru_python: /data/xuebinrui/miniconda3/envs/mineruhtml/bin/python
+        mineru_model: /data/xuebinrui/model/MinerU-HTML-v1.1-hunyuan0.5B-compact
+        mineru_backend: transformers
+        mineru_gpu: "0"
+        mineru_max_context_window: 70000
+        mineru_max_tokens: 4096
+        mineru_batch_size: 1
+        mineru_timeout: 900
+        fallback: legacy
+
+    - name: dataflow
+      args:
+        op: WordNumberFilter
+        input_key: text
+        output_key: dataflow_word_count
+        kind: filter
+        min_words: 40
+        max_words: 60000
+
+    # This executes on the cleaned PT document.  The operator uses the
+    # lake-local domain registry (plus persistent broad classes), then this
+    # is the first point at which the record is materialized as L2.
+    - name: domain_classify
+      args:
+        model: deepseek-proxy
+        chunk_size: 2
+        max_concurrency: 4
+        max_input_chars: 12000
+        max_tokens: 512
+      output:
+        dataset: webpage_demo_l2_pt
+        quality_level: L2
+        stage: pretrain
+        modality: text
+        processing_level: webpage_preprocessed
+        description: Clean webpage text with lake-synchronised LLM domain labels.
+
+    - name: pt_to_sft_qa
+      args:
+        model: deepseek-proxy
+        chunk_size: 2
+        max_concurrency: 4
+        max_input_chars: 12000
+        max_tokens: 4096
+        max_retries: 2
+
+    - name: sft_validate
+      args:
+        mode: filter
+      output:
+        dataset: webpage_demo_l3_sft
+        quality_level: L3
+        stage: sft
+        modality: text
+        task_type: grounded_qa
+        processing_level: initial_sft
+        description: Initial grounded SFT QA pairs generated from L2 webpage PT data.

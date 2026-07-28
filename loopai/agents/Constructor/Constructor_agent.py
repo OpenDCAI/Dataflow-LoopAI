@@ -8,12 +8,17 @@ from langgraph.config import get_stream_writer
 from loopai.schema.states import LoopAIState
 from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.schema.events import StreamEvent
+from loopai.schema.system_runtime import (
+    load_runtime_system_config,
+    resolve_integration_value,
+)
 
 from loopai.logger import get_logger
 from loopai.agents.Constructor.nodes import postprocess_node
 from loopai.agents.Constructor.nodes.filter_node import CleaningSubgraph
 from loopai.agents.Constructor.mapping import MappingSubgraph
 from loopai.common.prompts import PromptLoader
+from loopai.agents.Constructor.runtime_config import resolve_constructor_model_config
 from langchain_core.messages import AIMessage
 logger = get_logger()
 
@@ -118,7 +123,7 @@ class ConstructorAgent(BaseAgent):
             obtainer_state = state.get("obtainer", {})
             constructor = state["constructor"]
             fallback_keys = [
-                "model_path", "base_url", "api_key", "temperature",
+                "model_path", "base_url", "temperature",
                 "user_query", "datasets_background", "category", "subtasks",
                 "intermediate_data_path", "confirmed_format", "pending_format",
                 "mapping_auto_mode", "confirmation_result", "mapping_user_intent",
@@ -160,10 +165,34 @@ class ConstructorAgent(BaseAgent):
                 if self.base_url:
                     constructor["base_url"] = self.base_url
             
-            # api_key: 优先使用 constructor 中的值，其次使用 self.api_key
-            if not constructor.get("api_key"):
-                if self.api_key:
-                    constructor["api_key"] = self.api_key
+            system_config = load_runtime_system_config(
+                task_id=state.get("task_id"),
+                db_path=state.get("DB_PATH") or os.getenv("DB_PATH"),
+            )
+            runtime_model = resolve_constructor_model_config(
+                state,
+                legacy_model=self.model_name,
+                legacy_base_url=constructor.get("base_url") or self.base_url,
+                legacy_api_key=constructor.get("api_key") or self.api_key,
+            )
+            if runtime_model.model:
+                constructor["model_path"] = runtime_model.model
+            if runtime_model.base_url:
+                constructor["base_url"] = runtime_model.base_url
+            if runtime_model.api_key:
+                os.environ["LOOPAI_CONSTRUCTOR_API_KEY"] = runtime_model.api_key
+            constructor.pop("api_key", None)
+
+            tavily_api_key = resolve_integration_value(
+                system_config,
+                "tavily",
+                "api_key",
+                env_keys=("TAVILY_API_KEY",),
+                legacy_system_keys=("tavily_api_key",),
+                legacy_values=((obtainer_state or {}).get("tavily_api_key"),),
+            )
+            if tavily_api_key:
+                os.environ["TAVILY_API_KEY"] = tavily_api_key
             
             # temperature: 优先使用 constructor 中的值，其次使用 self.temperature，默认 0.7
             if constructor.get("temperature") is None:
@@ -436,6 +465,8 @@ class ConstructorAgent(BaseAgent):
                 "to allow subsequent Obtainer-driven runs"
             )
             ctor.pop("webcrawler_dataset_dir", None)
+        # Never return model credentials in task state.
+        ctor.pop("api_key", None)
 
         # Set next_to to query_node to return to parent graph
         state["next_to"] = "query_node"
@@ -560,7 +591,7 @@ class ConstructorAgent(BaseAgent):
             category=category,
             model_name=constructor.get("model_path", ""),
             base_url=constructor.get("base_url", ""),
-            api_key=constructor.get("api_key", ""),
+            api_key=resolve_constructor_model_config(state).api_key,
             temperature=constructor.get("temperature", 0.0),
             datasets_background=constructor.get("datasets_background", ""),
             tavily_api_key=tavily_api_key if tavily_api_key else None,

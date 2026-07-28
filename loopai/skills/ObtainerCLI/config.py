@@ -1,7 +1,22 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict, Mapping
+
+
+# These values are intentionally credential-free. A lake pointer is shared by
+# the UI, ObtainerCLI and isolated workers, so it must retain operational
+# defaults without copying API keys into project state.
+OBTAINER_CONTEXT_DEFAULTS: Dict[str, str] = {
+    "obtainer_webagent": "domain_data_acquisition",
+    "obtainer_webagent_model": "",
+    "obtainer_webagent_workers": "4",
+    "obtainer_webagent_subquery_count": "24",
+    "obtainer_webagent_auto_process": "false",
+    "obtainer_active_acquisition_run": "",
+    "obtainer_active_campaign_id": "",
+    "obtainer_active_l1_dataset": "",
+}
 
 
 def _parse_simple_yaml(path: Path) -> Dict[str, str]:
@@ -33,6 +48,17 @@ def _bool_text(value: bool) -> str:
     return "true" if value else "false"
 
 
+def obtainer_context(values: Mapping[str, Any] | None = None) -> Dict[str, str]:
+    """Return the persisted, credential-free Obtainer runtime context."""
+    source = values or {}
+    context = dict(OBTAINER_CONTEXT_DEFAULTS)
+    for key in context:
+        value = source.get(key)
+        if value is not None:
+            context[key] = str(value).strip()
+    return context
+
+
 def write_lake_config(
     path: Path,
     *,
@@ -49,9 +75,11 @@ def write_lake_config(
     embedding_text_field: str = "text",
     auto_embed_async: bool = True,
     auto_embed_batch_size: int = 512,
+    obtainer_context_values: Mapping[str, Any] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     warehouse = warehouse or root / "warehouse"
+    context = obtainer_context(obtainer_context_values)
     path.write_text(
         "\n".join(
             [
@@ -70,6 +98,9 @@ def write_lake_config(
                 f"embedding_text_field: {embedding_text_field}",
                 f"auto_embed_async: {_bool_text(auto_embed_async)}",
                 f"auto_embed_batch_size: {int(auto_embed_batch_size)}",
+                "",
+                "# Persistent Obtainer acquisition context (no credentials)",
+                *[f"{key}: {value}" for key, value in context.items()],
                 "",
             ]
         ),

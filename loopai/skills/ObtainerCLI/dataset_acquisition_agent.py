@@ -4,7 +4,6 @@ import argparse
 import contextlib
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -36,7 +35,23 @@ Hard rules:
 1. All lakehouse operations after downloaded files exist must use:
    {python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} <datamixer-command> --json
 2. Do not use legacy Obtainer lake/table/sample/index commands.
-3. You may use Obtainer SearchAgent and `download manifest` as the acquisition
+3. For every normal acquisition, start two complementary discovery streams at
+   the same time and wait for both before deciding what to ingest:
+   - Run Obtainer SearchAgent to discover hosted datasets and construct the
+     provider-download candidate manifest.
+   - Run DataMixer's registered `domain_data_acquisition` campaign (legacy alias
+     `webcrawler_dm`) to collect authoritative vertical-domain resource pages as
+     L1 raw HTML in the target warehouse.
+   SearchAgent and WebAgent cover different source types; neither substitutes
+   for the other. Keep their artifacts, failures, and accepted outputs separate
+   in the final report. Do not make one stream wait for the other to start.
+   Select an existing DataMixer model-pool name with `dm model list --json`
+   before starting WebAgent. If no model is registered, record a
+   `webagent_model_missing` blocker while continuing SearchAgent; never invent
+   credentials or silently skip the required WebAgent stream. Do not begin
+   `download manifest` until `webagent_start.json` exists, unless a concrete
+   `webagent_model_missing`/launch blocker has been written to final_report.
+4. Use Obtainer SearchAgent and `download manifest` as the acquisition
    bridge when appropriate:
    {python_executable} -m loopai.skills.ObtainerCLI.cli searchagent ...
    {python_executable} -m loopai.skills.ObtainerCLI.cli download manifest ...
@@ -45,12 +60,12 @@ Hard rules:
    call SearchAgent once with `--task-json <path> --parallelism <n>`. Keep each
    task's objective and search_keywords domain-specific so one domain cannot
    crowd out another.
-4. If direct web/Hugging Face/Kaggle discovery is more appropriate for the
+5. If direct web/Hugging Face/Kaggle discovery is more appropriate for the
    caller's instruction, write an equivalent manifest yourself and continue.
-5. Before downloading, compare the candidate list against the original user
+6. Before downloading, compare the candidate list against the original user
    request and Analyzer report. Remove clearly unrelated datasets and write
    both a filtered manifest and a rejection report with exact reasons.
-6. Each single dataset is capped at {max_rows_per_dataset} rows and
+7. Each single dataset is capped at {max_rows_per_dataset} rows and
    {max_bytes_per_dataset} output bytes. Do not bypass these caps. Smaller
    sampled downloads are allowed for broad acquisition, but record sampled_rows,
    rows_written, bytes_written, max_rows_effective, max_bytes_effective, and
@@ -59,15 +74,15 @@ Hard rules:
    and `--max-bytes-per-dataset` caps local JSONL output bytes per dataset. If
    the byte cap is reached, keep the partial JSONL and report `truncated`,
    `truncated_reason`, `rows_written`, and `bytes_written`.
-7. Normalize each downloaded dataset to JSONL before ingest. Each row must
+8. Normalize each downloaded dataset to JSONL before ingest. Each row must
    preserve source_uri, source_dataset/source_dataset_id, split, and enough
    payload fields for later SFT/PT processing.
-8. For every accepted dataset, write a Markdown dataset card before ingest and
+9. For every accepted dataset, write a Markdown dataset card before ingest and
    register it during ingest with `--dataset-card <path>`. The card must live in
    this run's manifest directory first and describe source, license, split,
    row count, original fields, derived fields, derivation rules, validation
    checks, intended training use, and known risks.
-9. You may add dataset-specific derived fields during normalization, but only
+10. You may add dataset-specific derived fields during normalization, but only
    by adding fields. Never drop, overwrite, or rename original payload fields.
    The normalized JSONL must preserve the same row count as the selected source
    rows. For complex embedded formats, derive explicit training-ready fields:
@@ -75,26 +90,33 @@ Hard rules:
    into messages/dialogue/instruction-response fields, combine question with
    options/evidence/schema blocks into prompt/input fields, and keep gold
    labels/answers as separate fields.
-10. If derived fields are added, every derived field must be non-empty for every
+11. If derived fields are added, every derived field must be non-empty for every
    row. Pass `--derived-field <name>` for each derived field and
    `--source-row-count <n>` to `dm ingest` so DataMixer validates this before
    writing. If validation fails, fix the normalizer or reject the dataset; do
    not ingest partial rows.
-11. Ingest every accepted dataset through DataMixer `ingest` or `agent-ingest`
+12. Ingest every accepted dataset through DataMixer `ingest` or `agent-ingest`
    with complete tags: source platform, source dataset id, source URL or URI,
    license if known, language if known, domain, task_type, processing_level,
-   source_kind, split, loop_uuid/version_id when provided, and acquisition_run.
-12. After ingest, run DataMixer status, dataset list, stats, representative query,
+   quality_level, source_kind, split, loop_uuid/version_id when provided, and
+   acquisition_run. Choose quality_level explicitly for every dataset: L1 for
+   raw source downloads, L2 for extracted/parsed/basic-cleaned source data, L3
+   for standard SFT/DPO/training samples, and L4 only for output explicitly
+   refined by an internal data-lake pipeline. When uncertain, choose the lower
+   applicable level and explain the uncertainty; never omit the parameter.
+13. After ingest, run DataMixer status, dataset list, stats, representative query,
    and index build when useful for downstream recall.
-13. Write final_report.json with candidates, filtered list, rejections,
+14. Write final_report.json with SearchAgent and WebAgent commands/statuses,
+    WebAgent campaign id and L1 datasets, candidates, filtered list, rejections,
     downloads, dataset card paths, derived field specs, validation outcomes,
-    ingests, DataMixer command summaries, before/after counts, lineage/manifest
-    paths, and blockers.
-14. Do not mark ok=true if no dataset was ingested, if accepted datasets are
+    ingests, each dataset's selected quality_level and selection rationale,
+    DataMixer command summaries, before/after counts, lineage/manifest paths,
+    and blockers.
+15. Do not mark ok=true if no dataset was ingested, if accepted datasets are
     unrelated to the request, if any accepted dataset lacks a registered md
     dataset card, if derived field validation failed, if row count changed
     during derivation, or if required source/provenance tags are missing.
-15. Do not read or print secret/key files.
+16. Do not read or print secret/key files.
 """
 
 
@@ -109,7 +131,13 @@ def _apply_runtime_env(*, python_executable: str = "", node_bin_dir: str = "") -
         os.environ["LOOPAI_NODE_BIN_DIR"] = node_bin_dir
 
 
-def _worker_env(base: dict[str, str] | None = None, prov: dict | None = None) -> dict[str, str]:
+def _worker_env(
+    base: dict[str, str] | None = None,
+    prov: dict | None = None,
+    *,
+    python_executable: str = "",
+    node_bin_dir: str = "",
+) -> dict[str, str]:
     env = dict(base or os.environ)
     for key in (
         "CODEX_THREAD_ID",
@@ -121,9 +149,13 @@ def _worker_env(base: dict[str, str] | None = None, prov: dict | None = None) ->
         env.pop(key, None)
     env["CODEX_HOME"] = str(_worker_codex_home())
     env["LOOPAI_WORKER_KIND"] = "dataset-acquisition-agent"
-    python_executable = codex.loopai_python_executable()
-    env["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
-    env["PATH"] = codex.runner_process_path(python_executable, env.get("PATH"))
+    worker_python = python_executable or codex.loopai_python_executable()
+    env["LOOPAI_PYTHON_EXECUTABLE"] = worker_python
+    env["PATH"] = codex.runner_process_path(worker_python, env.get("PATH"))
+    if node_bin_dir:
+        env["LOOPAI_NODE_BIN_DIR"] = node_bin_dir
+        entries = [node_bin_dir, *env["PATH"].split(os.pathsep)]
+        env["PATH"] = os.pathsep.join(dict.fromkeys(filter(None, entries)))
     hf_endpoint = env.get("HF_ENDPOINT") or env.get("HF_HUB_ENDPOINT") or "https://hf-mirror.com"
     env["HF_ENDPOINT"] = hf_endpoint
     env["HF_HUB_ENDPOINT"] = hf_endpoint
@@ -272,6 +304,8 @@ Required artifacts:
 - rejections: {run_dir}/manifest/rejections.json
 - SearchAgent task JSON: {run_dir}/manifest/tasks.json
 - SearchAgent manifest: {run_dir}/manifest/searchagent/searchagent_manifest.json
+- WebAgent launch result: {run_dir}/manifest/webagent_start.json
+- WebAgent campaign status: {run_dir}/manifest/webagent_campaign_status.json
 - dataset cards: {run_dir}/manifest/dataset_cards/*.md
 - derived-field specs/validation: {run_dir}/manifest/derived_fields.json
 - downloads: {run_dir}/downloads/
@@ -279,17 +313,53 @@ Required artifacts:
 - final report: {run_dir}/final_report.json
 
 Required discovery procedure:
-1. Create `{run_dir}/manifest/tasks.json` with a top-level `tasks` list.
-2. Run SearchAgent and wait for it to finish:
-   {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli searchagent \
-     --query "{objective or keywords or 'dataset acquisition'}" \
-     --task-json {run_dir}/manifest/tasks.json \
-     --output-root {run_dir}/manifest/searchagent \
-     --parallelism 3 \
-     --max-results-per-source {max(target_datasets, 5)} \
-     --no-deepsearch \
-     --json
-3. Read `{run_dir}/manifest/searchagent/searchagent_manifest.json`. Copy or
+1. Create `{run_dir}/manifest/tasks.json` with a top-level `tasks` list. Run
+   `{codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} model list --json`
+   and select one registered model name as `$WEBAGENT_MODEL`. If there is no
+   registered model, write `webagent_model_missing` to the final report, then
+   still run SearchAgent and report that the required WebAgent stream was blocked.
+2. When `$WEBAGENT_MODEL` is available, launch SearchAgent and WebAgent in
+   parallel. Use separate output files and wait for both PIDs; do not run one
+   only after the other finishes:
+
+```bash
+(
+  {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli searchagent \
+    --query "{objective or keywords or 'dataset acquisition'}" \
+    --task-json {run_dir}/manifest/tasks.json \
+    --output-root {run_dir}/manifest/searchagent \
+    --parallelism 3 \
+    --max-results-per-source {max(target_datasets, 5)} \
+    --no-deepsearch \
+    --json > {run_dir}/manifest/searchagent_start.json
+) &
+SEARCHAGENT_PID=$!
+(
+  {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} \
+    webagent campaign start domain_data_acquisition \
+    --query "{objective or keywords or 'dataset acquisition'}" \
+    --dataset {run_dir.name}_web_l1 \
+    --model "$WEBAGENT_MODEL" \
+    --subquery-count {max(4, min(24, target_datasets))} \
+    --workers 4 \
+    --search-provider tavily \
+    --json > {run_dir}/manifest/webagent_start.json
+) &
+WEBAGENT_PID=$!
+wait "$SEARCHAGENT_PID"; SEARCHAGENT_EXIT=$?
+wait "$WEBAGENT_PID"; WEBAGENT_EXIT=$?
+```
+
+   If `TAVILY_API_KEY` is unavailable, use `--search-provider auto` for the
+   WebAgent command and record the provider choice. A failed stream is not a
+   reason to discard successful output from the other stream.
+3. Read `{run_dir}/manifest/searchagent/searchagent_manifest.json` and
+   `{run_dir}/manifest/webagent_start.json`. Use `dm webagent campaign status
+   <run-id> --json` to write `{run_dir}/manifest/webagent_campaign_status.json`.
+   Preserve the WebAgent campaign id, selected URLs, L1 dataset names, and
+   L1/L2/L3 counts if an automatic pipeline was requested. Do not copy WebAgent
+   HTML into the provider download manifest; it is already in DataMixer.
+4. Read `{run_dir}/manifest/searchagent/searchagent_manifest.json`. Copy or
    transform its `candidates`/`download_list` into `{run_dir}/manifest/candidates.json`.
    Do not inspect `{run_dir}/manifest/tasks/`; SearchAgent does not write there.
    Preserve SearchAgent metadata. Do not hand-write this file with `echo`.
@@ -299,7 +369,9 @@ Required discovery procedure:
    `{max(target_datasets * 5, target_datasets + 10, 10)}` relevant candidates
    and record every removed candidate with a concrete reason in
    `{run_dir}/manifest/rejections.json`.
-4. Download only through this manifest command shape:
+5. Download only through this manifest command shape:
+
+```bash
    {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli download manifest \
      --manifest {run_dir}/manifest/candidates.json \
      --output-root {run_dir}/downloads \
@@ -307,16 +379,17 @@ Required discovery procedure:
      --max-rows {max_rows_per_dataset} \
      --max-bytes-per-dataset {max_bytes_per_dataset} \
      --json
-5. Wait for the download command to exit. Do not read
+```
+6. Wait for the download command to exit. Do not read
    `{run_dir}/downloads/download_results.json` while the command is still
    running. If the command does not exit successfully or the result file is
    missing, write an `ok=false` blocker with the command, status, exit code,
    stdout, and stderr; do not infer success from partial files.
-6. After download completes, read `{run_dir}/downloads/download_results.json`.
+7. After download completes, read `{run_dir}/downloads/download_results.json`.
    Use only non-empty `records_jsonl` paths from that report for ingest. Do not
    guess raw parquet, JSON, or nested download paths. A zero-byte JSONL file is
    not a successful download.
-7. For each accepted downloaded JSONL, ingest with this exact DataMixer shape:
+8. For each accepted downloaded JSONL, ingest with this exact DataMixer shape:
    {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} ingest <dataset_name> \
      --file <records_jsonl> \
      --dataset-card <dataset_card_md> \
@@ -324,6 +397,7 @@ Required discovery procedure:
      --license <license_or_unknown> \
      --domain <domain> \
      --task-type <task_type> \
+     --quality-level <L1|L2|L3|L4> \
      --processing-level raw \
      --source-kind <source_platform> \
      --source-uri <source_url_or_uri> \
@@ -505,8 +579,9 @@ def _spawn_background(
     logs.mkdir(parents=True, exist_ok=True)
     stdout_path = logs / "worker_stdout.ndjson"
     stderr_path = logs / "worker_stderr.log"
+    worker_python = python_executable or codex.loopai_python_executable()
     cmd = [
-        codex.loopai_python_executable(),
+        worker_python,
         "-m",
         "loopai.skills.ObtainerCLI.cli",
         "dm",
@@ -530,7 +605,10 @@ def _spawn_background(
         cmd.extend(["--python-executable", python_executable])
     if node_bin_dir:
         cmd.extend(["--node-bin-dir", node_bin_dir])
-    env = _worker_env()
+    env = _worker_env(
+        python_executable=worker_python,
+        node_bin_dir=node_bin_dir,
+    )
     with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
         proc = subprocess.Popen(
             cmd,
@@ -741,6 +819,13 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 exit_code=2,
             )
         warehouse = Path(root).expanduser().resolve()
+        if warehouse.is_file():
+            raise ObtainerCliError(
+                "DATASET_ACQUISITION_AGENT_WAREHOUSE_INVALID",
+                f"dataset-acquisition-agent requires a DataMixer warehouse directory, not a file: {warehouse}",
+                hint="Use `dm --lake .loopai/lake.yaml dataset-acquisition-agent start ...` or pass the directory containing datamixer.toml.",
+                exit_code=2,
+            )
         max_rows = args.max_rows_per_dataset
         if max_rows <= 0 or max_rows > DEFAULT_MAX_ROWS_PER_DATASET:
             max_rows = DEFAULT_MAX_ROWS_PER_DATASET

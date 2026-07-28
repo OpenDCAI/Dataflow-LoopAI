@@ -7,7 +7,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from loopai.schema.model_pool import StarterModelPool
+from loopai.schema.system_runtime import (
+    resolve_integration_value,
+    resolve_runtime_model_config,
+)
 from .errors import ObtainerCliError
 from .models import utc_now
 
@@ -131,32 +134,49 @@ def _resolve_runtime_defaults(starter_config: str | Path | None = None) -> dict[
     system = cfg.get("system", {}) if isinstance(cfg.get("system"), dict) else {}
     default_states = cfg.get("default_states", {}) if isinstance(cfg.get("default_states"), dict) else {}
     obtainer = default_states.get("obtainer", {}) if isinstance(default_states.get("obtainer"), dict) else {}
-    model_value = system.get("model")
-    has_explicit_pool = (
-        isinstance(model_value, list)
-        or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
-    )
-    provider = None
-    if has_explicit_pool:
-        pool = StarterModelPool(system)
-        provider = pool.resolve_proxy_provider(
-            _first_non_empty(obtainer.get("model_path"), system.get("starter_model_path"), system.get("starter_model_name")),
-            tier=pool.default_tier,
-        )
-    return {
-        "model_name": provider.model if provider is not None else _first_non_empty(
+    runtime_model = resolve_runtime_model_config(
+        system,
+        requested=_first_non_empty(
+            obtainer.get("model_path"),
             system.get("starter_model_path"),
             system.get("starter_model_name"),
         ),
-        "base_url": provider.base_url if provider is not None else system.get("starter_base_url"),
-        "api_key": provider.api_key if provider is not None else system.get("starter_api_key"),
+        legacy_model=obtainer.get("model_path"),
+        legacy_base_url=obtainer.get("base_url"),
+        legacy_api_key=obtainer.get("api_key"),
+    )
+    return {
+        "model_name": runtime_model.model,
+        "base_url": runtime_model.base_url,
+        "api_key": runtime_model.api_key,
         "temperature": obtainer.get("temperature"),
         "prompt_template_dir": default_states.get("prompt_template_dir"),
         "search_engine": obtainer.get("search_engine"),
         "max_urls": obtainer.get("max_urls"),
-        "tavily_api_key": _first_non_empty(obtainer.get("tavily_api_key"), system.get("tavily_api_key")),
-        "kaggle_username": _first_non_empty(obtainer.get("kaggle_username"), system.get("kaggle_username")),
-        "kaggle_key": _first_non_empty(obtainer.get("kaggle_key"), system.get("kaggle_key")),
+        "tavily_api_key": resolve_integration_value(
+            system,
+            "tavily",
+            "api_key",
+            env_keys=("TAVILY_API_KEY",),
+            legacy_system_keys=("tavily_api_key",),
+            legacy_values=(obtainer.get("tavily_api_key"),),
+        ),
+        "kaggle_username": resolve_integration_value(
+            system,
+            "kaggle",
+            "username",
+            env_keys=("KAGGLE_USERNAME",),
+            legacy_system_keys=("kaggle_username",),
+            legacy_values=(obtainer.get("kaggle_username"),),
+        ),
+        "kaggle_key": resolve_integration_value(
+            system,
+            "kaggle",
+            "key",
+            env_keys=("KAGGLE_KEY",),
+            legacy_system_keys=("kaggle_key",),
+            legacy_values=(obtainer.get("kaggle_key"),),
+        ),
         "output_root": default_states.get("output_dir"),
     }
 
@@ -505,36 +525,7 @@ async def _search_web_for_deepsearch(
     urls = WebTools.extract_urls_from_search_results(search_results)
     if not urls:
         urls = _extract_urls_from_text(search_results, limit=max_urls)
-    if urls or search_engine.lower() != "duckduckgo":
-        return search_results, urls[:max_urls]
-    if not _env_truthy("OBTAINER_SEARCHAGENT_DDGS_FALLBACK"):
-        return search_results, []
-
-    try:
-        from ddgs import DDGS
-    except Exception:
-        return search_results, []
-
-    def _run_ddgs_search() -> list[dict[str, Any]]:
-        with DDGS() as client:
-            return list(client.text(query, max_results=max_urls))
-
-    import asyncio
-
-    rows = await asyncio.to_thread(_run_ddgs_search)
-    formatted_parts: list[str] = []
-    fallback_urls: list[str] = []
-    for row in rows:
-        url = str(row.get("href") or row.get("url") or "").strip()
-        title = str(row.get("title") or "").strip()
-        body = str(row.get("body") or row.get("snippet") or "").strip()
-        if url:
-            fallback_urls.append(url)
-        formatted_parts.append("\n".join([f"标题: {title}", f"URL: {url}", f"摘要: {body}", "---"]))
-    formatted = "\n".join(formatted_parts).strip()
-    if formatted:
-        search_results = "\n\n".join(part for part in [search_results, formatted] if part)
-    return search_results, list(dict.fromkeys(fallback_urls))[:max_urls]
+    return search_results, urls[:max_urls]
 
 
 async def _run_deepsearch(

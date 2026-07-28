@@ -3,9 +3,10 @@ import json
 from tortoise.expressions import Q
 from ...models.db_models import StarterConfig
 from omegaconf import OmegaConf
+from loopai.common.tracking import strip_retired_tracking_fields
 from loopai.schema.states import get_state_config_schema
 from loopai.schema.system import get_system_config_schema
-from loopai.common.tracking import strip_retired_tracking_fields
+from loopai.schema.system_runtime import migrate_legacy_credentials
 
 async def check_config_from_db(base_dir):
     # 判断sqliter中是否有config记录，如果一条也没有，读取./examples/starter.yaml转化为json然后存到数据库
@@ -17,12 +18,13 @@ async def check_config_from_db(base_dir):
         )
         await StarterConfig.create(name='starter', config=json.dumps(config_obj))
         config = await StarterConfig.filter(Q(name='starter')).first()
-    else:
-        # One-time cleanup for databases created before the Trainer stopped
-        # storing external tracker credentials in StarterConfig.
+    if config and config.config:
+        # Normalize legacy credentials and remove retired tracker fields for
+        # both newly created and existing StarterConfig rows.
         try:
             original = json.loads(config.config)
             cleaned = strip_retired_tracking_fields(original)
+            migrate_legacy_credentials(cleaned)
             if cleaned != original:
                 config.config = json.dumps(cleaned, ensure_ascii=False)
                 await config.save(update_fields=["config"])

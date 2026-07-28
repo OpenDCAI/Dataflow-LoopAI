@@ -22,6 +22,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from loopai.schema.states import LoopAIState
 from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
+from loopai.agents.Constructor.runtime_config import resolve_constructor_api_key
 from loopai.common.prompts import PromptLoader
 from loopai.common.jsonl_dataset_sampling import (
     cleaning_sampling_plan_by_dataset,
@@ -794,7 +795,7 @@ def sharegpt_rewrite_node(state: LoopAIState) -> LoopAIState:
     if not stats["no_benchmark"]:
         model_name = constructor.get("model_path") or state.get("analyze_model_path")
         base_url = constructor.get("base_url") or state.get("analyze_base_url")
-        api_key = constructor.get("api_key") or state.get("analyze_api_key")
+        api_key = resolve_constructor_api_key(state) or state.get("analyze_api_key")
         temperature = constructor.get("temperature", 0.7)
         top_p = constructor.get("top_p", 0.95)
         max_completion_tokens = constructor.get("max_completion_tokens", 4096)
@@ -1042,7 +1043,7 @@ def planner_node(state: LoopAIState) -> LoopAIState:
             # 从 state 创建 LLM 参数
             model_name = constructor_state.get("model_path") or state.get("analyze_model_path")
             base_url = constructor_state.get("base_url") or state.get("analyze_base_url")
-            api_key = constructor_state.get("api_key") or state.get("analyze_api_key")
+            api_key = resolve_constructor_api_key(state) or state.get("analyze_api_key")
             temperature = constructor_state.get("temperature", 0.7)
             top_p = constructor_state.get("top_p", 0.95)
             max_completion_tokens = constructor_state.get("max_completion_tokens", 4096)
@@ -1655,7 +1656,7 @@ class CleaningSubgraph(BaseAgent):
         constructor_state = state.get("constructor", {})
         model_name = constructor_state.get("model_path") or state.get("analyze_model_path")
         base_url = constructor_state.get("base_url") or state.get("analyze_base_url")
-        api_key = constructor_state.get("api_key") or state.get("analyze_api_key")
+        api_key = resolve_constructor_api_key(state) or state.get("analyze_api_key")
         temperature = constructor_state.get("temperature", self.temperature)
         top_p = constructor_state.get("top_p", self.top_p)
         max_completion_tokens = constructor_state.get("max_completion_tokens", self.max_completion_tokens)

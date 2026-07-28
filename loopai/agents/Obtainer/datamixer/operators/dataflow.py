@@ -36,6 +36,7 @@ registry stay import-free.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from .. import utils
@@ -150,6 +151,8 @@ def _merge_records(batch: Batch, records: list[dict], input_key: str,
         for k, v in rec.items():
             if k == _IDX or k == input_key:
                 continue
+            if isinstance(v, float) and math.isnan(v):
+                continue
             row[k] = v
         out.append(row)
     return out
@@ -199,14 +202,20 @@ def load_dataflow_operator(name: str, **kwargs) -> Any:
             "(see docs/DATAFLOW.md).")
     reg = _operator_registry()
     cls = None
-    for getter in (lambda: reg.get(name), lambda: reg[name],
-                   lambda: getattr(reg, name)):
+    try:
+        cls = reg.get(name)
+    except (KeyError, AttributeError):
+        pass
+    if cls is None:
         try:
-            cls = getter()
-        except (KeyError, AttributeError, TypeError):
-            continue
-        if cls is not None:
-            break
+            cls = reg[name]
+        except (KeyError, TypeError):
+            pass
+    if cls is None:
+        try:
+            cls = getattr(reg, name)
+        except AttributeError:
+            pass
     if cls is None:
         raise KeyError(
             f"unknown DataFlow operator {name!r}; check the operator catalog at "

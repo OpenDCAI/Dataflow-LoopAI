@@ -7,7 +7,7 @@ loopai-obtainercli dm --root /path/to/warehouse <datamixer-command> --json
 loopai-obtainercli dm --lake .loopai/lake.yaml <datamixer-command> --json
 ```
 
-`searchagent` 和 `download manifest` 是 acquisition worker 内部的数据采集桥，用于发现和下载候选数据集。正常产品流程中，外层 Codex 不应直接调用它们，而应启动 `dataset-acquisition-agent`。下载完成后，初始化、入湖、处理、索引、召回、配比、出湖、snapshot 和 lineage 都必须回到 `loopai-obtainercli dm ...`。
+`searchagent` 和 `download manifest` 是 acquisition worker 内部的数据采集桥，用于发现和下载候选数据集。正常产品流程中，外层 Codex 不应直接调用它们，而应启动 `dataset-acquisition-agent`。worker 会与 `domain_data_acquisition`（旧名 `webcrawler_dm`）并行启动：前者发现 hosted datasets，后者采集垂域权威网页为 L1；两条流都必须保留状态与产物。下载完成后，初始化、入湖、处理、索引、召回、配比、出湖、snapshot 和 lineage 都必须回到 `loopai-obtainercli dm ...`。
 
 ## 1. 环境与事件
 
@@ -62,6 +62,17 @@ namespace: loopai
 
 ```bash
 loopai-obtainercli dm --lake .loopai/lake.yaml stats --json
+```
+
+`lake.yaml` 还会持久化不含凭据的 Obtainer 运行上下文：选择的垂域采集
+WebAgent、模型名、并发/子目标默认值、最近 acquisition run 和 campaign id。
+因此正常工作流应使用 `--lake`，无需反复填写 warehouse 或 run 路径：
+
+```bash
+loopai-obtainercli dm --lake .loopai/lake.yaml dataset-acquisition-agent start \
+  --objective "collect code training data" --keywords "code dataset" --json
+loopai-obtainercli dm --lake .loopai/lake.yaml dataset-acquisition-agent status --json
+loopai-obtainercli dm lake context --link .loopai/lake.yaml
 ```
 
 先扫描项目目录、`outputs`、`.loopai` 和常见 LoopAI 缓存目录中的候选
@@ -176,6 +187,7 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse ingest code_repair_m
   --source huggingface \
   --license unknown \
   --task-type SFT \
+  --quality-level L3 \
   --processing-level normalized \
   --source-kind huggingface \
   --loop-uuid "$LOOP_UUID" \
@@ -191,6 +203,7 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse ingest code_repair_m
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse agent-ingest ./outputs/downloads/raw_file \
   --engine builtin \
   --dataset code_repair_mix \
+  --quality-level L3 \
   --json
 ```
 
@@ -203,6 +216,17 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse query \
   --json
 
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dist domain --json
+
+# 湖级领域 taxonomy：内置 broad classes + 已入湖 domain 自动同步；可显式扩展
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse domain list --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse domain add text2sql robotics --json
+
+# 对清洗后的记录做 LLM 多标签领域分类；无需重复维护 labels 参数
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse op run domain_classify \
+  --dataset code_repair_mix \
+  --arg model=deepseek-proxy \
+  --arg max_input_chars=12000 \
+  --json
 
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse op list --json
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse op run quality_score --dataset code_repair_mix --json
@@ -227,6 +251,10 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recall \
 ```
 
 如果下游任务需要 DataFlow 算子链，不要手工盲选单个 DataFlow operator。`dataflow agent-run` 会让 Codex SDK 先导出试跑样本、按 DataFlow-Skills 规则规划算子链、生成并试跑 pipeline，再按 `sample_id` merge 回 DataMixer。低层 `op run dataflow --arg op=<DataFlowClassName>` 只适合已经明确知道要跑哪个 DataFlow 算子的场景。
+
+`domain_classify` 将主类写入可索引的 `domain`，完整多标签写入
+`domain_labels`（位于样本 tags）；`domain list` 同时会发现已有样本的非空
+`domain` 值。因此增量入湖或已有湖不会漏掉它们内部使用的领域类别。
 
 自定义标签过滤使用受控 `json_extract(tags_json, '$."tag_name"')` 形式。
 

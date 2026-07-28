@@ -14,6 +14,7 @@ Design goals (the brief's #1 priority: save space / store efficiently):
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -63,9 +64,19 @@ class ContentStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = utils.compress(data, codec)
         # atomic write
-        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp = path.with_suffix(
+            path.suffix + f".{os.getpid()}.{threading.get_ident()}.tmp"
+        )
         tmp.write_bytes(payload)
-        tmp.replace(path)
+        try:
+            # Another worker may have completed the same CID while this worker
+            # compressed it. In that case the final blob is already valid.
+            if path.exists():
+                tmp.unlink(missing_ok=True)
+                return cid, False
+            tmp.replace(path)
+        finally:
+            tmp.unlink(missing_ok=True)
         return cid, True
 
     def put_json(self, obj, codec: str | None = None) -> tuple[str, bool]:

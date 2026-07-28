@@ -42,6 +42,17 @@ def _default_model_config() -> dict[str, Any]:
     }
 
 
+def _default_integrations_config() -> dict[str, Any]:
+    return {
+        "tavily": {"api_key": "env:TAVILY_API_KEY"},
+        "kaggle": {
+            "username": "env:KAGGLE_USERNAME",
+            "key": "env:KAGGLE_KEY",
+        },
+        "rag": {"base_url": "", "api_key": "env:RAG_API_KEY"},
+    }
+
+
 class SystemConfig(BaseModel):
     api_port: int = Field(
         default=8855,
@@ -49,29 +60,17 @@ class SystemConfig(BaseModel):
         description="系统 API 服务监听端口",
         json_schema_extra={"ui_type": "number", "ui_group": "基础配置"},
     )
-    tavily_api_key: str = Field(
-        default="",
-        title="Tavily API Key",
-        description="Tavily 搜索服务的 API Key",
-        json_schema_extra={"ui_type": "password", "ui_group": "基础配置"},
-    )
-    kaggle_username: str = Field(
-        default="binrxu",
-        title="Kaggle 用户名",
-        description="Kaggle 账号用户名",
-        json_schema_extra={"ui_type": "text", "ui_group": "基础配置"},
-    )
-    kaggle_key: str = Field(
-        default="",
-        title="Kaggle Key",
-        description="Kaggle 账号访问密钥",
-        json_schema_extra={"ui_type": "password", "ui_group": "基础配置"},
-    )
     model: dict[str, Any] = Field(
         default_factory=_default_model_config,
         title="模型配置",
         description="完整的模型代理与模型池配置",
         json_schema_extra={"ui_type": "model_pool", "ui_group": "模型配置"},
+    )
+    integrations: dict[str, Any] = Field(
+        default_factory=_default_integrations_config,
+        title="外部服务配置",
+        description="Tavily、Kaggle 和 RAG 等外部服务的运行时凭据",
+        json_schema_extra={"ui_group": "集成配置"},
     )
     codex_workspace: str = Field(
         default="/home/lpc/repos/Dataflow-LoopAI",

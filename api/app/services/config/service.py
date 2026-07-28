@@ -9,6 +9,7 @@ from ...models.body import ConfigModel
 from ...models.db_models import StarterConfig
 from ...utils.config.config import format_value, get_state_config, get_system_config
 from loopai.common.tracking import strip_retired_tracking_fields
+from loopai.schema.system_runtime import migrate_legacy_credentials
 
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -77,6 +78,7 @@ async def update_starter_config(config: ConfigModel) -> dict[str, Any]:
     original_config_obj = strip_retired_tracking_fields(json.loads(original_config.config))
     _apply_system_config(original_config_obj, config_obj.get("system", {}))
     _apply_states_config(original_config_obj, config_obj.get("states", {}))
+    migrate_legacy_credentials(original_config_obj)
 
     original_config.config = json.dumps(original_config_obj)
     await original_config.save()

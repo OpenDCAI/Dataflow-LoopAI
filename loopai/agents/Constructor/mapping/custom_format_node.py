@@ -16,6 +16,7 @@ from langgraph.store.base import BaseStore
 
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
+from loopai.agents.Constructor.runtime_config import resolve_constructor_api_key
 from .__mapping_prompts import get_prompt
 from loopai.agents.Constructor.utils.openai_compat_chat import (
     OpenAIChatParams,
@@ -95,7 +96,7 @@ Please describe the fields and data structure you need:"""
     constructor = state.get("constructor", {})
     model_name = constructor.get("model_path")
     base_url = constructor.get("base_url")
-    api_key = constructor.get("api_key")
+    api_key = resolve_constructor_api_key(state)
     temperature = constructor.get("temperature", 0.7)
     
     if not model_name or not base_url or not api_key:
@@ -106,7 +107,7 @@ Please describe the fields and data structure you need:"""
     try:
         model_name = constructor.get("model_path")
         base_url = constructor.get("base_url")
-        api_key = constructor.get("api_key")
+        api_key = resolve_constructor_api_key(state)
         temperature = constructor.get("temperature", 0.7)
         top_p = constructor.get("top_p", 0.95)
         max_completion_tokens = constructor.get("max_completion_tokens", 4096)

@@ -29,10 +29,14 @@ def validate_filter(expr: str) -> str:
 class Catalog:
     def __init__(self, db_path: str | Path):
         self.path = str(db_path)
-        self.conn = sqlite3.connect(self.path)
+        # Every webagent worker owns a separate Catalog connection. WAL keeps
+        # reads concurrent while busy_timeout lets SQLite serialize the short
+        # ingest transactions instead of failing immediately with "locked".
+        self.conn = sqlite3.connect(self.path, timeout=30.0)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA busy_timeout=30000")
         self._init_db()
 
     # -- schema ------------------------------------------------------------
@@ -52,6 +56,11 @@ class Catalog:
                 description TEXT,
                 created_at REAL,
                 meta_json TEXT
+            );
+            CREATE TABLE IF NOT EXISTS domain_classes (
+                name TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                created_at REAL NOT NULL
             );
             CREATE TABLE IF NOT EXISTS samples (
                 sample_id TEXT PRIMARY KEY,
@@ -89,7 +98,67 @@ class Catalog:
             "INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)",
             (schema.SCHEMA_VERSION,),
         )
+        # These classes are intentionally lake-local rather than a global enum:
+        # users can register capability-specific domains while every new lake
+        # still has a useful baseline for LLM classification.
+        self.register_domain_classes(schema.DEFAULT_DOMAIN_CLASSES, source="builtin")
         self.conn.commit()
+
+    # -- domain taxonomy --------------------------------------------------
+    @staticmethod
+    def _normalise_domain(value: Any) -> str | None:
+        if value is None:
+            return None
+        name = str(value).strip()
+        return name or None
+
+    def register_domain_classes(
+        self, names: Iterable[Any], source: str = "user"
+    ) -> list[str]:
+        """Persist domain classes for this lake and return newly registered names.
+
+        Registration is idempotent and stays in the caller's transaction.  That
+        matters for ingestion: a failed batch cannot leave a partly committed
+        taxonomy behind.  ``source`` is informational (``builtin``, ``user``,
+        ``observed`` or ``classifier``) and never overwrites an earlier source.
+        """
+        created: list[str] = []
+        seen: set[str] = set()
+        now = time.time()
+        for value in names:
+            name = self._normalise_domain(value)
+            if name is None or name in seen:
+                continue
+            seen.add(name)
+            cur = self.conn.execute(
+                "INSERT OR IGNORE INTO domain_classes(name,source,created_at) "
+                "VALUES (?,?,?)",
+                (name, str(source or "user"), now),
+            )
+            if cur.rowcount:
+                created.append(name)
+        return created
+
+    def sync_domain_classes(self) -> list[dict]:
+        """Merge existing sample domains into the persisted lake taxonomy.
+
+        Older warehouses may predate ``domain_classes``.  Calling this at the
+        classifier boundary means their already-ingested domain values become
+        selectable labels without a migration command or a hard-coded list.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT domain FROM samples "
+            "WHERE domain IS NOT NULL AND TRIM(domain) != ''"
+        ).fetchall()
+        self.register_domain_classes((row["domain"] for row in rows), "observed")
+        return self.list_domain_classes()
+
+    def list_domain_classes(self) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT name,source,created_at FROM domain_classes "
+            "ORDER BY CASE source WHEN 'builtin' THEN 0 ELSE 1 END, name"
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     # -- datasets ----------------------------------------------------------
     def add_dataset(
@@ -184,6 +253,8 @@ class Catalog:
             utils.canonical_json(extra).decode(),
         ] + [core[c] for c in col_names]
         self.conn.execute(sql, values)
+        if core.get("domain"):
+            self.register_domain_classes([core["domain"]], source="observed")
         return sample_id, (not existed)
 
     def commit(self) -> None:
@@ -333,6 +404,8 @@ class Catalog:
         self.conn.execute(
             f"UPDATE samples SET {','.join(sets)} WHERE sample_id=?", params
         )
+        if core.get("domain"):
+            self.register_domain_classes([core["domain"]], source="observed")
 
     def distribution(self, column: str, where: str | None = None) -> list[dict]:
         if column not in schema.CORE_FIELD_NAMES:

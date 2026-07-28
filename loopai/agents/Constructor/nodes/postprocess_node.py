@@ -11,6 +11,7 @@ from loopai.schema.events import StreamEvent
 from loopai.logger import get_logger
 from loopai.agents.Constructor.utils.data_convertor import DataConvertor, _ensure_hf_cache_env
 from loopai.common.prompts import PromptLoader
+from loopai.agents.Constructor.runtime_config import resolve_constructor_api_key
 
 logger = get_logger()
 
@@ -138,7 +139,7 @@ def postprocess_node(state: LoopAIState) -> LoopAIState:
     try:
         model_name = constructor.get("model_path")
         base_url = constructor.get("base_url")
-        api_key = constructor.get("api_key")
+        api_key = resolve_constructor_api_key(state)
         temperature = constructor.get("temperature", 0.0)
         
         if not model_name or not base_url or not api_key:
@@ -737,4 +738,3 @@ async def _postprocess_workflow(
     except Exception as e:
         logger.error(f"Post-process workflow error: {e}", exc_info=True)
         return {"exception": f"Post-process workflow error: {str(e)}"}
-

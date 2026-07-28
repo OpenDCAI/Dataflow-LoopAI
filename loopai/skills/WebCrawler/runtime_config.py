@@ -6,17 +6,26 @@ from typing import Any, Dict, Optional
 from pydantic import ValidationError
 
 from loopai.schema.states import WebCrawlerState
+from loopai.schema.system_runtime import (
+    load_runtime_system_config,
+    resolve_integration_value,
+    resolve_runtime_model_config,
+)
 from loopai.skills.Configer import get_configer_task_state_config
 
 _DEFAULT_OUTPUT_DIR = "./outputs"
 _DEFAULT_THREAD_ID = "webcrawler-default"
-_REQUIRED_FIELDS = ("deepseek_api_key", "tavily_api_key")
 _SENSITIVE_FIELDS = {"deepseek_api_key", "tavily_api_key"}
+_REQUIRED_SYSTEM_FIELDS = (
+    "system.model",
+    "system.integrations.tavily.api_key",
+)
 
 _TASK_TYPE_PREFILL_GUIDE: Dict[str, Dict[str, Any]] = {
     "general": {
         "description": "通用网页爬取 + 数据集抽取",
-        "required_fields": ["deepseek_api_key", "tavily_api_key"],
+        "required_fields": [],
+        "required_system_fields": list(_REQUIRED_SYSTEM_FIELDS),
         "recommended_fields": [
             "model",
             "temperature",
@@ -35,7 +44,8 @@ _TASK_TYPE_PREFILL_GUIDE: Dict[str, Dict[str, Any]] = {
     },
     "code_collect": {
         "description": "偏代码内容收集，适合构建 SFT/PT 原始语料",
-        "required_fields": ["deepseek_api_key", "tavily_api_key"],
+        "required_fields": [],
+        "required_system_fields": list(_REQUIRED_SYSTEM_FIELDS),
         "recommended_fields": [
             "min_code_length",
             "max_records_per_page",
@@ -124,26 +134,64 @@ def _build_runtime_webcrawler_config(
     merged = dict(db_config)
     merged.update(in_state)
 
-    overrides = {
-        "deepseek_api_key": _first_non_empty(
+    system = load_runtime_system_config(
+        task_id=_resolve_task_id(state, **kwargs),
+        db_path=_first_non_empty(kwargs.get("db_path"), os.getenv("DB_PATH"), state.get("DB_PATH")),
+        system_config=kwargs.get("system_config"),
+    )
+    requested_model = _first_non_empty(
+        kwargs.get("webcrawler_model"),
+        kwargs.get("model"),
+        os.getenv("WEBCRAWLER_MODEL"),
+        merged.get("model"),
+    )
+    runtime_model = resolve_runtime_model_config(
+        system,
+        requested=requested_model,
+        legacy_model=merged.get("model"),
+        legacy_base_url=_first_non_empty(
+            kwargs.get("webcrawler_deepseek_api_base"),
+            kwargs.get("deepseek_api_base"),
+            os.getenv("WEBCRAWLER_DEEPSEEK_API_BASE"),
+            merged.get("deepseek_api_base"),
+        ),
+        legacy_api_key=_first_non_empty(
             kwargs.get("webcrawler_deepseek_api_key"),
             kwargs.get("deepseek_api_key"),
             os.getenv("DEEPSEEK_API_KEY"),
+            merged.get("deepseek_api_key"),
         ),
-        "tavily_api_key": _first_non_empty(
+    )
+    if runtime_model.model:
+        merged["model"] = runtime_model.model
+    if runtime_model.base_url:
+        merged["deepseek_api_base"] = runtime_model.base_url
+    if runtime_model.api_key:
+        merged["deepseek_api_key"] = runtime_model.api_key
+
+    merged["tavily_api_key"] = resolve_integration_value(
+        system,
+        "tavily",
+        "api_key",
+        explicit_values=(
             kwargs.get("webcrawler_tavily_api_key"),
             kwargs.get("tavily_api_key"),
-            os.getenv("TAVILY_API_KEY"),
         ),
+        env_keys=("TAVILY_API_KEY",),
+        legacy_system_keys=("tavily_api_key",),
+        legacy_values=(merged.get("tavily_api_key"),),
+    )
+
+    overrides = {
         "deepseek_api_base": _first_non_empty(
+            runtime_model.base_url,
             kwargs.get("webcrawler_deepseek_api_base"),
             kwargs.get("deepseek_api_base"),
             os.getenv("WEBCRAWLER_DEEPSEEK_API_BASE"),
         ),
         "model": _first_non_empty(
-            kwargs.get("webcrawler_model"),
-            kwargs.get("model"),
-            os.getenv("WEBCRAWLER_MODEL"),
+            runtime_model.model,
+            requested_model,
         ),
         "temperature": _first_non_empty(
             kwargs.get("webcrawler_temperature"),
@@ -160,9 +208,13 @@ def _build_runtime_webcrawler_config(
 
 
 def _validate_webcrawler_required_fields(config: Dict[str, Any]) -> None:
-    missing = [field for field in _REQUIRED_FIELDS if not config.get(field)]
+    missing = []
+    if not all(config.get(field) for field in ("model", "deepseek_api_base", "deepseek_api_key")):
+        missing.append("system.model")
+    if not config.get("tavily_api_key"):
+        missing.append("system.integrations.tavily.api_key")
     if missing:
-        raise ValueError(f"missing required config: {', '.join(missing)}")
+        raise ValueError(f"missing required system config: {', '.join(missing)}")
 
 
 def _export_sensitive_to_env(config: Dict[str, Any]) -> None:
@@ -196,6 +248,12 @@ def build_webcrawler_prefill_guide(
 
     required = list(guide.get("required_fields", []))
     missing_required = [field for field in required if not snapshot.get(field)]
+    required_system = list(guide.get("required_system_fields", []))
+    missing_system = []
+    if not all(snapshot.get(field) for field in ("model", "deepseek_api_base", "deepseek_api_key")):
+        missing_system.append("system.model")
+    if not snapshot.get("tavily_api_key"):
+        missing_system.append("system.integrations.tavily.api_key")
 
     resolved_preview: Dict[str, Any] = {}
     for field in set(required + list(guide.get("recommended_fields", []))):
@@ -207,9 +265,11 @@ def build_webcrawler_prefill_guide(
         "task_type": task_type,
         "description": guide.get("description", ""),
         "required_fields": required,
+        "required_system_fields": required_system,
         "recommended_fields": list(guide.get("recommended_fields", [])),
         "auto_fill_fields": dict(guide.get("auto_fill_fields", {})),
         "missing_required_fields": missing_required,
+        "missing_system_fields": missing_system,
         "resolved_preview": resolved_preview,
     }
 
@@ -242,10 +302,10 @@ def resolve_webcrawler_runtime_config(
     try:
         _validate_webcrawler_required_fields(merged)
     except ValueError as exc:
-        missing = prefill_guide.get("missing_required_fields", [])
+        missing = prefill_guide.get("missing_system_fields", [])
         raise ValueError(
-            f"{exc}. missing_required_fields={missing}. "
-            "Please prefill with Configer before starting WebCrawler."
+            f"{exc}. missing_system_fields={missing}. "
+            "Configure system credentials before starting WebCrawler."
         ) from exc
 
     _export_sensitive_to_env(merged)
@@ -280,4 +340,3 @@ def resolve_webcrawler_runtime_config(
 
 
 __all__ = ["build_webcrawler_prefill_guide", "resolve_webcrawler_runtime_config"]
-

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from ..models.body import response_body
 from ..utils.obtainer.monitor import probe_embedding_health
+from ..utils.obtainer.web_pipeline import build_web_pipeline_overview
 from loopai.skills.ObtainerCLI.monitor_state import read_monitor_state, start_background_rebuild
 from loopai.skills.ObtainerCLI.datamixer_adapter import warehouse_root
 from loopai.skills.ObtainerCLI.lake_manager import (
@@ -83,8 +84,10 @@ def _datamixer_command_payload() -> dict[str, Any]:
                 "label": "Lake Management",
                 "commands": [
                     "lake scan",
+                    "lake init --root /path/to/lake-root",
                     "lake current",
                     "lake load --warehouse /path/to/warehouse",
+                    "lake context",
                     "lake delete",
                     "lake monitor rebuild",
                 ],
@@ -106,8 +109,8 @@ def _datamixer_command_payload() -> dict[str, Any]:
                 "key": "ingest",
                 "label": "Ingest",
                 "commands": [
-                    "ingest DATASET --file /path/to/input.jsonl --dataset-card /path/to/DATASET.md --source-row-count N --derived-field FIELD",
-                    "agent-ingest /path/to/input.jsonl --dataset DATASET --dataset-card /path/to/DATASET.md",
+                    "ingest DATASET --file /path/to/input.jsonl --quality-level L3 --dataset-card /path/to/DATASET.md --source-row-count N --derived-field FIELD",
+                    "agent-ingest /path/to/input.jsonl --dataset DATASET --quality-level L2",
                     "dataset-acquisition-agent start --run outputs/obtainer_dataset_run --analysis-report outputs/analyzer_report.md",
                     "dataset-acquisition-agent status --run outputs/obtainer_dataset_run",
                 ],
@@ -279,6 +282,40 @@ async def get_lake_monitor(lake: str | None = None):
     try:
         lake_path = _resolve_lake_path(lake)
         data = read_monitor_state(warehouse_root(lake_path), lake=lake_path)
+    except Exception as exc:
+        return response_body(code=400, status="error", message=str(exc))()
+    return response_body(data=data)()
+
+
+@router.get(
+    "/webagent/overview",
+    operation_id="getObtainerWebAgentOverview",
+    summary="获取 WebAgent 到 L3 数据流水线的实时概览",
+)
+async def get_webagent_overview(
+    lake: str | None = None,
+    root: str | None = None,
+    run_id: str | None = None,
+):
+    """Read current queue/pipeline state for the active-task dashboard."""
+    try:
+        lake_path = _resolve_lake_path(lake)
+        lake_pointer = current_lake_pointer(link_path=lake_path)
+        context = lake_pointer.get("obtainer_context") or {}
+        warehouse = _resolve_datamixer_root(lake=lake, root=root)
+        data = build_web_pipeline_overview(
+            warehouse,
+            run_id=run_id,
+            acquisition_run=str(context.get("obtainer_active_acquisition_run") or "") or None,
+            lake_context=context,
+            project_root=REPO_ROOT,
+        )
+        data["lake"] = {
+            "lake_config": lake_pointer.get("lake_config"),
+            "lake_root": lake_pointer.get("lake_root"),
+            "warehouse": lake_pointer.get("warehouse"),
+            "loaded": lake_pointer.get("status") == "loaded",
+        }
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=data)()
