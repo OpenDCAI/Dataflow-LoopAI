@@ -525,36 +525,7 @@ async def _search_web_for_deepsearch(
     urls = WebTools.extract_urls_from_search_results(search_results)
     if not urls:
         urls = _extract_urls_from_text(search_results, limit=max_urls)
-    if urls or search_engine.lower() != "duckduckgo":
-        return search_results, urls[:max_urls]
-    if not _env_truthy("OBTAINER_SEARCHAGENT_DDGS_FALLBACK"):
-        return search_results, []
-
-    try:
-        from ddgs import DDGS
-    except Exception:
-        return search_results, []
-
-    def _run_ddgs_search() -> list[dict[str, Any]]:
-        with DDGS() as client:
-            return list(client.text(query, max_results=max_urls))
-
-    import asyncio
-
-    rows = await asyncio.to_thread(_run_ddgs_search)
-    formatted_parts: list[str] = []
-    fallback_urls: list[str] = []
-    for row in rows:
-        url = str(row.get("href") or row.get("url") or "").strip()
-        title = str(row.get("title") or "").strip()
-        body = str(row.get("body") or row.get("snippet") or "").strip()
-        if url:
-            fallback_urls.append(url)
-        formatted_parts.append("\n".join([f"标题: {title}", f"URL: {url}", f"摘要: {body}", "---"]))
-    formatted = "\n".join(formatted_parts).strip()
-    if formatted:
-        search_results = "\n\n".join(part for part in [search_results, formatted] if part)
-    return search_results, list(dict.fromkeys(fallback_urls))[:max_urls]
+    return search_results, urls[:max_urls]
 
 
 async def _run_deepsearch(

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import read_lake_config, write_lake_config
+from .config import obtainer_context, read_lake_config, write_lake_config
 from .datamixer_adapter import warehouse_root
 from .errors import ObtainerCliError
 from .monitor_state import read_monitor_state
@@ -29,7 +29,14 @@ def _existing_config(link: Path) -> dict[str, str]:
     return {}
 
 
-def _write_pointer(link: Path, *, lake_root: Path, warehouse: Path, previous: dict[str, str]) -> None:
+def _write_pointer(
+    link: Path,
+    *,
+    lake_root: Path,
+    warehouse: Path,
+    previous: dict[str, str],
+    context_values: dict[str, str] | None = None,
+) -> None:
     write_lake_config(
         link,
         root=lake_root,
@@ -45,6 +52,7 @@ def _write_pointer(link: Path, *, lake_root: Path, warehouse: Path, previous: di
         embedding_text_field=previous.get("embedding_text_field") or "text",
         auto_embed_async=_bool_from_config(previous.get("auto_embed_async"), True),
         auto_embed_batch_size=int(previous.get("auto_embed_batch_size") or 512),
+        obtainer_context_values=context_values or previous,
     )
 
 
@@ -269,6 +277,7 @@ def current_lake_pointer(*, link_path: str | Path = ".loopai/lake.yaml") -> dict
         "backend": config.get("backend", ""),
         "catalog": config.get("catalog", ""),
         "config": config,
+        "obtainer_context": obtainer_context(config),
         "warnings": []
         if exists
         else [
@@ -301,8 +310,21 @@ def load_lake_pointer(
     link = link.resolve()
     root = _resolve_path(lake_root) if lake_root else warehouse_path.parent
     previous = _existing_config(link)
+    source_config_path = root / "lake.yaml"
+    source_context = (
+        read_lake_config(source_config_path)
+        if source_config_path.is_file()
+        else {}
+    )
+    context_values = {**previous, **source_context}
     previous_warehouse = previous.get("warehouse", "")
-    _write_pointer(link, lake_root=root, warehouse=warehouse_path, previous=previous)
+    _write_pointer(
+        link,
+        lake_root=root,
+        warehouse=warehouse_path,
+        previous=previous,
+        context_values=context_values,
+    )
     monitor = read_monitor_state(warehouse_path, lake=link)
     return {
         "ok": True,
@@ -321,6 +343,71 @@ def load_lake_pointer(
             "updated_at": monitor.get("updated_at", ""),
             "rebuild": monitor.get("rebuild", {}),
         },
+        "warnings": [],
+    }
+
+
+def update_lake_obtainer_context(
+    *,
+    link_path: str | Path = ".loopai/lake.yaml",
+    updates: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist operational defaults/current runs on the active lake pointer."""
+    link = Path(link_path).expanduser()
+    if not link.is_absolute():
+        link = Path.cwd() / link
+    link = link.resolve()
+    if not link.is_file():
+        raise ObtainerCliError(
+            "LAKE_POINTER_MISSING",
+            f"Lake pointer does not exist: {link}",
+            hint="Load or initialize a DataMixer lake before starting an Obtainer worker.",
+            exit_code=2,
+        )
+    config = read_lake_config(link)
+    context = obtainer_context(config)
+    invalid = sorted(set(updates) - set(context))
+    if invalid:
+        raise ValueError(f"Unsupported Obtainer lake context keys: {', '.join(invalid)}")
+    for key, value in updates.items():
+        context[key] = "" if value is None else str(value).strip()
+    root_value = str(config.get("root") or "").strip()
+    warehouse_value = str(config.get("warehouse") or "").strip()
+    if not root_value or not warehouse_value:
+        raise ValueError(f"Lake pointer is missing root or warehouse: {link}")
+    root = Path(root_value).expanduser()
+    warehouse = Path(warehouse_value).expanduser()
+
+    def write_context(path: Path) -> None:
+        write_lake_config(
+            path,
+            root=root,
+            warehouse=warehouse,
+            catalog=config.get("catalog") or "datamixer",
+            backend=config.get("backend") or "datamixer",
+            auto_embed=_bool_from_config(config.get("auto_embed"), True),
+            embedding_provider=config.get("embedding_provider") or "openai-compatible",
+            embedding_base_url=config.get("embedding_base_url") or "http://127.0.0.1:8000/v1",
+            embedding_api_key=config.get("embedding_api_key") or "",
+            embedding_model=config.get("embedding_model") or "BAAI/bge-small-zh-v1.5",
+            embedding_backend=config.get("embedding_backend") or "local-jsonl",
+            embedding_text_field=config.get("embedding_text_field") or "text",
+            auto_embed_async=_bool_from_config(config.get("auto_embed_async"), True),
+            auto_embed_batch_size=int(config.get("auto_embed_batch_size") or 512),
+            obtainer_context_values=context,
+        )
+
+    write_context(link)
+    canonical_config = root.resolve() / "lake.yaml"
+    if canonical_config != link:
+        write_context(canonical_config)
+    return {
+        "ok": True,
+        "command": "dm lake context",
+        "status": "success",
+        "lake_config": str(link),
+        "warehouse": str(warehouse.resolve()),
+        "obtainer_context": context,
         "warnings": [],
     }
 

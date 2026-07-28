@@ -28,6 +28,7 @@ from typing import Any, Callable
 import tomlkit
 
 from loopai.schema.model_pool import StarterModelPool, load_starter_system_config_sync
+from . import schema
 from .models import ModelPool, ModelSpec
 
 
@@ -248,7 +249,10 @@ def _sync_runner_project_config(home: Path, prov: dict, cwd: str) -> None:
 # prompt
 # ---------------------------------------------------------------------------
 
-def build_prompt(file_path: str, dataset: str, root: str) -> str:
+def build_prompt(
+    file_path: str, dataset: str, root: str, quality_level: str
+) -> str:
+    quality_level = schema.validate_quality_level(quality_level)
     python_executable = loopai_python_executable()
     dm = f"{python_executable} -m loopai.agents.Obtainer.datamixer --root {root}"
     instructions = ingest_instructions_path()
@@ -257,9 +261,12 @@ def build_prompt(file_path: str, dataset: str, root: str) -> str:
         "Ingest a data file into this LoopAI data-lake warehouse. Inspect the "
         "file yourself and drive the provided CLI; do not write the catalog or "
         "blobs directly.\n\n"
-        f"FILE={file_path}\nDATASET={dataset}\nROOT={root}\nDM={dm}\n\n"
+        f"FILE={file_path}\nDATASET={dataset}\nQUALITY_LEVEL={quality_level}\n"
+        f"ROOT={root}\nDM={dm}\n\n"
+        "Use QUALITY_LEVEL exactly as provided in the final ingest command; "
+        "do not infer, replace, or omit it.\n\n"
         "When done, return the structured JSON result (summary, format, stage, "
-        "tags, records_ingested, dataset, dataset_card, derived_fields, "
+        "tags, quality_level, records_ingested, dataset, dataset_card, derived_fields, "
         "validation).\n\n"
         + (f"--- ingest instructions ---\n{body}\n" if body else "")
     )
@@ -442,8 +449,10 @@ def run_via_sdk(prompt: str, prov: dict, cwd: str, timeout: int = 600,
 # entry point
 # ---------------------------------------------------------------------------
 
-def codex_ingest(store, path, model: str, dataset: str | None = None,
-                 timeout: int = 600, network: bool = True) -> dict:
+def codex_ingest(store, path, model: str, *, quality_level: str,
+                 dataset: str | None = None, timeout: int = 600,
+                 network: bool = True) -> dict:
+    quality_level = schema.validate_quality_level(quality_level)
     if not model:
         raise CodexError("the codex engine requires --model (a model-pool name)")
     spec = ModelPool(store.root).get(model)
@@ -453,7 +462,7 @@ def codex_ingest(store, path, model: str, dataset: str | None = None,
     root = str(store.root)
 
     before = store.catalog.count()
-    prompt = build_prompt(abspath, dataset, root)
+    prompt = build_prompt(abspath, dataset, root, quality_level)
     result = run_via_sdk(prompt, prov, cwd=root, timeout=timeout, network=network)
     after = store.catalog.count()         # Codex committed via the CLI subprocess
 
@@ -461,6 +470,7 @@ def codex_ingest(store, path, model: str, dataset: str | None = None,
     return {
         "engine": "codex", "model": model, "dataset": dataset,
         "dataset_id": ds_id,
+        "quality_level": quality_level,
         "ingested": max(after - before, result.get("records_ingested") or 0),
         "codex_result": result,
         "review": result.get("summary", ""),

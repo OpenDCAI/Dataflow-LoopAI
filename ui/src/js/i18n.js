@@ -715,6 +715,14 @@ export default {
         "en": "Level",
         "zh": "层级"
     },
+    "Quality Level": {
+        "en": "Quality Level",
+        "zh": "质量等级"
+    },
+    "Processing Level": {
+        "en": "Processing Level",
+        "zh": "处理阶段"
+    },
     "Domain": {
         "en": "Domain",
         "zh": "领域"

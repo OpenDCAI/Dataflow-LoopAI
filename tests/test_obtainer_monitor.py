@@ -109,6 +109,7 @@ def test_build_lake_monitor_returns_chart_ready_payload(tmp_path: Path) -> None:
         lake=link_path,
         input_path=input_path,
         dataset="monitor_seed",
+        quality_level="L2",
         stage="silver",
         domain="code",
         task_type="PT",
@@ -221,6 +222,7 @@ def test_auto_embed_commits_completed_batches_and_updates_monitor_delta(tmp_path
             lake=link_path,
             input_path=input_path,
             dataset="auto_embed_seed",
+            quality_level="L1",
             idempotency_key="auto-embed-seed",
         )
 
@@ -255,7 +257,12 @@ def test_lake_monitor_endpoint_reads_monitor_cache_without_rebuild(tmp_path: Pat
     init_lake(root=lake_root, link_path=link_path, if_not_exists=True)
     input_path = tmp_path / "input" / "records.jsonl"
     _write_jsonl(input_path, [{"text": "alpha"}, {"text": "beta"}])
-    ingest_path(lake=link_path, input_path=input_path, dataset="cache_seed")
+    ingest_path(
+        lake=link_path,
+        input_path=input_path,
+        dataset="cache_seed",
+        quality_level="L1",
+    )
     rebuild_monitor_state(warehouse, lake=link_path)
 
     def fail_rebuild(*args, **kwargs):
@@ -310,7 +317,12 @@ def test_lake_monitor_endpoint_prefers_root_warehouse_when_pointer_warehouse_is_
     DataStore.init(stale_warehouse).close()
     input_path = tmp_path / "input" / "records.jsonl"
     _write_jsonl(input_path, [{"text": "alpha"}])
-    ingest_path(lake=lake_root, input_path=input_path, dataset="root_dataset")
+    ingest_path(
+        lake=lake_root,
+        input_path=input_path,
+        dataset="root_dataset",
+        quality_level="L1",
+    )
     write_lake_config(link_path, root=lake_root, warehouse=stale_warehouse)
     rebuild_monitor_state(lake_root, lake=link_path)
 
@@ -368,8 +380,9 @@ def test_datamixer_cli_endpoint_accepts_ingest_validation_args(tmp_path: Path) -
             DataMixerCliRequest(
                 root=str(warehouse),
                 line=(
-                    f"ingest frontend_ingest_check --file {input_path} "
-                    f"--dataset-card {card_path} --source-row-count 2 --derived-field reasoning"
+                        f"ingest frontend_ingest_check --file {input_path} "
+                        f"--quality-level L2 --dataset-card {card_path} "
+                        f"--source-row-count 2 --derived-field reasoning"
                 ),
             )
         )

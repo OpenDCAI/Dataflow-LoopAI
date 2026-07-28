@@ -81,6 +81,7 @@ def _record_preview(row: dict) -> dict:
         "dataset_id": row.get("dataset_id", ""),
         "stage": row.get("stage", ""),
         "domain": row.get("domain", ""),
+        "quality_level": row.get("quality_level", ""),
         "processing_level": row.get("processing_level", ""),
         "source_kind": row.get("source_kind", ""),
         "task_type": row.get("task_type", ""),
@@ -95,6 +96,7 @@ def _quality_preview(row: dict) -> dict:
         "finding_id": row.get("finding_id", ""),
         "record_id": row.get("record_id", ""),
         "dataset_id": row.get("dataset_id", ""),
+        "quality_level": row.get("quality_level", ""),
         "finding_type": row.get("finding_type", ""),
         "severity": row.get("severity", ""),
         "score": row.get("score"),
@@ -272,6 +274,7 @@ def build_lake_monitor(*, lake: str | Path, latest_limit: int = 8) -> dict:
         "charts": {
             "ingest_trend": _ingest_trend(ingest_runs),
             "composition": {
+                "quality_level": _count_by(records, "quality_level"),
                 "domain": _count_by(records, "domain"),
                 "processing_level": _count_by(records, "processing_level"),
                 "source_kind": _count_by(records, "source_kind"),

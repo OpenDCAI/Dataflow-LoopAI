@@ -121,16 +121,17 @@ class DataStore:
         heuristic) when not supplied, and the tokenizer used is recorded.
         """
         from . import tokenizers
-        defaults = defaults or {}
-        tok = tokenizers.resolve(tokenizer)
-        read_rows = accepted_rows = new = dup = written_rows = merged_rows = 0
-        contaminated_rows = 0
-        contam_sources: Counter[str] = Counter()
-        contamination_sets = []
-        if decontaminate:
-            from . import contam
+        defaults = dict(defaults or {})
+        batch_quality_level = None
+        if "quality_level" in defaults:
+            batch_quality_level = schema.validate_quality_level(
+                defaults["quality_level"]
+            )
 
-            contamination_sets = contam.load_sets(self.root)
+        # Validate and materialize the complete batch before touching CAS or
+        # the sample catalog. This prevents a bad late row from leaving a
+        # partially ingested batch behind.
+        prepared: list[tuple[Any, dict[str, Any]]] = []
         row_metadata_keys = set(schema.CORE_FIELD_NAMES) | {
             "bug_type",
             "failure_type",
@@ -147,14 +148,40 @@ class DataStore:
             "version_id",
             "idempotency_key",
         }
-        for rec in records:
-            read_rows += 1
+        for row_number, rec in enumerate(records, 1):
+            if not isinstance(rec, dict):
+                raise ValueError(f"ingest record {row_number} must be an object")
             if content_key in rec:
                 content = rec[content_key]
                 meta = {k: v for k, v in rec.items() if k != content_key}
             else:
                 content = rec
                 meta = {k: v for k, v in rec.items() if k in row_metadata_keys}
+            if batch_quality_level is not None and "quality_level" in meta:
+                row_quality_level = meta["quality_level"]
+                if row_quality_level != batch_quality_level:
+                    raise ValueError(
+                        f"ingest record {row_number} quality_level "
+                        f"{row_quality_level!r} conflicts with batch "
+                        f"quality_level {batch_quality_level!r}"
+                    )
+            merged = {**defaults, **meta}
+            merged["quality_level"] = schema.validate_quality_level(
+                merged.get("quality_level")
+            )
+            prepared.append((content, merged))
+
+        tok = tokenizers.resolve(tokenizer)
+        read_rows = accepted_rows = new = dup = written_rows = merged_rows = 0
+        contaminated_rows = 0
+        contam_sources: Counter[str] = Counter()
+        contamination_sets = []
+        if decontaminate:
+            from . import contam
+
+            contamination_sets = contam.load_sets(self.root)
+        for content, merged in prepared:
+            read_rows += 1
             if contamination_sets:
                 from . import contam
 
@@ -167,7 +194,6 @@ class DataStore:
                     contaminated_rows += 1
                     contam_sources[source or "unknown"] += 1
                     continue
-            merged = {**defaults, **meta}
             if "n_tokens" not in merged:
                 merged["n_tokens"] = tok.count(utils.extract_text(content))
                 merged.setdefault("tokenizer", tok.name)
