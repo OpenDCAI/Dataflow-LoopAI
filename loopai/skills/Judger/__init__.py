@@ -64,20 +64,27 @@ def run(
 
     # 成功——标准 payload 输出到 stdout（Codex 消费）
     judger = result.get("judger", {})
-    bench = judger.get("bench") or {}
-    metrics = judger.get("metrics") or {}
-    if not metrics:
-        metrics = (bench.get("meta") or {}).get("eval_result") or {}
+    bench_list = judger.get("bench_result") or []
+    secondary_list = judger.get("extra_bench_result") or []
+
+    # 聚合 metrics：按 bench_name 索引
+    metrics = {}
+    for b in bench_list + secondary_list:
+        m = b.get("metrics") or {}
+        if m:
+            metrics[b.get("bench_name", "unknown")] = m
+        else:
+            meta = b.get("meta") or {}
+            m = meta.get("eval_result") or {}
+            if m:
+                metrics[b.get("bench_name", "unknown")] = m
+
     metrics_str = json.dumps(metrics, ensure_ascii=False) if metrics else ""
 
     emit_success(
         data={
-            "task_type": judger.get("eval_task_type"),
-            "output_result_path": judger.get("output_result_path", ""),
-            "output_case_path": judger.get("output_case_path", ""),
-            "output_problem_path": judger.get("output_problem_path", ""),
-            "output_pred_path": judger.get("output_pred_path", ""),
-            "bench": bench,
+            "bench_result": bench_list,
+            "extra_bench_result": secondary_list,
             "metrics": metrics_str,
         },
         stream_writer=writer,

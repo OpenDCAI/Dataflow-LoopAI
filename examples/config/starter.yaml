@@ -151,9 +151,7 @@ default_states:
     # 默认使用 LLaMA-Factory SFT。启用 Verl GRPO 时，将下面两项改为
     # train_framework: "verl" / train_stage: "grpo"，并填写 Parquet 数据路径。
     train_framework: "llamafactory"
-    train_stage: "sft"
-    trainer_persistent_worker: true
-    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/"
+    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory"
     llamafactory_env_path: "/home/lpc/miniconda3/envs/lmf/bin/"
     CUDA_VISIBLE_DEVICES: "0,1"
     train_input_dataset_path: "/home/lpc/repos/Dataflow-LoopAI/data/alpaca_en_demo.json" # to defined the path of training dataset (json/jsonl format)

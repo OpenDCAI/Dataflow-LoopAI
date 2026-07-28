@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Standalone code/text2sql sample generation — no LangGraph dependency.
-
-Extracted from ``loopai.agents.Judger.utils.oj.generate``,
-replaced ``get_stream_writer()`` with a passed-in ``writer`` parameter.
-"""
+"""Standalone code/text2sql sample generation — no LangGraph dependency."""
 
 from pathlib import Path
 from typing import Any, Dict
@@ -46,9 +42,10 @@ def run_generate_code(state: Dict[str, Any], writer) -> str:
 
     output_dir = Path(state.get("output_dir"))
     problem_path = judger_state["eval_problem_path"]
-    problem_file_name = Path(problem_path).stem
+    bench_name = judger_state.get("bench_name", Path(problem_path).stem)
     test_case_path = str(
-        output_dir / str(state_task_id) / "judger" / writer.version_id / f"{problem_file_name}_sample.jsonl"
+        output_dir / str(state_task_id) / "judger" / writer.version_id
+        / bench_name / f"{bench_name}_sample.jsonl"
     )
 
     batch_size = judger_state["eval_batch_size"]
@@ -63,7 +60,8 @@ def run_generate_code(state: Dict[str, Any], writer) -> str:
     writer(StreamEvent(
         current=state.get("current", "judger"), progress=0.0,
         message=f"{task_type}任务样本合成开始",
-        data={"total_tasks": total_tasks, "num_samples_per_task": num_samples_per_task,
+        data={"bench_name": bench_name, "total_tasks": total_tasks,
+              "num_samples_per_task": num_samples_per_task,
               "total_samples": total_samples}))
 
     logger.info(f"===== 开始生成样本 =====")
@@ -91,14 +89,14 @@ def run_generate_code(state: Dict[str, Any], writer) -> str:
                 current=state.get("current", "judger"),
                 progress=round(cnt / total_samples, 1),
                 message=f"{task_type}任务样本合成进度",
-                data={"progress_detail": f"{cnt}/{total_samples}"}))
+                data={"bench_name": bench_name, "progress_detail": f"{cnt}/{total_samples}"}))
 
     write_jsonl(test_case_path, samples)
     logger.info(f"===== 生成完成 ===== 样本数：{len(samples)}  路径：{test_case_path}")
 
     writer(StreamEvent(
         current=state.get("current", "judger"), progress=1.0, message=f"{task_type}任务样本合成完成",
-        data={"sample_num": len(samples), "sample_save_path": test_case_path}))
+        data={"bench_name": bench_name, "sample_num": len(samples), "sample_save_path": test_case_path}))
     return test_case_path
 
 
@@ -117,9 +115,10 @@ def run_generate_text2sql(state: Dict[str, Any], writer) -> str:
 
     output_dir = Path(state.get("output_dir"))
     problem_path = judger_state["eval_problem_path"]
-    problem_file_name = Path(problem_path).stem
+    bench_name = judger_state.get("bench_name", Path(problem_path).stem)
     test_case_path = str(
-        output_dir / str(state_task_id) / "judger" / writer.version_id / f"{problem_file_name}_sample.jsonl"
+        output_dir / str(state_task_id) / "judger" / writer.version_id
+        / bench_name / f"{bench_name}_sample.jsonl"
     )
 
     task_type = judger_state["eval_task_type"]
@@ -135,7 +134,8 @@ def run_generate_text2sql(state: Dict[str, Any], writer) -> str:
     writer(StreamEvent(
         current=state.get("current", "judger"), progress=0.0,
         message=f"{task_type}任务样本合成开始",
-        data={"total_tasks": total_tasks, "num_samples_per_task": num_samples_per_task,
+        data={"bench_name": bench_name, "total_tasks": total_tasks,
+              "num_samples_per_task": num_samples_per_task,
               "total_samples": total_samples}))
 
     logger.info(f"===== 开始生成样本 =====")
@@ -170,12 +170,12 @@ def run_generate_text2sql(state: Dict[str, Any], writer) -> str:
                 current=state.get("current", "judger"),
                 progress=round(cnt / total_samples, 1),
                 message=f"{task_type}任务样本合成进度",
-                data={"progress_detail": f"{cnt}/{total_samples}"}))
+                data={"bench_name": bench_name, "progress_detail": f"{cnt}/{total_samples}"}))
 
     write_jsonl(test_case_path, samples)
     logger.info(f"===== 生成完成 ===== 样本数：{len(samples)}  路径：{test_case_path}")
 
     writer(StreamEvent(
         current=state.get("current", "judger"), progress=1.0, message=f"{task_type}任务样本合成完成",
-        data={"sample_num": len(samples), "sample_save_path": test_case_path}))
+        data={"bench_name": bench_name, "sample_num": len(samples), "sample_save_path": test_case_path}))
     return test_case_path

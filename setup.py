@@ -65,6 +65,7 @@ setup(
     entry_points={
         "console_scripts": [
             "loopai-obtainercli=loopai.skills.ObtainerCLI.cli:main",
+            "loopai-judger=loopai.skills.Judger.cli:main",
         ],
     },
     python_requires=">=3.12",

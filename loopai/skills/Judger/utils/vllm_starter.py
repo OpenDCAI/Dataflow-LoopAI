@@ -106,7 +106,7 @@ def start_vllm_openai_api_server(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=10.0,
+            timeout=30.0,
         )
     except FileNotFoundError:
         raise Exception(f"未找到 Python 可执行文件：{python_exec}")
