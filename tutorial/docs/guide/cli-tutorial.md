@@ -53,8 +53,9 @@ python examples/scripts/run_trainer.py
 可选但强烈建议给到的字段：
 
 - `output_dir`：Trainer 的工作目录，默认会落到 `./output/trainer`
-- `train_input_use_swanlab` / `train_input_swanlab_project`：开启 SwanLab 监控
-- `swanlab_api_key` / `llamafactory_env_path` / `CUDA_VISIBLE_DEVICES`：未在 `state.system` 中提供时需在 `state.trainer` 直接给出
+- `llamafactory_env_path` / `CUDA_VISIBLE_DEVICES`：未在 `state.system` 中提供时需在 `state.trainer` 直接给出
+
+Trainer 的进度、曲线和结果分析由本地指标文件驱动，不需要配置外部实验跟踪服务。
 
 > 完整字段含义见 [Trainer Agent 详细指南](/guide/details/trainer-agent#输入字段表-state-trainer)。
 
@@ -74,10 +75,7 @@ training_state = {
         "train_input_model_name": "/your/path/to/Qwen2.5-Coder-7B",
         "output_dir": "./output/trainer_demo",
 
-        "train_input_use_swanlab": True,
-        "train_input_swanlab_project": "sql_sft",
         # 单独运行时如果 starter.yaml 没加载到 system，可在这里直接补
-        # "swanlab_api_key": "xxx",
         # "llamafactory_env_path": "/opt/conda/envs/llamafactory",
         # "CUDA_VISIBLE_DEVICES": "0,1",
     }
@@ -90,9 +88,9 @@ training_state = {
 - **只想跑数据检查**：`from loopai.skills.Trainer.utils.data_checker import check_data_format, generate_format_report`，传入数据集路径即可，不依赖 LangGraph。
 - **复跑某次任务**：`thread_id` 用同一个值（脚本里默认是 `"trainer_test_1"`），LangGraph 会从 checkpointer 里恢复上次状态；想要从 0 开始就换一个新的 `thread_id`。
 - **想看到完整 SSE 流**：把 `graph.invoke(...)` 换成 `for event in graph.stream(training_state, config=config, stream_mode="custom"): print(event)`，会逐条打出 `StreamEvent`。
-- **长时间训练**：Trainer 没有固定的 1 小时等待上限，会保持前台同步直到训练完成、失败或取消；调用方中断时会取消训练进程组，避免遗留 torchrun/rank 子进程。
+- **长时间训练**：Trainer 没有固定的 1 小时等待上限。调用方正常存活时会同步等待独立 Trainer Worker 到达完成、失败或取消状态；调用方意外中断时 Worker 会继续训练，可通过同一 `task_id`、`version_id` 以及运行目录中的 `run_state.json`/`worker_result.pkl` 重新读取进度和结果。
 - **训练失败定位**：先看 `result["trainer"]["train_output_training_log_path"]` 指向的日志文件（LlamaFactory 子进程原始 stdout/stderr），再看 `train_output_training_report_path` 中的汇总报告。
-- **SwanLab 日志看不到**：确认模板 `report_to` 没被覆盖成 `none`，并且 `swanlab_api_key` 能从 `state.trainer` 或 `state.system` 之一读到。
+- **曲线或指标未更新**：SFT 检查运行目录中的 `trainer_log.jsonl` 和 `metrics/metrics.json`；Verl 检查 `metrics/verl_metrics.jsonl`，同时确认训练子进程仍在写日志。
 
 #### 输出位置
 
@@ -102,5 +100,6 @@ training_state = {
 - `training_config.yaml` + `config_explanation.txt`：自动生成的 LlamaFactory 配置与说明
 - `configs/{trainer_task_id}.yaml`：实际提交给训练子进程的配置副本
 - `logs/`、`runs/`：TaskManager 维护的训练日志与运行记录
+- `metrics/metrics.json`（SFT）或 `metrics/verl_metrics.jsonl`（Verl）：前端曲线和结果分析使用的本地指标
 - `training_log_{task_id}.txt`、`training_report_{task_id}.txt`：最终汇总日志与报告
 - 训练产物（`checkpoint-*`、`trainer_log.jsonl`）写在配置里的 `output_dir`，可在 `result["trainer"]["training_checkpoints"]` 里拿到列表

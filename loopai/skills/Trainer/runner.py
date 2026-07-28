@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
 
+from loopai.common.tracking import assert_no_retired_tracking, strip_retired_tracking_fields
 from loopai.common.exception import ErrorCode, emit_error, emit_success
 from loopai.skills.Trainer.runtime_config import (
     build_trainer_prefill_guide,
@@ -33,9 +35,12 @@ _TRAINER_TASK_STATE_UPDATE_FIELDS = {
     "training_error",
     "current_training_status",
     "update_model_path",
-    "swanlab_url",
-    "train_output_swanlab_log_path",
     "trainer_event_log_path",
+    "trainer_run_state_path",
+    "trainer_worker_log_path",
+    "trainer_worker_pid",
+    "trainer_persistent_worker",
+    "trainer_state_update_error",
     "trainer_version_id",
     "trainer_output_dir",
     "trainer_missing_fields",
@@ -43,10 +48,13 @@ _TRAINER_TASK_STATE_UPDATE_FIELDS = {
     "trainer_result",
     "trainer_last_error",
     "trainer_result_analysis",
+    "trainer_result_analysis_version_id",
     "trainer_result_summary",
     "trainer_best_checkpoint",
     "trainer_best_metric",
     "trainer_best_checkpoint_path",
+    "trainer_model_export_error",
+    "trainer_model_export_log_path",
     "train_config",
     "training_checkpoints",
     "training_step_losses",
@@ -176,6 +184,7 @@ def inspect_prepared_trainer_config(config_path: str) -> Dict[str, Any]:
     parsed = yaml.safe_load(config_yaml)
     if not isinstance(parsed, dict):
         raise ValueError(f"prepared Trainer config must contain a YAML mapping: {path}")
+    assert_no_retired_tracking(parsed)
 
     return {
         "config_path": str(path),
@@ -211,6 +220,103 @@ def _update_trainer_task_state(runtime: Dict[str, Any], trainer_state: Dict[str,
         raise RuntimeError(detail or "failed to update Trainer task state config")
 
 
+def finalize_trainer_result_state(
+    result: Dict[str, Any],
+    *,
+    task_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Analyze artifacts and export a Verl checkpoint in an idempotent way."""
+    if not isinstance(result, dict):
+        return result
+
+    trainer_state = result.setdefault("trainer", {})
+    version_id = str(trainer_state.get("trainer_version_id") or "")
+    if (
+        isinstance(trainer_state.get("trainer_result_analysis"), dict)
+        and str(trainer_state.get("trainer_result_analysis_version_id") or "") == version_id
+    ):
+        return result
+    try:
+        from loopai.skills.Trainer.results import analyze_results
+
+        analysis_payload = analyze_results(
+            task_id=task_id or result.get("task_id"),
+            output_dir=result.get("output_dir", "./outputs"),
+            trainer_state=trainer_state,
+        )
+        analysis_data = analysis_payload.get("data") or {}
+        summary = analysis_data.get("summary") or {}
+        best_checkpoint = analysis_data.get("best_checkpoint") or {}
+        best_metric = analysis_data.get("best_metric") or {}
+        if (
+            trainer_state.get("train_framework") == "verl"
+            and best_checkpoint.get("needs_merge")
+            and ((trainer_state.get("train_config") or {}).get("result") or {}).get(
+                "export_huggingface", True
+            )
+        ):
+            from loopai.skills.Trainer.utils.verl_exporter import export_verl_checkpoint
+
+            export_log_path = str(Path(trainer_state["trainer_output_dir"]) / "model_export.log")
+            try:
+                exported_path = export_verl_checkpoint(
+                    str(trainer_state.get("train_output_config_path") or ""),
+                    best_checkpoint,
+                    export_log_path,
+                    app_config={
+                        "verl_dir": trainer_state.get("verl_dir"),
+                        "verl_env_path": trainer_state.get("verl_env_path"),
+                        "CUDA_VISIBLE_DEVICES": trainer_state.get("CUDA_VISIBLE_DEVICES"),
+                    },
+                )
+                best_checkpoint["raw_checkpoint_path"] = best_checkpoint.get("path")
+                best_checkpoint["path"] = exported_path
+                best_checkpoint["needs_merge"] = False
+                best_checkpoint["export_log_path"] = export_log_path
+                summary["best_checkpoint_path"] = exported_path
+                summary["model_export_status"] = "completed"
+            except Exception as export_exc:
+                trainer_state["trainer_model_export_error"] = str(export_exc)
+                trainer_state["trainer_model_export_log_path"] = export_log_path
+                summary["model_export_status"] = "failed"
+        compact_analysis = {
+            "ok": analysis_payload.get("ok"),
+            "status": analysis_payload.get("status"),
+            "message": analysis_payload.get("message"),
+            "summary": summary,
+            "best_checkpoint": best_checkpoint,
+            "best_metric": best_metric,
+            "model_export_error": trainer_state.get("trainer_model_export_error"),
+            "error": analysis_payload.get("error"),
+        }
+        trainer_state["trainer_result_analysis"] = compact_analysis
+        trainer_state["trainer_result_analysis_version_id"] = version_id
+        trainer_state["trainer_result_summary"] = summary
+        trainer_state["trainer_best_checkpoint"] = best_checkpoint
+        trainer_state["trainer_best_metric"] = best_metric
+        if best_checkpoint.get("path") and not best_checkpoint.get("needs_merge"):
+            trainer_state["trainer_best_checkpoint_path"] = best_checkpoint["path"]
+            trainer_state["update_model_path"] = best_checkpoint["path"]
+        if analysis_data.get("checkpoints") and not trainer_state.get("training_checkpoints"):
+            trainer_state["training_checkpoints"] = [
+                item.get("name") for item in analysis_data["checkpoints"] if item.get("name")
+            ]
+        if analysis_data.get("metric_records") and not trainer_state.get("training_step_losses"):
+            trainer_state["training_step_losses"] = analysis_data["metric_records"]
+    except Exception as exc:
+        trainer_state["trainer_result_analysis"] = {
+            "ok": False,
+            "status": "failed",
+            "message": "Trainer result analysis failed.",
+            "error": {
+                "type": type(exc).__name__,
+                "detail": str(exc),
+            },
+        }
+        trainer_state["trainer_result_analysis_version_id"] = version_id
+    return result
+
+
 def run_trainer_standalone(
     state: Optional[Dict[str, Any]] = None,
     thread_id: Optional[str] = None,
@@ -239,7 +345,9 @@ def run_trainer_standalone(
         fallback_state = {
             "task_id": fallback_task_id,
             "output_dir": fallback_output_root,
-            "trainer": dict((state or {}).get("trainer") or {}) if isinstance(state, dict) else {},
+            "trainer": strip_retired_tracking_fields(
+                dict((state or {}).get("trainer") or {}) if isinstance(state, dict) else {}
+            ),
         }
         fallback_writer = prepare_trainer_run(
             fallback_state,
@@ -331,6 +439,11 @@ def run_trainer_standalone(
                 )
             trainer_state["train_output_config_path"] = prepared_config["config_path"]
             trainer_state["train_config"] = prepared_config["config"]
+            # Carry the exact approved bytes into the trusted worker request.
+            # The worker materializes this snapshot instead of rereading a
+            # user-editable source path after the approval digest check.
+            trainer_state["_trainer_approved_config_yaml"] = prepared_config["config_yaml"]
+            trainer_state["_trainer_approved_config_sha256"] = actual_digest
             trainer_state["trainer_config_generation_success"] = True
             trainer_state["_trainer_use_prepared_config"] = True
         except Exception as exc:
@@ -347,6 +460,13 @@ def run_trainer_standalone(
             trainer_state["trainer_last_error"] = payload["error"]
             _update_trainer_task_state(runtime, trainer_state)
             raise
+
+    if not prepare_only:
+        trainer_state["_trainer_worker_runtime"] = {
+            "task_state_loaded": runtime.get("task_state_loaded", False),
+            "thread_id": runtime.get("thread_id"),
+            "db_path": runtime.get("db_path"),
+        }
 
     from loopai.memory import checkpointer, store
     from loopai.skills.Trainer.trainer_agent import TrainerAgent
@@ -379,6 +499,9 @@ def run_trainer_standalone(
     trainer_state = result.setdefault("trainer", {}) if isinstance(result, dict) else {}
     trainer_state.pop("_trainer_prepare_only", None)
     trainer_state.pop("_trainer_use_prepared_config", None)
+    trainer_state.pop("_trainer_worker_runtime", None)
+    trainer_state.pop("_trainer_approved_config_yaml", None)
+    trainer_state.pop("_trainer_approved_config_sha256", None)
 
     if prepare_only:
         try:
@@ -421,50 +544,44 @@ def run_trainer_standalone(
         return result
 
     if isinstance(result, dict):
-        try:
-            from loopai.skills.Trainer.results import analyze_results
+        finalize_trainer_result_state(result, task_id=runtime["thread_id"])
 
-            analysis_payload = analyze_results(
-                task_id=runtime["thread_id"],
-                output_dir=resolved_state.get("output_dir", "./outputs"),
-                trainer_state=trainer_state,
+    training_success = trainer_state.get("trainer_training_success") is True
+    if not training_success:
+        existing_payload = trainer_state.get("trainer_result")
+        if isinstance(existing_payload, dict) and existing_payload.get("ok") is False:
+            payload = existing_payload
+            event_writer.set_failed(payload)
+            if emit_result:
+                print(json.dumps(payload, ensure_ascii=False))
+        else:
+            final_status = trainer_state.get("trainer_training_final_status") or {}
+            terminal_status = str(final_status.get("status") or "failed").lower()
+            error_detail = (
+                trainer_state.get("train_output_training_error")
+                or final_status.get("error_message")
+                or f"training finished with status: {terminal_status}"
             )
-            analysis_data = analysis_payload.get("data") or {}
-            summary = analysis_data.get("summary") or {}
-            best_checkpoint = analysis_data.get("best_checkpoint") or {}
-            best_metric = analysis_data.get("best_metric") or {}
-            compact_analysis = {
-                "ok": analysis_payload.get("ok"),
-                "status": analysis_payload.get("status"),
-                "message": analysis_payload.get("message"),
-                "summary": summary,
-                "best_checkpoint": best_checkpoint,
-                "best_metric": best_metric,
-                "error": analysis_payload.get("error"),
-            }
-            trainer_state["trainer_result_analysis"] = compact_analysis
-            trainer_state["trainer_result_summary"] = summary
-            trainer_state["trainer_best_checkpoint"] = best_checkpoint
-            trainer_state["trainer_best_metric"] = best_metric
-            if best_checkpoint.get("path"):
-                trainer_state["trainer_best_checkpoint_path"] = best_checkpoint["path"]
-                trainer_state["update_model_path"] = best_checkpoint["path"]
-            if analysis_data.get("checkpoints") and not trainer_state.get("training_checkpoints"):
-                trainer_state["training_checkpoints"] = [
-                    item.get("name") for item in analysis_data["checkpoints"] if item.get("name")
-                ]
-            if analysis_data.get("metric_records") and not trainer_state.get("training_step_losses"):
-                trainer_state["training_step_losses"] = analysis_data["metric_records"]
-        except Exception as exc:
-            trainer_state["trainer_result_analysis"] = {
-                "ok": False,
-                "status": "failed",
-                "message": "Trainer result analysis failed.",
-                "error": {
-                    "type": type(exc).__name__,
-                    "detail": str(exc),
-                },
-            }
+            payload = emit_error(
+                RuntimeError(str(error_detail)),
+                code=(
+                    ErrorCode.INTERRUPTED
+                    if terminal_status == "cancelled"
+                    else ErrorCode.UNHANDLED_EXCEPTION
+                ),
+                recoverable=terminal_status != "cancelled",
+                stream_writer=event_writer,
+                message="Trainer skill failed.",
+                exit_process=False,
+                print_payload=emit_result,
+            )
+        trainer_state["trainer_result"] = payload
+        trainer_state["trainer_last_error"] = payload["error"]
+        trainer_state["trainer_event_log_path"] = str(event_writer.event_path)
+        _update_trainer_task_state(runtime, trainer_state)
+        if emit_result:
+            raise SystemExit(1)
+        return result
 
     success_data = {
         "task_id": runtime["thread_id"],
@@ -478,12 +595,14 @@ def run_trainer_standalone(
         "train_output_training_report_path": trainer_state.get("train_output_training_report_path"),
         "trainer_result_summary": trainer_state.get("trainer_result_summary"),
         "trainer_best_checkpoint": trainer_state.get("trainer_best_checkpoint"),
+        "trainer_model_export_error": trainer_state.get("trainer_model_export_error"),
+        "trainer_model_export_log_path": trainer_state.get("trainer_model_export_log_path"),
     }
     payload = emit_success(
         data=success_data,
         message="Trainer skill completed.",
         stream_writer=event_writer,
-        exit_process=emit_result,
+        exit_process=False,
         print_payload=emit_result,
     )
     if isinstance(result, dict):
@@ -491,5 +610,8 @@ def run_trainer_standalone(
         result.setdefault("trainer", {})["trainer_last_error"] = {}
         result.setdefault("trainer", {})["trainer_event_log_path"] = str(event_writer.event_path)
         _update_trainer_task_state(runtime, result.setdefault("trainer", {}))
+
+    if emit_result:
+        raise SystemExit(0)
 
     return result

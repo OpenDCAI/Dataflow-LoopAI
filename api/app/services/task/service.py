@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from copy import deepcopy
 from pathlib import Path
@@ -13,6 +12,7 @@ from ...models.body import TaskItem
 from ...models.db_models import TaskModel, TaskRuntime
 from ...utils.config.config import get_state_config
 from ...utils.task.task import apply_state_config_updates, build_task_state_config, config_format
+from loopai.common.tracking import strip_retired_tracking_fields
 
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -26,6 +26,50 @@ class TaskServiceError(Exception):
         super().__init__(message)
         self.message = message
         self.code = code
+
+
+def _sanitize_serialized_json(value: Any) -> Any:
+    """Hide retired tracking secrets from legacy API records."""
+    if not isinstance(value, str):
+        return strip_retired_tracking_fields(value)
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return value
+    return json.dumps(strip_retired_tracking_fields(parsed), ensure_ascii=False)
+
+
+async def _purge_retired_tracking_from_task(task: TaskModel) -> None:
+    """Remove legacy tracker fields from persisted task config/state once read."""
+    changed_fields: list[str] = []
+    for field_name in ("config", "state"):
+        raw_value = getattr(task, field_name, None)
+        if not isinstance(raw_value, str) or not raw_value:
+            continue
+        try:
+            original = json.loads(raw_value)
+        except Exception:
+            continue
+        cleaned = strip_retired_tracking_fields(original)
+        if cleaned != original:
+            setattr(task, field_name, json.dumps(cleaned, ensure_ascii=False))
+            changed_fields.append(field_name)
+    if changed_fields:
+        await task.save(update_fields=changed_fields)
+
+
+async def _purge_retired_tracking_from_runtime(runtime: TaskRuntime) -> None:
+    raw_state = runtime.state
+    if not isinstance(raw_state, str) or not raw_state:
+        return
+    try:
+        original = json.loads(raw_state)
+    except Exception:
+        return
+    cleaned = strip_retired_tracking_fields(original)
+    if cleaned != original:
+        runtime.state = json.dumps(cleaned, ensure_ascii=False)
+        await runtime.save(update_fields=["state"])
 
 
 def _merge_state(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -74,7 +118,7 @@ def _serialize_task_runtime(
         "updatedAt": runtime.updatedAt,
     }
     if include_state:
-        payload["state"] = runtime.state
+        payload["state"] = _sanitize_serialized_json(runtime.state)
     return payload
 
 
@@ -83,8 +127,8 @@ def _serialize_task(task: TaskModel) -> dict[str, Any]:
         "id": task.id,
         "task_id": task.task_id,
         "name": task.name,
-        "config": task.config,
-        "state": task.state,
+        "config": _sanitize_serialized_json(task.config),
+        "state": _sanitize_serialized_json(task.state),
         "ai_thread_id": task.ai_thread_id,
         "createdAt": task.createdAt,
         "updatedAt": task.updatedAt,
@@ -104,7 +148,7 @@ def _serialize_task_summary(task: TaskModel) -> dict[str, Any]:
 
 def _parse_task_config(raw_config: str | None) -> dict[str, Any]:
     try:
-        return json.loads(raw_config)
+        return strip_retired_tracking_fields(json.loads(raw_config))
     except Exception as exc:
         raise TaskServiceError("config格式错误") from exc
 
@@ -116,10 +160,10 @@ async def build_initial_task_state(
     state_config = await get_state_config(str(PROJECT_ROOT))
     base_state = _unwrap_state_config(state_config["config"], task_id)
     if state_overrides:
-        base_state = _merge_state(base_state, state_overrides)
+        base_state = _merge_state(base_state, strip_retired_tracking_fields(state_overrides))
         base_state["task_id"] = task_id
         base_state.setdefault("messages", [])
-    return base_state
+    return strip_retired_tracking_fields(base_state)
 
 
 def parse_task_state_overrides(raw_state: str | None) -> dict[str, Any] | None:
@@ -128,7 +172,7 @@ def parse_task_state_overrides(raw_state: str | None) -> dict[str, Any] | None:
     parsed = json.loads(raw_state)
     if not isinstance(parsed, dict):
         raise ValueError("state must be a JSON object")
-    return parsed
+    return strip_retired_tracking_fields(parsed)
 
 
 async def create_task(task_item: TaskItem) -> dict[str, Any]:
@@ -156,10 +200,12 @@ async def get_task(task_id: str) -> dict[str, Any] | None:
     task = await TaskModel.get_or_none(task_id=task_id)
     if not task:
         return None
+    await _purge_retired_tracking_from_task(task)
     return _serialize_task(task)
 
 
 async def _load_task_state(task: TaskModel) -> dict[str, Any]:
+    await _purge_retired_tracking_from_task(task)
     base_state = await build_initial_task_state(task.task_id)
     if not task.state:
         return base_state
@@ -169,10 +215,11 @@ async def _load_task_state(task: TaskModel) -> dict[str, Any]:
         return base_state
     if not isinstance(current_state, dict):
         return base_state
+    current_state = strip_retired_tracking_fields(current_state)
     merged_state = _merge_state(base_state, current_state)
     merged_state["task_id"] = task.task_id
     merged_state.setdefault("messages", [])
-    return merged_state
+    return strip_retired_tracking_fields(merged_state)
 
 
 def _parse_state_config_payload(raw_payload: Any) -> dict[str, Any]:
@@ -214,6 +261,7 @@ async def update_task_state_config(task_id: str, payload: Any) -> dict[str, Any]
     states_config = _parse_state_config_payload(payload)
     state = await _load_task_state(task)
     apply_state_config_updates(state, states_config)
+    state = strip_retired_tracking_fields(state)
     state["task_id"] = task_id
     state.setdefault("messages", [])
 
@@ -261,14 +309,16 @@ async def delete_task(task_id: str) -> bool:
     return True
 
 
-def get_train_status(output_dir: str, task_id: str, train_task_id: str) -> list[Any]:
-    watch_path = os.path.join(output_dir, task_id, "trainer", train_task_id)
-    final_path = os.path.join(watch_path, "metrics", "metrics.json")
-    if not os.path.exists(final_path):
-        raise TaskServiceError(f"训练状态文件不存在:{final_path}", code=404)
+def get_train_status(output_dir: str, task_id: str, train_task_id: str) -> dict[str, Any]:
+    from loopai.skills.Trainer.results import load_live_training_metrics
 
-    with open(final_path, "r") as file_obj:
-        return json.load(file_obj)
+    watch_path = Path(output_dir) / task_id / "trainer" / train_task_id
+    try:
+        return load_live_training_metrics(watch_path)
+    except FileNotFoundError as exc:
+        raise TaskServiceError(str(exc), code=404) from exc
+    except ValueError as exc:
+        raise TaskServiceError(str(exc), code=500) from exc
 
 
 async def create_task_runtime(
@@ -337,6 +387,7 @@ async def get_latest_task_runtime(
     ).order_by("-updatedAt", "-id").first()
     if not runtime:
         return None
+    await _purge_retired_tracking_from_runtime(runtime)
     return _serialize_task_runtime(runtime, include_state=True)
 
 
@@ -348,6 +399,8 @@ async def list_task_runtime_history(
         task_id=task_id,
         node_name=node_name,
     ).order_by("-updatedAt", "-id")
+    for runtime in runtimes:
+        await _purge_retired_tracking_from_runtime(runtime)
     return [_serialize_task_runtime(runtime, include_state=True) for runtime in runtimes]
 
 
@@ -362,6 +415,7 @@ async def list_latest_task_runtimes(task_id: str) -> list[dict[str, Any]]:
     seen_nodes: set[str] = set()
 
     for runtime in runtimes:
+        await _purge_retired_tracking_from_runtime(runtime)
         node_name = runtime.node_name or ""
         if node_name in seen_nodes:
             continue

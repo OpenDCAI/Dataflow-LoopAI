@@ -5,15 +5,31 @@ from ...models.db_models import StarterConfig
 from omegaconf import OmegaConf
 from loopai.schema.states import get_state_config_schema
 from loopai.schema.system import get_system_config_schema
+from loopai.common.tracking import strip_retired_tracking_fields
 
 async def check_config_from_db(base_dir):
     # 判断sqliter中是否有config记录，如果一条也没有，读取./examples/starter.yaml转化为json然后存到数据库
     config = await StarterConfig.filter(Q(name='starter')).first()
     if not config:
         cfg = OmegaConf.load(os.path.join(base_dir, "starter.yaml"))
-        config_obj = OmegaConf.to_container(cfg, resolve=True)
+        config_obj = strip_retired_tracking_fields(
+            OmegaConf.to_container(cfg, resolve=True)
+        )
         await StarterConfig.create(name='starter', config=json.dumps(config_obj))
         config = await StarterConfig.filter(Q(name='starter')).first()
+    else:
+        # One-time cleanup for databases created before the Trainer stopped
+        # storing external tracker credentials in StarterConfig.
+        try:
+            original = json.loads(config.config)
+            cleaned = strip_retired_tracking_fields(original)
+            if cleaned != original:
+                config.config = json.dumps(cleaned, ensure_ascii=False)
+                await config.save(update_fields=["config"])
+        except Exception:
+            # Preserve the existing validation/error behavior for malformed DB
+            # rows; callers will surface the parse failure in the normal path.
+            pass
     return config
 
 def wrap_attr(val):
@@ -40,8 +56,8 @@ async def get_system_config(base_dir):
     """获取配置"""
     config = await check_config_from_db(base_dir)
     config_data = json.loads(config.config)
-    system_config = config_data.get('system', {})
-    states_data = config_data.get('default_states', {})
+    system_config = strip_retired_tracking_fields(config_data.get('system', {}))
+    states_data = strip_retired_tracking_fields(config_data.get('default_states', {}))
     language = states_data.get('language', 'zh') if isinstance(states_data, dict) else 'zh'
     system_schema = get_system_config_schema(language)
     result = {}
@@ -72,7 +88,7 @@ async def get_state_config(base_dir):
     """获取Starter状态配置"""
     config = await check_config_from_db(base_dir)
     config_data = json.loads(config.config)
-    states_data = config_data.get('default_states', {})
+    states_data = strip_retired_tracking_fields(config_data.get('default_states', {}))
     language = states_data.get('language', 'zh')
     nested_states_schema = get_state_config_schema(language)
     default_schema = nested_states_schema.get('default', {})
