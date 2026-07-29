@@ -14,8 +14,13 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.modules.setdefault("colorlog", types.SimpleNamespace(ColoredFormatter=logging.Formatter))
 
 from loopai.skills.ObtainerCLI.cli import run
-from loopai.skills.ObtainerCLI.config import write_lake_config
+from loopai.skills.ObtainerCLI.config import read_lake_config, write_lake_config
 from loopai.skills.ObtainerCLI.errors import ObtainerCliError
+from loopai.skills.ObtainerCLI.lake_manager import (
+    current_lake_pointer,
+    load_lake_pointer,
+    update_lake_obtainer_context,
+)
 from loopai.skills.ObtainerCLI.monitor_state import monitor_state_path
 from loopai.agents.Obtainer.datamixer.clusters import update_dataset_clusters
 from loopai.agents.Obtainer.datamixer.store import DataStore
@@ -77,6 +82,95 @@ def _set_starter_model_pool(tmp_path: Path, monkeypatch) -> Path:
     )
     monkeypatch.setenv("STARTER_CONFIG", str(starter_config))
     return starter_config
+
+
+def test_lake_context_persists_with_the_loaded_warehouse(tmp_path: Path) -> None:
+    lake_root = tmp_path / "code_lake"
+    warehouse = lake_root / "warehouse"
+    DataStore.init(warehouse).close()
+    pointer = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    write_lake_config(pointer, root=lake_root, warehouse=warehouse)
+
+    update_lake_obtainer_context(
+        link_path=pointer,
+        updates={
+            "obtainer_webagent_model": "deepseek-proxy",
+            "obtainer_active_acquisition_run": str(warehouse / "obtainer_runs" / "acquisition_01"),
+        },
+    )
+    load_lake_pointer(warehouse=warehouse, link_path=pointer, lake_root=lake_root)
+    current = current_lake_pointer(link_path=pointer)
+    canonical = read_lake_config(lake_root / "lake.yaml")
+
+    assert current["obtainer_context"]["obtainer_webagent"] == "domain_data_acquisition"
+    assert current["obtainer_context"]["obtainer_webagent_model"] == "deepseek-proxy"
+    assert current["obtainer_context"]["obtainer_active_acquisition_run"].endswith("acquisition_01")
+    assert canonical["obtainer_webagent_model"] == "deepseek-proxy"
+
+
+def test_dataset_acquisition_agent_uses_lake_warehouse_and_persists_default_run(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    lake_root = tmp_path / "lake"
+    warehouse = lake_root / "warehouse"
+    DataStore.init(warehouse).close()
+    pointer = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    write_lake_config(pointer, root=lake_root, warehouse=warehouse)
+    _set_starter_model_pool(tmp_path, monkeypatch)
+
+    def fake_spawn_background(**kwargs):
+        return {
+            "ok": True,
+            "status": "background_started",
+            "run_dir": str(kwargs["run_dir"]),
+            "pid": 5252,
+        }
+
+    monkeypatch.setattr(dataset_acquisition_agent, "_spawn_background", fake_spawn_background)
+    exit_code = run(
+        [
+            "dm",
+            "--lake",
+            str(pointer),
+            "dataset-acquisition-agent",
+            "start",
+            "--objective",
+            "collect code data",
+        ]
+    )
+    payload = _last_json(capsys)
+    assert exit_code == 0, payload
+    run_dir = Path(payload["run_dir"])
+    assert run_dir.parent == warehouse / "obtainer_runs"
+    current = current_lake_pointer(link_path=pointer)
+    assert current["obtainer_context"]["obtainer_active_acquisition_run"] == str(run_dir)
+
+
+def test_dataset_acquisition_agent_rejects_a_sqlite_file_as_warehouse(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    db_file = tmp_path / "app.sqlite3"
+    db_file.write_bytes(b"SQLite format 3\x00")
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(db_file),
+            "dataset-acquisition-agent",
+            "start",
+            "--run",
+            str(tmp_path / "run"),
+            "--dry-run",
+        ]
+    )
+    payload = _last_json(capsys)
+    assert exit_code == 2
+    assert payload["error_code"] == "DATASET_ACQUISITION_AGENT_WAREHOUSE_INVALID"
 
 
 def test_obtainercli_dm_init_ingest_query_index_and_recipe_export(tmp_path: Path, capsys) -> None:
@@ -169,6 +263,8 @@ def test_obtainercli_dm_init_ingest_query_index_and_recipe_export(tmp_path: Path
             "code_repair_mix",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--stage",
             "sft",
             "--domain",
@@ -277,6 +373,8 @@ def test_datamixer_ingest_skips_registered_benchmark_contamination(tmp_path: Pat
             "finance_training",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--domain",
             "finance",
             "--task-type",
@@ -332,6 +430,8 @@ def test_contam_add_removes_existing_benchmark_contamination(tmp_path: Path, cap
             "finance_training",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--domain",
             "finance",
             "--task-type",
@@ -405,6 +505,8 @@ def test_dm_ingest_registers_dataset_card_and_validates_derived_fields(tmp_path:
             "alphamath_trainset_sft_v1",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--content-key",
             "content",
             "--dataset-card",
@@ -469,6 +571,8 @@ def test_dm_ingest_rejects_empty_declared_derived_field(tmp_path: Path, capsys) 
             "bad_sft",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--content-key",
             "content",
             "--dataset-card",
@@ -543,6 +647,8 @@ def test_recipe_export_defaults_to_cluster_similarity_sampling_with_random_fallb
             "mixed_sft",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--stage",
             "sft",
             "--domain",
@@ -638,6 +744,8 @@ def test_sft_recipe_export_requires_explicit_schema_mapping(tmp_path: Path, caps
             "math_sft",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--stage",
             "sft",
             "--domain",
@@ -727,6 +835,8 @@ def test_sft_recipe_export_mapping_normalizes_heterogeneous_keys(
             "math_sft",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--stage",
             "sft",
             "--domain",
@@ -844,6 +954,8 @@ def test_sft_recipe_export_supports_bucket_schema_templates(
             "math_sft",
             "--file",
             str(math_records),
+            "--quality-level",
+            "L3",
             "--stage",
             "sft",
             "--domain",
@@ -860,6 +972,8 @@ def test_sft_recipe_export_supports_bucket_schema_templates(
             "sql_sft",
             "--file",
             str(sql_records),
+            "--quality-level",
+            "L3",
             "--stage",
             "sft",
             "--domain",
@@ -952,6 +1066,8 @@ def test_sft_recipe_export_reports_mapping_failures_for_agent_repair(
             "math_sft",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--stage",
             "sft",
             "--domain",
@@ -1074,6 +1190,8 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
             "math_sft",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--stage",
             "sft",
             "--domain",
@@ -1180,6 +1298,8 @@ def test_sft_recipe_defaults_to_100k_records_when_budget_is_missing(tmp_path: Pa
             "syntax_mix",
             "--file",
             str(records),
+            "--quality-level",
+            "L3",
             "--stage",
             "sft",
             "--domain",
@@ -1252,7 +1372,18 @@ def test_dm_lake_pointer_prefers_root_when_root_is_datamixer_warehouse(tmp_path:
     _dm(stale_warehouse, ["init"], capsys)
     input_path = tmp_path / "records.jsonl"
     _write_jsonl(input_path, [{"text": "root record"}])
-    _dm(lake_root, ["ingest", "root_dataset", "--file", str(input_path)], capsys)
+    _dm(
+        lake_root,
+        [
+            "ingest",
+            "root_dataset",
+            "--file",
+            str(input_path),
+            "--quality-level",
+            "L1",
+        ],
+        capsys,
+    )
     write_lake_config(link, root=lake_root, warehouse=stale_warehouse)
 
     result = run(["dm", "--lake", str(link), "status"])
@@ -1656,12 +1787,21 @@ def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
     assert "Each single dataset is capped at 100000 rows" in prompt
     assert "2147483648 output bytes" in prompt
     assert "DataMixer `ingest` or `agent-ingest`" in prompt
+    assert "--quality-level <L1|L2|L3|L4>" in prompt
+    assert "selected quality_level and selection rationale" in prompt
     assert "register it during ingest with `--dataset-card <path>`" in prompt
     assert "Pass `--derived-field <name>` for each derived field" in prompt
     assert "dataset_cards/*.md" in prompt
     assert "SearchAgent task JSON:" in prompt
     assert "manifest/tasks.json" in prompt
     assert "manifest/searchagent/searchagent_manifest.json" in prompt
+    assert "model list --json" in prompt
+    assert "launch SearchAgent and WebAgent in" in prompt
+    assert "webagent campaign start domain_data_acquisition" in prompt
+    assert "SEARCHAGENT_PID" in prompt
+    assert "WEBAGENT_PID" in prompt
+    assert "webagent_campaign_status.json" in prompt
+    assert "webagent_model_missing" in prompt
     assert "--output-root" in prompt
     assert "--no-deepsearch" in prompt
     assert "Do not inspect" in prompt
@@ -2063,9 +2203,13 @@ def test_datamixer_codex_prompt_uses_current_python_executable(
 
     monkeypatch.delenv("LOOPAI_PYTHON_EXECUTABLE", raising=False)
 
-    prompt = codex.build_prompt("/tmp/data.jsonl", "demo", "/tmp/warehouse")
+    prompt = codex.build_prompt(
+        "/tmp/data.jsonl", "demo", "/tmp/warehouse", "L2"
+    )
 
     assert f"DM={codex.loopai_python_executable()} -m loopai.agents.Obtainer.datamixer" in prompt
+    assert "QUALITY_LEVEL=L2" in prompt
+    assert '--quality-level "$QUALITY_LEVEL"' in prompt
 
 
 def test_codex_runner_path_uses_configured_node_bin_dir(tmp_path: Path, monkeypatch) -> None:

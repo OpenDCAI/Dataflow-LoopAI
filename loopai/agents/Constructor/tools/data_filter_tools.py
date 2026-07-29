@@ -26,6 +26,7 @@ from langchain_openai import ChatOpenAI
 
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
+from loopai.agents.Constructor.runtime_config import resolve_constructor_api_key
 from pydantic import BaseModel, Field
 from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.agents.Constructor.utils.openai_compat_chat import (
@@ -2217,13 +2218,13 @@ async def _async_domain_text2sql_cleaner(data_path: str, state: LoopAIState) -> 
         repair_agent = Text2SQLRepairAgent(
             model_name=agent_config.get("model_path"),
             base_url=agent_config.get("base_url"),
-            api_key=agent_config.get("api_key"),
+            api_key=resolve_constructor_api_key(state),
             temperature=0.1
         )
         sql_repair_agent = Text2SQLExecutionRepairAgent(
             model_name=agent_config.get("model_path"),
             base_url=agent_config.get("base_url"),
-            api_key=agent_config.get("api_key"),
+            api_key=resolve_constructor_api_key(state),
             temperature=0.1
         )
     except Exception as e:
@@ -3930,13 +3931,13 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
         domain_agent = CodeGenDomainAgent(
             model_name=agent_config.get("model_path"),
             base_url=agent_config.get("base_url"),
-            api_key=agent_config.get("api_key"),
+            api_key=resolve_constructor_api_key(state),
             temperature=0.1
         )
         repair_agent = CodeGenRepairAgent(
             model_name=agent_config.get("model_path"),
             base_url=agent_config.get("base_url"),
-            api_key=agent_config.get("api_key"),
+            api_key=resolve_constructor_api_key(state),
             temperature=0.1
         )
     except Exception as e:
@@ -3959,7 +3960,7 @@ async def _async_domain_code_gen_cleaner(data_path: str, state: LoopAIState) -> 
             format_agent = CodeGenBenchmarkFormatAgent(
                 model_name=agent_config.get("model_path"),
                 base_url=agent_config.get("base_url"),
-                api_key=agent_config.get("api_key"),
+                api_key=resolve_constructor_api_key(state),
                 temperature=0.1,
             )
             format_agent._rewrite_record_json_max_chars = rewrite_record_prompt_json_max_chars(
@@ -4580,13 +4581,13 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
         domain_agent = NormalDomainAgent(
             model_name=agent_config.get("model_path"),
             base_url=agent_config.get("base_url"),
-            api_key=agent_config.get("api_key"),
+            api_key=resolve_constructor_api_key(state),
             temperature=0.1
         )
         query_rewrite_agent = NormalDomainQueryRewriteAgent(
             model_name=agent_config.get("model_path"),
             base_url=agent_config.get("base_url"),
-            api_key=agent_config.get("api_key"),
+            api_key=resolve_constructor_api_key(state),
             temperature=0.1
         )
     except Exception as e:
@@ -4694,7 +4695,7 @@ async def _async_domain_normal_data_cleaner(data_path: str, state: LoopAIState) 
 
         model_name = (agent_config.get("model_path") or state.get("analyze_model_path") or "").strip()
         base_url = (agent_config.get("base_url") or state.get("analyze_base_url") or "").strip()
-        api_key = (agent_config.get("api_key") or state.get("analyze_api_key") or "").strip()
+        api_key = (resolve_constructor_api_key(state) or state.get("analyze_api_key") or "").strip()
         if not (model_name and base_url and api_key):
             msg = "Missing LLM config (model_path / base_url / api_key) for Alpagasus"
             logger.warning(msg)

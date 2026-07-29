@@ -231,6 +231,12 @@
                     </div>
                 </section>
 
+                <web-pipeline-status
+                    :lake="lakePath"
+                    :root="webPipelineRoot"
+                    embedded
+                ></web-pipeline-status>
+
                 <section v-if="advancedMode" class="surface-panel">
                     <div
                         v-for="item in operationSurface"
@@ -507,6 +513,7 @@ import { mapState, mapActions } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
 import baseChart from '@/components/manage/obtainerLake/baseChart.vue'
+import webPipelineStatus from '@/components/manage/obtainerLake/webPipelineStatus.vue'
 import {
     deleteDataMixerLake,
     getDataMixerCommands,
@@ -520,7 +527,8 @@ import {
 
 export default {
     components: {
-        baseChart
+        baseChart,
+        webPipelineStatus
     },
     data() {
         return {
@@ -535,7 +543,7 @@ export default {
             activeView: 'workbench',
             advancedMode: false,
             activeTab: 'records',
-            compositionMode: 'processing_level',
+            compositionMode: 'quality_level',
             detail: null,
             commandGroups: [],
             commandEndpoint: 'loopai-obtainercli dm',
@@ -577,6 +585,9 @@ export default {
         },
         lakeRoot() {
             return this.monitor?.lake_root || ''
+        },
+        webPipelineRoot() {
+            return this.monitor?.config?.warehouse || this.lakeState?.warehouse || ''
         },
         workspaceTitle() {
             if (this.monitor?.lake_root) return `${this.monitor.lake_root} - ${this.monitor.lake_config || this.lakePath}`
@@ -867,7 +878,8 @@ export default {
         },
         compositionModes() {
             return [
-                { key: 'processing_level', label: this.local('Level') },
+                { key: 'quality_level', label: this.local('Quality Level') },
+                { key: 'processing_level', label: this.local('Processing Level') },
                 { key: 'domain', label: this.local('Domain') },
                 { key: 'source_kind', label: this.local('Source') },
                 { key: 'task_type', label: this.local('Task') }
@@ -1015,7 +1027,8 @@ export default {
                 records: [
                     { key: 'record_id', label: this.local('Record') },
                     { key: 'dataset_id', label: this.local('Dataset') },
-                    { key: 'processing_level', label: this.local('Level') },
+                    { key: 'quality_level', label: this.local('Quality Level') },
+                    { key: 'processing_level', label: this.local('Processing Level') },
                     { key: 'source_kind', label: this.local('Source') },
                     { key: 'text', label: this.local('Text') }
                 ],

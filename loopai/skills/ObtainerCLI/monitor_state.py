@@ -15,7 +15,7 @@ from .catalog import TABLES
 from .config import read_lake_config
 from .lock import commit_lock
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 LATEST_LIMIT = 8
 
 
@@ -156,7 +156,13 @@ def _empty_monitor_payload(*, warehouse: Path, lake: str | Path | None = None) -
         "benchmarks": benchmark_monitor_state(warehouse),
         "charts": {
             "ingest_trend": [],
-            "composition": {"domain": {}, "processing_level": {}, "source_kind": {}, "task_type": {}},
+            "composition": {
+                "quality_level": {},
+                "domain": {},
+                "processing_level": {},
+                "source_kind": {},
+                "task_type": {},
+            },
             "top_tags": [],
             "quality_findings": [],
         },
@@ -283,7 +289,7 @@ def build_lightweight_monitor_payload(*, warehouse: str | Path, lake: str | Path
                     "FROM samples"
                 ).fetchone()["n"]
             )
-            for field in ("domain", "task_type"):
+            for field in ("quality_level", "domain", "task_type"):
                 rows = conn.execute(
                     f"SELECT COALESCE({field}, 'unknown') AS value, COUNT(*) AS n "
                     f"FROM samples GROUP BY {field} ORDER BY n DESC LIMIT 16"
@@ -327,7 +333,8 @@ def build_lightweight_monitor_payload(*, warehouse: str | Path, lake: str | Path
                 for row in quality_rows
             ]
             latest = conn.execute(
-                "SELECT sample_id, dataset_id, domain, task_type, created_at, tags_json "
+                "SELECT sample_id, dataset_id, quality_level, domain, task_type, "
+                "created_at, tags_json "
                 "FROM samples ORDER BY created_at DESC LIMIT ?",
                 (LATEST_LIMIT,),
             ).fetchall()
@@ -335,6 +342,7 @@ def build_lightweight_monitor_payload(*, warehouse: str | Path, lake: str | Path
                 {
                     "record_id": row["sample_id"],
                     "dataset_id": row["dataset_id"],
+                    "quality_level": row["quality_level"] or "",
                     "domain": row["domain"] or "",
                     "task_type": row["task_type"] or "",
                     "created_at": str(row["created_at"] or ""),
@@ -506,6 +514,11 @@ def update_monitor_delta(
 ) -> dict[str, Any]:
     root = Path(warehouse).expanduser().resolve()
     existing_state = _read_raw_state(root)
+    if (
+        existing_state is not None
+        and int(existing_state.get("schema_version") or 0) != SCHEMA_VERSION
+    ):
+        existing_state = None
     state = existing_state or build_lightweight_monitor_payload(warehouse=root, lake=lake)
     summary = dict(state.get("summary") or {})
     effective_delta = delta if existing_state is not None else {}
@@ -516,6 +529,17 @@ def update_monitor_delta(
     for key, rows in latest_delta.items():
         merged = list(rows or []) + list(latest.get(key) or [])
         latest[key] = merged[:LATEST_LIMIT]
+    composition = dict((state.get("charts") or {}).get("composition") or {})
+    for dimension, values in (effective_delta or {}).get(
+        "composition_delta", {}
+    ).items():
+        current = dict(composition.get(dimension) or {})
+        for value, count in (values or {}).items():
+            current[str(value)] = int(current.get(str(value)) or 0) + int(
+                count or 0
+            )
+        composition[dimension] = current
+    state.setdefault("charts", {})["composition"] = composition
     state["summary"] = summary
     state["latest"] = latest
     _sync_incremental_counts(state, effective_delta)

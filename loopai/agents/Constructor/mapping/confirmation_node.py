@@ -14,6 +14,7 @@ from langgraph.store.base import BaseStore
 
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
+from loopai.agents.Constructor.runtime_config import resolve_constructor_api_key
 from loopai.agents.Constructor.tools.format_mapping_tools import PRESET_FORMATS
 from .__mapping_prompts import get_prompt
 
@@ -161,7 +162,7 @@ def _analyze_confirmation_intent(
     constructor = state.get("constructor", {})
     model_name = constructor.get("model_path")
     base_url = constructor.get("base_url")
-    api_key = constructor.get("api_key")
+    api_key = resolve_constructor_api_key(state)
     
     if not model_name or not base_url or not api_key:
         logger.warning("No LLM config, treating as modify request")

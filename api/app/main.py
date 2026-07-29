@@ -4,6 +4,11 @@ from fastapi.staticfiles import StaticFiles
 from tortoise.contrib.fastapi import register_tortoise
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
+from loopai.schema.system_runtime import (
+    export_system_integrations_to_env,
+    load_runtime_system_config,
+)
+from .utils.config.credential_migration import migrate_persisted_credentials
 
 from .controllers.config import router as config_router
 from .controllers.response_proxy import router as response_proxy_router
@@ -38,6 +43,12 @@ app.add_middleware(
     allow_methods=["*"],  # 允许的 HTTP 方法
     allow_headers=["*"],  # 允许的请求头
 )
+
+
+@app.on_event("startup")
+async def load_system_integrations() -> None:
+    migrate_persisted_credentials(DB_PATH)
+    export_system_integrations_to_env(load_runtime_system_config())
 
 register_tortoise(
     app,

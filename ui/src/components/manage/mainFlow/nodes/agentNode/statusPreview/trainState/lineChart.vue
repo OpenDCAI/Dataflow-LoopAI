@@ -62,7 +62,8 @@ onMounted(() => {
                     data: props.data,
                     borderColor: 'rgba(126, 113, 208, 1)',
                     backgroundColor: 'rgba(126, 113, 208, 0.2)',
-                    tension: 0.4
+                    tension: 0.4,
+                    spanGaps: true
                 }
             ]
         },

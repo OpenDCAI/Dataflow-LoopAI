@@ -7,14 +7,38 @@ and recipe bucketing; anything else a contributor attaches rides along in a
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 # Allowed enum-ish vocabularies (kept loose for the MVP; enforced softly).
 MODALITIES = ("text", "image", "audio", "video", "interleaved")
 STAGES = ("pretrain", "sft", "preference", "agent_trajectory")
+QUALITY_LEVELS = ("L1", "L2", "L3", "L4")
+
+# A lake starts with a useful, stable vocabulary for broad-content routing.  It
+# is deliberately not an enum for ``samples.domain``: each warehouse can add
+# its own domains (for example ``text2sql`` or ``robotics``) without a schema
+# migration.  ``Catalog`` persists these values in its domain registry and the
+# LLM classifier adds the lake's registered values to this baseline at run
+# time.
+DEFAULT_DOMAIN_CLASSES = (
+    "general",
+    "code",
+    "math",
+    "science",
+    "medical",
+    "finance",
+    "law",
+    "education",
+    "engineering",
+    "business",
+    "social_science",
+    "humanities",
+    "web",
+    "other",
+)
 
 
 @dataclass(frozen=True)
@@ -35,6 +59,13 @@ CORE_FIELDS: tuple[Field, ...] = (
     Field("domain", "TEXT", "domain", True, "code/math/web/science/..."),
     Field("source", "TEXT", "source", True, "origin dataset / corpus"),
     Field("license", "TEXT", "source", False, "license identifier"),
+    Field(
+        "quality_level",
+        "TEXT",
+        "quality",
+        True,
+        "required data quality level: L1/L2/L3/L4",
+    ),
     Field("quality_score", "REAL", "quality", True, "0..1 quality estimate"),
     Field("toxicity", "REAL", "quality", False, "0..1 toxicity estimate"),
     Field("dedup_cluster_id", "TEXT", "quality", True, "near-dup cluster id"),
@@ -88,12 +119,29 @@ def split_metadata(meta: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]
     return core, extra
 
 
+def validate_quality_level(value: Any) -> str:
+    """Return a valid explicit quality level or raise a clear error."""
+    if value is None or value == "":
+        raise ValueError(
+            "quality_level is required and must be one of: "
+            + ", ".join(QUALITY_LEVELS)
+        )
+    if not isinstance(value, str) or value not in QUALITY_LEVELS:
+        raise ValueError(
+            f"invalid quality_level {value!r}; expected one of: "
+            + ", ".join(QUALITY_LEVELS)
+        )
+    return value
+
+
 def describe() -> dict[str, Any]:
     """Machine-readable schema contract (used by ``datamixer schema``)."""
     return {
         "schema_version": SCHEMA_VERSION,
         "modalities": list(MODALITIES),
         "stages": list(STAGES),
+        "quality_levels": list(QUALITY_LEVELS),
+        "default_domain_classes": list(DEFAULT_DOMAIN_CLASSES),
         "fields": [
             {
                 "name": f.name,
@@ -101,6 +149,11 @@ def describe() -> dict[str, Any]:
                 "dimension": f.dim,
                 "indexed": f.indexed,
                 "description": f.desc,
+                **(
+                    {"allowed_values": list(QUALITY_LEVELS)}
+                    if f.name == "quality_level"
+                    else {}
+                ),
             }
             for f in CORE_FIELDS
         ],

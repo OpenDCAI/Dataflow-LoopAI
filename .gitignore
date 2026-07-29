@@ -39,3 +39,9 @@ codex-chat-router/target
 codex_home_worker/
 catalog.db
 datamixer.toml
+.yarnrc.yml
+.yarn
+blobs/
+lineage/
+dataset_cards/
+obtainer_runs/

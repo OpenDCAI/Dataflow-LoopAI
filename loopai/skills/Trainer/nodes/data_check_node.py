@@ -8,6 +8,10 @@ import os
 from loopai.skills.Trainer.utils.stream_events import prepare_trainer_run
 from loopai.schema.states import LoopAIState
 from loopai.skills.Trainer.utils.data_checker import check_data_format, generate_format_report
+from loopai.skills.Trainer.utils.verl_data_checker import (
+    check_verl_grpo_inputs,
+    generate_verl_data_report,
+)
 from loopai.logger import get_logger
 
 logger = get_logger()
@@ -37,7 +41,12 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
         obtainer_output_file = state.get('obtainer', {}).get('mapping_results', {}).get('output_file') if state.get('obtainer', {}).get('mapping_results') else None
         constructor_output_file = state.get('constructor', {}).get('mapping_results', {}).get('output_file') if state.get('constructor', {}).get('mapping_results') else None
         
-        if obtainer_output_file and os.path.exists(obtainer_output_file):
+        framework = state.get('trainer', {}).get('train_framework')
+        if framework == "verl":
+            # Constructor/Obtainer currently produce SFT JSON. An explicitly supplied
+            # RL Parquet must not be silently replaced by those artifacts.
+            dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
+        elif obtainer_output_file and os.path.exists(obtainer_output_file):
             dataset_path = obtainer_output_file
             logger.info(f"使用 obtainer 映射结果作为训练数据集: {dataset_path}")
         elif constructor_output_file and os.path.exists(constructor_output_file):
@@ -54,8 +63,6 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
         
         logger.info(f"检查数据集: {dataset_path}")
 
-        framework = state.get('trainer', {}).get('train_framework')
-        
         if framework == "llamafactory":
             # 执行数据格式检查
             check_result = check_data_format(dataset_path)
@@ -95,8 +102,37 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
                 for warning in check_result['warnings'][:3]:  # 只显示前3个警告
                     logger.warning(f"  - {warning}")
         elif framework == "verl":
-            logger.info("数据检查跳过: Verl 框架当前不支持数据格式检查")
-            state.setdefault('trainer', {})['trainer_data_check_passed'] = True
+            trainer_state = state.setdefault('trainer', {})
+            if trainer_state.get('train_stage') != 'grpo':
+                raise ValueError("Verl 当前只支持 GRPO")
+            eval_path = trainer_state.get('train_input_eval_dataset_path')
+            if not eval_path:
+                raise ValueError("Verl GRPO 缺少验证 Parquet (train_input_eval_dataset_path)")
+
+            check_result = check_verl_grpo_inputs(
+                dataset_path,
+                eval_path,
+                trainer_state.get('verl_reward_function_path'),
+                trainer_state.get('verl_reward_function_name') or 'compute_score',
+                trainer_state.get('verl_reward_mode'),
+                trainer_state.get('verl_reward_preset'),
+                trainer_state.get('verl_reward_kwargs'),
+                trainer_state.get('verl_dir'),
+                trainer_state.get('verl_env_path'),
+            )
+            output_dir = trainer_state.get('trainer_output_dir', './output/trainer')
+            os.makedirs(output_dir, exist_ok=True)
+            report_path = os.path.join(output_dir, 'data_check_report.txt')
+            with open(report_path, 'w', encoding='utf-8') as f:
+                f.write(generate_verl_data_report(check_result))
+            trainer_state['trainer_data_check_result'] = check_result
+            trainer_state['train_output_data_check_report_path'] = report_path
+            trainer_state['trainer_data_check_passed'] = check_result['is_valid']
+            if not check_result['is_valid']:
+                trainer_state['trainer_data_check_error'] = '; '.join(check_result['errors'])
+                logger.warning(f"❌ Verl GRPO 数据检查失败: {trainer_state['trainer_data_check_error']}")
+            else:
+                logger.info("✅ Verl GRPO 数据、验证集与 reward 预检查通过")
         else:
             raise ValueError(f"未知的训练框架: {framework}")
         

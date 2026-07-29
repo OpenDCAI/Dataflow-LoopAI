@@ -3,10 +3,10 @@
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
         <editor-preview
             v-if="computedUIType === 'editor'"
-            :model-value="modelValue.value"
+            :model-value="editorModel"
             :language="editorLanguage"
             :lock="lock"
-            @update:modelValue="modelValue.value = $event"
+            @update:modelValue="editorModel = $event"
         ></editor-preview>
         <fv-text-box
             v-if="computedUIType === 'text'"
@@ -167,6 +167,7 @@ export default {
             if (this.modelValue.value === null || this.modelValue.value === undefined) return 'none'
             if (this.modelValue.ui_type === 'file_path') return 'dir'
             if (this.modelValue.ui_type === 'textarea') return 'editor'
+            if (this.modelValue.type === 'dict' || this.modelValue.type === 'list') return 'editor'
             if (
                 this.modelValue.type === 'str' ||
                 this.modelValue.type === 'int' ||
@@ -185,8 +186,29 @@ export default {
             return 'text'
         },
         editorLanguage() {
+            if (this.modelValue.type === 'dict' || this.modelValue.type === 'list') return 'json'
             if (!this.modelValue || !this.modelValue.language) return 'plaintext'
             return this.modelValue.language
+        },
+        editorModel: {
+            get() {
+                return this.modelValue.value
+            },
+            set(value) {
+                if (this.modelValue.type !== 'dict' && this.modelValue.type !== 'list') {
+                    this.modelValue.value = value
+                    return
+                }
+                try {
+                    const parsed = typeof value === 'string' ? JSON.parse(value) : value
+                    const valid =
+                        (this.modelValue.type === 'dict' && parsed && !Array.isArray(parsed)) ||
+                        (this.modelValue.type === 'list' && Array.isArray(parsed))
+                    if (valid) this.modelValue.value = parsed
+                } catch (error) {
+                    // Keep the last valid object while the user is editing JSON.
+                }
+            }
         },
         listValueModel: {
             get() {

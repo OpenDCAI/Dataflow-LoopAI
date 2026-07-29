@@ -215,8 +215,9 @@ def build_ingest_records(records, plan: dict):
 # Agent loop
 # ---------------------------------------------------------------------------
 
-def agent_ingest(store, path, filename=None, model=None, dataset=None,
-                 max_iters=3, dry_run=False) -> dict:
+def agent_ingest(store, path, *, quality_level: str, filename=None, model=None,
+                 dataset=None, max_iters=3, dry_run=False) -> dict:
+    quality_level = schema.validate_quality_level(quality_level)
     s = sniff(path, filename)
     plan = None
     planner = "heuristic"
@@ -244,7 +245,7 @@ def agent_ingest(store, path, filename=None, model=None, dataset=None,
         "filename": s["filename"], "ext": s["ext"], "format": plan["format"],
         "planner": planner, "review": plan.get("review", ""),
         "records_detected": len(records), "plan": plan,
-        "sample": built[:3],
+        "sample": built[:3], "quality_level": quality_level,
     }
     if dry_run:
         report["dry_run"] = True
@@ -252,7 +253,12 @@ def agent_ingest(store, path, filename=None, model=None, dataset=None,
     name = dataset or Path(s["filename"]).stem or "agent_dataset"
     ds_id = store.catalog.resolve_dataset(name) or store.catalog.add_dataset(
         name, source=s["filename"])
-    res = store.ingest_records(ds_id, built, content_key="content")
+    res = store.ingest_records(
+        ds_id,
+        built,
+        defaults={"quality_level": quality_level},
+        content_key="content",
+    )
     report.update({"dataset": name, "dataset_id": ds_id,
                    "ingested": res.ingested, "new_blobs": res.new_blobs,
                    "deduped_blobs": res.deduped_blobs})

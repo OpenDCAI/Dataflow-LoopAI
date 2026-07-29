@@ -11,6 +11,7 @@ from loopai.skills.Trainer import (
 )
 from loopai.skills.Trainer.runtime_config import _DEFAULT_TEMPLATE_PATH
 from loopai.skills.Trainer.trainer_agent import TrainerAgent
+from loopai.skills.Trainer.nodes.training_execution_node import _materialize_training_config
 
 
 def test_prepare_uses_config_only_mode() -> None:
@@ -44,6 +45,27 @@ def test_inspect_prepared_config_returns_exact_text_and_digest(tmp_path) -> None
     assert inspected["config_yaml"] == config_yaml
     assert inspected["config"]["num_train_epochs"] == 3
     assert inspected["config_sha256"] == hashlib.sha256(config_yaml.encode("utf-8")).hexdigest()
+
+
+def test_worker_materializes_approved_yaml_snapshot_after_source_changes(tmp_path) -> None:
+    source = tmp_path / "approved.yaml"
+    target = tmp_path / "worker" / "training.yaml"
+    approved_yaml = "model_name_or_path: /models/approved\nnum_train_epochs: 3\n"
+    source.write_text(approved_yaml, encoding="utf-8")
+    trainer_state = {
+        "_trainer_approved_config_yaml": approved_yaml,
+        "_trainer_approved_config_sha256": hashlib.sha256(
+            approved_yaml.encode("utf-8")
+        ).hexdigest(),
+    }
+
+    source.write_text("model_name_or_path: /models/tampered\n", encoding="utf-8")
+    materialized = _materialize_training_config(str(source), str(target), trainer_state)
+
+    assert materialized == str(target.resolve())
+    assert target.read_text(encoding="utf-8") == approved_yaml
+    assert "_trainer_approved_config_yaml" not in trainer_state
+    assert "_trainer_approved_config_sha256" not in trainer_state
 
 
 def test_prepare_stops_after_config_generation() -> None:
@@ -96,7 +118,6 @@ def test_prepare_generates_yaml_without_starting_training(tmp_path, monkeypatch)
                 "train_input_model_name": "/models/base",
                 "train_input_task_description": "SFT a small assistant",
                 "train_input_config_template_path": str(_DEFAULT_TEMPLATE_PATH),
-                "train_input_use_swanlab": False,
             },
         },
         thread_id="approval-task",
@@ -145,7 +166,6 @@ def test_run_prepared_uses_exact_yaml_without_regenerating(tmp_path, monkeypatch
                 "train_input_model_name": "/models/base",
                 "train_input_task_description": "SFT a small assistant",
                 "train_input_config_template_path": str(_DEFAULT_TEMPLATE_PATH),
-                "train_input_use_swanlab": False,
             },
         },
         thread_id=thread_id,
@@ -178,3 +198,108 @@ def test_run_prepared_uses_exact_yaml_without_regenerating(tmp_path, monkeypatch
 
     assert result["trainer"]["trainer_training_success"] is True
     assert result["trainer"]["train_output_config_path"] == approval["config_path"]
+
+
+def test_run_prepared_preserves_structured_training_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("TASK_ID", raising=False)
+    monkeypatch.delenv("DB_PATH", raising=False)
+    dataset_path = tmp_path / "data.json"
+    dataset_path.write_text(
+        json.dumps([{"instruction": "hello", "input": "", "output": "world"}]),
+        encoding="utf-8",
+    )
+    thread_id = f"approval-failure-{tmp_path.name}"
+    prepared = prepare(
+        state={
+            "task_id": thread_id,
+            "output_dir": str(tmp_path),
+            "trainer": {
+                "train_framework": "llamafactory",
+                "llamafactory_dir": str(tmp_path),
+                "CUDA_VISIBLE_DEVICES": "0",
+                "train_input_dataset_path": str(dataset_path),
+                "train_input_model_name": "/models/base",
+                "train_input_task_description": "SFT a small assistant",
+                "train_input_config_template_path": str(_DEFAULT_TEMPLATE_PATH),
+            },
+        },
+        thread_id=thread_id,
+    )
+    approval = prepared["trainer"]["trainer_result"]["data"]
+
+    def fake_failed_training(state, writer=None):
+        state["trainer"]["trainer_training_success"] = False
+        state["trainer"]["trainer_training_final_status"] = {
+            "status": "failed",
+            "error_message": "synthetic training failure",
+        }
+        state["trainer"]["train_output_training_error"] = "synthetic training failure"
+        return state
+
+    monkeypatch.setattr(
+        "loopai.skills.Trainer.trainer_agent.training_execution_node",
+        fake_failed_training,
+    )
+    result = run_prepared(
+        prepared_config_path=approval["config_path"],
+        expected_config_sha256=approval["config_sha256"],
+        state=prepared,
+        thread_id=thread_id,
+        version_id=approval["trainer_version_id"],
+    )
+
+    assert result["trainer"]["trainer_training_success"] is False
+    assert result["trainer"]["trainer_result"]["ok"] is False
+    assert result["trainer"]["trainer_result"]["status"] == "failed"
+    assert "synthetic training failure" in result["trainer"]["trainer_last_error"]["detail"]
+
+
+def test_run_prepared_preserves_cancelled_error_semantics(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("TASK_ID", raising=False)
+    monkeypatch.delenv("DB_PATH", raising=False)
+    dataset_path = tmp_path / "data.json"
+    dataset_path.write_text(
+        json.dumps([{"instruction": "hello", "input": "", "output": "world"}]),
+        encoding="utf-8",
+    )
+    thread_id = f"approval-cancelled-{tmp_path.name}"
+    prepared = prepare(
+        state={
+            "task_id": thread_id,
+            "output_dir": str(tmp_path),
+            "trainer": {
+                "train_framework": "llamafactory",
+                "llamafactory_dir": str(tmp_path),
+                "CUDA_VISIBLE_DEVICES": "0",
+                "train_input_dataset_path": str(dataset_path),
+                "train_input_model_name": "/models/base",
+                "train_input_task_description": "SFT a small assistant",
+                "train_input_config_template_path": str(_DEFAULT_TEMPLATE_PATH),
+            },
+        },
+        thread_id=thread_id,
+    )
+    approval = prepared["trainer"]["trainer_result"]["data"]
+
+    def fake_cancelled_training(state, writer=None):
+        state["trainer"]["trainer_training_success"] = False
+        state["trainer"]["trainer_training_final_status"] = {"status": "cancelled"}
+        state["trainer"]["train_output_training_error"] = "cancelled by user"
+        return state
+
+    monkeypatch.setattr(
+        "loopai.skills.Trainer.trainer_agent.training_execution_node",
+        fake_cancelled_training,
+    )
+    result = run_prepared(
+        prepared_config_path=approval["config_path"],
+        expected_config_sha256=approval["config_sha256"],
+        state=prepared,
+        thread_id=thread_id,
+        version_id=approval["trainer_version_id"],
+    )
+
+    error = result["trainer"]["trainer_result"]["error"]
+    assert error["code"] == "INTERRUPTED"
+    assert error["recoverable"] is False
+    assert "cancelled by user" in error["detail"]

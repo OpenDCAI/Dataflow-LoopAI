@@ -106,6 +106,51 @@ default_states:
     assert captured["max_urls"] == 4
 
 
+def test_searchagent_uses_nested_system_integrations(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import searchagent
+
+    starter = tmp_path / "starter.yaml"
+    starter.write_text(
+        """
+system:
+  starter_model_path: starter-model
+  starter_base_url: http://starter.example/v1
+  starter_api_key: starter-key
+  integrations:
+    tavily:
+      api_key: nested-tavily-key
+    kaggle:
+      username: nested-user
+      key: nested-kaggle-key
+default_states:
+  obtainer:
+    search_engine: tavily
+""",
+        encoding="utf-8",
+    )
+    captured = {}
+
+    async def fake_run_async(**kwargs):
+        captured.update(kwargs)
+        return [{"objective": "x", "search_keywords": ["x"], "decision": {}, "candidates": [], "errors": []}]
+
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("KAGGLE_USERNAME", raising=False)
+    monkeypatch.delenv("KAGGLE_KEY", raising=False)
+    monkeypatch.setattr(searchagent, "_run_searchagent_async", fake_run_async)
+
+    searchagent.run_searchagent(
+        query="collect reasoning data",
+        output_root=tmp_path,
+        starter_config=starter,
+        deepsearch=False,
+    )
+
+    assert captured["tavily_api_key"] == "nested-tavily-key"
+    assert captured["kaggle_username"] == "nested-user"
+    assert captured["kaggle_key"] == "nested-kaggle-key"
+
+
 def test_searchagent_starter_model_overrides_env_defaults(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import searchagent
 

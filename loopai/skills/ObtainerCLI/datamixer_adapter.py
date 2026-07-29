@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from loopai.agents.Obtainer.datamixer import utils as dm_utils
-from loopai.agents.Obtainer.datamixer.index import store_text
+from loopai.agents.Obtainer.datamixer import schema as dm_schema
 from loopai.agents.Obtainer.datamixer.store import DataStore
 
 from .config import read_lake_config_for_lake, resolve_lake_root, write_lake_config
@@ -191,6 +191,7 @@ def _record_metadata(
     stage: str,
     domain: str,
     task_type: str,
+    quality_level: str,
     processing_level: str,
     source_kind: str,
     tags: Mapping[str, str],
@@ -203,6 +204,7 @@ def _record_metadata(
         "lake_stage": stage,
         "domain": domain,
         "task_type": task_type,
+        "quality_level": quality_level,
         "processing_level": processing_level,
         "source_kind": source_kind,
         "source_domain": str(row.get("source_domain", "")),
@@ -230,6 +232,7 @@ def ingest_datamixer_path(
     lake: str | Path,
     input_path: str | Path,
     dataset: str,
+    quality_level: str,
     stage: str = "bronze",
     domain: str = "general",
     task_type: str = "PT",
@@ -239,12 +242,19 @@ def ingest_datamixer_path(
     idempotency_key: str | None = None,
     on_duplicate: str = "skip",
 ) -> dict:
+    quality_level = dm_schema.validate_quality_level(quality_level)
     if on_duplicate not in {"skip", "error"}:
         raise ValueError("on_duplicate must be skip|error")
+    tag_map = parse_tags(tags)
+    tagged_quality_level = tag_map.get("quality_level")
+    if tagged_quality_level is not None and tagged_quality_level != quality_level:
+        raise ValueError(
+            f"tag quality_level {tagged_quality_level!r} conflicts with "
+            f"quality_level {quality_level!r}"
+        )
     lake_root = resolve_lake_root(lake)
     ensure_tables(lake_root)
     input_file = Path(input_path)
-    tag_map = parse_tags(tags)
     dataset_id = _dataset_id(dataset)
     asset_id = _asset_id(dataset_id, input_file)
     ingest_run_id = "ingest_" + sha256_text(idempotency_key or f"{dataset}:{input_file.resolve()}")[:24]
@@ -269,6 +279,7 @@ def ingest_datamixer_path(
                         "command": "ingest path",
                         "input_uri": str(input_file),
                         "dataset_id": dataset_id,
+                        "quality_level": quality_level,
                         "status": "skipped_duplicate_ingest",
                         "started_at": utc_now(),
                         "finished_at": utc_now(),
@@ -276,7 +287,7 @@ def ingest_datamixer_path(
                         "rows_written": 0,
                         "rows_quarantined": 0,
                         "error_summary": "",
-                        "config_snapshot": {},
+                        "config_snapshot": {"quality_level": quality_level},
                     }
                 ],
             )
@@ -286,6 +297,7 @@ def ingest_datamixer_path(
                 "status": "success_with_warnings",
                 "warnings": [warning],
                 "lake_root": str(lake_root),
+                "quality_level": quality_level,
                 "rows_seen": 0,
                 "rows_written": 0,
                 "rows_quarantined": 0,
@@ -299,6 +311,15 @@ def ingest_datamixer_path(
                 row = json.loads(line)
                 if not isinstance(row, dict):
                     raise ValueError(f"JSONL row {lineno} must be an object")
+                if (
+                    "quality_level" in row
+                    and row["quality_level"] != quality_level
+                ):
+                    raise ValueError(
+                        f"JSONL row {lineno} quality_level "
+                        f"{row['quality_level']!r} conflicts with batch "
+                        f"quality_level {quality_level!r}"
+                    )
                 raw_rows.append(row)
 
         store = open_store(lake_root)
@@ -306,7 +327,13 @@ def ingest_datamixer_path(
             store.catalog.add_dataset(
                 name=dataset,
                 source=source_kind,
-                meta={"stage": stage, "domain": domain, "task_type": task_type, "default_tags": tag_map},
+                meta={
+                    "stage": stage,
+                    "domain": domain,
+                    "task_type": task_type,
+                    "quality_level": quality_level,
+                    "default_tags": tag_map,
+                },
                 dataset_id=dataset_id,
             )
         records = []
@@ -323,6 +350,7 @@ def ingest_datamixer_path(
                         stage=stage,
                         domain=domain,
                         task_type=task_type,
+                        quality_level=quality_level,
                         processing_level=processing_level,
                         source_kind=source_kind,
                         tags=tag_map,
@@ -333,6 +361,14 @@ def ingest_datamixer_path(
         if on_duplicate == "error" and result.merged:
             store.close()
             raise ValueError(f"Duplicate records: {result.merged}")
+        recent_records = [
+            _legacy_record_row(store, sample)
+            for sample in store.catalog.query(
+                dataset_id=dataset_id,
+                limit=8,
+                order="created_at DESC",
+            )
+        ]
         store.close()
         contaminated = int(getattr(result, "contaminated", 0) or 0)
         contam_sources = dict(getattr(result, "contam_sources", {}) or {})
@@ -344,6 +380,7 @@ def ingest_datamixer_path(
                 {
                     "asset_id": asset_id,
                     "dataset_id": dataset_id,
+                    "quality_level": quality_level,
                     "source_uri": str(input_file.resolve()),
                     "source_kind": source_kind,
                     "local_uri": str(input_file.resolve()),
@@ -367,6 +404,7 @@ def ingest_datamixer_path(
                     "command": "ingest path",
                     "input_uri": str(input_file),
                     "dataset_id": dataset_id,
+                    "quality_level": quality_level,
                     "status": "succeeded",
                     "started_at": utc_now(),
                     "finished_at": utc_now(),
@@ -378,6 +416,7 @@ def ingest_datamixer_path(
                         "stage": stage,
                         "domain": domain,
                         "task_type": task_type,
+                        "quality_level": quality_level,
                         "processing_level": processing_level,
                         "source_kind": source_kind,
                         "tags": tag_map,
@@ -406,6 +445,7 @@ def ingest_datamixer_path(
         "status": "success_with_warnings" if warnings else "success",
         "warnings": warnings,
         "lake_root": str(lake_root),
+        "quality_level": quality_level,
         "rows_seen": result.ingested,
         "rows_written": result.written,
         "rows_quarantined": contaminated,
@@ -431,7 +471,11 @@ def ingest_datamixer_path(
                         if isinstance(row.get("quality_findings") or [], list)
                     ),
                 },
+                "composition_delta": {
+                    "quality_level": {quality_level: result.written},
+                },
                 "latest": {
+                    "records": recent_records,
                     "ingest_runs": [
                         {
                             "ingest_run_id": ingest_run_id,
@@ -439,6 +483,7 @@ def ingest_datamixer_path(
                             "rows_seen": result.ingested,
                             "rows_written": result.written,
                             "rows_quarantined": contaminated,
+                            "quality_level": quality_level,
                             "finished_at": utc_now(),
                         }
                     ]
@@ -467,6 +512,7 @@ def _legacy_dataset_row(row: Mapping[str, Any]) -> dict:
         "stage": meta.get("stage", ""),
         "domain": meta.get("domain", ""),
         "task_type": meta.get("task_type", ""),
+        "quality_level": meta.get("quality_level", ""),
         "description": row.get("description") or "",
         "owner": row.get("owner") or "",
         "source_kind": row.get("source") or "",
@@ -490,6 +536,7 @@ def _legacy_record_row(store: DataStore, sample: Mapping[str, Any]) -> dict:
         "asset_id": tags.get("asset_id", ""),
         "stage": tags.get("lake_stage") or sample.get("stage", ""),
         "domain": sample.get("domain", ""),
+        "quality_level": sample.get("quality_level", ""),
         "processing_level": tags.get("processing_level", ""),
         "source_kind": tags.get("source_kind", ""),
         "source_domain": tags.get("source_domain", ""),
@@ -520,6 +567,7 @@ def _legacy_tag_map(sample: Mapping[str, Any]) -> dict[str, Any]:
         "lang": sample.get("lang", ""),
         "source": sample.get("source", ""),
         "modality": sample.get("modality", ""),
+        "quality_level": sample.get("quality_level", ""),
         "processing_level": tags.get("processing_level", ""),
         "source_kind": tags.get("source_kind", ""),
         "task_type": sample.get("task_type", ""),
@@ -575,6 +623,7 @@ def _legacy_quality_rows(samples: list[dict]) -> list[dict]:
                     "finding_id": "finding_" + sha256_text(f"{sample['sample_id']}:{index}:{finding}")[:24],
                     "record_id": sample["sample_id"],
                     "dataset_id": sample["dataset_id"],
+                    "quality_level": sample.get("quality_level", ""),
                     "processing_level": tags.get("processing_level", ""),
                     "source_kind": tags.get("source_kind", ""),
                     "finding_type": str(finding.get("finding_type", "quality_signal")),

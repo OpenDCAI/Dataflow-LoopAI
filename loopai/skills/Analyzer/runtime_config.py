@@ -12,6 +12,59 @@ _DEFAULT_CHECKPOINT_PATH = "outputs/analyzer_checkpoints.sqlite"
 _DEFAULT_THREAD_ID = "analyzer-default"
 
 
+def get_version_checkpoint_path(
+    output_dir: str,
+    task_id: str,
+    version_id: str,
+) -> str:
+    """Return the state checkpoint located beside this Analyzer run's artifacts."""
+    return str(
+        Path(output_dir)
+        / str(task_id)
+        / "analyzer"
+        / str(version_id)
+        / "state_checkpoint.sqlite"
+    )
+
+
+def find_latest_version_checkpoint(output_dir: str, task_id: str) -> Optional[tuple[str, str]]:
+    """Find the newest version checkpoint for a task without reusing a finished run blindly."""
+    analyzer_dir = Path(output_dir) / str(task_id) / "analyzer"
+    candidates = []
+    for version_dir in analyzer_dir.iterdir() if analyzer_dir.is_dir() else []:
+        checkpoint = version_dir / "state_checkpoint.sqlite"
+        if version_dir.is_dir() and checkpoint.exists():
+            candidates.append((checkpoint.stat().st_mtime, version_dir.name, str(checkpoint)))
+    if not candidates:
+        return None
+    _, version_id, checkpoint_path = max(candidates)
+    return version_id, checkpoint_path
+
+
+def cleanup_old_analyzer_checkpoints(
+    output_dir: str,
+    task_id: str,
+    keep_version_id: str,
+) -> None:
+    """Keep only the active version's state checkpoint for a task.
+
+    Historical reports and stream event files remain untouched.
+    """
+    analyzer_dir = Path(output_dir) / str(task_id) / "analyzer"
+    if not analyzer_dir.is_dir():
+        return
+    for version_dir in analyzer_dir.iterdir():
+        if not version_dir.is_dir() or version_dir.name == str(keep_version_id):
+            continue
+        checkpoint = version_dir / "state_checkpoint.sqlite"
+        try:
+            checkpoint.unlink(missing_ok=True)
+            # Remove only now-empty version directories; reports/events remain.
+            version_dir.rmdir()
+        except OSError:
+            continue
+
+
 def _first_non_empty(*values: Any) -> Any:
     for value in values:
         if value is not None and value != "":

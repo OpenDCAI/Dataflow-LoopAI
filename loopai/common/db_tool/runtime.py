@@ -1,9 +1,37 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
+from loopai.common.tracking import strip_retired_tracking_fields
+
 from .base import _sqlite_connect, require_db_path
+
+
+def _sanitize_runtime_state(state: str | None) -> str | None:
+    if not isinstance(state, str) or not state:
+        return state
+    try:
+        parsed = json.loads(state)
+    except (TypeError, json.JSONDecodeError):
+        return state
+    return json.dumps(strip_retired_tracking_fields(parsed), ensure_ascii=False)
+
+
+def _purge_runtime_rows(con, rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+    cleaned_rows: list[tuple[Any, ...]] = []
+    updates: list[tuple[str | None, Any]] = []
+    for row in rows:
+        cleaned_state = _sanitize_runtime_state(row[4])
+        if cleaned_state != row[4]:
+            updates.append((cleaned_state, row[0]))
+            row = (*row[:4], cleaned_state, *row[5:])
+        cleaned_rows.append(row)
+    if updates:
+        con.executemany("update taskruntime set state=? where id=?", updates)
+        con.commit()
+    return cleaned_rows
 
 
 def _serialize_task_runtime_row(row: tuple[Any, ...]) -> dict[str, Any]:
@@ -12,7 +40,7 @@ def _serialize_task_runtime_row(row: tuple[Any, ...]) -> dict[str, Any]:
         "task_id": row[1],
         "node_name": row[2],
         "version": row[3],
-        "state": row[4],
+        "state": _sanitize_runtime_state(row[4]),
         "status": row[5],
         "createdAt": row[6],
         "updatedAt": row[7],
@@ -27,6 +55,7 @@ def create_task_runtime_sync(
     status: str,
     state: str | None = None,
 ) -> dict[str, Any]:
+    state = _sanitize_runtime_state(state)
     con = _sqlite_connect(db_path)
     try:
         cur = con.execute(
@@ -60,6 +89,7 @@ def update_task_runtime_sync(
     status: str,
     state: str | None = None,
 ) -> dict[str, Any] | None:
+    state = _sanitize_runtime_state(state)
     con = _sqlite_connect(db_path)
     try:
         existing = con.execute(
@@ -92,6 +122,8 @@ def update_task_runtime_sync(
             """,
             (existing[0],),
         ).fetchone()
+        if row is not None:
+            row = _purge_runtime_rows(con, [row])[0]
     finally:
         con.close()
     if row is None:
@@ -167,6 +199,8 @@ def get_latest_task_runtime_sync(
             """,
             (task_id, node_name),
         ).fetchone()
+        if row is not None:
+            row = _purge_runtime_rows(con, [row])[0]
     finally:
         con.close()
     if row is None:
@@ -191,6 +225,8 @@ def get_current_task_runtime_sync(
             """,
             (task_id, version),
         ).fetchone()
+        if row is not None:
+            row = _purge_runtime_rows(con, [row])[0]
     finally:
         con.close()
     if row is None:
@@ -214,6 +250,7 @@ def list_task_runtime_history_sync(
             """,
             (task_id, node_name),
         ).fetchall()
+        rows = _purge_runtime_rows(con, rows)
     finally:
         con.close()
     return [_serialize_task_runtime_row(row) for row in rows]
@@ -234,6 +271,7 @@ def list_latest_task_runtimes_sync(
             """,
             (task_id,),
         ).fetchall()
+        rows = _purge_runtime_rows(con, rows)
     finally:
         con.close()
 

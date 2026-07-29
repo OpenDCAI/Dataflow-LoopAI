@@ -5,9 +5,7 @@ from typing import Any, Dict, Optional
 
 _DEFAULT_OUTPUT_DIR = "./outputs"
 
-# JudgerState schema defaults (mirror loopai/schema/states.py JudgerState)
 _SCHEMA_DEFAULTS: Dict[str, Any] = {
-    "eval_task_type": "code",
     "eval_temperature": 0,
     "eval_top_p": 0.95,
     "eval_batch_size": 10,
@@ -15,9 +13,6 @@ _SCHEMA_DEFAULTS: Dict[str, Any] = {
     "eval_vllm_tensor_parallel_size": 1,
     "eval_vllm_gpu_memory_utilization": 0.9,
     "cuda_visible_devices": "0",
-    "bench_name": "general_text_eval",
-    "bench_dataflow_eval_type": "",
-    "key_mapping": {},
 }
 
 
@@ -42,22 +37,18 @@ def resolve_judger_runtime_config(
     state: Optional[Dict[str, Any]],
     task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Resolve Judger runtime values from env, state, defaults.
+    """Resolve Judger global runtime config from state + env + defaults.
 
-    Priority: env > state["judger"] > schema defaults.
+    bench-level fields (name, task_type, problem_path, eval_type, etc.)
+    come from ``benchlist`` / ``extra_benchlist`` directly.
     """
     judger = _judger(state)
     is_state_dict = isinstance(state, dict)
 
-    # --- model / vllm ---
+    # --- model / vllm (global) ---
     model_path = _first_non_empty(
         os.getenv("JUDGER_MODEL_PATH"),
         judger.get("eval_model_path"),
-    )
-    task_type = _first_non_empty(
-        os.getenv("JUDGER_TASK_TYPE"),
-        judger.get("eval_task_type"),
-        _SCHEMA_DEFAULTS["eval_task_type"],
     )
     temperature = _first_non_empty(
         os.getenv("JUDGER_TEMPERATURE"),
@@ -69,10 +60,6 @@ def resolve_judger_runtime_config(
         judger.get("eval_top_p"),
         _SCHEMA_DEFAULTS["eval_top_p"],
     )
-    problem_path = _first_non_empty(
-        os.getenv("JUDGER_PROBLEM_PATH"),
-        judger.get("eval_problem_path"),
-    )
     batch_size = _first_non_empty(
         os.getenv("JUDGER_BATCH_SIZE"),
         judger.get("eval_batch_size"),
@@ -83,12 +70,9 @@ def resolve_judger_runtime_config(
         judger.get("eval_case_num"),
         _SCHEMA_DEFAULTS["eval_case_num"],
     )
-
-    # --- vllm local startup ---
     tensor_parallel_size = _first_non_empty(
         os.getenv("JUDGER_TENSOR_PARALLEL_SIZE"),
         judger.get("eval_vllm_tensor_parallel_size"),
-        judger.get("tensor_parallel_size"),  # 兼容 starter.yaml 中的短键名
         _SCHEMA_DEFAULTS["eval_vllm_tensor_parallel_size"],
     )
     gpu_memory_utilization = _first_non_empty(
@@ -102,30 +86,8 @@ def resolve_judger_runtime_config(
         _SCHEMA_DEFAULTS["cuda_visible_devices"],
     )
 
-    # --- general_text ---
-    bench_name = _first_non_empty(
-        os.getenv("JUDGER_BENCH_NAME"),
-        judger.get("bench_name"),
-        _SCHEMA_DEFAULTS["bench_name"],
-    )
-    bench_dataflow_eval_type = _first_non_empty(
-        os.getenv("JUDGER_BENCH_DATAFLOW_EVAL_TYPE"),
-        judger.get("bench_dataflow_eval_type"),
-        _SCHEMA_DEFAULTS["bench_dataflow_eval_type"],
-    )
-    key_mapping = _first_non_empty(
-        judger.get("key_mapping"),
-        _SCHEMA_DEFAULTS["key_mapping"],
-    )
-    if isinstance(key_mapping, str):
-        import json
-        try:
-            key_mapping = json.loads(key_mapping)
-        except (json.JSONDecodeError, TypeError):
-            key_mapping = {}
-
     # --- global ---
-    task_id = _first_non_empty(
+    resolved_task_id = _first_non_empty(
         task_id,
         os.getenv("TASK_ID"),
         state.get("task_id") if is_state_dict else None,
@@ -165,27 +127,19 @@ def resolve_judger_runtime_config(
 
     # --- write resolved values back into state ---
     if is_state_dict:
-        # CLI/env 传入的 task_id 优先级高于 YAML 默认值，始终覆盖
-        if task_id:
-            state["task_id"] = task_id
+        if resolved_task_id:
+            state["task_id"] = resolved_task_id
         if output_dir:
             state["output_dir"] = output_dir
-
-        # 只在值非空时才覆盖，避免把 DB/state 中的已有值冲掉
         for key, val in (
             ("eval_model_path", model_path),
-            ("eval_task_type", task_type),
             ("eval_temperature", temperature),
             ("eval_top_p", top_p),
-            ("eval_problem_path", problem_path),
             ("eval_batch_size", batch_size),
             ("eval_case_num", case_num),
             ("eval_vllm_tensor_parallel_size", tensor_parallel_size),
             ("eval_vllm_gpu_memory_utilization", gpu_memory_utilization),
             ("cuda_visible_devices", cuda_visible_devices),
-            ("bench_name", bench_name),
-            ("bench_dataflow_eval_type", bench_dataflow_eval_type),
-            ("key_mapping", key_mapping),
         ):
             if val is not None:
                 state["judger"][key] = val
@@ -193,20 +147,15 @@ def resolve_judger_runtime_config(
             state["DB_PATH"] = db_path
 
     return {
-        "task_id": str(task_id) if task_id else "",
+        "task_id": str(resolved_task_id) if resolved_task_id else "",
         "output_dir": str(output_dir or _DEFAULT_OUTPUT_DIR),
         "db_path": db_path,
         "model_path": model_path,
-        "task_type": str(task_type),
         "temperature": temperature,
         "top_p": top_p,
-        "problem_path": problem_path,
         "batch_size": batch_size,
         "case_num": case_num,
         "tensor_parallel_size": tensor_parallel_size,
         "gpu_memory_utilization": gpu_memory_utilization,
         "cuda_visible_devices": str(cuda_visible_devices),
-        "bench_name": str(bench_name),
-        "bench_dataflow_eval_type": str(bench_dataflow_eval_type or ""),
-        "key_mapping": key_mapping if isinstance(key_mapping, dict) else {},
     }

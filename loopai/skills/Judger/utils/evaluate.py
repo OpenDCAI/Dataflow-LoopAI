@@ -128,12 +128,14 @@ def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
     judger_state = state.get("judger", {})
     output_dir = Path(state.get("output_dir"))
     problem_path = judger_state["eval_problem_path"]
-    problem_file_name = Path(problem_path).stem
+    bench_name = judger_state.get("bench_name", Path(problem_path).stem)
     test_case_path = str(
-        output_dir / str(state_task_id) / "judger" / writer.version_id / f"{problem_file_name}_sample.jsonl"
+        output_dir / str(state_task_id) / "judger" / writer.version_id
+        / bench_name / f"{bench_name}_sample.jsonl"
     )
     result_path = str(
-        output_dir / str(state_task_id) / "judger" / writer.version_id / f"{problem_file_name}_result.jsonl"
+        output_dir / str(state_task_id) / "judger" / writer.version_id
+        / bench_name / f"{bench_name}_result.jsonl"
     )
     case_num = judger_state.get("eval_case_num", 10)
     task_type = judger_state["eval_task_type"]
@@ -200,12 +202,14 @@ def run_evaluate_text2sql(state: Dict[str, Any], writer) -> Dict[str, Any]:
     judger_state = state.get("judger", {})
     output_dir = Path(state.get("output_dir"))
     problem_path = judger_state["eval_problem_path"]
-    problem_file_name = Path(problem_path).stem
+    bench_name = judger_state.get("bench_name", Path(problem_path).stem)
     test_case_path = str(
-        output_dir / str(state_task_id) / "judger" / writer.version_id / f"{problem_file_name}_sample.jsonl"
+        output_dir / str(state_task_id) / "judger" / writer.version_id
+        / bench_name / f"{bench_name}_sample.jsonl"
     )
     result_path = str(
-        output_dir / str(state_task_id) / "judger" / writer.version_id / f"{problem_file_name}_result.jsonl"
+        output_dir / str(state_task_id) / "judger" / writer.version_id
+        / bench_name / f"{bench_name}_result.jsonl"
     )
     case_num = judger_state.get("eval_case_num", 10)
     task_type = judger_state["eval_task_type"]

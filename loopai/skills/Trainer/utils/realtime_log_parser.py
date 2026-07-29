@@ -38,6 +38,11 @@ class MetricsExtractor:
         # 更多常见的训练指标
         self.accuracy_pattern = re.compile(rf'(?:accuracy|acc)[:\s=]+({number_pattern})', re.IGNORECASE)
         self.perplexity_pattern = re.compile(rf'(?:perplexity|ppl)[:\s=]+({number_pattern})', re.IGNORECASE)
+        # Verl console logger emits one line in the form:
+        # step:12 - critic/rewards/mean:0.42 - training/global_step:12
+        self.key_value_pattern = re.compile(
+            rf'(?<![\w/])([A-Za-z][A-Za-z0-9_./@*-]*)\s*[:=]\s*({number_pattern})'
+        )
 
     def _to_number(self, value: Any) -> Optional[float]:
         if isinstance(value, bool):
@@ -60,6 +65,24 @@ class MetricsExtractor:
             metrics['step'] = int(float(metrics['epoch']) * self.total_steps / self.total_epochs)
         except (TypeError, ValueError, OverflowError, ZeroDivisionError):
             return
+
+    def _normalize_verl_metrics(self, metrics: Dict[str, Any]) -> None:
+        if 'training/global_step' in metrics:
+            metrics['step'] = int(float(metrics['training/global_step']))
+        elif 'global_step' in metrics and 'step' not in metrics:
+            metrics['step'] = int(float(metrics['global_step']))
+        if 'training/epoch' in metrics and 'epoch' not in metrics:
+            metrics['epoch'] = metrics['training/epoch']
+        if 'critic/rewards/mean' in metrics:
+            metrics['reward'] = metrics['critic/rewards/mean']
+        if 'actor/pg_loss' in metrics:
+            metrics['policy_loss'] = metrics['actor/pg_loss']
+        val_keys = sorted(
+            key for key, value in metrics.items()
+            if key.startswith('val-core/') and self._to_number(value) is not None
+        )
+        if val_keys:
+            metrics['val_score'] = metrics[val_keys[0]]
 
     def extract_metrics(self, line: str) -> Dict[str, Any]:
         """从日志行中提取指标"""
@@ -87,7 +110,16 @@ class MetricsExtractor:
             except json.JSONDecodeError:
                 continue
 
-        # 如果没有找到JSON格式，尝试单独提取各个指标
+        # Verl emits flat key:value pairs rather than JSON.
+        if not metrics:
+            for key, value_str in self.key_value_pattern.findall(line):
+                try:
+                    number = float(value_str)
+                    metrics[key] = int(number) if key in {'step', 'global_step', 'training/global_step'} else number
+                except (ValueError, OverflowError):
+                    continue
+
+        # 如果没有找到JSON或 Verl 指标，尝试单独提取各个指标
         if not metrics:
             patterns = {
                 'loss': self.loss_pattern,
@@ -115,6 +147,8 @@ class MetricsExtractor:
                         continue
 
             self._fill_step_from_epoch(metrics)
+
+        self._normalize_verl_metrics(metrics)
 
         return metrics
 
@@ -145,7 +179,11 @@ class RealTimeLogParser:
 
             with open(self.log_path, 'r', encoding='utf-8', errors='ignore') as f:
                 for line in f:
-                    step_match = re.search(r'Total optimization steps = ([\d,]+)', line)
+                    step_match = re.search(
+                        r'(?:Total optimization steps|total_training_steps|total steps)\s*[:=]\s*([\d,]+)',
+                        line,
+                        re.IGNORECASE,
+                    )
                     epoch_match = re.search(r'Num Epochs = ([\d,]+)', line)
                     if step_match:
                         self.total_steps = int(step_match.group(1).replace(',', ''))
@@ -221,6 +259,10 @@ class RealTimeLogParser:
         """监控循环"""
         while self.running:
             try:
+                if not self.if_total_steps_recorded:
+                    self._find_total_steps()
+                    self.extractor.total_steps = self.total_steps
+                    self.extractor.total_epochs = self.total_epochs
                 new_metrics = self._parse_new_lines()
                 if new_metrics:
                     self._save_metrics(new_metrics)
@@ -237,9 +279,9 @@ class RealTimeLogParser:
             return
 
         self.running = True
-        while not self.if_total_steps_recorded:
-            self._find_total_steps()
-            time.sleep(1)
+        # Do not block process startup while waiting for a framework-specific
+        # total-step log line. The monitor updates it later when available.
+        self._find_total_steps()
         self._initialize_metrics_file()
         self.extractor = MetricsExtractor(total_steps=self.total_steps, total_epochs=self.total_epochs)
         self.thread = threading.Thread(target=self._monitoring_loop, daemon=True)
@@ -251,6 +293,9 @@ class RealTimeLogParser:
         self.running = False
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=5)
+        final_metrics = self._parse_new_lines() if hasattr(self, 'extractor') else []
+        if final_metrics:
+            self._save_metrics(final_metrics)
         print("已停止日志监控")
 
     def get_latest_metrics(self, count: int = 10) -> List[Dict[str, Any]]:

@@ -416,6 +416,8 @@ PAGE = r"""<!doctype html>
           <option>preference</option><option>agent_trajectory</option></select></div></div>
       <div class="row"><div><label class="f" data-i18n="f.domain">domain</label><input id="ig_dom"></div>
         <div><label class="f" data-i18n="f.lang">lang</label><input id="ig_lang"></div>
+        <div><label class="f" data-i18n="f.qualityLevel">quality level</label><select id="ig_quality">
+          <option>L1</option><option>L2</option><option>L3</option><option>L4</option></select></div>
         <div><label class="f" data-i18n="f.contentKey">content-key</label><input id="ig_ck" value="content"></div></div>
       <label class="f" data-i18n="f.jsonl">JSONL data (one record per line)</label>
       <textarea id="ig_data" placeholder='{"content":{"text":"hello"},"domain":"web"}'></textarea>
@@ -434,6 +436,8 @@ PAGE = r"""<!doctype html>
         <div><label class="f" data-i18n="f.model">runner model (pool)</label>
           <select id="ag_model"><option value="">(heuristic, no model)</option></select></div>
         <div><label class="f" data-i18n="f.dataset">dataset</label><input id="ag_ds" list="dslist"></div></div>
+      <label class="f" data-i18n="f.qualityLevel">quality level</label>
+      <select id="ag_quality"><option>L1</option><option>L2</option><option>L3</option><option>L4</option></select>
       <label class="f" data-i18n="f.fileContent">file content</label>
       <textarea id="ag_data" placeholder="question,answer,category&#10;2+2,four,math"></textarea>
       <label class="brow"><input type="checkbox" id="ag_dry">
@@ -614,7 +618,7 @@ const I18N={
    'help.agentIngest':"The LoopAI runner (kernel model from the pool) reviews the "
      +"file and drives the CLI to ingest it; 'builtin' is an offline heuristic. "
      +"Paste any text format (CSV/JSON/JSONL/TXT/...).",
-   'f.filename':'filename (for format hint)','f.fileContent':'file content',
+   'f.filename':'filename (for format hint)','f.fileContent':'file content','f.qualityLevel':'quality level',
    'f.dryRun':'dry-run (review & plan only)','opt.heuristic':'(heuristic, no model)',
    'f.engine':'engine','btn.agentIngest':'Agent ingest',
    'f.note':'note','f.apiUrl':'api url','f.apiKey':'api key (or env:VAR)','f.format':'response format',
@@ -665,7 +669,7 @@ const I18N={
    'h.modelPool':'模型池','h.regModel':'注册模型','h.classify':'领域分类（LLM）',
    'h.agentIngest':'智能入库 - 任意格式',
    'help.agentIngest':'LoopAI runner（内核模型取自模型池）审查文件并调用 CLI 入库；builtin 为离线启发式。可粘贴任意文本格式（CSV/JSON/JSONL/TXT/…）。',
-   'f.filename':'文件名（用于格式识别）','f.fileContent':'文件内容',
+   'f.filename':'文件名（用于格式识别）','f.fileContent':'文件内容','f.qualityLevel':'质量等级',
    'f.dryRun':'试运行（仅审查与方案，不入库）','opt.heuristic':'（启发式，不用模型）',
    'f.engine':'引擎','btn.agentIngest':'智能入库',
    'f.note':'备注','f.apiUrl':'API 地址','f.apiKey':'API 密钥（或 env:变量名）','f.format':'响应格式',
@@ -780,7 +784,8 @@ async function dsRefresh(){const r=await api(['dataset','list']);
     `<td>${esc(d.name)}</td><td>${d.n_samples}</td><td>${esc(d.license||'-')}</td></tr>`).join('')+'</table>';
   $('#dslist').innerHTML=rows.map(d=>`<option value="${esc(d.name)}">`).join('');}   // searchable dataset names
 async function agentIngest(){
-  const a=['agent-ingest','@FILE','--engine',$('#ag_engine').value];
+  const a=['agent-ingest','@FILE','--engine',$('#ag_engine').value,
+    '--quality-level',$('#ag_quality').value];
   if($('#ag_name').value)a.push('--filename',$('#ag_name').value);
   if($('#ag_model').value)a.push('--model',$('#ag_model').value);
   if($('#ag_ds').value)a.push('--dataset',$('#ag_ds').value);
@@ -792,7 +797,8 @@ async function dsAdd(){const a=['dataset','add','--name',$('#ds_name').value];
   if($('#ds_desc').value)a.push('--description',$('#ds_desc').value);
   render('#ds_res',await api(a)); dsRefresh();}
 async function ingest(){
-  const a=['ingest',$('#ig_ds').value,'--file','@DATA','--content-key',$('#ig_ck').value];
+  const a=['ingest',$('#ig_ds').value,'--file','@DATA','--quality-level',
+    $('#ig_quality').value,'--content-key',$('#ig_ck').value];
   if($('#ig_stage').value)a.push('--stage',$('#ig_stage').value);
   if($('#ig_dom').value)a.push('--domain',$('#ig_dom').value);
   if($('#ig_lang').value)a.push('--lang',$('#ig_lang').value);

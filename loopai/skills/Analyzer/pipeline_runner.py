@@ -175,10 +175,14 @@ class _AnalyzerProgressWriter:
         writer: Optional[Callable],
         step_name: str,
         progress_state: Optional[Dict[str, Any]] = None,
+        state: Optional[Dict[str, Any]] = None,
+        checkpoint_callback: Optional[Callable] = None,
     ) -> None:
         self._writer = writer
         self._step_name = step_name
         self._progress_state = progress_state
+        self._state = state
+        self._checkpoint_callback = checkpoint_callback
 
     def __call__(self, payload: StreamEvent | Dict[str, Any] | Any):
         if self._writer is None:
@@ -194,6 +198,33 @@ class _AnalyzerProgressWriter:
         processed_samples = data.get("processed_samples")
         total_failed_samples = data.get("total_failed_samples")
         is_heartbeat = bool(data.get("heartbeat"))
+
+        # Waiting heartbeats are the latest durable indication of progress
+        # while an LLM request is in flight. Persist them so resume does not
+        # fall back to the node-start percentage.
+        event_progress = event_dict.get("progress")
+        if (
+            is_heartbeat
+            and self._checkpoint_callback is not None
+            and self._state is not None
+            and isinstance(event_progress, (int, float))
+        ):
+            if self._step_name == "analyze_result":
+                overall_progress = float(event_progress)
+            else:
+                overall_progress = _map_step_progress(
+                    self._step_name,
+                    float(event_progress),
+                )
+            self._checkpoint_callback(
+                self._state,
+                overall_progress,
+                stage=self._step_name,
+                data={
+                    "heartbeat": True,
+                    "waiting_seconds": data.get("waiting_seconds"),
+                },
+            )
 
         # Do not convert arbitrary local node progress into global progress.
         # It caused jumps such as 4% -> 63% when a node reported "local 60%".
@@ -220,6 +251,13 @@ class _AnalyzerProgressWriter:
                 },
                 progress_state=self._progress_state,
             )
+            if self._checkpoint_callback is not None and self._state is not None:
+                self._checkpoint_callback(
+                    self._state,
+                    overall_progress,
+                    stage=self._step_name,
+                    data={"processed_samples": processed_samples},
+                )
         return result
 
     def __getattr__(self, name: str) -> Any:
@@ -242,10 +280,17 @@ def _connect(checkpoint_path: str) -> sqlite3.Connection:
             version_id TEXT NOT NULL,
             state_json TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            node_progress REAL NOT NULL DEFAULT 0,
+            node_checkpoint_json TEXT,
             PRIMARY KEY(thread_id, version_id)
         )
         """
     )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(analyzer_checkpoints_v2)").fetchall()}
+    if "node_progress" not in columns:
+        conn.execute("ALTER TABLE analyzer_checkpoints_v2 ADD COLUMN node_progress REAL NOT NULL DEFAULT 0")
+    if "node_checkpoint_json" not in columns:
+        conn.execute("ALTER TABLE analyzer_checkpoints_v2 ADD COLUMN node_checkpoint_json TEXT")
     conn.commit()
     return conn
 
@@ -255,6 +300,8 @@ def save_analyzer_checkpoint(
     thread_id: str,
     checkpoint_path: str,
     version_id: str = "default",
+    node_progress: float = 0.0,
+    node_checkpoint: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Persist a version-scoped Analyzer checkpoint.
 
@@ -264,17 +311,30 @@ def save_analyzer_checkpoint(
     state["version_id"] = version_id
     state.setdefault("analyzer", {})["version_id"] = version_id
     payload = json.dumps(_json_safe(state), ensure_ascii=False)
+    node_payload = json.dumps(_json_safe(node_checkpoint or {}), ensure_ascii=False)
     updated_at = datetime.now(timezone.utc).isoformat()
     with _connect(checkpoint_path) as conn:
         conn.execute(
             """
-            INSERT INTO analyzer_checkpoints_v2(thread_id, version_id, state_json, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO analyzer_checkpoints_v2(
+                thread_id, version_id, state_json, updated_at,
+                node_progress, node_checkpoint_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id, version_id) DO UPDATE SET
                 state_json = excluded.state_json,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                node_progress = excluded.node_progress,
+                node_checkpoint_json = excluded.node_checkpoint_json
             """,
-            (thread_id, version_id, payload, updated_at),
+            (
+                thread_id,
+                version_id,
+                payload,
+                updated_at,
+                max(0.0, min(1.0, float(node_progress or 0.0))),
+                node_payload,
+            ),
         )
         conn.commit()
     update_analyzer_state_via_configer(state, task_id=thread_id)
@@ -289,14 +349,19 @@ def load_analyzer_checkpoint(
         with _connect(checkpoint_path) as conn:
             row = conn.execute(
                 """
-                SELECT state_json FROM analyzer_checkpoints_v2
+                SELECT state_json, node_progress, node_checkpoint_json FROM analyzer_checkpoints_v2
                 WHERE thread_id = ? AND version_id = ?
                 LIMIT 1
                 """,
                 (thread_id, version_id),
             ).fetchone()
         if row is not None:
-            return json.loads(row[0])
+            state = json.loads(row[0])
+            state["_analyzer_checkpoint"] = {
+                "node_progress": float(row[1] or 0.0),
+                "node_checkpoint": json.loads(row[2] or "{}"),
+            }
+            return state
     return load_analyzer_state_from_configer(task_id=thread_id)
 
 
@@ -328,13 +393,23 @@ def _is_finished(state: Dict[str, Any]) -> bool:
     )
 
 
-def _run_step(step_name: str, state: Dict[str, Any], writer: Optional[Callable] = None) -> Dict[str, Any]:
+def _run_step(
+    step_name: str,
+    state: Dict[str, Any],
+    writer: Optional[Callable] = None,
+    *,
+    checkpoint_callback: Optional[Callable] = None,
+    resume_progress: float = 0.0,
+) -> Dict[str, Any]:
     from loopai.skills.Analyzer.utils.stream import (
+        reset_analyzer_checkpoint_context,
         reset_analyzer_stream_writer,
+        set_analyzer_checkpoint_context,
         set_analyzer_stream_writer,
     )
 
     token = set_analyzer_stream_writer(writer)
+    checkpoint_token = set_analyzer_checkpoint_context(checkpoint_callback, resume_progress)
     try:
         if step_name == "eval_model":
             from loopai.skills.Analyzer.nodes.eval_model import eval_model_node
@@ -348,6 +423,7 @@ def _run_step(step_name: str, state: Dict[str, Any], writer: Optional[Callable] 
         raise ValueError(f"Unknown executable Analyzer step: {step_name}")
     finally:
         reset_analyzer_stream_writer(token)
+        reset_analyzer_checkpoint_context(checkpoint_token)
 
 
 def run_analyzer_pipeline(
@@ -365,6 +441,13 @@ def run_analyzer_pipeline(
     elif state is None:
         raise ValueError("state is required when resume is false.")
 
+    checkpoint_record = state.pop("_analyzer_checkpoint", {}) if isinstance(state, dict) else {}
+    resume_progress = (
+        float(checkpoint_record.get("node_progress", 0.0) or 0.0)
+        if resume and from_node is None
+        else 0.0
+    )
+
     if baseline_result_path:
         state.setdefault("analyzer", {})["baseline_result_path"] = baseline_result_path
 
@@ -378,8 +461,11 @@ def run_analyzer_pipeline(
     if start_step is None:
         start_step = ANALYZER_PIPELINE_STEPS[0]
     start_at = _start_index(start_step)
+    initial_resume_progress = (
+        resume_progress if resume and from_node is None else 0.0
+    )
     progress_state: Dict[str, Any] = {
-        "last_percent": -1,
+        "last_percent": _progress_percent(initial_resume_progress) - 1,
         "cap_percent": 0,
         "step": None,
         "ticker_message": "Analyzer 运行中",
@@ -388,7 +474,7 @@ def run_analyzer_pipeline(
     if writer:
         _emit_pipeline_progress(
             writer,
-            0.0,
+            initial_resume_progress,
             "Analyzer pipeline started",
             data={
                 "task_id": thread_id,
@@ -398,6 +484,22 @@ def run_analyzer_pipeline(
             progress_state=progress_state,
         )
     ticker_stop, ticker_thread = _start_pipeline_ticker(writer, progress_state)
+
+    def checkpoint_progress(
+        checkpoint_state: Dict[str, Any],
+        progress: float,
+        *,
+        stage: Optional[str] = None,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        save_analyzer_checkpoint(
+            checkpoint_state,
+            thread_id,
+            checkpoint_path,
+            version_id=version_id,
+            node_progress=progress,
+            node_checkpoint={"stage": stage, "data": data or {}},
+        )
 
     try:
         if resume and from_node is None and _is_finished(state):
@@ -412,21 +514,47 @@ def run_analyzer_pipeline(
 
         for step_name in ANALYZER_PIPELINE_STEPS[start_at:]:
             state["current"] = step_name
-            save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+            step_resume_progress = (
+                resume_progress
+                if resume and from_node is None and step_name == start_step
+                else 0.0
+            )
+            save_analyzer_checkpoint(
+                state,
+                thread_id,
+                checkpoint_path,
+                version_id=version_id,
+                node_progress=step_resume_progress,
+                node_checkpoint={
+                    "stage": step_name,
+                    "data": {"resumed_from_progress": step_resume_progress}
+                    if step_resume_progress
+                    else {},
+                },
+            )
             _set_pipeline_step_cap(progress_state, step_name, message=f"{step_name} 运行中")
 
             if writer:
                 writer(StreamEvent(
                     current=f"analyzer.{step_name}",
-                    progress=_STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
-                    progress_num=_progress_percent(_STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0]),
+                    progress=max(
+                        step_resume_progress,
+                        _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                    ),
+                    progress_num=_progress_percent(max(
+                        step_resume_progress,
+                        _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                    )),
                     total=100,
                     message=f"步骤开始: {step_name}",
                     data={"step": step_name},
                 ))
                 _emit_pipeline_progress(
                     writer,
-                    _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                    max(
+                        step_resume_progress,
+                        _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[0],
+                    ),
                     f"开始 {step_name}",
                     data={"step": step_name},
                     progress_state=progress_state,
@@ -434,7 +562,14 @@ def run_analyzer_pipeline(
 
             if step_name == "finish":
                 state["last_completed"] = "finish"
-                save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+                save_analyzer_checkpoint(
+                    state,
+                    thread_id,
+                    checkpoint_path,
+                    version_id=version_id,
+                    node_progress=1.0,
+                    node_checkpoint={"stage": "finish", "data": {}},
+                )
                 if writer:
                     writer(StreamEvent(
                         current="analyzer.finish",
@@ -455,10 +590,25 @@ def run_analyzer_pipeline(
             state = _run_step(
                 step_name,
                 state,
-                writer=_AnalyzerProgressWriter(writer, step_name, progress_state),
+                writer=_AnalyzerProgressWriter(
+                    writer,
+                    step_name,
+                    progress_state,
+                    state=state,
+                    checkpoint_callback=checkpoint_progress,
+                ),
+                checkpoint_callback=checkpoint_progress,
+                resume_progress=resume_progress if step_name == start_step else 0.0,
             )
             state["last_completed"] = step_name
-            save_analyzer_checkpoint(state, thread_id, checkpoint_path, version_id=version_id)
+            save_analyzer_checkpoint(
+                state,
+                thread_id,
+                checkpoint_path,
+                version_id=version_id,
+                node_progress=1.0,
+                node_checkpoint={"stage": step_name, "data": {}},
+            )
 
             if writer:
                 step_end = _STEP_PROGRESS_RANGES.get(step_name, (0.0, 1.0))[1]

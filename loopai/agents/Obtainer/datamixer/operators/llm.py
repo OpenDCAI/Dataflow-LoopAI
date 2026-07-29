@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-from .. import llm
+from .. import llm, schema
 from ..utils import extract_text
 from .base import Batch, Operator, OperatorContext, OperatorSpec, register
 
@@ -42,7 +42,8 @@ class LLMOperator(Operator):
     def __init__(self, model: str | None = None, chunk_size: int = MAX_CHUNK,
                  max_concurrency: int = DEFAULT_CONCURRENCY, cache: bool = True,
                  rpm: int = 0, max_retries: int = 3,
-                 max_input_chars: int = 2000, cost_per_1k: float = 0.0, **_):
+                 max_input_chars: int = 2000, cost_per_1k: float = 0.0,
+                 max_tokens: int | None = None, **_):
         self.model_name = model
         self.chunk_size = max(1, min(int(chunk_size), MAX_CHUNK))
         self.max_concurrency = max(1, int(max_concurrency))
@@ -51,6 +52,7 @@ class LLMOperator(Operator):
         self.max_retries = int(max_retries)
         self.max_input_chars = int(max_input_chars)
         self.cost_per_1k = float(cost_per_1k)
+        self.max_tokens = int(max_tokens or 0)
         self.model_spec = None
         self._cache_dir = None
         self._lock = None
@@ -120,7 +122,11 @@ class LLMOperator(Operator):
             self._account(messages, text, cached=True)
             return text
         self._rate_wait()
-        text = llm.complete(self.model_spec, messages, json_mode=True,
+        spec = self.model_spec
+        if self.max_tokens > 0:
+            from dataclasses import replace
+            spec = replace(spec, max_tokens=self.max_tokens)
+        text = llm.complete(spec, messages, json_mode=True,
                             max_retries=self.max_retries)
         if path is not None:
             try:
@@ -160,8 +166,9 @@ class LLMOperator(Operator):
 
 _DEFAULT_INSTRUCTION = (
     "You are a precise data classifier for an LLM training-data platform. "
-    "For each item, assign zero or more labels chosen STRICTLY from the allowed "
-    "label list. Judge by the item's content."
+    "For each item, identify its primary subject from the allowed label list and "
+    "optionally add directly supported secondary subjects. Judge only by the "
+    "item's content; do not infer a label from the source URL or prior metadata."
 )
 
 # The output JSON schema is fixed and minimal: only index + label list.
@@ -169,43 +176,79 @@ _SCHEMA_HINT = (
     'Return ONLY a JSON object with this exact schema, no prose:\n'
     '{"results": [{"index": <int>, "labels": [<string>, ...]}]}\n'
     "- index: the item index exactly as given\n"
-    "- labels: a subset of the allowed labels (may be empty)\n"
+    "- labels: a non-empty subset of the allowed labels; put the primary domain first\n"
     "- include one results entry per item; use no labels outside the allowed list"
 )
 
 
 @register("domain_classify")
 class DomainClassify(LLMOperator):
-    """Per-item multi-label domain/function classifier via an LLM.
+    """Lake-synchronised, per-item multi-label domain classifier via an LLM.
 
     Args (via ``--arg k=v``; values are JSON):
       * ``model``           model-pool name (required)
-      * ``labels``          allowed label list, e.g. ``["code","math","web"]``
+      * ``labels``          optional additional labels, e.g.
+                            ``["text2sql","robotics"]``
       * ``field``           core column to receive the primary label (default ``domain``)
+      * ``sync_lake``       include the current lake's registered/observed
+                            domain classes (default ``true``)
       * ``prompt``          optional custom instruction (JSON schema is always appended)
       * ``chunk_size``      items per LLM call, <=10 (default 10)
       * ``max_concurrency`` thread cap (default 64)
 
-    Writes the full label list to ``tags.labels`` and the first label to the
-    ``field`` core column (so recipe filters like ``domain='code'`` keep working).
+    Every lake keeps a persistent registry seeded with several broad built-in
+    domains.  On setup this operator synchronises any distinct ``domain`` values
+    already found in the lake, then classifies against the union of that registry
+    and optional labels.  Thus labels such as ``text2sql`` already used by a
+    lake remain available without editing every pipeline YAML.
+
+    Writes the full label list to ``tags.domain_labels`` (and the legacy
+    ``tags.labels`` alias) and the first label to ``field`` so recipe filters
+    such as ``domain='code'`` continue to work.
     """
     spec = OperatorSpec(
-        "domain_classify", "1.0", "score", gpu_required=False,
-        description="LLM per-item multi-label domain/function classifier.")
+        "domain_classify", "1.1", "score", gpu_required=False,
+        description="LLM domain classifier using persistent + lake-synchronised labels.")
 
     def __init__(self, model=None, labels=None, prompt=None, field="domain",
-                 chunk_size=MAX_CHUNK, max_concurrency=DEFAULT_CONCURRENCY, **kw):
+                 sync_lake=True, chunk_size=MAX_CHUNK,
+                 max_concurrency=DEFAULT_CONCURRENCY, **kw):
         super().__init__(model, chunk_size, max_concurrency, **kw)
-        self.labels = list(labels or [])
+        if labels is None:
+            labels = []
+        if not isinstance(labels, (list, tuple)):
+            raise ValueError("domain_classify labels must be a JSON list")
+        self.extra_labels = _unique_labels(labels)
+        self.labels: list[str] = []
         self.prompt = prompt
         self.field = field
+        self.sync_lake = bool(sync_lake)
 
     def setup(self, ctx: OperatorContext) -> None:
         super().setup(ctx)
-        if not self.labels:
-            raise ValueError(
-                "domain_classify requires a 'labels' arg, e.g. "
-                "--arg labels='[\"code\",\"math\",\"web\"]'")
+        lake_labels: list[str] = []
+        if ctx.root:
+            from pathlib import Path
+            from ..catalog import Catalog
+
+            catalog = Catalog(Path(ctx.root) / "catalog.db")
+            try:
+                # Explicit pipeline labels are durable too; subsequent runs and
+                # other classifier invocations see the same vocabulary.
+                if self.extra_labels:
+                    catalog.register_domain_classes(self.extra_labels, source="user")
+                if self.sync_lake:
+                    lake_labels = [item["name"] for item in catalog.sync_domain_classes()]
+                else:
+                    lake_labels = [item["name"] for item in catalog.list_domain_classes()]
+                catalog.commit()
+            finally:
+                catalog.close()
+        self.labels = _unique_labels(
+            [*schema.DEFAULT_DOMAIN_CLASSES, *lake_labels, *self.extra_labels]
+        )
+        if not self.labels:  # defensive; defaults above make this unreachable
+            raise ValueError("domain_classify has no allowed labels")
 
     def build_messages(self, chunk: Batch) -> list[dict]:
         items = [{"index": i,
@@ -227,9 +270,11 @@ class DomainClassify(LLMOperator):
             idx = entry.get("index")
             if not isinstance(idx, int) or not (0 <= idx < len(chunk)):
                 continue
-            labels = [str(l) for l in entry.get("labels", []) if l in allowed]
+            labels = [str(label) for label in entry.get("labels", [])
+                      if label in allowed]
             row = chunk[idx]
-            row["labels"] = labels            # full list -> tags.labels
+            row["domain_labels"] = labels     # full list -> tags.domain_labels
+            row["labels"] = labels            # backward-compatible tag alias
             if labels:
                 row[self.field] = labels[0]   # primary -> core column
 
@@ -237,3 +282,15 @@ class DomainClassify(LLMOperator):
 def _json(obj) -> str:
     import json
     return json.dumps(obj, ensure_ascii=False)
+
+
+def _unique_labels(values) -> list[str]:
+    """Normalize labels while preserving the declared priority/order."""
+    labels: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        label = str(value).strip()
+        if label and label not in seen:
+            labels.append(label)
+            seen.add(label)
+    return labels

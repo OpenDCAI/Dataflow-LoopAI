@@ -161,8 +161,7 @@ def _save_task_progress(state: Dict[str, Any], task_id: str) -> None:
 
     judger = state.get("judger", {})
     updates: Dict[str, Any] = {}
-    for k in ("output_result_path", "output_case_path", "output_problem_path",
-              "output_pred_path", "bench"):
+    for k in ("bench_result", "extra_bench_result"):
         if k in judger and judger[k]:
             updates[k] = judger[k]
     update_configer_task_state_config("judger", updates, task_id=task_id)
@@ -282,6 +281,8 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         )
 
     # 5. JSONL 字段校验
+    from loopai.skills.Judger.utils.data import check_jsonl_fields
+
     if task_type == "code":
         fmt = judger.get("eval_format_type", "")
         if fmt == "mbpp":
@@ -308,11 +309,6 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
                 stream_writer=writer,
                 message=f"Problem file {problem_path} has invalid fields for task type {task_type}.",
             )
-
-    # 6. 重置输出路径
-    state["judger"]["output_result_path"] = ""
-    state["judger"]["output_case_path"] = ""
-    state["judger"]["output_problem_path"] = ""
 
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="配置校验通过",
@@ -507,6 +503,92 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
     )
 
 
+def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
+    """将 bench entry 的字段注入到 state["judger"]，使标准 pipeline 可直接运行。"""
+    judger = state.setdefault("judger", {})
+    # 清除上一个 bench 的字段，避免残留
+    for k in ("eval_format_type", "eval_text2sql_dir",
+              "bench_dataflow_eval_type", "key_mapping"):
+        judger.pop(k, None)
+    judger["eval_task_type"] = bench.get("task_type", "code")
+    judger["eval_problem_path"] = bench.get("problem_path", "")
+    judger["bench_name"] = bench.get("name", "")
+    if bench.get("case_num") is not None:
+        judger["eval_case_num"] = bench["case_num"]
+    else:
+        judger.setdefault("eval_case_num", 10)
+    if bench.get("batch_size") is not None:
+        judger["eval_batch_size"] = bench["batch_size"]
+    else:
+        judger.setdefault("eval_batch_size", 10)
+    if bench.get("text2sql_dir"):
+        judger["eval_text2sql_dir"] = bench["text2sql_dir"]
+    if bench.get("eval_type"):
+        judger["bench_dataflow_eval_type"] = bench["eval_type"]
+    if bench.get("key_mapping"):
+        judger["key_mapping"] = bench["key_mapping"]
+
+
+def _run_single_bench(
+    state: Dict[str, Any],
+    bench: Dict[str, Any],
+    writer,
+) -> Dict[str, Any]:
+    """运行单个 bench 的完整流水线，返回 bench result dict。"""
+    _apply_bench_to_state(state, bench)
+
+    task_type = bench["task_type"]
+    if task_type == "general_text":
+        steps = _GENERAL_TEXT_STEPS
+    else:
+        steps = _CODE_TEXTSQL_STEPS
+
+    bench_name = bench["name"]
+    logger.info(f"[Judger] bench {bench_name} (task_type={task_type}) starting...")
+    writer(StreamEvent(
+        current="judger", progress=0.0,
+        message=f"Bench 开始: {bench_name}",
+        data={"bench_name": bench_name, "task_type": task_type}))
+
+    for step_name in steps:
+        state["current"] = f"{bench_name}.{step_name}"
+        logger.info(f"[Judger] [{bench_name}] step {step_name}")
+        if step_name == "finish":
+            break
+        state = _run_step(step_name, state, writer)
+
+    # 收集结果
+    judger = state.get("judger", {})
+    if task_type == "general_text":
+        bench_data = judger.get("bench") or {}
+        result = {
+            "bench_name": bench_name,
+            "task_type": task_type,
+            "output_result_path": judger.get("output_result_path", ""),
+            "output_pred_path": judger.get("output_pred_path", ""),
+            "eval_status": bench_data.get("eval_status", "success"),
+            "meta": bench_data.get("meta", {}),
+            "key_mapping": bench_data.get("key_mapping", {}),
+            "metrics": (bench_data.get("meta", {})).get("eval_result", {}),
+        }
+    else:
+        result = {
+            "bench_name": bench_name,
+            "task_type": task_type,
+            "output_case_path": judger.get("output_case_path", ""),
+            "output_result_path": judger.get("output_result_path", ""),
+            "metrics": judger.get("metrics", {}),
+            "eval_status": "success",
+        }
+
+    writer(StreamEvent(
+        current="judger", progress=1.0,
+        message=f"Bench 完成: {bench_name}",
+        data={"bench_name": bench_name, "result": result}))
+    logger.info(f"[Judger] bench {bench_name} done")
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Main pipeline runner / 主流水线执行器
 # ---------------------------------------------------------------------------
@@ -543,6 +625,20 @@ def run_judger_pipeline(
         state = _load_task_state(task_id)
     elif state is not None:
         state = dict(state)
+        # If state from starter yaml is incomplete (e.g. missing benchlist),
+        # load full judger config from DB (task model state)
+        try:
+            db_state = _load_task_state(task_id)
+            db_judger = db_state.get("judger") or {}
+            if db_judger:
+                # Merge DB judger fields into state, but keep output_dir from yaml
+                db_judger.pop("_last_completed", None)
+                db_judger.pop("_current", None)
+                for k, v in db_judger.items():
+                    if v is not None and v != "":
+                        state["judger"][k] = v
+        except Exception:
+            pass
     else:
         state = _load_task_state(task_id)
         if not state.get("judger"):
@@ -571,63 +667,101 @@ def run_judger_pipeline(
 
     output_dir = state.get("output_dir", "./outputs")
 
+    judger_cfg = state.get("judger") or {}
+
+    def _parse_benchlist(val):
+        """textarea 可能返回 JSON 字符串（单行或多行），转为 list。"""
+        if isinstance(val, str):
+            # 尝试整体解析
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+            # 尝试按行解析（每行一个 JSON 对象）
+            items = []
+            for line in val.strip().split("\n"):
+                line = line.strip()
+                if line:
+                    try:
+                        items.append(json.loads(line))
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+            if items:
+                return items
+            return []
+        return val if isinstance(val, list) else []
+
+    benchlist = _parse_benchlist(judger_cfg.get("benchlist")) or []
+    extra_benchlist = _parse_benchlist(judger_cfg.get("extra_benchlist")) or []
+
+    if not benchlist and not extra_benchlist:
+        emit_error(
+            ValueError("benchlist 和 extra_benchlist 都为空，请至少配置一个评测集"),
+            code=ErrorCode.CONFIG_ERROR, recoverable=True,
+            stream_writer=writer,
+            message="Both benchlist and extra_benchlist are empty. Please configure at least one bench.",
+        )
+
     writer(StreamEvent(
         current="judger", progress=0.0, message="Judger pipeline started",
-        data={"task_id": task_id, "resume": resume,
-              "task_type": (state.get("judger") or {}).get("eval_task_type")}))
+        data={"task_id": task_id, "resume": resume}))
 
-    # 根据任务类型选择流水线
-    task_type = (state.get("judger") or {}).get("eval_task_type", "code")
-    steps = _GENERAL_TEXT_STEPS if task_type == "general_text" else _CODE_TEXTSQL_STEPS
+    logger.info(f"[Judger] task_id={task_id} "
+                f"benchlist={[b.get('name') for b in benchlist]} "
+                f"extra_benchlist={[b.get('name') for b in extra_benchlist]}")
 
-    judger_cfg = state.get("judger") or {}
-    logger.info(f"[Judger] task_id={task_id} task_type={task_type} "
-                f"pipeline={' -> '.join(steps)}")
-    logger.info(f"[Judger] model_path={judger_cfg.get('eval_model_path')} "
-                f"problem_path={judger_cfg.get('eval_problem_path')} "
-                f"batch_size={judger_cfg.get('eval_batch_size')} "
-                f"case_num={judger_cfg.get('eval_case_num')} "
-                f"gpu={judger_cfg.get('cuda_visible_devices')} "
-                f"tp_size={judger_cfg.get('eval_vllm_tensor_parallel_size')}")
+    bench_results: List[Dict[str, Any]] = []
+    secondary_results: List[Dict[str, Any]] = []
+    state["judger"]["bench_result"] = bench_results
+    state["judger"]["extra_bench_result"] = secondary_results
 
-    # 确定起始步骤
-    if from_step is not None:
-        start_step = normalize_judger_step(from_step)
-    elif resume:
-        start_step = _resume_step_from_state(state)
-    else:
-        start_step = steps[0]
-
-    if start_step is None:
-        start_step = steps[0]
-    start_at = _start_index(start_step, steps)
-
-    if from_step is None and _is_finished(state):
-        logger.info(f"[Judger] already finished, skip")
-        return state
-
-    # 按序执行各步骤
-    for i, step_name in enumerate(steps[start_at:], start_at):
-        state["current"] = f"judger.{step_name}"
-        logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} starting...")
-        _save_task_progress(state, task_id)
-
-        writer(StreamEvent(
-            current=state["current"], progress=0.0,
-            message=f"步骤开始: {step_name}"))
-
-        if step_name == "finish":
-            state["last_completed"] = "finish"
+    # 主任务（失败记录后退出）
+    for bench in benchlist:
+        try:
+            result = _run_single_bench(state, bench, writer)
+            bench_results.append(result)
             _save_task_progress(state, task_id)
-            writer(StreamEvent(
-                current=state["current"], progress=1.0, message="流水线完成"))
-            logger.info(f"[Judger] pipeline finished")
-            return state
+        except SystemExit:
+            bench_results.append({
+                "bench_name": bench.get("name", "unknown"),
+                "eval_status": "failed",
+                "meta": {"error": "Bench evaluation failed"},
+            })
+            _save_task_progress(state, task_id)
+            raise
+        except Exception as exc:
+            bench_results.append({
+                "bench_name": bench.get("name", "unknown"),
+                "eval_status": "failed",
+                "meta": {"error": str(exc)},
+            })
+            _save_task_progress(state, task_id)
+            raise
 
-        state = _run_step(step_name, state, writer)
-        state["last_completed"] = step_name
-        _save_task_progress(state, task_id)
+    # 附加任务（失败记录后继续）
+    for bench in extra_benchlist:
+        try:
+            result = _run_single_bench(state, bench, writer)
+            secondary_results.append(result)
+            _save_task_progress(state, task_id)
+        except SystemExit:
+            secondary_results.append({
+                "bench_name": bench.get("name", "unknown"),
+                "eval_status": "failed",
+                "meta": {"error": "Bench evaluation failed"},
+            })
+        except Exception as exc:
+            secondary_results.append({
+                "bench_name": bench.get("name", "unknown"),
+                "eval_status": "failed",
+                "meta": {"error": str(exc)},
+            })
 
-        logger.info(f"[Judger] step [{i+1}/{len(steps)}] {step_name} done")
-
+    state["last_completed"] = "finish"
+    _save_task_progress(state, task_id)
+    writer(StreamEvent(
+        current="finish", progress=1.0, message="流水线完成"))
+    logger.info(f"[Judger] pipeline finished")
     return state

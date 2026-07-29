@@ -81,6 +81,7 @@ def prepare_trainer_run(
         context_id=context_id,
         log_file_path=output_root,
         version_id=initial_version_id,
+        event_dir=get_trainer_event_dir(state),
     )
     if seed_writer.version_id is None:
         seed_writer.refresh_version_id()
@@ -116,6 +117,7 @@ def prepare_trainer_run(
         context_id=context_id,
         log_file_path=output_root,
         version_id=run_id,
+        event_dir=get_trainer_event_dir(state),
     )
 
 
@@ -173,7 +175,13 @@ def _persist_trainer_event(state: dict[str, Any], event: StreamEvent) -> None:
             version_id=version_id,
         )
         event.version_id = writer.version_id
-        writer(event)
+        persisted_payload = event.json()
+        if event.status == "completed":
+            writer.set_completed(persisted_payload)
+        elif event.status in {"failed", "cancelled"}:
+            writer.set_failed(persisted_payload)
+        else:
+            writer.set_running(persisted_payload)
         state.setdefault("trainer", {})["trainer_event_log_path"] = str(writer.event_path)
     except Exception as exc:
         logger.warning(f"写入 Trainer 事件日志失败: {exc}")
@@ -224,5 +232,11 @@ def emit_trainer_event(
     )
     _persist_trainer_event(state, event)
     payload = event.json()
+    try:
+        from loopai.skills.Trainer.utils.persistent_worker import record_worker_event
+
+        record_worker_event(state, payload)
+    except Exception as exc:
+        logger.warning(f"更新 Trainer Worker 状态失败: {exc}")
     writer(payload)
     return event

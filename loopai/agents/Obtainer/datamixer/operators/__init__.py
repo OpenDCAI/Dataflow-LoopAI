@@ -17,6 +17,7 @@ from . import llm  # noqa: F401 - side effect: register LLM operators
 from . import posttrain  # noqa: F401 - side effect: register post-training ops
 from . import scorers  # noqa: F401 - side effect: register model-based scorers
 from . import dataflow  # noqa: F401 - side effect: register the DataFlow bridge
+from . import webpage  # noqa: F401 - side effect: register webpage/PT/SFT ops
 from .dataflow import (
     DataFlowBridge,
     DataFlowStorage,
@@ -24,6 +25,7 @@ from .dataflow import (
     load_dataflow_operator,
 )
 from .llm import DomainClassify, LLMOperator
+from .webpage import PTToSFTQA, WebpageToPT
 from .pipeline import PipelineResult, load_pipeline, run_pipeline
 
 __all__ = [
@@ -46,4 +48,6 @@ __all__ = [
     "PipelineResult",
     "LLMOperator",
     "DomainClassify",
+    "WebpageToPT",
+    "PTToSFTQA",
 ]

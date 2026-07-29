@@ -1,6 +1,6 @@
 ---
 name: obtainer
-description: Use this skill when LoopAI needs dataset discovery, acquisition, DataMixer lakehouse operations, data processing, indexing, recipe planning, or production training-data export. In long-running Codex SDK loops, when Analyzer produces an analysis report, failure taxonomy, or user request that implies new training data is needed, Codex must activate this Obtainer skill, interpret the data need, and start the managed dataset-acquisition-agent worker. The outer Codex context must not run SearchAgent, download manifest, or ingest directly for normal acquisition.
+description: Use this skill when LoopAI needs dataset discovery, acquisition, web-page collection, DataMixer lakehouse operations, data processing, indexing, recipe planning, or production training-data export. In long-running Codex SDK loops, when Analyzer produces an analysis report, failure taxonomy, or user request that implies new training data is needed, Codex must activate this Obtainer skill, interpret the data need, and start the managed dataset-acquisition-agent worker. The worker concurrently runs SearchAgent and the registered DataMixer WebAgent; the outer Codex context must not run either acquisition bridge, download manifest, or ingest directly for normal acquisition.
 ---
 
 # Obtainer Skill
@@ -8,9 +8,11 @@ description: Use this skill when LoopAI needs dataset discovery, acquisition, Da
 ## Purpose
 
 Obtainer is the agent-facing workflow for turning a data need into a production
-training-data artifact. SearchAgent handles dataset discovery. DataMixer is the
-only data-lake command surface for storage, ingest, processing, indexing,
-sampling, recipe planning, export, snapshots, and lineage.
+training-data artifact. SearchAgent discovers hosted datasets, while the
+registered Domain Data Acquisition WebAgent (`domain_data_acquisition`, legacy
+alias `webcrawler_dm`) collects primary vertical-domain webpages as raw L1 data. DataMixer
+is the only data-lake command surface for storage, ingest, processing,
+indexing, sampling, recipe planning, export, snapshots, and lineage.
 
 When a long-running Codex SDK loop receives an Analyzer report, failure taxonomy,
 training recipe, or next-iteration data request, treat it as an Obtainer input,
@@ -19,7 +21,7 @@ not a generic coding task:
 1. Identify whether the report needs dataset acquisition, production export, or both.
 2. For acquisition/download/ingest, start the managed
    `dataset-acquisition-agent` worker instead of manually driving
-   SearchAgent/download/ingest from the outer Codex context.
+   SearchAgent/WebAgent/download/ingest from the outer Codex context.
 3. Poll worker status and decide whether to resume the same worker or start a
    fresh worker.
 4. Run DataMixer processing, quality, decontamination, deduplication, indexing,
@@ -58,6 +60,12 @@ not a generic coding task:
   --yes` is explicitly supplied. Prefer `dm lake scan` before choosing a
   warehouse, so the agent sees project and cache candidates instead of guessing
   paths.
+- **Use lake context, not repeated boilerplate.** After a lake is loaded or
+  initialized, use `dm --lake .loopai/lake.yaml ...` for agents. The pointer
+  persists the warehouse, selected WebAgent, model name, worker/subquery
+  defaults, current acquisition run, and current campaign id. Do not pass a
+  FastAPI/Configer SQLite file as `--root`; `--root` must be a DataMixer
+  warehouse containing `datamixer.toml`.
 - **Prepare worker intent before acquiring from a report.** First recognize the
   dataset-acquisition intent: target sample shape, task types, domains, source
   hints, proportions, quality gates, and concrete search objectives. Pass that
@@ -67,10 +75,18 @@ not a generic coding task:
 - **Objectives describe dataset shape, not only error keywords.** Use objectives
   like "buggy and fixed Python code pairs for syntax error repair", not only
   "SyntaxError" or "missing".
-- **Worker search order:** inside the acquisition worker, use
-  deepsearch/research context first, then provider search such as Hugging Face
-  and Kaggle. The final download list must be grounded in current external
-  sources.
+- **Dual discovery streams:** inside the acquisition worker, start SearchAgent
+  and the registered `domain_data_acquisition` campaign concurrently. It is a
+  vertical-domain data source collector, not a general browser helper. SearchAgent finds
+  hosted datasets for the provider download manifest; WebAgent collects primary
+  webpages into a distinct DataMixer L1 dataset. Wait for both streams, retain
+  their separate artifacts/statuses, and include both outcomes in
+  `final_report.json`. A failure in one stream must not erase successful output
+  from the other.
+- **WebAgent model prerequisite:** choose a registered DataMixer model with
+  `dm model list --json` before launching WebAgent. If none exists, record
+  `webagent_model_missing`; do not invent credentials or silently omit the
+  WebAgent stream.
 - **Worker must inspect `searchagent_manifest.json` before downloading.** If
   errors are non-empty, the download list is empty, candidates are unrelated to
   the interpreted intent, or sources cannot satisfy the requested sample shape,
@@ -145,29 +161,30 @@ loopai-obtainercli dm lake scan --link .loopai/lake.yaml --project-root .
 loopai-obtainercli dm lake current --link .loopai/lake.yaml
 loopai-obtainercli dm lake load --warehouse /path/to/warehouse --link .loopai/lake.yaml
 loopai-obtainercli dm lake delete --link .loopai/lake.yaml
+loopai-obtainercli dm lake context --link .loopai/lake.yaml
 ```
 
 `dm lake delete` unloads only the pointer by default. Use
 `--delete-warehouse --yes` only when the actual reusable warehouse should be
 removed.
 
-SearchAgent and provider download are internal acquisition bridges. In the
-normal product workflow, outer Codex reaches them only by starting
-`dataset-acquisition-agent`. Do not call low-level `searchagent` or
-`download manifest` from the outer Codex context.
+SearchAgent, WebAgent, and provider download are internal acquisition bridges.
+In the normal product workflow, outer Codex reaches them only by starting
+`dataset-acquisition-agent`. Do not call low-level `searchagent`, `webagent`,
+or `download manifest` from the outer Codex context.
 
 ## Dataset Acquisition Worker
 
-For dataset discovery, candidate pruning, download, normalization, and DataMixer
-ingest, outer Codex must use the managed acquisition worker CLI wrapper. Here
+For dataset discovery, WebAgent collection, candidate pruning, download,
+normalization, and DataMixer ingest, outer Codex must use the managed acquisition
+worker CLI wrapper. Here
 "worker" means the `dataset-acquisition-agent start` command below, not a
 generic spawned Codex worker.
 
 Start a new worker:
 
 ```bash
-${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent start \
-  --run ./outputs/acquisition_run \
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --lake .loopai/lake.yaml dataset-acquisition-agent start \
   --analysis-report ./outputs/analyzer_report.md \
   --objective "collect general-domain instruction and QA datasets" \
   --keywords "instruction tuning dataset, open QA dataset, summarization dataset" \
@@ -186,15 +203,13 @@ to block. If `loopai-obtainercli` is not installed as a console script, use the
 Poll status:
 
 ```bash
-${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent status \
-  --run ./outputs/acquisition_run
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --lake .loopai/lake.yaml dataset-acquisition-agent status
 ```
 
 Resume the same worker:
 
 ```bash
-${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --root /path/to/warehouse dataset-acquisition-agent resume \
-  --run ./outputs/acquisition_run \
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --lake .loopai/lake.yaml dataset-acquisition-agent resume \
   --message "Remove unrelated datasets from the filtered manifest, then continue ingest."
 ```
 
@@ -203,10 +218,11 @@ requests a one-off override. By default the wrapper resolves the Codex worker
 model from Starter's model pool, preferring the configured Codex default model.
 
 The worker wrapper injects the detailed acquisition policy: explicit objective
-and keywords, candidate list review against the original request before
-download, rejection report, 100,000-row and 2GiB JSONL-output per-dataset caps,
-normalized JSONL, DataMixer-only ingest/status/query/index operations, complete
-provenance tags, and `final_report.json`.
+and keywords, concurrent SearchAgent/WebAgent discovery, candidate list review
+against the original request before download, rejection report, 100,000-row and
+2GiB JSONL-output per-dataset caps, normalized JSONL, DataMixer-only
+ingest/status/query/index operations, complete provenance tags, and
+`final_report.json`.
 
 ## DataMixer Lake Operations
 
@@ -242,6 +258,7 @@ loopai-obtainercli dm --root /path/to/warehouse ingest code_repair_mix \
   --source huggingface \
   --license unknown \
   --task-type SFT \
+  --quality-level L3 \
   --tokenizer tiktoken:o200k_base \
   --json
 ```
@@ -253,6 +270,7 @@ If the downloaded file is not already normalized JSONL, use DataMixer
 loopai-obtainercli dm --root /path/to/warehouse agent-ingest ./downloads/raw_file \
   --engine builtin \
   --dataset code_repair_mix \
+  --quality-level L3 \
   --json
 ```
 
@@ -323,7 +341,7 @@ loopai-obtainercli dm --root /path/to/warehouse snapshot create --name sft_mix_v
 loopai-obtainercli dm --root /path/to/warehouse lineage list --json
 ```
 
-## Internal SearchAgent Bridge
+## Internal Discovery Bridges
 
 This low-level discovery bridge is for the isolated acquisition worker and for
 human debugging only. If you are the outer Codex agent responding to a user
@@ -345,8 +363,8 @@ loopai-obtainercli dm --root /path/to/warehouse dataset-acquisition-agent start 
 
 For multi-domain requests such as text2sql + math + code, describe the domain
 split in `--objective` / `--keywords` / `--message`; the worker policy will
-create isolated SearchAgent tasks internally and use parallelism where
-appropriate. 尽量使用镜像源；当 Hugging Face/Kaggle 等主站访问慢或不稳定时，
+create isolated SearchAgent tasks and a WebAgent campaign internally, then run
+the two discovery streams concurrently. 尽量使用镜像源；当 Hugging Face/Kaggle 等主站访问慢或不稳定时，
 优先选择可用镜像或缓存源，并在 manifest/report 里记录实际来源。
 
 ## Manifest Download
@@ -448,8 +466,9 @@ explicitly instead of letting a global mapping choose the wrong source.
 ## End-To-End Agent Workflow
 
 1. Read the Analyzer report or user request and extract the dataset intent.
-2. Start `dataset-acquisition-agent` for discovery, candidate pruning,
-   download, normalization, and DataMixer ingest.
+2. Start `dataset-acquisition-agent`; it concurrently runs SearchAgent for
+   hosted-dataset discovery and WebAgent for raw webpage L1 collection, then
+   performs candidate pruning, download, normalization, and DataMixer ingest.
 3. Poll `dataset-acquisition-agent status`; resume or restart based on
    `final_report.json` and blockers.
 4. Run DataMixer operators for quality, deduplication, safety, and post-training
