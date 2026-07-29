@@ -32,11 +32,6 @@ import { useLoopAI } from '@/stores/loopAI'
 
 export default {
     name: 'LooperTakeoverWarning',
-    data() {
-        return {
-            looperCancelSource: null
-        }
-    },
     watch: {
         'msgStreamModel.loading'(val, oldVal) {
             if (val) {
@@ -121,15 +116,29 @@ export default {
         looperInterrupt() {
             this.clearLooperTakeoverCountdown()
             this.$barWarning(this.local('Looper takeover interrupted.'), {
-                status: 'warning'
+                status: 'default'
             })
         },
-        looperCancel() {
-            this.looperCancelSource?.cancel('Interrupted by user.')
-            this.looperCancelSource = null
-            this.$barWarning(this.local('Looper takeover canceled.'), {
-                status: 'warning'
-            })
+        async looperCancel() {
+            let session_id = this.currentTask?.task_id
+            if (!session_id) return
+            try {
+                const res = await this.$api.starter.starterCodexSessionLooperTerminate(session_id)
+                if (res.code === 200) {
+                    this.clearLooperTakeoverCountdown()
+                    this.$barWarning(this.local('Looper takeover canceled.'), {
+                        status: 'default'
+                    })
+                    return
+                }
+                this.$barWarning(res.message || this.local('Failed to cancel Looper takeover.'), {
+                    status: 'warning'
+                })
+            } catch (error) {
+                this.$barWarning(error.message, {
+                    status: 'error'
+                })
+            }
         },
         async runLooperTakeover() {
             let session_id = this.currentTask?.task_id
