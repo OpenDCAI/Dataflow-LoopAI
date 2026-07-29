@@ -948,7 +948,7 @@ class JudgerState(BaseModel):
         description="评估模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
-    #eval_base_url: str = Field(
+    # eval_base_url: str = Field(
     #    default=None,
     #    title="评估模型 Base URL",
     #    description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
@@ -972,7 +972,7 @@ class JudgerState(BaseModel):
         description="评估模型 Top P",
         json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
-    #eval_format_type: str = Field(
+    # eval_format_type: str = Field(
     #    default=None,
     #    title="评估模型问题格式化类型",
     #    description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"和\"mbpp\"，格式化后的文件将存至output_dir定义的目录下",
@@ -1014,25 +1014,37 @@ class JudgerState(BaseModel):
         default_factory=list,
         title="主任务评测集",
         description="主任务评测集列表，每个元素包含 name、task_type、problem_path 等字段",
-        json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "bench_list", "ui_group": "评估模型", "nested_allowed_values": {
+            "task_type": ["code", "text2sql", "general_text"],
+            "eval_type": ["key2_qa", "key2_q_ma", "key3_q_choices_a", "key3_q_choices_as", "key3_q_a_rejected", "key1_text_score"]
+        }}
     )
     extra_benchlist: List[Dict[str, Any]] = Field(
         default_factory=list,
         title="附加任务评测集",
         description="附加任务评测集列表，格式同 benchlist。失败不影响主任务",
-        json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "bench_list", "ui_group": "评估模型", "nested_allowed_values": {
+            "task_type": ["code", "text2sql", "general_text"],
+            "eval_type": ["key2_qa", "key2_q_ma", "key3_q_choices_a", "key3_q_choices_as", "key3_q_a_rejected", "key1_text_score"]
+        }}
     )
     bench_result: List[Dict[str, Any]] = Field(
         default_factory=list,
         title="主任务评测结果",
         description="主任务 bench 评测结果列表，供 Analyzer 读取",
-        json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型", "nested_allowed_values": {
+            "task_type": ["code", "text2sql", "general_text"],
+            "eval_type": ["key2_qa", "key2_q_ma", "key3_q_choices_a", "key3_q_choices_as", "key3_q_a_rejected", "key1_text_score"]
+        }}
     )
     extra_bench_result: List[Dict[str, Any]] = Field(
         default_factory=list,
         title="附加任务评测结果",
         description="附加任务 bench 评测结果列表，供 Analyzer 读取",
-        json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型"}
+        json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型", "nested_allowed_values": {
+                    "task_type": ["code", "text2sql", "general_text"],
+                    "eval_type": ["key2_qa", "key2_q_ma", "key3_q_choices_a", "key3_q_choices_as", "key3_q_a_rejected", "key1_text_score"]
+        }}
     )
     cuda_visible_devices: str = Field(
         default="0",
@@ -1048,7 +1060,6 @@ class JudgerState(BaseModel):
     #    description="是否通过 API 调用模型",
     #    json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
     # )
-    
 
 
 class AnalyzerState(BaseModel):
@@ -1383,7 +1394,8 @@ class TrainerState(BaseModel):
         default_factory=dict,
         title="Verl Reward 参数",
         description="传给 Reward 预设或自定义函数的可选参数",
-        json_schema_extra={"ui_type": "textarea", "language": "json", "ui_group": "训练模型"},
+        json_schema_extra={"ui_type": "textarea",
+                           "language": "json", "ui_group": "训练模型"},
     )
     verl_selection_metric: str = Field(
         default="val-core/*/acc/mean@*",
