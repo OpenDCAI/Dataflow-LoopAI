@@ -41,3 +41,7 @@ catalog.db
 datamixer.toml
 .yarnrc.yml
 .yarn
+blobs/
+lineage/
+dataset_cards/
+obtainer_runs/
