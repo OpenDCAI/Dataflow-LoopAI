@@ -1,33 +1,44 @@
 <script setup>
-import { Box, Newline, Text } from '@vue-tui/runtime'
-import { useAppConfig } from '../../stores/appConfig.js'
-import { useLoopAI } from '../../stores/loopAI.js'
-import { formatTime } from '../../lib/format.js'
-import { useTasksView } from '../../hooks/tasks/useTasksView.js'
+import { TBox, TText } from '@simon_he/vue-tui/vue'
 
-const appConfig = useAppConfig()
-const loopAI = useLoopAI()
-const { title, visibleTasks, footerHint } = useTasksView()
+defineProps({
+  x: { type: Number, required: true },
+  y: { type: Number, required: true },
+  w: { type: Number, required: true },
+  h: { type: Number, required: true },
+  title: { type: String, required: true },
+  visibleTasks: { type: Array, required: true },
+  selectedTaskIndex: { type: Number, required: true },
+  taskItemHeight: { type: Number, default: 3 },
+  taskPage: { type: Number, required: true },
+  taskPageCount: { type: Number, required: true },
+  pageLabel: { type: String, required: true },
+  emptyText: { type: String, required: true }
+})
 </script>
 
 <template>
-  <Box borderStyle="round" padding="1" flexDirection="column">
-    <Text bold color="yellow">{{ title }}</Text>
-    <Newline />
-    <template v-if="loopAI.tasks.length === 0">
-      <Text dimColor>{{ appConfig.local('No task yet. Press n to create one.') }}</Text>
-      <Text>/new &lt;name&gt;</Text>
+  <TBox :x="x" :y="y" :w="w" :h="h" border :title="title" :style="{ fg: 'yellowBright' }">
+    <TText :x="1" :y="0" :w="Math.max(12, w - 6)" :value="'所有任务列表'" :style="{ fg: 'white' }" />
+    <template v-if="visibleTasks.length">
+      <template v-for="({ task, actualIndex }, index) in visibleTasks" :key="task.task_id || task.id || index">
+        <TText
+          :x="1"
+          :y="1 + index * taskItemHeight"
+          :w="Math.max(12, w - 6)"
+          :value="`${actualIndex === selectedTaskIndex ? '▶' : ' '} ${task.name || task.task_id || '-'}`"
+          :style="actualIndex === selectedTaskIndex ? { fg: 'greenBright', bold: true } : { fg: 'whiteBright' }"
+        />
+        <TText
+          :x="3"
+          :y="2 + index * taskItemHeight"
+          :w="Math.max(12, w - 8)"
+          :value="`id=${task.task_id || '-'}   updated=${task.updatedLabel || '-'}`"
+          :style="{ fg: 'cyanBright' }"
+        />
+      </template>
     </template>
-    <template v-else>
-      <Box v-for="item in visibleTasks" :key="item.task.task_id" flexDirection="column" marginBottom="1">
-        <Text :inverse="item.actualIndex === loopAI.selectedTaskIndex" :bold="item.actualIndex === loopAI.selectedTaskIndex" color="green" wrap="truncate-end">
-          {{ `${item.actualIndex === loopAI.selectedTaskIndex ? '>' : ' '} ${item.task.name || item.task.task_id || '(unnamed)'}` }}
-        </Text>
-        <Text dimColor wrap="truncate-end">id: {{ item.task.task_id }}</Text>
-        <Text dimColor wrap="truncate-end">{{ appConfig.local('updated') }}: {{ formatTime(item.task.updatedAt) }}</Text>
-      </Box>
-      <Text dimColor>{{ footerHint }}</Text>
-      <Text dimColor>Enter = activate task</Text>
-    </template>
-  </Box>
+    <TText v-else :x="1" :y="1" :w="Math.max(12, w - 6)" :value="emptyText" :style="{ fg: 'redBright' }" />
+    <TText :x="1" :y="Math.max(1, h - 3)" :w="Math.max(12, w - 6)" :value="`${pageLabel} ${taskPage}/${taskPageCount}   Enter = activate task`" :style="{ fg: 'white' }" />
+  </TBox>
 </template>

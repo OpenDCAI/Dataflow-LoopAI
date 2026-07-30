@@ -1,28 +1,33 @@
 <script setup>
-import { computed } from 'vue'
-import { Box, Text } from '@vue-tui/runtime'
-import { useAppConfig } from '../../stores/appConfig.js'
-import { useLoopAI } from '../../stores/loopAI.js'
+import { TInputBox, TText } from '@simon_he/vue-tui/vue'
 
-const appConfig = useAppConfig()
-const loopAI = useLoopAI()
-
-const hint = computed(() => {
-  if (appConfig.page === 'home') {
-    return '/tasks  /now  /quit'
-  }
-  if (appConfig.page === 'tasks') {
-    return '/now  /new <name>  /rename <name>  /delete  /refresh  /quit'
-  }
-  return '/tasks  /refresh  /quit  ←/→ nodes  Tab focus pane  j/k scroll pane  type query and Enter'
+const props = defineProps({
+  x: { type: Number, required: true },
+  y: { type: Number, required: true },
+  w: { type: Number, required: true },
+  inputBoxHeight: { type: Number, default: 3 },
+  modelValue: { type: String, required: true },
+  commandHint: { type: String, required: true },
+  statusLine: { type: String, required: true }
 })
-const footerStatus = computed(() => (loopAI.loading ? '[loading]' : `[${loopAI.toast}]`))
+
+const emit = defineEmits(['update:modelValue', 'keydown'])
 </script>
 
 <template>
-  <Box marginTop="1" borderStyle="round" padding="1" flexDirection="column">
-    <Text dimColor>{{ hint }}</Text>
-    <Text color="green">> {{ loopAI.inputBuffer }}</Text>
-    <Text dimColor>{{ footerStatus }}</Text>
-  </Box>
+  <TInputBox
+    :x="x"
+    :y="y"
+    :w="w"
+    :h="inputBoxHeight"
+    title="Command"
+    :model-value="props.modelValue"
+    placeholder="/tasks, /now, /new demo, 或直接发送消息"
+    :style="{ fg: 'whiteBright' }"
+    auto-focus
+    @update:model-value="(value) => emit('update:modelValue', value)"
+    @keydown="(event) => emit('keydown', event)"
+  />
+  <TText :x="2" :y="y + 2" :w="Math.max(12, w - 6)" :value="commandHint" :style="{ fg: 'white' }" />
+  <TText :x="2" :y="y + 3" :w="Math.max(12, w - 6)" :value="statusLine" :style="{ fg: 'greenBright' }" />
 </template>

@@ -13946,7 +13946,7 @@ function createGridBuffer(cols, rows, options = {}) {
 		widthProvider: options.widthProvider ?? "default"
 	};
 }
-function clamp$2(n, min, max) {
+function clamp$4(n, min, max) {
 	return Math.max(min, Math.min(max, n));
 }
 /**
@@ -14068,10 +14068,10 @@ function putCell(buffer, x, y, ch, style) {
 }
 function fillRect(buffer, x, y, w, h, ch = " ", style) {
 	if (w <= 0 || h <= 0 || buffer.cols === 0 || buffer.rows === 0) return;
-	const x0 = clamp$2(Math.floor(x), 0, buffer.cols);
-	const y0 = clamp$2(Math.floor(y), 0, buffer.rows);
-	const x1 = clamp$2(Math.floor(x + w), 0, buffer.cols);
-	const y1 = clamp$2(Math.floor(y + h), 0, buffer.rows);
+	const x0 = clamp$4(Math.floor(x), 0, buffer.cols);
+	const y0 = clamp$4(Math.floor(y), 0, buffer.rows);
+	const x1 = clamp$4(Math.floor(x + w), 0, buffer.cols);
+	const y1 = clamp$4(Math.floor(y + h), 0, buffer.rows);
 	if (x1 <= x0 || y1 <= y0) return;
 	if (charCellWidth(ch, buffer.widthProvider) === 1) {
 		const fillCell = createCell(ch, style, buffer.widthProvider);
@@ -14126,10 +14126,10 @@ function clearRect(buffer, x, y, w, h) {
 		return;
 	}
 	if (w <= 0 || h <= 0) return;
-	const x0 = clamp$2(Math.floor(x), 0, buffer.cols);
-	const y0 = clamp$2(Math.floor(y), 0, buffer.rows);
-	const x1 = clamp$2(Math.floor(x + w), 0, buffer.cols);
-	const y1 = clamp$2(Math.floor(y + h), 0, buffer.rows);
+	const x0 = clamp$4(Math.floor(x), 0, buffer.cols);
+	const y0 = clamp$4(Math.floor(y), 0, buffer.rows);
+	const x1 = clamp$4(Math.floor(x + w), 0, buffer.cols);
+	const y1 = clamp$4(Math.floor(y + h), 0, buffer.rows);
 	if (x1 <= x0 || y1 <= y0) return;
 	for (let yy = y0; yy < y1; yy++) {
 		const row = getBufferRow(buffer, yy);
@@ -14197,13 +14197,13 @@ function scrollBuffer(buffer, lines) {
 	else if (n > 0) recomputeFingerprintsForRows(buffer, buffer.rows - inserted, buffer.rows);
 	else recomputeFingerprintsForRows(buffer, 0, inserted);
 	markAllDirty(buffer);
-	buffer.cursorY = clamp$2(buffer.cursorY - n, 0, Math.max(0, buffer.rows - 1));
+	buffer.cursorY = clamp$4(buffer.cursorY - n, 0, Math.max(0, buffer.rows - 1));
 }
 function scrollBufferRegion(buffer, startY, endY, lines) {
 	const n = Math.trunc(lines);
 	if (n === 0 || buffer.rows === 0) return [];
-	const start = clamp$2(Math.floor(startY), 0, buffer.rows);
-	const end = clamp$2(Math.floor(endY), 0, buffer.rows);
+	const start = clamp$4(Math.floor(startY), 0, buffer.rows);
+	const end = clamp$4(Math.floor(endY), 0, buffer.rows);
 	const height = end - start;
 	if (height <= 0) return [];
 	const absDelta = Math.abs(n);
@@ -14220,7 +14220,7 @@ function scrollBufferRegion(buffer, startY, endY, lines) {
 	if (absDelta >= height) {
 		replaceRegionWithBlankRows();
 		recomputeFingerprintsForRows(buffer, start, end);
-		if (buffer.cursorY >= start && buffer.cursorY < end) buffer.cursorY = clamp$2(buffer.cursorY - n, start, Math.max(start, end - 1));
+		if (buffer.cursorY >= start && buffer.cursorY < end) buffer.cursorY = clamp$4(buffer.cursorY - n, start, Math.max(start, end - 1));
 		return insertedRows;
 	}
 	const regionRows = [];
@@ -14253,7 +14253,7 @@ function scrollBufferRegion(buffer, startY, endY, lines) {
 		buffer.grid[physY] = nextRows[i];
 	}
 	recomputeFingerprintsForRows(buffer, start, end);
-	if (buffer.cursorY >= start && buffer.cursorY < end) buffer.cursorY = clamp$2(buffer.cursorY - n, start, Math.max(start, end - 1));
+	if (buffer.cursorY >= start && buffer.cursorY < end) buffer.cursorY = clamp$4(buffer.cursorY - n, start, Math.max(start, end - 1));
 	return insertedRows;
 }
 function resizeBuffer(buffer, cols, rows) {
@@ -14304,8 +14304,8 @@ function resizeBuffer(buffer, cols, rows) {
 		if (y < buffer.dirtyMin) buffer.dirtyMin = y;
 		if (y > buffer.dirtyMax) buffer.dirtyMax = y;
 	}
-	buffer.cursorX = clamp$2(buffer.cursorX, 0, Math.max(0, nextCols));
-	buffer.cursorY = clamp$2(buffer.cursorY, 0, Math.max(0, nextRows - 1));
+	buffer.cursorX = clamp$4(buffer.cursorX, 0, Math.max(0, nextCols));
+	buffer.cursorY = clamp$4(buffer.cursorY, 0, Math.max(0, nextRows - 1));
 	if (buffer.fingerprintFn) {
 		const len = nextRows * nextCols;
 		if (len > 0) {
@@ -23824,7 +23824,7 @@ function mentionChipStyle(baseStyle, _absPath, _fsKind) {
 }
 //#endregion
 //#region ../../vue-tui/src/vue/components/input/utils/inlineText.ts
-function clamp$1(n, min, max) {
+function clamp$3(n, min, max) {
 	return Math.max(min, Math.min(max, n));
 }
 function isAscii(text) {
@@ -23877,7 +23877,7 @@ function mentionLabelAt(mentions, mentionIndex) {
 }
 function countTokens(value, token, endIndex = value.length) {
 	let count = 0;
-	const limit = clamp$1(endIndex, 0, value.length);
+	const limit = clamp$3(endIndex, 0, value.length);
 	for (let i = 0; i < limit; i++) if (value[i] === token) count++;
 	return count;
 }
@@ -23892,8 +23892,8 @@ function nextInlineBoundary(value, multilineToken, mentionToken, start, end) {
 	return next;
 }
 function forEachInlineUnit(value, multilineToken, mentionToken, multilineTexts, mentions, start, end, cb) {
-	const safeStart = clamp$1(start, 0, value.length);
-	const safeEnd = clamp$1(end, safeStart, value.length);
+	const safeStart = clamp$3(start, 0, value.length);
+	const safeEnd = clamp$3(end, safeStart, value.length);
 	let tokenIndex = countMultilineTokens$1(value, multilineToken, safeStart);
 	let mentionIndex = countMentionTokens$1(value, mentionToken, safeStart);
 	for (let i = safeStart; i < safeEnd;) {
@@ -23973,8 +23973,8 @@ function mentionIndexAt$1(value, mentionToken, index) {
 	return countMentionTokens$1(value, mentionToken, index);
 }
 function textCellWidthInline(value, multilineToken, mentionToken, multilineTexts, mentions, start, end) {
-	const safeStart = clamp$1(start, 0, value.length);
-	const safeEnd = clamp$1(end, safeStart, value.length);
+	const safeStart = clamp$3(start, 0, value.length);
+	const safeEnd = clamp$3(end, safeStart, value.length);
 	let cells = 0;
 	forEachInlineUnit(value, multilineToken, mentionToken, multilineTexts, mentions, 0, safeEnd, (unit) => {
 		if (unit.end > safeStart) cells += unit.cells;
@@ -24082,7 +24082,7 @@ function wrapToLinesFirstWidthInline$1(value, multilineToken, mentionToken, mult
 	}];
 }
 function indexToWrappedCellColFirstWidthInline$1(value, multilineToken, mentionToken, multilineTexts, mentions, index, firstWidth, width) {
-	const safe = clamp$1(index, 0, value.length);
+	const safe = clamp$3(index, 0, value.length);
 	const lines = wrapToLinesFirstWidthInline$1(value, multilineToken, mentionToken, multilineTexts, mentions, firstWidth, width);
 	for (let i = 0; i < lines.length; i++) {
 		const info = lines[i];
@@ -24103,7 +24103,7 @@ function indexToWrappedCellColFirstWidthInline$1(value, multilineToken, mentionT
 	};
 }
 function indexToLineCellColInline$1(value, multilineToken, mentionToken, multilineTexts, mentions, index) {
-	const safe = clamp$1(index, 0, value.length);
+	const safe = clamp$3(index, 0, value.length);
 	const lines = computeLines$1(value);
 	for (let i = 0; i < lines.length; i++) {
 		const info = lines[i];
@@ -24230,7 +24230,7 @@ function buildInlineSelectionSegments$1(value, displayValue, multilineToken, men
 }
 //#endregion
 //#region ../../vue-tui/src/vue/components/input/utils/primitives.ts
-function clamp(n, min, max) {
+function clamp$2(n, min, max) {
 	return Math.max(min, Math.min(max, n));
 }
 function isWhitespace(ch) {
@@ -24954,7 +24954,7 @@ function buildInlineSelectionSegments(value, displayValue, multilineTexts, menti
 //#endregion
 //#region ../../vue-tui/src/vue/components/input/utils/wordNavigation.ts
 function findWordLeft(text, index) {
-	let i = clamp(index, 0, text.length);
+	let i = clamp$2(index, 0, text.length);
 	if (i === 0) return 0;
 	while (i > 0 && isWhitespace(text[i - 1])) i--;
 	if (i === 0) return 0;
@@ -24968,7 +24968,7 @@ function findWordLeft(text, index) {
 	return i;
 }
 function findWordRight(text, index) {
-	let i = clamp(index, 0, text.length);
+	let i = clamp$2(index, 0, text.length);
 	if (i >= text.length) return text.length;
 	while (i < text.length && isWhitespace(text[i])) i++;
 	if (i >= text.length) return text.length;
@@ -24983,7 +24983,7 @@ function findWordRight(text, index) {
 }
 function tokenRangeAt(value, index) {
 	if (!value) return null;
-	let i = clamp(index, 0, value.length);
+	let i = clamp$2(index, 0, value.length);
 	if (i === value.length) i = value.length - 1;
 	if (i < 0) return null;
 	const ch0 = value[i];
@@ -25030,7 +25030,7 @@ function computeLines(value) {
 	return computeLines$1(value);
 }
 function indexToLineCellCol(value, index) {
-	const safe = clamp(index, 0, value.length);
+	const safe = clamp$2(index, 0, value.length);
 	const lines = computeLines(value);
 	for (let i = 0; i < lines.length; i++) {
 		const info = lines[i];
@@ -25294,7 +25294,7 @@ var TInput = /* @__PURE__ */ defineComponent({
 		function measureContent(r) {
 			const wAll = Math.max(0, Math.floor(r.w));
 			const hAll = Math.max(0, Math.floor(r.h));
-			const padX = clamp(PADDING_X, 0, Math.floor(wAll / 2));
+			const padX = clamp$2(PADDING_X, 0, Math.floor(wAll / 2));
 			return {
 				wAll,
 				hAll,
@@ -25394,8 +25394,8 @@ var TInput = /* @__PURE__ */ defineComponent({
 				cursor.value = nextLen;
 				anchor.value = null;
 			} else {
-				cursor.value = clamp(cursor.value, 0, nextLen);
-				if (anchor.value != null) anchor.value = clamp(anchor.value, 0, nextLen);
+				cursor.value = clamp$2(cursor.value, 0, nextLen);
+				if (anchor.value != null) anchor.value = clamp$2(anchor.value, 0, nextLen);
 			}
 			if (composing.value && next !== prev) {
 				compositionBlocked.value = true;
@@ -25512,12 +25512,12 @@ var TInput = /* @__PURE__ */ defineComponent({
 		});
 		const useCompositionEnd = typeof document !== "undefined";
 		function getComposedTextAndCursor(value) {
-			const baseCursor = clamp(cursor.value, 0, value.length);
+			const baseCursor = clamp$2(cursor.value, 0, value.length);
 			if (composing.value && compositionText.value) {
 				const text = `${value.slice(0, baseCursor)}${compositionText.value}${value.slice(baseCursor)}`;
 				return {
 					text,
-					cursor: useCompositionEnd ? clamp(baseCursor + compositionText.value.length, 0, text.length) : baseCursor
+					cursor: useCompositionEnd ? clamp$2(baseCursor + compositionText.value.length, 0, text.length) : baseCursor
 				};
 			}
 			return {
@@ -25543,9 +25543,9 @@ var TInput = /* @__PURE__ */ defineComponent({
 					else if (col > scrollX.value + viewW - 1) scrollX.value = Math.max(0, col - (viewW - 1));
 				}
 				const maxTop = Math.max(0, lines.length - height);
-				scrollY.value = clamp(scrollY.value, 0, maxTop);
+				scrollY.value = clamp$2(scrollY.value, 0, maxTop);
 				if (line < scrollY.value) scrollY.value = line;
-				else if (line > scrollY.value + height - 1) scrollY.value = clamp(line - (height - 1), 0, maxTop);
+				else if (line > scrollY.value + height - 1) scrollY.value = clamp$2(line - (height - 1), 0, maxTop);
 			});
 		}
 		function computeImeAnchorCell() {
@@ -25566,8 +25566,8 @@ var TInput = /* @__PURE__ */ defineComponent({
 				const pos = wrap ? indexToWrappedCellColFirstWidthInline(cursorText, props.multilineTexts, props.mentions, composed.cursor, firstWidth, width) : indexToLineCellColInline(cursorText, props.multilineTexts, props.mentions, composed.cursor);
 				const cx0 = pos.col - offX;
 				const cy = pos.line - offY;
-				const cx = clamp(cx0, 0, Math.max(0, width - 1));
-				const cyClamped = clamp(cy, 0, Math.max(0, r.h - 1));
+				const cx = clamp$2(cx0, 0, Math.max(0, width - 1));
+				const cyClamped = clamp$2(cy, 0, Math.max(0, r.h - 1));
 				return {
 					cellX: r.x + padX + cx,
 					cellY: r.y + cyClamped
@@ -25595,8 +25595,8 @@ var TInput = /* @__PURE__ */ defineComponent({
 				const r = absRect.value;
 				const { w: contentW, padX } = measureContent(r);
 				const width = Math.max(1, contentW);
-				const localX = clamp(cellX - (r.x + padX), 0, Math.max(0, contentW - 1));
-				const localY = clamp(cellY - r.y, 0, Math.max(0, r.h - 1));
+				const localX = clamp$2(cellX - (r.x + padX), 0, Math.max(0, contentW - 1));
+				const localY = clamp$2(cellY - r.y, 0, Math.max(0, r.h - 1));
 				const value = getValue();
 				const wrap = wrapMode.value;
 				const xText = localX;
@@ -25605,14 +25605,14 @@ var TInput = /* @__PURE__ */ defineComponent({
 				let hit = null;
 				if (wrap) {
 					const lines = wrapToLinesFirstWidthInline(value, props.multilineTexts, props.mentions, firstWidth, width);
-					const line = clamp(scrollY.value + localY, 0, lines.length - 1);
+					const line = clamp$2(scrollY.value + localY, 0, lines.length - 1);
 					const col = xText;
 					const hit2 = wrappedCellColToIndexInline(value, props.multilineTexts, props.mentions, lines[line], col);
 					next = hit2.index;
 					hit = hit2.hit;
 				} else {
 					const lines = computeLines(value);
-					const line = clamp(scrollY.value + localY, 0, lines.length - 1);
+					const line = clamp$2(scrollY.value + localY, 0, lines.length - 1);
 					const col = scrollX.value + xText;
 					const info = lines[line];
 					const hit2 = lineCellColToIndexInline(value, props.multilineTexts, props.mentions, info.start, info.end, col);
@@ -25642,7 +25642,7 @@ var TInput = /* @__PURE__ */ defineComponent({
 		}
 		function applyEdit(nextValue, nextCursor, commit = false) {
 			withInputWidth(() => {
-				const c = clamp(nextCursor, 0, nextValue.length);
+				const c = clamp$2(nextCursor, 0, nextValue.length);
 				cursor.value = c;
 				anchor.value = null;
 				composing.value = false;
@@ -25672,7 +25672,7 @@ var TInput = /* @__PURE__ */ defineComponent({
 				if (extend) {
 					if (anchor.value == null) anchor.value = prev;
 				} else anchor.value = null;
-				cursor.value = clamp(nextCursor, 0, value.length);
+				cursor.value = clamp$2(nextCursor, 0, value.length);
 				if (wrapMode.value) {
 					const { w: contentW } = measureContent(absRect.value);
 					const w = Math.max(1, contentW);
@@ -26530,7 +26530,7 @@ var TInput = /* @__PURE__ */ defineComponent({
 					anchor.value = null;
 				}
 				hasFocusedOnce.value = true;
-				cursor.value = clamp(cursor.value, 0, valueLen);
+				cursor.value = clamp$2(cursor.value, 0, valueLen);
 				ensureCursorVisible();
 				syncImeAnchorNow();
 				startBlink();
@@ -26916,8 +26916,8 @@ var TInput = /* @__PURE__ */ defineComponent({
 					const cx0 = pos.col - offX;
 					const cy = pos.line - offY;
 					if (imeAnchor && focused.value) {
-						const cx = clamp(cx0, 0, Math.max(0, width - 1));
-						const cyClamped = clamp(cy, 0, Math.max(0, r.h - 1));
+						const cx = clamp$2(cx0, 0, Math.max(0, width - 1));
+						const cyClamped = clamp$2(cy, 0, Math.max(0, r.h - 1));
 						imeAnchor.value = {
 							cellX: r.x + padX + cx,
 							cellY: r.y + cyClamped,
@@ -27069,7 +27069,7 @@ var TInputBox = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/components/home/LogoPixel.vue
-var _sfc_main$1 = {
+var _sfc_main$8 = {
 	__name: "LogoPixel",
 	props: {
 		x: {
@@ -27138,6 +27138,1000 @@ var _sfc_main$1 = {
 		};
 	}
 };
+//#endregion
+//#region src/components/home/HomePanel.vue
+var _sfc_main$7 = {
+	__name: "HomePanel",
+	props: {
+		x: {
+			type: Number,
+			required: true
+		},
+		y: {
+			type: Number,
+			required: true
+		},
+		w: {
+			type: Number,
+			required: true
+		},
+		h: {
+			type: Number,
+			required: true
+		},
+		helpLines: {
+			type: Array,
+			required: true
+		}
+	},
+	setup(__props) {
+		return (_ctx, _cache) => {
+			return openBlock(), createBlock(unref(TBox), {
+				x: __props.x,
+				y: __props.y,
+				w: __props.w,
+				h: __props.h,
+				border: "",
+				title: "Home",
+				style: { fg: "magentaBright" }
+			}, {
+				default: withCtx(() => [createVNode(_sfc_main$8, {
+					x: Math.max(2, Math.floor((__props.w - 92) / 2)),
+					y: 2
+				}, null, 8, ["x"]), (openBlock(true), createElementBlock(Fragment, null, renderList(__props.helpLines, (line, index) => {
+					return openBlock(), createBlock(unref(TText), {
+						key: `home-help-${index}`,
+						x: Math.max(2, Math.floor((__props.w - 96) / 2)),
+						y: 11 + index * 2,
+						w: Math.min(96, __props.w - 6),
+						value: line,
+						style: normalizeStyle$1(index === 0 ? { fg: "greenBright" } : { fg: "whiteBright" })
+					}, null, 8, [
+						"x",
+						"y",
+						"w",
+						"value",
+						"style"
+					]);
+				}), 128))]),
+				_: 1
+			}, 8, [
+				"x",
+				"y",
+				"w",
+				"h"
+			]);
+		};
+	}
+};
+//#endregion
+//#region src/components/layout/AppFooter.vue
+var _sfc_main$6 = {
+	__name: "AppFooter",
+	props: {
+		x: {
+			type: Number,
+			required: true
+		},
+		y: {
+			type: Number,
+			required: true
+		},
+		w: {
+			type: Number,
+			required: true
+		},
+		inputBoxHeight: {
+			type: Number,
+			default: 3
+		},
+		modelValue: {
+			type: String,
+			required: true
+		},
+		commandHint: {
+			type: String,
+			required: true
+		},
+		statusLine: {
+			type: String,
+			required: true
+		}
+	},
+	emits: ["update:modelValue", "keydown"],
+	setup(__props, { emit: __emit }) {
+		const props = __props;
+		const emit = __emit;
+		return (_ctx, _cache) => {
+			return openBlock(), createElementBlock(Fragment, null, [
+				createVNode(unref(TInputBox), {
+					x: __props.x,
+					y: __props.y,
+					w: __props.w,
+					h: __props.inputBoxHeight,
+					title: "Command",
+					"model-value": props.modelValue,
+					placeholder: "/tasks, /now, /new demo, 或直接发送消息",
+					style: { fg: "whiteBright" },
+					"auto-focus": "",
+					"onUpdate:modelValue": _cache[0] || (_cache[0] = (value) => emit("update:modelValue", value)),
+					onKeydown: _cache[1] || (_cache[1] = (event) => emit("keydown", event))
+				}, null, 8, [
+					"x",
+					"y",
+					"w",
+					"h",
+					"model-value"
+				]),
+				createVNode(unref(TText), {
+					x: 2,
+					y: __props.y + 2,
+					w: Math.max(12, __props.w - 6),
+					value: __props.commandHint,
+					style: { fg: "white" }
+				}, null, 8, [
+					"y",
+					"w",
+					"value"
+				]),
+				createVNode(unref(TText), {
+					x: 2,
+					y: __props.y + 3,
+					w: Math.max(12, __props.w - 6),
+					value: __props.statusLine,
+					style: { fg: "greenBright" }
+				}, null, 8, [
+					"y",
+					"w",
+					"value"
+				])
+			], 64);
+		};
+	}
+};
+//#endregion
+//#region src/components/layout/AppHeader.vue
+var _sfc_main$5 = {
+	__name: "AppHeader",
+	props: {
+		cols: {
+			type: Number,
+			required: true
+		},
+		page: {
+			type: String,
+			required: true
+		},
+		tasksCount: {
+			type: Number,
+			required: true
+		},
+		loading: {
+			type: Boolean,
+			required: true
+		},
+		apiBaseUrl: {
+			type: String,
+			required: true
+		},
+		lastRefreshAt: {
+			type: String,
+			default: "-"
+		}
+	},
+	setup(__props) {
+		return (_ctx, _cache) => {
+			return openBlock(), createBlock(unref(TBox), {
+				x: 0,
+				y: 0,
+				w: __props.cols,
+				h: 3,
+				border: "",
+				title: "LoopAI TUI",
+				style: { fg: "cyanBright" }
+			}, {
+				default: withCtx(() => [createVNode(unref(TText), {
+					x: 1,
+					y: 0,
+					w: Math.max(8, __props.cols - 4),
+					value: `/${__props.page}   tasks=${__props.tasksCount}   loading=${__props.loading ? "yes" : "no"}`
+				}, null, 8, ["w", "value"]), createVNode(unref(TText), {
+					x: 1,
+					y: 1,
+					w: Math.max(8, __props.cols - 4),
+					value: `api=${__props.apiBaseUrl}   updated=${__props.lastRefreshAt || "-"}`,
+					style: { fg: "white" }
+				}, null, 8, ["w", "value"])]),
+				_: 1
+			}, 8, ["w"]);
+		};
+	}
+};
+//#endregion
+//#region src/components/now/NodeBoard.vue
+var _sfc_main$4 = {
+	__name: "NodeBoard",
+	props: {
+		x: {
+			type: Number,
+			required: true
+		},
+		y: {
+			type: Number,
+			required: true
+		},
+		w: {
+			type: Number,
+			required: true
+		},
+		h: {
+			type: Number,
+			required: true
+		},
+		title: {
+			type: String,
+			required: true
+		},
+		visibleNodeCards: {
+			type: Array,
+			required: true
+		},
+		nowActivePane: {
+			type: String,
+			required: true
+		},
+		emptyText: {
+			type: String,
+			required: true
+		},
+		nodeCardWidth: {
+			type: Number,
+			default: 44
+		},
+		nodeCardGap: {
+			type: Number,
+			default: 2
+		}
+	},
+	setup(__props) {
+		return (_ctx, _cache) => {
+			return openBlock(), createBlock(unref(TBox), {
+				x: __props.x,
+				y: __props.y,
+				w: __props.w,
+				h: __props.h,
+				border: "",
+				title: __props.title,
+				style: { fg: "yellowBright" }
+			}, {
+				default: withCtx(() => [__props.visibleNodeCards.length ? (openBlock(true), createElementBlock(Fragment, { key: 0 }, renderList(__props.visibleNodeCards, (card, index) => {
+					return openBlock(), createBlock(unref(TBox), {
+						key: `${card.key}-${index}`,
+						x: index * (__props.nodeCardWidth + __props.nodeCardGap),
+						y: 0,
+						w: __props.nodeCardWidth,
+						h: Math.max(8, __props.h - 2),
+						border: "",
+						title: `${card.label} · ${card.runtimeStatus}`,
+						style: normalizeStyle$1(card.borderStyle)
+					}, {
+						default: withCtx(() => [
+							createVNode(unref(TText), {
+								x: 1,
+								y: 0,
+								w: __props.nodeCardWidth - 4,
+								value: `updated: ${card.runtimeUpdatedLabel || "-"}`,
+								style: { fg: "white" }
+							}, null, 8, ["w", "value"]),
+							createVNode(unref(TText), {
+								x: 1,
+								y: 1,
+								w: __props.nodeCardWidth - 4,
+								value: card.focusLabel,
+								style: normalizeStyle$1(card.focusStyle)
+							}, null, 8, [
+								"w",
+								"value",
+								"style"
+							]),
+							createVNode(unref(TBox), {
+								x: 1,
+								y: 3,
+								w: Math.floor((__props.nodeCardWidth - 5) / 2),
+								h: Math.max(6, __props.h - 7),
+								border: "",
+								title: card.stateTitle,
+								style: normalizeStyle$1(card.stateBorderStyle)
+							}, {
+								default: withCtx(() => [(openBlock(true), createElementBlock(Fragment, null, renderList(card.stateLines, (line, lineIndex) => {
+									return openBlock(), createBlock(unref(TText), {
+										key: `${card.key}-state-${lineIndex}`,
+										x: 0,
+										y: lineIndex,
+										w: Math.floor((__props.nodeCardWidth - 11) / 2),
+										value: line,
+										style: { fg: "whiteBright" }
+									}, null, 8, [
+										"y",
+										"w",
+										"value"
+									]);
+								}), 128))]),
+								_: 2
+							}, 1032, [
+								"w",
+								"h",
+								"title",
+								"style"
+							]),
+							createVNode(unref(TBox), {
+								x: Math.floor((__props.nodeCardWidth - 5) / 2) + 2,
+								y: 3,
+								w: Math.floor((__props.nodeCardWidth - 5) / 2),
+								h: Math.max(6, __props.h - 7),
+								border: "",
+								title: card.customTitle,
+								style: normalizeStyle$1(card.customBorderStyle)
+							}, {
+								default: withCtx(() => [(openBlock(true), createElementBlock(Fragment, null, renderList(card.customLines, (line, lineIndex) => {
+									return openBlock(), createBlock(unref(TText), {
+										key: `${card.key}-custom-${lineIndex}`,
+										x: 0,
+										y: lineIndex,
+										w: Math.floor((__props.nodeCardWidth - 11) / 2),
+										value: line,
+										style: normalizeStyle$1(line.startsWith("┌") || line.startsWith("└") ? { fg: "yellowBright" } : { fg: "whiteBright" })
+									}, null, 8, [
+										"y",
+										"w",
+										"value",
+										"style"
+									]);
+								}), 128))]),
+								_: 2
+							}, 1032, [
+								"x",
+								"w",
+								"h",
+								"title",
+								"style"
+							])
+						]),
+						_: 2
+					}, 1032, [
+						"x",
+						"w",
+						"h",
+						"title",
+						"style"
+					]);
+				}), 128)) : (openBlock(), createBlock(unref(TText), {
+					key: 1,
+					x: 1,
+					y: 1,
+					w: Math.max(12, __props.w - 6),
+					value: __props.emptyText,
+					style: { fg: "redBright" }
+				}, null, 8, ["w", "value"]))]),
+				_: 1
+			}, 8, [
+				"x",
+				"y",
+				"w",
+				"h",
+				"title"
+			]);
+		};
+	}
+};
+//#endregion
+//#region src/components/now/NodeSummary.vue
+var _sfc_main$3 = {
+	__name: "NodeSummary",
+	props: {
+		x: {
+			type: Number,
+			required: true
+		},
+		y: {
+			type: Number,
+			required: true
+		},
+		w: {
+			type: Number,
+			required: true
+		},
+		h: {
+			type: Number,
+			required: true
+		},
+		currentTaskName: {
+			type: String,
+			required: true
+		},
+		currentTaskId: {
+			type: String,
+			required: true
+		},
+		status: {
+			type: String,
+			required: true
+		},
+		nodeCount: {
+			type: Number,
+			required: true
+		}
+	},
+	setup(__props) {
+		return (_ctx, _cache) => {
+			return openBlock(), createBlock(unref(TBox), {
+				x: __props.x,
+				y: __props.y,
+				w: __props.w,
+				h: __props.h,
+				border: "",
+				title: "Task Summary",
+				style: { fg: "cyanBright" }
+			}, {
+				default: withCtx(() => [createVNode(unref(TText), {
+					x: 1,
+					y: 0,
+					w: Math.max(12, __props.w - 6),
+					value: `任务: ${__props.currentTaskName}`,
+					style: {
+						fg: "greenBright",
+						bold: true
+					}
+				}, null, 8, ["w", "value"]), createVNode(unref(TText), {
+					x: 1,
+					y: 1,
+					w: Math.max(12, __props.w - 6),
+					value: `id: ${__props.currentTaskId}   状态: ${__props.status}   节点: ${__props.nodeCount}`
+				}, null, 8, ["w", "value"])]),
+				_: 1
+			}, 8, [
+				"x",
+				"y",
+				"w",
+				"h"
+			]);
+		};
+	}
+};
+//#endregion
+//#region src/components/now/TranscriptPane.vue
+var _sfc_main$2 = {
+	__name: "TranscriptPane",
+	props: {
+		x: {
+			type: Number,
+			required: true
+		},
+		y: {
+			type: Number,
+			required: true
+		},
+		w: {
+			type: Number,
+			required: true
+		},
+		h: {
+			type: Number,
+			required: true
+		},
+		nowActivePane: {
+			type: String,
+			required: true
+		},
+		userPreviewLines: {
+			type: Array,
+			required: true
+		},
+		eventViewport: {
+			type: Array,
+			required: true
+		},
+		transcriptViewport: {
+			type: Array,
+			required: true
+		}
+	},
+	setup(__props) {
+		return (_ctx, _cache) => {
+			return openBlock(), createElementBlock(Fragment, null, [
+				createVNode(unref(TBox), {
+					x: __props.x,
+					y: __props.y,
+					w: Math.floor(__props.w * .3),
+					h: __props.h,
+					border: "",
+					title: "User",
+					style: { fg: "cyanBright" }
+				}, {
+					default: withCtx(() => [(openBlock(true), createElementBlock(Fragment, null, renderList(__props.userPreviewLines, (line, index) => {
+						return openBlock(), createBlock(unref(TText), {
+							key: `user-preview-${index}`,
+							x: 1,
+							y: 1 + index,
+							w: Math.max(8, Math.floor(__props.w * .3) - 4),
+							value: line,
+							style: { fg: "cyanBright" }
+						}, null, 8, [
+							"y",
+							"w",
+							"value"
+						]);
+					}), 128))]),
+					_: 1
+				}, 8, [
+					"x",
+					"y",
+					"w",
+					"h"
+				]),
+				createVNode(unref(TBox), {
+					x: __props.x + Math.floor(__props.w * .3),
+					y: __props.y,
+					w: Math.floor(__props.w * .3),
+					h: __props.h,
+					border: "",
+					title: "Runtime",
+					style: normalizeStyle$1({ fg: __props.nowActivePane === "tool" ? "yellowBright" : "whiteBright" })
+				}, {
+					default: withCtx(() => [(openBlock(true), createElementBlock(Fragment, null, renderList(__props.eventViewport, (line, index) => {
+						return openBlock(), createBlock(unref(TText), {
+							key: `event-line-${index}`,
+							x: 1,
+							y: 1 + index,
+							w: Math.max(8, Math.floor(__props.w * .3) - 4),
+							value: line.text,
+							style: normalizeStyle$1(line.style)
+						}, null, 8, [
+							"y",
+							"w",
+							"value",
+							"style"
+						]);
+					}), 128))]),
+					_: 1
+				}, 8, [
+					"x",
+					"y",
+					"w",
+					"h",
+					"style"
+				]),
+				createVNode(unref(TBox), {
+					x: __props.x + Math.floor(__props.w * .6),
+					y: __props.y,
+					w: __props.w - Math.floor(__props.w * .6),
+					h: __props.h,
+					border: "",
+					title: "Transcript",
+					style: normalizeStyle$1({ fg: __props.nowActivePane === "assistant" ? "greenBright" : "magentaBright" })
+				}, {
+					default: withCtx(() => [(openBlock(true), createElementBlock(Fragment, null, renderList(__props.transcriptViewport, (line, index) => {
+						return openBlock(), createBlock(unref(TText), {
+							key: `transcript-line-${index}`,
+							x: 1,
+							y: 1 + index,
+							w: Math.max(8, __props.w - Math.floor(__props.w * .6) - 4),
+							value: line.text,
+							style: normalizeStyle$1(line.style)
+						}, null, 8, [
+							"y",
+							"w",
+							"value",
+							"style"
+						]);
+					}), 128))]),
+					_: 1
+				}, 8, [
+					"x",
+					"y",
+					"w",
+					"h",
+					"style"
+				])
+			], 64);
+		};
+	}
+};
+//#endregion
+//#region src/components/tasks/TaskList.vue
+var _sfc_main$1 = {
+	__name: "TaskList",
+	props: {
+		x: {
+			type: Number,
+			required: true
+		},
+		y: {
+			type: Number,
+			required: true
+		},
+		w: {
+			type: Number,
+			required: true
+		},
+		h: {
+			type: Number,
+			required: true
+		},
+		title: {
+			type: String,
+			required: true
+		},
+		visibleTasks: {
+			type: Array,
+			required: true
+		},
+		selectedTaskIndex: {
+			type: Number,
+			required: true
+		},
+		taskItemHeight: {
+			type: Number,
+			default: 3
+		},
+		taskPage: {
+			type: Number,
+			required: true
+		},
+		taskPageCount: {
+			type: Number,
+			required: true
+		},
+		pageLabel: {
+			type: String,
+			required: true
+		},
+		emptyText: {
+			type: String,
+			required: true
+		}
+	},
+	setup(__props) {
+		return (_ctx, _cache) => {
+			return openBlock(), createBlock(unref(TBox), {
+				x: __props.x,
+				y: __props.y,
+				w: __props.w,
+				h: __props.h,
+				border: "",
+				title: __props.title,
+				style: { fg: "yellowBright" }
+			}, {
+				default: withCtx(() => [
+					createVNode(unref(TText), {
+						x: 1,
+						y: 0,
+						w: Math.max(12, __props.w - 6),
+						value: "所有任务列表",
+						style: { fg: "white" }
+					}, null, 8, ["w"]),
+					__props.visibleTasks.length ? (openBlock(true), createElementBlock(Fragment, { key: 0 }, renderList(__props.visibleTasks, ({ task, actualIndex }, index) => {
+						return openBlock(), createElementBlock(Fragment, { key: task.task_id || task.id || index }, [createVNode(unref(TText), {
+							x: 1,
+							y: 1 + index * __props.taskItemHeight,
+							w: Math.max(12, __props.w - 6),
+							value: `${actualIndex === __props.selectedTaskIndex ? "▶" : " "} ${task.name || task.task_id || "-"}`,
+							style: normalizeStyle$1(actualIndex === __props.selectedTaskIndex ? {
+								fg: "greenBright",
+								bold: true
+							} : { fg: "whiteBright" })
+						}, null, 8, [
+							"y",
+							"w",
+							"value",
+							"style"
+						]), createVNode(unref(TText), {
+							x: 3,
+							y: 2 + index * __props.taskItemHeight,
+							w: Math.max(12, __props.w - 8),
+							value: `id=${task.task_id || "-"}   updated=${task.updatedLabel || "-"}`,
+							style: { fg: "cyanBright" }
+						}, null, 8, [
+							"y",
+							"w",
+							"value"
+						])], 64);
+					}), 128)) : (openBlock(), createBlock(unref(TText), {
+						key: 1,
+						x: 1,
+						y: 1,
+						w: Math.max(12, __props.w - 6),
+						value: __props.emptyText,
+						style: { fg: "redBright" }
+					}, null, 8, ["w", "value"])),
+					createVNode(unref(TText), {
+						x: 1,
+						y: Math.max(1, __props.h - 3),
+						w: Math.max(12, __props.w - 6),
+						value: `${__props.pageLabel} ${__props.taskPage}/${__props.taskPageCount}   Enter = activate task`,
+						style: { fg: "white" }
+					}, null, 8, [
+						"y",
+						"w",
+						"value"
+					])
+				]),
+				_: 1
+			}, 8, [
+				"x",
+				"y",
+				"w",
+				"h",
+				"title"
+			]);
+		};
+	}
+};
+//#endregion
+//#region src/lib/format.js
+var ANSI_PATTERN = /\u001b\[[0-9;]*m/g;
+var stripAnsi = (value = "") => String(value).replace(ANSI_PATTERN, "");
+var visibleLength = (value = "") => stripAnsi(value).length;
+var truncate = (value, width) => {
+	const text = value == null ? "" : String(value);
+	if (width <= 0) return "";
+	if (visibleLength(text) <= width) return text;
+	if (width === 1) return ".";
+	if (width === 2) return "..";
+	return `${stripAnsi(text).slice(0, width - 3)}...`;
+};
+var padRight = (value, width) => {
+	const text = value == null ? "" : String(value);
+	const len = visibleLength(text);
+	if (len >= width) return truncate(text, width);
+	return `${text}${" ".repeat(width - len)}`;
+};
+var wrapText = (value, width) => {
+	const source = value == null ? "" : String(value);
+	if (width <= 1) return [truncate(source, Math.max(width, 1))];
+	const paragraphs = source.replace(/\r/g, "").split("\n");
+	const lines = [];
+	for (const paragraph of paragraphs) {
+		if (!paragraph) {
+			lines.push("");
+			continue;
+		}
+		let remaining = paragraph;
+		while (remaining.length > width) {
+			let cursor = remaining.lastIndexOf(" ", width);
+			if (cursor <= 0) cursor = width;
+			lines.push(remaining.slice(0, cursor).trimEnd());
+			remaining = remaining.slice(cursor).trimStart();
+		}
+		lines.push(remaining);
+	}
+	return lines.length ? lines : [""];
+};
+var formatValue = (value, maxWidth = 48) => {
+	if (value == null) return "null";
+	if (typeof value === "string") return truncate(value.replace(/\s+/g, " ").trim(), maxWidth);
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	try {
+		return truncate(JSON.stringify(value), maxWidth);
+	} catch (error) {
+		return truncate(String(value), maxWidth);
+	}
+};
+var formatTime = (value) => {
+	if (!value) return "-";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return String(value);
+	return date.toLocaleString("zh-CN", { hour12: false });
+};
+//#endregion
+//#region src/lib/messages.js
+var identity = (text) => text;
+var normalizeConversationItem = (item = {}) => {
+	return {
+		role: item.role || "message",
+		content: typeof item.content === "string" ? item.content : formatValue(item.content, 160),
+		id: item.id || null,
+		state: item.state || null
+	};
+};
+var formatConversationLine = (item, width, local = identity) => {
+	const role = item?.role || "message";
+	const roleText = role === "assistant" ? local("assistant") : role === "user" ? local("user") : role === "tool" ? local("tool") : role.toUpperCase();
+	const prefix = `[${String(roleText).toUpperCase()}] `;
+	const bodyWidth = Math.max(10, width - prefix.length);
+	return wrapText(item?.content || "", bodyWidth).map((line, index) => index === 0 ? `${prefix}${line}` : `${" ".repeat(prefix.length)}${line}`);
+};
+var formatTodoList = (items = []) => items.map((item) => `- [${item?.completed ? "x" : " "}] ${item?.text || ""}`);
+var summarizeEvent = (payload = {}, local = identity) => {
+	if (!payload || typeof payload !== "object") return [`[event] ${local("invalid payload")}`];
+	const type = payload.type || "unknown";
+	if (type === "submitted") return [`[${local("Status").toLowerCase()}] ${payload.message || local("submitted")}`];
+	if (type === "starter.codex.init") return [`[${local("init")}] ${local("model")}: ${payload.model || "-"}`, `[${local("init")}] ${local("base_url")}: ${payload.base_url || "-"}`];
+	if (type === "runner.started") return [`[${local("user")}] ${payload.prompt || ""}`];
+	if (type === "finishing") return [`[${local("finishing")}] ${payload.message || ""}`];
+	if (type === "completed") return [`[${local("assistant")}] ${payload?.result?.finalResponse || ""}`];
+	if (type !== "event") return [`[${type}] ${payload.message || ""}`];
+	const event = payload.event || {};
+	if (event.type === "error") return [`[error] ${event.message || local("unknown error")}`];
+	const item = event.item || {};
+	if (!item.type) return [`[event:${event.type || local("Unknown").toLowerCase()}]`];
+	if (item.type === "agent_message") return [`[${local("assistant")}] ${item.text || ""}`];
+	if (item.type === "mcp_tool_call") return [`[${local("tool")}] ${item.server || "-"} / ${item.tool || "-"}`, `[args] ${formatValue(item.arguments, 120)}`];
+	if (item.type === "todo_list") return [`[${local("todo")}]`].concat(formatTodoList(item.items || []));
+	if (item.type === "command_execution") return [`[${local("command")}:${event.type}] ${item.command || ""}`];
+	if (item.type === "file_change") {
+		const firstChange = item.changes?.[0]?.path || "-";
+		return [`[${local("file")}:${event.type}] ${firstChange}`];
+	}
+	return [`[event:${item.type}] ${formatValue(item, 120)}`];
+};
+//#endregion
+//#region src/hooks/now/useNowPanel.js
+function clamp$1(value, min, max) {
+	return Math.max(min, Math.min(max, value));
+}
+function useNowPanel({ bodyY, bodyHeight, bodyWidth, local, currentTask, taskStatus, nodeCards, conversation, sessionEvents, nowActivePane, nodeScrollOffset, nodeStateScrollOffset, nodeCustomScrollOffset, toolScrollOffset, assistantScrollOffset }) {
+	const NODE_CARD_WIDTH = 44;
+	const NODE_CARD_GAP = 2;
+	const NODE_CARD_HEIGHT_MIN = 15;
+	const NODE_CARD_HEIGHT_MAX = 20;
+	const summaryHeight = 4;
+	const nodesAreaY = computed(() => bodyY.value + summaryHeight);
+	const nodesAreaHeight = computed(() => clamp$1(Math.floor(bodyHeight.value * .52), NODE_CARD_HEIGHT_MIN, NODE_CARD_HEIGHT_MAX));
+	const chatAreaY = computed(() => nodesAreaY.value + nodesAreaHeight.value);
+	const chatAreaHeight = computed(() => Math.max(8, bodyY.value + bodyHeight.value - chatAreaY.value));
+	const visibleNodeCount = computed(() => Math.max(1, Math.floor((bodyWidth.value + NODE_CARD_GAP) / 46)));
+	const maxNodeStart = computed(() => Math.max(0, nodeCards.value.length - visibleNodeCount.value));
+	const nodeStart = computed(() => clamp$1(nodeScrollOffset.value || 0, 0, maxNodeStart.value));
+	const nodeBoardLabel = computed(() => `${nodeCards.value.length ? nodeStart.value + 1 : 0}-${Math.min(nodeCards.value.length, nodeStart.value + visibleNodeCount.value)}/${nodeCards.value.length}`);
+	function progressBarLine(progress, width) {
+		const safeWidth = Math.max(8, width);
+		const ratio = clamp$1(Number.isFinite(progress) ? progress : 0, 0, 1);
+		const percent = `${Math.round(ratio * 100)}%`;
+		const barWidth = Math.max(4, safeWidth - percent.length - 3);
+		const filled = Math.round(barWidth * ratio);
+		return `[${"=".repeat(filled)}${"-".repeat(Math.max(0, barWidth - filled))}] ${percent}`;
+	}
+	function stateLinesFor(card, index, width, height) {
+		if (!card) return ["-"];
+		const lines = card.stateEntries?.length ? card.stateEntries.flatMap((entry) => wrapText(`${entry.key}: ${formatValue(entry.value, width * 3)}`, width).concat([""])) : ["-"];
+		const safeOffset = clamp$1(index === 0 ? nodeStateScrollOffset.value : 0, 0, Math.max(0, lines.length - height));
+		return lines.slice(safeOffset, safeOffset + height);
+	}
+	function customLinesFor(card, index, width, height) {
+		if (!card) return ["-"];
+		const groups = Array.isArray(card.customGroups) ? card.customGroups : [];
+		const lines = groups.length ? groups.flatMap((group) => {
+			return [
+				`┌ ${truncate(group.key, Math.max(8, width - 4))}`,
+				...wrapText(`│ msg: ${group.message || "-"}`, Math.max(8, width)).map((line) => padRight(line, width)),
+				`│ ${progressBarLine(typeof group.progress === "number" ? group.progress : 0, Math.max(8, width - 2))}`,
+				...wrapText(`│ data: ${formatValue(group.data, width * 3)}`, Math.max(8, width)).map((line) => padRight(line, width)),
+				`└ updated: ${formatTime(group.updatedAt)}`,
+				""
+			];
+		}) : ["-"];
+		const safeOffset = clamp$1(index === 0 ? nodeCustomScrollOffset.value : 0, 0, Math.max(0, lines.length - height));
+		return lines.slice(safeOffset, safeOffset + height);
+	}
+	const visibleNodeCards = computed(() => nodeCards.value.slice(nodeStart.value, nodeStart.value + visibleNodeCount.value).map((card, index) => ({
+		...card,
+		borderStyle: index === 0 ? { fg: "cyanBright" } : card.running ? { fg: "greenBright" } : { fg: "whiteBright" },
+		focusLabel: index === 0 ? `focus=${nowActivePane.value}` : "preview",
+		focusStyle: { fg: index === 0 ? "cyanBright" : "white" },
+		stateTitle: local("state"),
+		customTitle: local("custom_info"),
+		stateBorderStyle: index === 0 && nowActivePane.value === "state" ? { fg: "cyanBright" } : { fg: "white" },
+		customBorderStyle: index === 0 && nowActivePane.value === "custom" ? { fg: "magentaBright" } : { fg: "white" },
+		stateLines: stateLinesFor(card, index, Math.floor((NODE_CARD_WIDTH - 11) / 2), Math.max(1, nodesAreaHeight.value - 11)),
+		customLines: customLinesFor(card, index, Math.floor((NODE_CARD_WIDTH - 11) / 2), Math.max(1, nodesAreaHeight.value - 11))
+	})));
+	const transcriptEntries = computed(() => {
+		const items = Array.isArray(conversation.value) ? conversation.value : [];
+		if (!items.length) return [{
+			role: "system",
+			text: local("empty")
+		}];
+		return items.flatMap((item) => {
+			const normalized = normalizeConversationItem(item);
+			return formatConversationLine(normalized, Math.max(20, bodyWidth.value - 8), local).map((line) => ({
+				role: normalized.role,
+				text: line
+			}));
+		});
+	});
+	const eventEntries = computed(() => {
+		const items = Array.isArray(sessionEvents.value) ? sessionEvents.value : [];
+		if (!items.length) return [{
+			tone: "default",
+			text: local("empty")
+		}];
+		return items.flatMap((item) => summarizeEvent(item.payload || {}, local).map((line) => ({
+			tone: line.startsWith("[error]") ? "error" : line.startsWith("[tool]") ? "tool" : "default",
+			text: line
+		})));
+	});
+	const transcriptBoxHeight = computed(() => clamp$1(chatAreaHeight.value - 2, 6, 14));
+	const eventBoxHeight = computed(() => clamp$1(chatAreaHeight.value - 2, 6, 12));
+	const latestUser = computed(() => {
+		for (let i = conversation.value.length - 1; i >= 0; i -= 1) {
+			const item = normalizeConversationItem(conversation.value[i]);
+			if (item.role === "user") return item.content;
+		}
+		return "-";
+	});
+	watch([transcriptEntries, transcriptBoxHeight], () => {
+		assistantScrollOffset.value = Math.max(0, transcriptEntries.value.length - Math.max(1, transcriptBoxHeight.value - 2));
+	}, { immediate: true });
+	watch([eventEntries, eventBoxHeight], () => {
+		toolScrollOffset.value = Math.max(0, eventEntries.value.length - Math.max(1, eventBoxHeight.value - 2));
+	}, { immediate: true });
+	function lineStyleForRole(role) {
+		if (role === "user") return { fg: "cyanBright" };
+		if (role === "assistant") return { fg: "greenBright" };
+		if (role === "tool") return { fg: "yellowBright" };
+		return { fg: "whiteBright" };
+	}
+	function lineStyleForEvent(tone) {
+		if (tone === "error") return { fg: "redBright" };
+		if (tone === "tool") return { fg: "yellowBright" };
+		return { fg: "whiteBright" };
+	}
+	return {
+		summaryHeight,
+		nodesAreaY,
+		nodesAreaHeight,
+		chatAreaY,
+		chatAreaHeight,
+		nodeBoardLabel,
+		visibleNodeCards,
+		transcriptViewport: computed(() => {
+			const innerHeight = Math.max(1, transcriptBoxHeight.value - 2);
+			const safeOffset = clamp$1(assistantScrollOffset.value || 0, 0, Math.max(0, transcriptEntries.value.length - innerHeight));
+			return transcriptEntries.value.slice(safeOffset, safeOffset + innerHeight).map((line) => ({
+				...line,
+				style: lineStyleForRole(line.role)
+			}));
+		}),
+		eventViewport: computed(() => {
+			const innerHeight = Math.max(1, eventBoxHeight.value - 2);
+			const safeOffset = clamp$1(toolScrollOffset.value || 0, 0, Math.max(0, eventEntries.value.length - innerHeight));
+			return eventEntries.value.slice(safeOffset, safeOffset + innerHeight).map((line) => ({
+				...line,
+				style: lineStyleForEvent(line.tone)
+			}));
+		}),
+		userPreviewLines: computed(() => wrapText(String(latestUser.value || "-"), Math.max(16, Math.floor(bodyWidth.value * .28) - 4)).slice(-3)),
+		nodeCardWidth: NODE_CARD_WIDTH,
+		nodeCardGap: NODE_CARD_GAP
+	};
+}
+//#endregion
+//#region src/hooks/tasks/useTaskPanel.js
+function clamp(value, min, max) {
+	return Math.max(min, Math.min(max, value));
+}
+function useTaskPanel({ tasks, selectedTaskIndex, bodyHeight }) {
+	const taskItemHeight = 3;
+	const tasksPerPage = computed(() => Math.max(1, Math.floor((bodyHeight.value - 4) / taskItemHeight)));
+	const taskPageCount = computed(() => Math.max(1, Math.ceil(tasks.value.length / tasksPerPage.value)));
+	const taskPage = computed(() => {
+		return clamp(Math.floor((selectedTaskIndex.value || 0) / tasksPerPage.value) + 1, 1, taskPageCount.value);
+	});
+	const taskStart = computed(() => (taskPage.value - 1) * tasksPerPage.value);
+	return {
+		taskItemHeight,
+		taskPage,
+		taskPageCount,
+		visibleTasks: computed(() => tasks.value.slice(taskStart.value, taskStart.value + tasksPerPage.value).map((task, index) => ({
+			task: {
+				...task,
+				updatedLabel: formatTime(task.updatedAt)
+			},
+			actualIndex: taskStart.value + index
+		})))
+	};
+}
 //#endregion
 //#region src/i18n.js
 var i18n = {
@@ -32885,62 +33879,6 @@ async function submitTaskQuery(payload) {
 	return starter.starterCodexStream(payload);
 }
 //#endregion
-//#region src/lib/format.js
-var ANSI_PATTERN = /\u001b\[[0-9;]*m/g;
-var stripAnsi = (value = "") => String(value).replace(ANSI_PATTERN, "");
-var visibleLength = (value = "") => stripAnsi(value).length;
-var truncate = (value, width) => {
-	const text = value == null ? "" : String(value);
-	if (width <= 0) return "";
-	if (visibleLength(text) <= width) return text;
-	if (width === 1) return ".";
-	if (width === 2) return "..";
-	return `${stripAnsi(text).slice(0, width - 3)}...`;
-};
-var padRight = (value, width) => {
-	const text = value == null ? "" : String(value);
-	const len = visibleLength(text);
-	if (len >= width) return truncate(text, width);
-	return `${text}${" ".repeat(width - len)}`;
-};
-var wrapText = (value, width) => {
-	const source = value == null ? "" : String(value);
-	if (width <= 1) return [truncate(source, Math.max(width, 1))];
-	const paragraphs = source.replace(/\r/g, "").split("\n");
-	const lines = [];
-	for (const paragraph of paragraphs) {
-		if (!paragraph) {
-			lines.push("");
-			continue;
-		}
-		let remaining = paragraph;
-		while (remaining.length > width) {
-			let cursor = remaining.lastIndexOf(" ", width);
-			if (cursor <= 0) cursor = width;
-			lines.push(remaining.slice(0, cursor).trimEnd());
-			remaining = remaining.slice(cursor).trimStart();
-		}
-		lines.push(remaining);
-	}
-	return lines.length ? lines : [""];
-};
-var formatValue = (value, maxWidth = 48) => {
-	if (value == null) return "null";
-	if (typeof value === "string") return truncate(value.replace(/\s+/g, " ").trim(), maxWidth);
-	if (typeof value === "number" || typeof value === "boolean") return String(value);
-	try {
-		return truncate(JSON.stringify(value), maxWidth);
-	} catch (error) {
-		return truncate(String(value), maxWidth);
-	}
-};
-var formatTime = (value) => {
-	if (!value) return "-";
-	const date = new Date(value);
-	if (Number.isNaN(date.getTime())) return String(value);
-	return date.toLocaleString("zh-CN", { hour12: false });
-};
-//#endregion
 //#region src/lib/nodes.js
 var NODE_SPECS = [
 	{
@@ -33387,59 +34325,11 @@ var useLoopAI = defineStore("loopAI", () => {
 	};
 });
 //#endregion
-//#region src/lib/messages.js
-var identity = (text) => text;
-var normalizeConversationItem = (item = {}) => {
-	return {
-		role: item.role || "message",
-		content: typeof item.content === "string" ? item.content : formatValue(item.content, 160),
-		id: item.id || null,
-		state: item.state || null
-	};
-};
-var formatConversationLine = (item, width, local = identity) => {
-	const role = item?.role || "message";
-	const roleText = role === "assistant" ? local("assistant") : role === "user" ? local("user") : role === "tool" ? local("tool") : role.toUpperCase();
-	const prefix = `[${String(roleText).toUpperCase()}] `;
-	const bodyWidth = Math.max(10, width - prefix.length);
-	return wrapText(item?.content || "", bodyWidth).map((line, index) => index === 0 ? `${prefix}${line}` : `${" ".repeat(prefix.length)}${line}`);
-};
-var formatTodoList = (items = []) => items.map((item) => `- [${item?.completed ? "x" : " "}] ${item?.text || ""}`);
-var summarizeEvent = (payload = {}, local = identity) => {
-	if (!payload || typeof payload !== "object") return [`[event] ${local("invalid payload")}`];
-	const type = payload.type || "unknown";
-	if (type === "submitted") return [`[${local("Status").toLowerCase()}] ${payload.message || local("submitted")}`];
-	if (type === "starter.codex.init") return [`[${local("init")}] ${local("model")}: ${payload.model || "-"}`, `[${local("init")}] ${local("base_url")}: ${payload.base_url || "-"}`];
-	if (type === "runner.started") return [`[${local("user")}] ${payload.prompt || ""}`];
-	if (type === "finishing") return [`[${local("finishing")}] ${payload.message || ""}`];
-	if (type === "completed") return [`[${local("assistant")}] ${payload?.result?.finalResponse || ""}`];
-	if (type !== "event") return [`[${type}] ${payload.message || ""}`];
-	const event = payload.event || {};
-	if (event.type === "error") return [`[error] ${event.message || local("unknown error")}`];
-	const item = event.item || {};
-	if (!item.type) return [`[event:${event.type || local("Unknown").toLowerCase()}]`];
-	if (item.type === "agent_message") return [`[${local("assistant")}] ${item.text || ""}`];
-	if (item.type === "mcp_tool_call") return [`[${local("tool")}] ${item.server || "-"} / ${item.tool || "-"}`, `[args] ${formatValue(item.arguments, 120)}`];
-	if (item.type === "todo_list") return [`[${local("todo")}]`].concat(formatTodoList(item.items || []));
-	if (item.type === "command_execution") return [`[${local("command")}:${event.type}] ${item.command || ""}`];
-	if (item.type === "file_change") {
-		const firstChange = item.changes?.[0]?.path || "-";
-		return [`[${local("file")}:${event.type}] ${firstChange}`];
-	}
-	return [`[event:${item.type}] ${formatValue(item, 120)}`];
-};
-//#endregion
 //#region src/App.vue
 var POLL_MS = 3e3;
-var NODE_CARD_WIDTH = 44;
-var NODE_CARD_GAP = 2;
-var NODE_CARD_HEIGHT_MIN = 15;
-var NODE_CARD_HEIGHT_MAX = 20;
 var headerHeight = 3;
 var footerHeight = 5;
 var inputBoxHeight = 3;
-var taskItemHeight = 3;
-var summaryHeight = 4;
 var _sfc_main = {
 	__name: "App",
 	props: { onQuit: {
@@ -33456,9 +34346,6 @@ var _sfc_main = {
 		let pollTimer = null;
 		function local(text) {
 			return appConfig.local(text);
-		}
-		function clamp(value, min, max) {
-			return Math.max(min, Math.min(max, value));
 		}
 		function ensureNumber(value, fallback) {
 			return Number.isFinite(value) ? value : fallback;
@@ -33595,7 +34482,6 @@ var _sfc_main = {
 		const bodyY = computed(() => headerHeight);
 		const bodyHeight = computed(() => Math.max(12, rows.value - headerHeight - footerHeight));
 		const inputY = computed(() => rows.value - footerHeight);
-		const bodyWidth = computed(() => cols.value);
 		const apiBaseUrl = computed(() => loopAI.config?.base_url || taskStatus.value?.base_url || "http://127.0.0.1:8855");
 		const commandHint = computed(() => "/home  /tasks  /now  /refresh  /new <name>  /rename <name>  /delete  /quit");
 		const modeHint = computed(() => {
@@ -33603,123 +34489,34 @@ var _sfc_main = {
 			if (page.value === "now") return "←/→ nodes · Tab pane · ↑/↓ scroll · PgUp/PgDn fast scroll";
 			return "输入 /tasks 或 /now 进入任务视图";
 		});
+		const statusLine = computed(() => `${toast.value}   |   ${modeHint.value}`);
 		const homeHelpLines = computed(() => [
 			"LoopAI terminal now runs on @simon_he/vue-tui.",
 			"Use /tasks to browse tasks, /now to open the selected task, /quit to leave.",
 			tasks.value.length ? `Detected ${tasks.value.length} task(s). If no task is selected, /now will open the first one.` : local("No task yet. Press n to create one.")
 		]);
-		const tasksPerPage = computed(() => Math.max(1, Math.floor((bodyHeight.value - 4) / taskItemHeight)));
-		const taskPageCount = computed(() => Math.max(1, Math.ceil(tasks.value.length / tasksPerPage.value)));
-		const taskPage = computed(() => {
-			return clamp(Math.floor((selectedTaskIndex.value || 0) / tasksPerPage.value) + 1, 1, taskPageCount.value);
+		const { taskItemHeight, taskPage, taskPageCount, visibleTasks } = useTaskPanel({
+			tasks,
+			selectedTaskIndex,
+			bodyHeight
 		});
-		const taskStart = computed(() => (taskPage.value - 1) * tasksPerPage.value);
-		const visibleTasks = computed(() => tasks.value.slice(taskStart.value, taskStart.value + tasksPerPage.value).map((task, index) => ({
-			task,
-			actualIndex: taskStart.value + index
-		})));
-		const nodesAreaY = computed(() => bodyY.value + summaryHeight);
-		const nodesAreaHeight = computed(() => clamp(Math.floor(bodyHeight.value * .52), NODE_CARD_HEIGHT_MIN, NODE_CARD_HEIGHT_MAX));
-		const chatAreaY = computed(() => nodesAreaY.value + nodesAreaHeight.value);
-		const chatAreaHeight = computed(() => Math.max(8, bodyY.value + bodyHeight.value - chatAreaY.value));
-		const visibleNodeCount = computed(() => Math.max(1, Math.floor((bodyWidth.value + NODE_CARD_GAP) / 46)));
-		const maxNodeStart = computed(() => Math.max(0, nodeCards.value.length - visibleNodeCount.value));
-		const nodeStart = computed(() => clamp(nodeScrollOffset.value || 0, 0, maxNodeStart.value));
-		const visibleNodeCards = computed(() => nodeCards.value.slice(nodeStart.value, nodeStart.value + visibleNodeCount.value));
-		computed(() => nodeCards.value[nodeStart.value] || null);
-		const nodeBoardLabel = computed(() => `${nodeCards.value.length ? nodeStart.value + 1 : 0}-${Math.min(nodeCards.value.length, nodeStart.value + visibleNodeCount.value)}/${nodeCards.value.length}`);
-		function progressBarLine(progress, width) {
-			const safeWidth = Math.max(8, width);
-			const ratio = clamp(Number.isFinite(progress) ? progress : 0, 0, 1);
-			const percent = `${Math.round(ratio * 100)}%`;
-			const barWidth = Math.max(4, safeWidth - percent.length - 3);
-			const filled = Math.round(barWidth * ratio);
-			return `[${"=".repeat(filled)}${"-".repeat(Math.max(0, barWidth - filled))}] ${percent}`;
-		}
-		function stateLinesFor(card, index, width, height) {
-			if (!card) return ["-"];
-			const lines = card.stateEntries?.length ? card.stateEntries.flatMap((entry) => wrapText(`${entry.key}: ${formatValue(entry.value, width * 3)}`, width).concat([""])) : ["-"];
-			const safeOffset = clamp(index === 0 ? nodeStateScrollOffset.value : 0, 0, Math.max(0, lines.length - height));
-			return lines.slice(safeOffset, safeOffset + height);
-		}
-		function customLinesFor(card, index, width, height) {
-			if (!card) return ["-"];
-			const groups = Array.isArray(card.customGroups) ? card.customGroups : [];
-			const lines = groups.length ? groups.flatMap((group) => {
-				return [
-					`┌ ${truncate(group.key, Math.max(8, width - 4))}`,
-					...wrapText(`│ msg: ${group.message || "-"}`, Math.max(8, width)).map((line) => padRight(line, width)),
-					`│ ${progressBarLine(typeof group.progress === "number" ? group.progress : 0, Math.max(8, width - 2))}`,
-					...wrapText(`│ data: ${formatValue(group.data, width * 3)}`, Math.max(8, width)).map((line) => padRight(line, width)),
-					`└ updated: ${formatTime(group.updatedAt)}`,
-					""
-				];
-			}) : ["-"];
-			const safeOffset = clamp(index === 0 ? nodeCustomScrollOffset.value : 0, 0, Math.max(0, lines.length - height));
-			return lines.slice(safeOffset, safeOffset + height);
-		}
-		const transcriptEntries = computed(() => {
-			const items = Array.isArray(conversation.value) ? conversation.value : [];
-			if (!items.length) return [{
-				role: "system",
-				text: local("empty")
-			}];
-			return items.flatMap((item) => {
-				const normalized = normalizeConversationItem(item);
-				return formatConversationLine(normalized, Math.max(20, bodyWidth.value - 8), local).map((line) => ({
-					role: normalized.role,
-					text: line
-				}));
-			});
+		const { summaryHeight, nodesAreaY, nodesAreaHeight, chatAreaY, chatAreaHeight, nodeBoardLabel, visibleNodeCards, transcriptViewport, eventViewport, userPreviewLines, nodeCardWidth, nodeCardGap } = useNowPanel({
+			bodyY,
+			bodyHeight,
+			bodyWidth: cols,
+			local,
+			currentTask,
+			taskStatus,
+			nodeCards,
+			conversation,
+			sessionEvents,
+			nowActivePane,
+			nodeScrollOffset,
+			nodeStateScrollOffset,
+			nodeCustomScrollOffset,
+			toolScrollOffset,
+			assistantScrollOffset
 		});
-		const eventEntries = computed(() => {
-			const items = Array.isArray(sessionEvents.value) ? sessionEvents.value : [];
-			if (!items.length) return [{
-				tone: "default",
-				text: local("empty")
-			}];
-			return items.flatMap((item) => summarizeEvent(item.payload || {}, local).map((line) => ({
-				tone: line.startsWith("[error]") ? "error" : line.startsWith("[tool]") ? "tool" : "default",
-				text: line
-			})));
-		});
-		const transcriptBoxHeight = computed(() => clamp(chatAreaHeight.value - 2, 6, 14));
-		const eventBoxHeight = computed(() => clamp(chatAreaHeight.value - 2, 6, 12));
-		const latestUser = computed(() => {
-			for (let i = conversation.value.length - 1; i >= 0; i -= 1) {
-				const item = normalizeConversationItem(conversation.value[i]);
-				if (item.role === "user") return item.content;
-			}
-			return "-";
-		});
-		watch([transcriptEntries, transcriptBoxHeight], () => {
-			assistantScrollOffset.value = Math.max(0, transcriptEntries.value.length - Math.max(1, transcriptBoxHeight.value - 2));
-		}, { immediate: true });
-		watch([eventEntries, eventBoxHeight], () => {
-			toolScrollOffset.value = Math.max(0, eventEntries.value.length - Math.max(1, eventBoxHeight.value - 2));
-		}, { immediate: true });
-		const transcriptViewport = computed(() => {
-			const innerHeight = Math.max(1, transcriptBoxHeight.value - 2);
-			const safeOffset = clamp(assistantScrollOffset.value || 0, 0, Math.max(0, transcriptEntries.value.length - innerHeight));
-			return transcriptEntries.value.slice(safeOffset, safeOffset + innerHeight);
-		});
-		const eventViewport = computed(() => {
-			const innerHeight = Math.max(1, eventBoxHeight.value - 2);
-			const safeOffset = clamp(toolScrollOffset.value || 0, 0, Math.max(0, eventEntries.value.length - innerHeight));
-			return eventEntries.value.slice(safeOffset, safeOffset + innerHeight);
-		});
-		function lineStyleForRole(role) {
-			if (role === "user") return { fg: "cyanBright" };
-			if (role === "assistant") return { fg: "greenBright" };
-			if (role === "tool") return { fg: "yellowBright" };
-			return { fg: "whiteBright" };
-		}
-		function lineStyleForEvent(tone) {
-			if (tone === "error") return { fg: "redBright" };
-			if (tone === "tool") return { fg: "yellowBright" };
-			return { fg: "whiteBright" };
-		}
-		const userPreviewLines = computed(() => wrapText(String(latestUser.value || "-"), Math.max(16, Math.floor(bodyWidth.value * .28) - 4)).slice(-3));
 		return (_ctx, _cache) => {
 			return openBlock(), createBlock(unref(TView), {
 				x: 0,
@@ -33731,416 +34528,135 @@ var _sfc_main = {
 				onKeydown: onSurfaceKeydown
 			}, {
 				default: withCtx(() => [
-					createVNode(unref(TBox), {
-						x: 0,
-						y: 0,
-						w: cols.value,
-						h: headerHeight,
-						border: "",
-						title: "LoopAI TUI",
-						style: { fg: "cyanBright" }
-					}, {
-						default: withCtx(() => [createVNode(unref(TText), {
-							x: 1,
-							y: 0,
-							w: Math.max(8, cols.value - 4),
-							value: `/${unref(page)}   tasks=${unref(tasks).length}   loading=${unref(loading) ? "yes" : "no"}`
-						}, null, 8, ["w", "value"]), createVNode(unref(TText), {
-							x: 1,
-							y: 1,
-							w: Math.max(8, cols.value - 4),
-							value: `api=${apiBaseUrl.value}   updated=${unref(lastRefreshAt) || "-"}`,
-							style: { fg: "white" }
-						}, null, 8, ["w", "value"])]),
-						_: 1
-					}, 8, ["w"]),
-					unref(page) === "home" ? (openBlock(), createBlock(unref(TBox), {
+					createVNode(_sfc_main$5, {
+						cols: cols.value,
+						page: unref(page),
+						"tasks-count": unref(tasks).length,
+						loading: unref(loading),
+						"api-base-url": apiBaseUrl.value,
+						"last-refresh-at": unref(lastRefreshAt) || "-"
+					}, null, 8, [
+						"cols",
+						"page",
+						"tasks-count",
+						"loading",
+						"api-base-url",
+						"last-refresh-at"
+					]),
+					unref(page) === "home" ? (openBlock(), createBlock(_sfc_main$7, {
 						key: 0,
 						x: 0,
 						y: bodyY.value,
 						w: cols.value,
 						h: bodyHeight.value,
-						border: "",
-						title: "Home",
-						style: { fg: "magentaBright" }
-					}, {
-						default: withCtx(() => [createVNode(_sfc_main$1, {
-							x: Math.max(2, Math.floor((cols.value - 92) / 2)),
-							y: 2
-						}, null, 8, ["x"]), (openBlock(true), createElementBlock(Fragment, null, renderList(homeHelpLines.value, (line, index) => {
-							return openBlock(), createBlock(unref(TText), {
-								key: `home-help-${index}`,
-								x: Math.max(2, Math.floor((cols.value - 96) / 2)),
-								y: 11 + index * 2,
-								w: Math.min(96, cols.value - 6),
-								value: line,
-								style: normalizeStyle$1(index === 0 ? { fg: "greenBright" } : { fg: "whiteBright" })
-							}, null, 8, [
-								"x",
-								"y",
-								"w",
-								"value",
-								"style"
-							]);
-						}), 128))]),
-						_: 1
-					}, 8, [
+						"help-lines": homeHelpLines.value
+					}, null, 8, [
 						"y",
 						"w",
-						"h"
-					])) : unref(page) === "tasks" ? (openBlock(), createBlock(unref(TBox), {
+						"h",
+						"help-lines"
+					])) : unref(page) === "tasks" ? (openBlock(), createBlock(_sfc_main$1, {
 						key: 1,
 						x: 0,
 						y: bodyY.value,
 						w: cols.value,
 						h: bodyHeight.value,
-						border: "",
 						title: `${local("Tasks")} (${unref(tasks).length})`,
-						style: { fg: "yellowBright" }
-					}, {
-						default: withCtx(() => [
-							createVNode(unref(TText), {
-								x: 1,
-								y: 0,
-								w: Math.max(12, cols.value - 6),
-								value: "所有任务列表",
-								style: { fg: "white" }
-							}, null, 8, ["w"]),
-							visibleTasks.value.length ? (openBlock(true), createElementBlock(Fragment, { key: 0 }, renderList(visibleTasks.value, ({ task, actualIndex }, index) => {
-								return openBlock(), createElementBlock(Fragment, { key: task.task_id || task.id || index }, [createVNode(unref(TText), {
-									x: 1,
-									y: 1 + index * taskItemHeight,
-									w: Math.max(12, cols.value - 6),
-									value: `${actualIndex === unref(selectedTaskIndex) ? "▶" : " "} ${unref(truncate)(task.name || task.task_id || "-", Math.max(8, cols.value - 12))}`,
-									style: normalizeStyle$1(actualIndex === unref(selectedTaskIndex) ? {
-										fg: "greenBright",
-										bold: true
-									} : { fg: "whiteBright" })
-								}, null, 8, [
-									"y",
-									"w",
-									"value",
-									"style"
-								]), createVNode(unref(TText), {
-									x: 3,
-									y: 2 + index * taskItemHeight,
-									w: Math.max(12, cols.value - 8),
-									value: `id=${task.task_id || "-"}   updated=${unref(formatTime)(task.updatedAt)}`,
-									style: { fg: "cyanBright" }
-								}, null, 8, [
-									"y",
-									"w",
-									"value"
-								])], 64);
-							}), 128)) : (openBlock(), createBlock(unref(TText), {
-								key: 1,
-								x: 1,
-								y: 1,
-								w: Math.max(12, cols.value - 6),
-								value: local("No task yet. Press n to create one."),
-								style: { fg: "redBright" }
-							}, null, 8, ["w", "value"])),
-							createVNode(unref(TText), {
-								x: 1,
-								y: Math.max(1, bodyHeight.value - 3),
-								w: Math.max(12, cols.value - 6),
-								value: `${local("page")} ${taskPage.value}/${taskPageCount.value}   Enter = activate task`,
-								style: { fg: "white" }
-							}, null, 8, [
-								"y",
-								"w",
-								"value"
-							])
-						]),
-						_: 1
-					}, 8, [
+						"visible-tasks": unref(visibleTasks),
+						"selected-task-index": unref(selectedTaskIndex),
+						"task-item-height": unref(taskItemHeight),
+						"task-page": unref(taskPage),
+						"task-page-count": unref(taskPageCount),
+						"page-label": local("page"),
+						"empty-text": local("No task yet. Press n to create one.")
+					}, null, 8, [
 						"y",
 						"w",
 						"h",
-						"title"
+						"title",
+						"visible-tasks",
+						"selected-task-index",
+						"task-item-height",
+						"task-page",
+						"task-page-count",
+						"page-label",
+						"empty-text"
 					])) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [
-						createVNode(unref(TBox), {
+						createVNode(_sfc_main$3, {
 							x: 0,
 							y: bodyY.value,
 							w: cols.value,
-							h: summaryHeight,
-							border: "",
-							title: "Task Summary",
-							style: { fg: "cyanBright" }
-						}, {
-							default: withCtx(() => [createVNode(unref(TText), {
-								x: 1,
-								y: 0,
-								w: Math.max(12, cols.value - 6),
-								value: `任务: ${unref(currentTask)?.name || unref(currentTask)?.task_id || "-"}`,
-								style: {
-									fg: "greenBright",
-									bold: true
-								}
-							}, null, 8, ["w", "value"]), createVNode(unref(TText), {
-								x: 1,
-								y: 1,
-								w: Math.max(12, cols.value - 6),
-								value: `id: ${unref(currentTask)?.task_id || "-"}   状态: ${unref(taskStatus)?.status || "idle"}   节点: ${unref(nodeCards).length}`
-							}, null, 8, ["w", "value"])]),
-							_: 1
-						}, 8, ["y", "w"]),
-						createVNode(unref(TBox), {
+							h: unref(summaryHeight),
+							"current-task-name": unref(currentTask)?.name || unref(currentTask)?.task_id || "-",
+							"current-task-id": unref(currentTask)?.task_id || "-",
+							status: unref(taskStatus)?.status || "idle",
+							"node-count": unref(nodeCards).length
+						}, null, 8, [
+							"y",
+							"w",
+							"h",
+							"current-task-name",
+							"current-task-id",
+							"status",
+							"node-count"
+						]),
+						createVNode(_sfc_main$4, {
 							x: 0,
-							y: nodesAreaY.value,
+							y: unref(nodesAreaY),
 							w: cols.value,
-							h: nodesAreaHeight.value,
-							border: "",
-							title: `${local("Nodes")} ${nodeBoardLabel.value}`,
-							style: { fg: "yellowBright" }
-						}, {
-							default: withCtx(() => [visibleNodeCards.value.length ? (openBlock(true), createElementBlock(Fragment, { key: 0 }, renderList(visibleNodeCards.value, (card, index) => {
-								return openBlock(), createBlock(unref(TBox), {
-									key: `${card.key}-${index}`,
-									x: index * 46,
-									y: 0,
-									w: NODE_CARD_WIDTH,
-									h: Math.max(8, nodesAreaHeight.value - 2),
-									border: "",
-									title: `${card.label} · ${card.runtimeStatus}`,
-									style: normalizeStyle$1(index === 0 ? { fg: "cyanBright" } : card.running ? { fg: "greenBright" } : { fg: "whiteBright" })
-								}, {
-									default: withCtx(() => [
-										createVNode(unref(TText), {
-											x: 1,
-											y: 0,
-											w: NODE_CARD_WIDTH - 4,
-											value: `updated: ${card.runtimeUpdatedLabel || "-"}`,
-											style: { fg: "white" }
-										}, null, 8, ["w", "value"]),
-										createVNode(unref(TText), {
-											x: 1,
-											y: 1,
-											w: NODE_CARD_WIDTH - 4,
-											value: index === 0 ? `focus=${unref(nowActivePane)}` : "preview",
-											style: normalizeStyle$1({ fg: index === 0 ? "cyanBright" : "white" })
-										}, null, 8, [
-											"w",
-											"value",
-											"style"
-										]),
-										createVNode(unref(TBox), {
-											x: 1,
-											y: 3,
-											w: Math.floor((NODE_CARD_WIDTH - 5) / 2),
-											h: Math.max(6, nodesAreaHeight.value - 7),
-											border: "",
-											title: local("state"),
-											style: normalizeStyle$1(index === 0 && unref(nowActivePane) === "state" ? { fg: "cyanBright" } : { fg: "white" })
-										}, {
-											default: withCtx(() => [(openBlock(true), createElementBlock(Fragment, null, renderList(stateLinesFor(card, index, Math.floor((NODE_CARD_WIDTH - 11) / 2), Math.max(1, nodesAreaHeight.value - 11)), (line, lineIndex) => {
-												return openBlock(), createBlock(unref(TText), {
-													key: `${card.key}-state-${lineIndex}`,
-													x: 0,
-													y: lineIndex,
-													w: Math.floor((NODE_CARD_WIDTH - 11) / 2),
-													value: line,
-													style: { fg: "whiteBright" }
-												}, null, 8, [
-													"y",
-													"w",
-													"value"
-												]);
-											}), 128))]),
-											_: 2
-										}, 1032, [
-											"w",
-											"h",
-											"title",
-											"style"
-										]),
-										createVNode(unref(TBox), {
-											x: Math.floor((NODE_CARD_WIDTH - 5) / 2) + 2,
-											y: 3,
-											w: Math.floor((NODE_CARD_WIDTH - 5) / 2),
-											h: Math.max(6, nodesAreaHeight.value - 7),
-											border: "",
-											title: local("custom_info"),
-											style: normalizeStyle$1(index === 0 && unref(nowActivePane) === "custom" ? { fg: "magentaBright" } : { fg: "white" })
-										}, {
-											default: withCtx(() => [(openBlock(true), createElementBlock(Fragment, null, renderList(customLinesFor(card, index, Math.floor((NODE_CARD_WIDTH - 11) / 2), Math.max(1, nodesAreaHeight.value - 11)), (line, lineIndex) => {
-												return openBlock(), createBlock(unref(TText), {
-													key: `${card.key}-custom-${lineIndex}`,
-													x: 0,
-													y: lineIndex,
-													w: Math.floor((NODE_CARD_WIDTH - 11) / 2),
-													value: line,
-													style: normalizeStyle$1(line.startsWith("┌") || line.startsWith("└") ? { fg: "yellowBright" } : { fg: "whiteBright" })
-												}, null, 8, [
-													"y",
-													"w",
-													"value",
-													"style"
-												]);
-											}), 128))]),
-											_: 2
-										}, 1032, [
-											"x",
-											"w",
-											"h",
-											"title",
-											"style"
-										])
-									]),
-									_: 2
-								}, 1032, [
-									"x",
-									"h",
-									"title",
-									"style"
-								]);
-							}), 128)) : (openBlock(), createBlock(unref(TText), {
-								key: 1,
-								x: 1,
-								y: 1,
-								w: Math.max(12, cols.value - 6),
-								value: local("No node data available for this task yet."),
-								style: { fg: "redBright" }
-							}, null, 8, ["w", "value"]))]),
-							_: 1
-						}, 8, [
+							h: unref(nodesAreaHeight),
+							title: `${local("Nodes")} ${unref(nodeBoardLabel)}`,
+							"visible-node-cards": unref(visibleNodeCards),
+							"now-active-pane": unref(nowActivePane),
+							"empty-text": local("No node data available for this task yet."),
+							"node-card-width": unref(nodeCardWidth),
+							"node-card-gap": unref(nodeCardGap)
+						}, null, 8, [
 							"y",
 							"w",
 							"h",
-							"title"
+							"title",
+							"visible-node-cards",
+							"now-active-pane",
+							"empty-text",
+							"node-card-width",
+							"node-card-gap"
 						]),
-						createVNode(unref(TBox), {
+						createVNode(_sfc_main$2, {
 							x: 0,
-							y: chatAreaY.value,
-							w: Math.floor(cols.value * .3),
-							h: chatAreaHeight.value,
-							border: "",
-							title: "User",
-							style: { fg: "cyanBright" }
-						}, {
-							default: withCtx(() => [(openBlock(true), createElementBlock(Fragment, null, renderList(userPreviewLines.value, (line, index) => {
-								return openBlock(), createBlock(unref(TText), {
-									key: `user-preview-${index}`,
-									x: 1,
-									y: 1 + index,
-									w: Math.max(8, Math.floor(cols.value * .3) - 4),
-									value: line,
-									style: { fg: "cyanBright" }
-								}, null, 8, [
-									"y",
-									"w",
-									"value"
-								]);
-							}), 128))]),
-							_: 1
-						}, 8, [
-							"y",
-							"w",
-							"h"
-						]),
-						createVNode(unref(TBox), {
-							x: Math.floor(cols.value * .3),
-							y: chatAreaY.value,
-							w: Math.floor(cols.value * .3),
-							h: chatAreaHeight.value,
-							border: "",
-							title: "Runtime",
-							style: normalizeStyle$1({ fg: unref(nowActivePane) === "tool" ? "yellowBright" : "whiteBright" })
-						}, {
-							default: withCtx(() => [(openBlock(true), createElementBlock(Fragment, null, renderList(eventViewport.value, (line, index) => {
-								return openBlock(), createBlock(unref(TText), {
-									key: `event-line-${index}`,
-									x: 1,
-									y: 1 + index,
-									w: Math.max(8, Math.floor(cols.value * .3) - 4),
-									value: line.text,
-									style: normalizeStyle$1(lineStyleForEvent(line.tone))
-								}, null, 8, [
-									"y",
-									"w",
-									"value",
-									"style"
-								]);
-							}), 128))]),
-							_: 1
-						}, 8, [
-							"x",
+							y: unref(chatAreaY),
+							w: cols.value,
+							h: unref(chatAreaHeight),
+							"now-active-pane": unref(nowActivePane),
+							"user-preview-lines": unref(userPreviewLines),
+							"event-viewport": unref(eventViewport),
+							"transcript-viewport": unref(transcriptViewport)
+						}, null, 8, [
 							"y",
 							"w",
 							"h",
-							"style"
-						]),
-						createVNode(unref(TBox), {
-							x: Math.floor(cols.value * .6),
-							y: chatAreaY.value,
-							w: cols.value - Math.floor(cols.value * .6),
-							h: chatAreaHeight.value,
-							border: "",
-							title: "Transcript",
-							style: normalizeStyle$1({ fg: unref(nowActivePane) === "assistant" ? "greenBright" : "magentaBright" })
-						}, {
-							default: withCtx(() => [(openBlock(true), createElementBlock(Fragment, null, renderList(transcriptViewport.value, (line, index) => {
-								return openBlock(), createBlock(unref(TText), {
-									key: `transcript-line-${index}`,
-									x: 1,
-									y: 1 + index,
-									w: Math.max(8, cols.value - Math.floor(cols.value * .6) - 4),
-									value: line.text,
-									style: normalizeStyle$1(lineStyleForRole(line.role))
-								}, null, 8, [
-									"y",
-									"w",
-									"value",
-									"style"
-								]);
-							}), 128))]),
-							_: 1
-						}, 8, [
-							"x",
-							"y",
-							"w",
-							"h",
-							"style"
+							"now-active-pane",
+							"user-preview-lines",
+							"event-viewport",
+							"transcript-viewport"
 						])
 					], 64)),
-					createVNode(unref(TInputBox), {
+					createVNode(_sfc_main$6, {
 						x: 0,
 						y: inputY.value,
 						w: cols.value,
-						h: inputBoxHeight,
-						title: "Command",
+						"input-box-height": inputBoxHeight,
 						"model-value": unref(inputBuffer),
-						placeholder: "/tasks, /now, /new demo, 或直接发送消息",
-						style: { fg: "whiteBright" },
-						"auto-focus": "",
+						"command-hint": commandHint.value,
+						"status-line": statusLine.value,
 						"onUpdate:modelValue": setInputValue,
 						onKeydown: onInputKeydown
 					}, null, 8, [
 						"y",
 						"w",
-						"model-value"
-					]),
-					createVNode(unref(TText), {
-						x: 2,
-						y: inputY.value + 2,
-						w: Math.max(12, cols.value - 6),
-						value: commandHint.value,
-						style: { fg: "white" }
-					}, null, 8, [
-						"y",
-						"w",
-						"value"
-					]),
-					createVNode(unref(TText), {
-						x: 2,
-						y: inputY.value + 3,
-						w: Math.max(12, cols.value - 6),
-						value: `${unref(toast)}   |   ${modeHint.value}`,
-						style: { fg: "greenBright" }
-					}, null, 8, [
-						"y",
-						"w",
-						"value"
+						"model-value",
+						"command-hint",
+						"status-line"
 					])
 				]),
 				_: 1

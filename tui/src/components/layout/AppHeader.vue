@@ -1,33 +1,19 @@
 <script setup>
-import { computed } from 'vue'
-import { Box, Spacer, Text } from '@vue-tui/runtime'
-import { useAppConfig } from '../../stores/appConfig.js'
-import { useLoopAI } from '../../stores/loopAI.js'
+import { TBox, TText } from '@simon_he/vue-tui/vue'
 
-const appConfig = useAppConfig()
-const loopAI = useLoopAI()
-
-const title = computed(() => {
-  if (appConfig.page === 'home') return '/home'
-  return appConfig.page === 'tasks' ? '/tasks' : '/now'
+defineProps({
+  cols: { type: Number, required: true },
+  page: { type: String, required: true },
+  tasksCount: { type: Number, required: true },
+  loading: { type: Boolean, required: true },
+  apiBaseUrl: { type: String, required: true },
+  lastRefreshAt: { type: String, default: '-' }
 })
-const subtitle = computed(() => {
-  if (appConfig.page === 'home') {
-    return `LoopAI TUI  ${appConfig.local('Tasks')}=${loopAI.tasks.length}`
-  }
-  if (appConfig.page === 'tasks') {
-    return `${appConfig.local('Tasks')}=${loopAI.tasks.length}`
-  }
-  return `${appConfig.local('Task')}=${loopAI.currentTask?.name || '-'}  session=${loopAI.sessionStatus}`
-})
-const apiBaseUrl = import.meta.env.VITE_LOOPAI_API_BASE_URL || 'http://127.0.0.1:8855'
 </script>
 
 <template>
-  <Box borderStyle="round" padding="1">
-    <Text bold color="cyan">{{ title }}</Text>
-    <Text>  {{ subtitle }}</Text>
-    <Spacer />
-    <Text dimColor>api={{ apiBaseUrl }}</Text>
-  </Box>
+  <TBox :x="0" :y="0" :w="cols" :h="3" border title="LoopAI TUI" :style="{ fg: 'cyanBright' }">
+    <TText :x="1" :y="0" :w="Math.max(8, cols - 4)" :value="`/${page}   tasks=${tasksCount}   loading=${loading ? 'yes' : 'no'}`" />
+    <TText :x="1" :y="1" :w="Math.max(8, cols - 4)" :value="`api=${apiBaseUrl}   updated=${lastRefreshAt || '-'}`" :style="{ fg: 'white' }" />
+  </TBox>
 </template>
