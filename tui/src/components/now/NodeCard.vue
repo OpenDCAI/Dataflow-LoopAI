@@ -1,13 +1,47 @@
 <script setup>
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { TBox, TText } from '@simon_he/vue-tui/vue'
 
-defineProps({
+const props = defineProps({
   card: { type: Object, required: true },
   index: { type: Number, required: true },
   x: { type: Number, required: true },
   y: { type: Number, required: true },
   w: { type: Number, required: true },
   h: { type: Number, required: true }
+})
+
+const blinkOn = ref(true)
+let blinkTimer = null
+
+const statusTone = computed(() => String(props.card?.runtimeStatus || 'idle').toLowerCase())
+
+const titleStyle = computed(() => {
+  if (statusTone.value === 'running') {
+    return {
+      fg: 'black',
+      bg: blinkOn.value ? 'yellowBright' : '#f97316',
+      bold: true
+    }
+  }
+  if (statusTone.value === 'completed') {
+    return { fg: 'black', bg: 'greenBright', bold: true }
+  }
+  if (statusTone.value === 'error' || statusTone.value === 'failed') {
+    return { fg: 'whiteBright', bg: 'redBright', bold: true }
+  }
+  return { fg: 'whiteBright', bg: 'blueBright', bold: true }
+})
+
+onMounted(() => {
+  if (statusTone.value !== 'running') return
+  blinkTimer = setInterval(() => {
+    blinkOn.value = !blinkOn.value
+  }, 500)
+})
+
+onBeforeUnmount(() => {
+  if (blinkTimer) clearInterval(blinkTimer)
 })
 </script>
 
@@ -20,6 +54,7 @@ defineProps({
     border
     :title="`${card.label} · ${card.runtimeStatus}`"
     :style="card.borderStyle"
+    :title-style="titleStyle"
   >
     <TText :x="1" :y="0" :w="w - 4" :value="`updated: ${card.runtimeUpdatedLabel || '-'}`" :style="{ fg: 'white' }" />
     <TText :x="1" :y="1" :w="w - 4" :value="card.focusLabel" :style="card.focusStyle" />

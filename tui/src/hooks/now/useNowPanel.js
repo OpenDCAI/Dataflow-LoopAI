@@ -1,4 +1,4 @@
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import { formatTime, formatValue, padRight, truncate, wrapText } from '../../lib/format.js'
 import { normalizeConversationItem, summarizeEvent } from '../../lib/messages.js'
 
@@ -106,8 +106,6 @@ export function useNowPanel({
     return items.flatMap((item) => summarizeEvent(item.payload || {}, local))
   })
 
-  const transcriptBoxHeight = computed(() => clamp(chatAreaHeight.value - 2, 6, 14))
-  const eventBoxHeight = computed(() => clamp(chatAreaHeight.value - 2, 6, 12))
   const latestUser = computed(() => {
     for (let i = conversation.value.length - 1; i >= 0; i -= 1) {
       const item = normalizeConversationItem(conversation.value[i])
@@ -115,22 +113,6 @@ export function useNowPanel({
     }
     return '-'
   })
-
-  watch(
-    [transcriptEntries, transcriptBoxHeight],
-    () => {
-      assistantScrollOffset.value = Math.max(0, transcriptEntries.value.length - Math.max(1, transcriptBoxHeight.value - 2))
-    },
-    { immediate: true }
-  )
-
-  watch(
-    [eventEntries, eventBoxHeight],
-    () => {
-      toolScrollOffset.value = Math.max(0, eventEntries.value.length - Math.max(1, eventBoxHeight.value - 2))
-    },
-    { immediate: true }
-  )
 
   const userMarkdown = computed(() => String(latestUser.value || '-'))
 

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { TView, useLayout } from '@simon_he/vue-tui/vue'
 import HomePanel from './components/home/HomePanel.vue'
@@ -47,6 +47,8 @@ const {
 } = storeToRefs(loopAI)
 
 let pollTimer = null
+const runtimeBottomSnapToken = ref(0)
+const assistantBottomSnapToken = ref(0)
 
 function local(text) {
   return appConfig.local(text)
@@ -126,13 +128,13 @@ async function handleHotkey(event) {
 
   if (!isNavigationAllowed()) return false
 
-  if (key === 'ArrowDown' || lowerKey === 'j') {
+  if (key === 'ArrowDown' || lowerKey === 'k') {
     event.preventDefault?.()
     event.stopPropagation?.()
     await moveSelection(1)
     return true
   }
-  if (key === 'ArrowUp' || lowerKey === 'k') {
+  if (key === 'ArrowUp' || lowerKey === 'j') {
     event.preventDefault?.()
     event.stopPropagation?.()
     await moveSelection(-1)
@@ -184,6 +186,21 @@ function setInputValue(value) {
   inputBuffer.value = value
 }
 
+function handleToolPaneScrollTop(value) {
+  toolScrollOffset.value = value
+}
+
+function handleAssistantPaneScrollTop(value) {
+  assistantScrollOffset.value = value
+}
+
+function triggerNowBottomSnap() {
+  toolScrollOffset.value = 1000000
+  assistantScrollOffset.value = 1000000
+  runtimeBottomSnapToken.value += 1
+  assistantBottomSnapToken.value += 1
+}
+
 onMounted(async () => {
   try {
     await loopAI.bootstrap()
@@ -217,6 +234,27 @@ const modeHint = computed(() => {
   return '输入 /tasks 或 /now 进入任务视图'
 })
 const statusLine = computed(() => `${toast.value}   |   ${modeHint.value}`)
+
+watch(
+  () => page.value,
+  (value) => {
+    if (value === 'now') triggerNowBottomSnap()
+  }
+)
+
+watch(
+  () => sessionEvents.value.length,
+  (value, prevValue) => {
+    if (page.value === 'now' && value > prevValue) triggerNowBottomSnap()
+  }
+)
+
+watch(
+  () => conversation.value.length,
+  (value, prevValue) => {
+    if (page.value === 'now' && value > prevValue) triggerNowBottomSnap()
+  }
+)
 const homeHelpLines = computed(() => [
   'LoopAI terminal now runs on @simon_he/vue-tui.',
   'Use /tasks to browse tasks, /now to open the selected task, /quit to leave.',
@@ -263,6 +301,7 @@ const {
   toolScrollOffset,
   assistantScrollOffset
 })
+
 </script>
 
 <template>
@@ -328,8 +367,10 @@ const {
         :transcript-markdown="transcriptMarkdown"
         :tool-scroll-top="toolPaneScrollTop"
         :assistant-scroll-top="assistantPaneScrollTop"
-        @update:tool-scroll-top="(value) => (toolScrollOffset = value)"
-        @update:assistant-scroll-top="(value) => (assistantScrollOffset = value)"
+        :runtime-bottom-snap-token="runtimeBottomSnapToken"
+        :assistant-bottom-snap-token="assistantBottomSnapToken"
+        @update:tool-scroll-top="handleToolPaneScrollTop"
+        @update:assistant-scroll-top="handleAssistantPaneScrollTop"
       />
     </template>
 

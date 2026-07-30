@@ -13,7 +13,9 @@ const props = defineProps({
   runtimeMarkdown: { type: String, required: true },
   transcriptMarkdown: { type: String, required: true },
   toolScrollTop: { type: Number, required: true },
-  assistantScrollTop: { type: Number, required: true }
+  assistantScrollTop: { type: Number, required: true },
+  runtimeBottomSnapToken: { type: Number, required: true },
+  assistantBottomSnapToken: { type: Number, required: true }
 })
 
 const emit = defineEmits(['update:toolScrollTop', 'update:assistantScrollTop'])
@@ -29,6 +31,7 @@ const emit = defineEmits(['update:toolScrollTop', 'update:assistantScrollTop'])
     :active="nowActivePane === 'tool'"
     :content="runtimeMarkdown"
     :scroll-top="toolScrollTop"
+    :bottom-snap-token="runtimeBottomSnapToken"
     @update:scroll-top="(value) => emit('update:toolScrollTop', value)"
   />
   <AssistantPane
@@ -39,6 +42,7 @@ const emit = defineEmits(['update:toolScrollTop', 'update:assistantScrollTop'])
     :active="nowActivePane === 'assistant'"
     :content="transcriptMarkdown"
     :scroll-top="assistantScrollTop"
+    :bottom-snap-token="assistantBottomSnapToken"
     @update:scroll-top="(value) => emit('update:assistantScrollTop', value)"
   />
 </template>

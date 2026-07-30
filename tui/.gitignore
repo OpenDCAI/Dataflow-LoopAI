@@ -3,3 +3,4 @@ node_modules/
 .yarn/install-state.gz
 yarn.lock
 dist/
+dist-terminal/

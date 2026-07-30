@@ -83,8 +83,8 @@ export const useLoopAI = defineStore('loopAI', () => {
       nodeScrollOffset.value = 0
       nodeStateScrollOffset.value = 0
       nodeCustomScrollOffset.value = 0
-      toolScrollOffset.value = 0
-      assistantScrollOffset.value = 0
+      toolScrollOffset.value = 1000000
+      assistantScrollOffset.value = 1000000
       nowActivePane.value = 'state'
       return
     }
@@ -117,8 +117,8 @@ export const useLoopAI = defineStore('loopAI', () => {
     nodeScrollOffset.value = 0
     nodeStateScrollOffset.value = 0
     nodeCustomScrollOffset.value = 0
-    toolScrollOffset.value = 0
-    assistantScrollOffset.value = 0
+    toolScrollOffset.value = 1000000
+    assistantScrollOffset.value = 1000000
     nowActivePane.value = 'state'
   }
 
@@ -141,8 +141,8 @@ export const useLoopAI = defineStore('loopAI', () => {
     nodeScrollOffset.value = 0
     nodeStateScrollOffset.value = 0
     nodeCustomScrollOffset.value = 0
-    toolScrollOffset.value = 0
-    assistantScrollOffset.value = 0
+    toolScrollOffset.value = 1000000
+    assistantScrollOffset.value = 1000000
     nowActivePane.value = 'state'
     toast.value = local('Task created')
   }
@@ -208,8 +208,8 @@ export const useLoopAI = defineStore('loopAI', () => {
       nodeScrollOffset.value = 0
       nodeStateScrollOffset.value = 0
       nodeCustomScrollOffset.value = 0
-      toolScrollOffset.value = 0
-      assistantScrollOffset.value = 0
+      toolScrollOffset.value = 1000000
+      assistantScrollOffset.value = 1000000
       nowActivePane.value = 'state'
       if (currentTask.value?.task_id) await refreshCurrent(true)
       toast.value = currentTask.value?.task_id ? local('Synced') : local('No task selected')
