@@ -43,7 +43,11 @@ const {
   nodeStateScrollOffset,
   nodeCustomScrollOffset,
   toolScrollOffset,
-  assistantScrollOffset
+  assistantScrollOffset,
+  looperTakeover,
+  looperEnabled,
+  looperRunning,
+  commandHelpVisible
 } = storeToRefs(loopAI)
 
 let pollTimer = null
@@ -216,24 +220,53 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (pollTimer) clearInterval(pollTimer)
+  loopAI.clearLooperTakeoverCountdown()
 })
 
 const cols = computed(() => ensureNumber(layout.clipRect?.w, 120))
 const rows = computed(() => ensureNumber(layout.clipRect?.h, 36))
 const headerHeight = 3
-const footerHeight = 5
+const footerHeight = computed(() => (commandHelpVisible.value ? 8 : 5))
 const inputBoxHeight = 3
 const bodyY = computed(() => headerHeight)
-const bodyHeight = computed(() => Math.max(12, rows.value - headerHeight - footerHeight))
-const inputY = computed(() => rows.value - footerHeight)
+const bodyHeight = computed(() => Math.max(12, rows.value - headerHeight - footerHeight.value))
+const inputY = computed(() => rows.value - footerHeight.value)
 const apiBaseUrl = computed(() => loopAI.config?.base_url || taskStatus.value?.base_url || 'http://127.0.0.1:8855')
-const commandHint = computed(() => '/home  /tasks  /now  /refresh  /new <name>  /rename <name>  /delete  /quit')
+const commandHint = computed(() => '/h  /help  /home  /tasks  /now  /refresh  /clear  /stop  /stop_looper  /new <name>  /rename <name>  /delete  /quit')
 const modeHint = computed(() => {
   if (page.value === 'tasks') return '↑/↓ select · Enter activate · /new /rename /delete'
   if (page.value === 'now') return '←/→ nodes · Tab pane · ↑/↓ scroll · PgUp/PgDn fast scroll'
   return '输入 /tasks 或 /now 进入任务视图'
 })
 const statusLine = computed(() => `${toast.value}   |   ${modeHint.value}`)
+
+const commandPlaceholder = computed(() => {
+  if (page.value === 'now') return '/h 查看命令帮助，或直接发送消息'
+  if (page.value === 'tasks') return '/h 查看命令帮助，/now 打开当前任务'
+  return '/h 查看命令帮助，/tasks 打开任务列表，/now 打开当前任务'
+})
+
+const commandHelpLines = computed(() => {
+  if (!commandHelpVisible.value) return []
+  if (page.value === 'now') {
+    return [
+      'Command Help · /now',
+      '/refresh  同步当前任务状态与会话',
+      '/clear  重置当前会话历史',
+      '/stop  终止当前 starter codex 会话',
+      '/stop_looper  中断 looper 接管或执行',
+      '/tasks  回到任务列表   /home  回到首页'
+    ]
+  }
+  return [
+    'Command Help',
+    '/tasks  打开任务列表',
+    '/now  打开当前任务；如果未选择则打开第一个任务',
+    '/new <name>  创建任务   /rename <name>  重命名任务',
+    '/delete  删除当前任务   /refresh  刷新任务与状态',
+    '/quit  退出'
+  ]
+})
 
 watch(
   () => page.value,
@@ -257,6 +290,7 @@ watch(
 )
 const homeHelpLines = computed(() => [
   'LoopAI terminal now runs on @simon_he/vue-tui.',
+  'Use /h or /help to inspect available commands from the command area.',
   'Use /tasks to browse tasks, /now to open the selected task, /quit to leave.',
   tasks.value.length
     ? `Detected ${tasks.value.length} task(s). If no task is selected, /now will open the first one.`
@@ -343,6 +377,12 @@ const {
         :current-task-id="currentTask?.task_id || '-'"
         :status="taskStatus?.status || 'idle'"
         :node-count="nodeCards.length"
+        :looper-enabled="looperEnabled"
+        :looper-active="looperTakeover.active"
+        :looper-pending="looperTakeover.pending"
+        :looper-running="looperRunning"
+        :looper-seconds="looperTakeover.seconds"
+        :local="local"
       />
       <NodeBoard
         :x="0"
@@ -380,8 +420,10 @@ const {
       :w="cols"
       :input-box-height="inputBoxHeight"
       :model-value="inputBuffer"
+      :placeholder="commandPlaceholder"
       :command-hint="commandHint"
       :status-line="statusLine"
+      :help-lines="commandHelpLines"
       @update:model-value="setInputValue"
       @keydown="onInputKeydown"
     />

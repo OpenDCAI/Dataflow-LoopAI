@@ -4,7 +4,7 @@ const DEFAULT_BASE_URL = import.meta.env.VITE_LOOPAI_API_BASE_URL || 'http://127
 
 const client = axios.create({
   baseURL: DEFAULT_BASE_URL,
-  timeout: 15000
+  timeout: 60000
 })
 
 client.interceptors.request.use((config) => {

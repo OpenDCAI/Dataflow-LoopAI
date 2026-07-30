@@ -27,7 +27,7 @@ export function useNowPanel({
   const NODE_CARD_GAP = 2
   const NODE_CARD_HEIGHT_MIN = 15
   const NODE_CARD_HEIGHT_MAX = 20
-  const summaryHeight = 4
+  const summaryHeight = 7
   const nodesAreaY = computed(() => bodyY.value + summaryHeight)
   const nodesAreaHeight = computed(() => clamp(Math.floor(bodyHeight.value * 0.52), NODE_CARD_HEIGHT_MIN, NODE_CARD_HEIGHT_MAX))
   const chatAreaY = computed(() => nodesAreaY.value + nodesAreaHeight.value)

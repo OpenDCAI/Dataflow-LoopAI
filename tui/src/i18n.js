@@ -73,7 +73,25 @@ export const i18n = {
   'quit': { en: 'quit', zh: '退出' },
   'Task': { en: 'Task', zh: '任务' },
   'Refresh': { en: 'Refresh', zh: '刷新' },
-  'Unknown': { en: 'Unknown', zh: '未知' }
+  'Unknown': { en: 'Unknown', zh: '未知' },
+  'Looper': { en: 'Looper', zh: 'Looper' },
+  'Enabled': { en: 'Enabled', zh: '已启用' },
+  'Disabled': { en: 'Disabled', zh: '已停用' },
+  'Idle': { en: 'Idle', zh: '空闲' },
+  'Auto-send in': { en: 'Auto-send in', zh: '将在' },
+  'Ready after next reply': { en: 'Ready after next reply', zh: '等待下一轮回复后自动接管' },
+  'Waiting for response...': { en: 'Waiting for response...', zh: '等待响应中...' },
+  'Executing': { en: 'Executing', zh: '执行中' },
+  'Stop with /stop_looper': { en: 'Stop with /stop_looper', zh: '输入 /stop_looper 可中断' },
+  'Looper auto-takeover stopped': { en: 'Looper auto-takeover stopped', zh: 'Looper 自动接管已停止' },
+  'Looper is not active.': { en: 'Looper is not active.', zh: '当前没有正在进行的 Looper 接管' },
+  'Looper takeover canceled.': { en: 'Looper takeover canceled.', zh: 'Looper 接管已取消' },
+  'Failed to cancel Looper takeover.': { en: 'Failed to cancel Looper takeover.', zh: '取消 Looper 接管失败' },
+  'Failed to let Looper take over.': { en: 'Failed to let Looper take over.', zh: 'Looper 自动接管失败' },
+  'Conversation reset successfully.': { en: 'Conversation reset successfully.', zh: '会话已成功重置' },
+  'Failed to reset conversation.': { en: 'Failed to reset conversation.', zh: '重置会话失败' },
+  'Conversation terminated successfully.': { en: 'Conversation terminated successfully.', zh: '会话已成功终止' },
+  'Failed to terminated conversation.': { en: 'Failed to terminated conversation.', zh: '终止会话失败' }
 }
 
 export function resolveLanguage(configData) {

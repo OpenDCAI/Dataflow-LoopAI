@@ -11,6 +11,7 @@ let app = null;
 let lastRestartAt = 0;
 let watcher = null;
 let shuttingDown = false;
+let restartTimer = null;
 
 function log(message) {
   process.stderr.write(`[dev] ${message}
@@ -40,18 +41,23 @@ function startApp() {
   });
 }
 
-function scheduleRestart() {
+function scheduleRestart(delay = 220) {
   const now = Date.now();
   if (now - lastRestartAt < 200) return;
   lastRestartAt = now;
-  setTimeout(() => startApp(), 80);
+  if (restartTimer) clearTimeout(restartTimer);
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    startApp();
+  }, delay);
 }
 
 function startWatcher() {
   const distDir = path.dirname(distEntry);
   watcher = watch(distDir, { persistent: true }, (_eventType, filename) => {
     if (!filename) return;
-    if (String(filename) === "terminal.js") scheduleRestart();
+    const name = String(filename);
+    if (name === 'terminal.js' || name.startsWith('path-')) scheduleRestart(260);
   });
 }
 
@@ -64,8 +70,8 @@ const vite = spawn("yarn", ["vite", "build", "--watch", "--mode", "terminal"], {
 vite.stdout.on("data", (chunk) => {
   const text = chunk.toString();
   process.stderr.write(text);
-  if (text.includes("built in") || text.includes("built successfully")) {
-    startApp();
+  if (text.includes('built in') || text.includes('built successfully')) {
+    scheduleRestart(260);
   }
 });
 
@@ -85,8 +91,9 @@ function cleanup() {
   if (shuttingDown) return;
   shuttingDown = true;
   watcher?.close();
+  if (restartTimer) clearTimeout(restartTimer);
   stopApp();
-  vite.kill("SIGTERM");
+  vite.kill('SIGTERM');
 }
 
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
