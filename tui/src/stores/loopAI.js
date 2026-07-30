@@ -19,6 +19,11 @@ export const useLoopAI = defineStore('loopAI', () => {
   const inputBuffer = ref('')
   const scrollOffset = ref(0)
   const nodeScrollOffset = ref(0)
+  const nowActivePane = ref('state')
+  const nodeStateScrollOffset = ref(0)
+  const nodeCustomScrollOffset = ref(0)
+  const toolScrollOffset = ref(0)
+  const assistantScrollOffset = ref(0)
   const loading = ref(false)
   const toast = ref('Loading LoopAI TUI...')
   const lastRefreshAt = ref(null)
@@ -76,6 +81,11 @@ export const useLoopAI = defineStore('loopAI', () => {
       lastRefreshAt.value = new Date().toLocaleString('zh-CN', { hour12: false })
       scrollOffset.value = 0
       nodeScrollOffset.value = 0
+      nodeStateScrollOffset.value = 0
+      nodeCustomScrollOffset.value = 0
+      toolScrollOffset.value = 0
+      assistantScrollOffset.value = 0
+      nowActivePane.value = 'state'
       return
     }
     if (!silent) {
@@ -105,6 +115,11 @@ export const useLoopAI = defineStore('loopAI', () => {
     appConfig.setPage('now')
     scrollOffset.value = 0
     nodeScrollOffset.value = 0
+    nodeStateScrollOffset.value = 0
+    nodeCustomScrollOffset.value = 0
+    toolScrollOffset.value = 0
+    assistantScrollOffset.value = 0
+    nowActivePane.value = 'state'
   }
 
   async function createNewTask(name) {
@@ -124,6 +139,11 @@ export const useLoopAI = defineStore('loopAI', () => {
     appConfig.setPage('now')
     scrollOffset.value = 0
     nodeScrollOffset.value = 0
+    nodeStateScrollOffset.value = 0
+    nodeCustomScrollOffset.value = 0
+    toolScrollOffset.value = 0
+    assistantScrollOffset.value = 0
+    nowActivePane.value = 'state'
     toast.value = local('Task created')
   }
 
@@ -174,16 +194,25 @@ export const useLoopAI = defineStore('loopAI', () => {
       return true
     }
     if (command === '/tasks') {
+      await refreshTasks(true)
+      ensureTaskSelection()
       appConfig.setPage('tasks')
       toast.value = local('Synced')
       return true
     }
     if (command === '/now') {
+      await refreshTasks(true)
+      ensureTaskSelection()
       appConfig.setPage('now')
       scrollOffset.value = 0
       nodeScrollOffset.value = 0
+      nodeStateScrollOffset.value = 0
+      nodeCustomScrollOffset.value = 0
+      toolScrollOffset.value = 0
+      assistantScrollOffset.value = 0
+      nowActivePane.value = 'state'
       if (currentTask.value?.task_id) await refreshCurrent(true)
-      toast.value = local('Synced')
+      toast.value = currentTask.value?.task_id ? local('Synced') : local('No task selected')
       return true
     }
     if (command === '/refresh') {
@@ -211,14 +240,14 @@ export const useLoopAI = defineStore('loopAI', () => {
 
   async function submitInput() {
     const value = inputBuffer.value.trim()
-    if (!value) return
+    if (!value) return null
     inputBuffer.value = ''
     if (value.startsWith('/')) {
-      await runSlashCommand(value)
-      return
+      return await runSlashCommand(value)
     }
     if (appConfig.page !== 'now') throw new Error(local('Unknown'))
     await sendQuery(value)
+    return true
   }
 
   function appendInput(chars) {
@@ -247,10 +276,25 @@ export const useLoopAI = defineStore('loopAI', () => {
 
   function scrollNodeBoardBy(delta) {
     nodeScrollOffset.value = Math.max(0, nodeScrollOffset.value + delta)
+    nodeStateScrollOffset.value = 0
+    nodeCustomScrollOffset.value = 0
   }
 
   function resetNodeBoardScroll() {
     nodeScrollOffset.value = 0
+  }
+
+  function cycleNowPane() {
+    const panes = ['state', 'custom', 'tool', 'assistant']
+    const current = panes.indexOf(nowActivePane.value)
+    nowActivePane.value = panes[(current + 1) % panes.length]
+  }
+
+  function scrollNowPaneBy(delta) {
+    if (nowActivePane.value === 'state') nodeStateScrollOffset.value = Math.max(0, nodeStateScrollOffset.value + delta)
+    else if (nowActivePane.value === 'custom') nodeCustomScrollOffset.value = Math.max(0, nodeCustomScrollOffset.value + delta)
+    else if (nowActivePane.value === 'tool') toolScrollOffset.value = Math.max(0, toolScrollOffset.value + delta)
+    else assistantScrollOffset.value = Math.max(0, assistantScrollOffset.value + delta)
   }
 
   return {
@@ -263,6 +307,11 @@ export const useLoopAI = defineStore('loopAI', () => {
     inputBuffer,
     scrollOffset,
     nodeScrollOffset,
+    nowActivePane,
+    nodeStateScrollOffset,
+    nodeCustomScrollOffset,
+    toolScrollOffset,
+    assistantScrollOffset,
     loading,
     toast,
     lastRefreshAt,
@@ -289,6 +338,8 @@ export const useLoopAI = defineStore('loopAI', () => {
     resetScroll,
     scrollNodeBoardBy,
     resetNodeBoardScroll,
+    cycleNowPane,
+    scrollNowPaneBy,
     ensureTaskSelection,
     local
   }

@@ -7,6 +7,14 @@ const client = axios.create({
   timeout: 15000
 })
 
+client.interceptors.request.use((config) => {
+  const method = String(config?.method || 'get').toUpperCase()
+  if (method === 'GET' || method === 'HEAD') {
+    delete config.data
+  }
+  return config
+})
+
 export const getBaseURL = () => client.defaults.baseURL
 
 export default client

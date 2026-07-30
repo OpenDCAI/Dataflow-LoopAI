@@ -22,11 +22,13 @@ export function useAppShell() {
       }
       if (key.downArrow || (input === 'j' && inputBuffer.value.length === 0)) {
         if (page.value === 'tasks') await loopAI.selectTaskByDelta(1)
+        else if (page.value === 'now') loopAI.scrollNowPaneBy(1)
         else loopAI.scrollBy(1)
         return
       }
       if (key.upArrow || (input === 'k' && inputBuffer.value.length === 0)) {
         if (page.value === 'tasks') await loopAI.selectTaskByDelta(-1)
+        else if (page.value === 'now') loopAI.scrollNowPaneBy(-1)
         else loopAI.scrollBy(-1)
         return
       }
@@ -39,11 +41,17 @@ export function useAppShell() {
         return
       }
       if (key.pageDown) {
-        loopAI.scrollBy(10)
+        if (page.value === 'now') loopAI.scrollNowPaneBy(5)
+        else loopAI.scrollBy(10)
         return
       }
       if (key.pageUp) {
-        loopAI.scrollBy(-10)
+        if (page.value === 'now') loopAI.scrollNowPaneBy(-5)
+        else loopAI.scrollBy(-10)
+        return
+      }
+      if (key.tab && page.value === 'now' && inputBuffer.value.length === 0) {
+        loopAI.cycleNowPane()
         return
       }
       if (key.escape) {

@@ -14,7 +14,7 @@ const hint = computed(() => {
   if (appConfig.page === 'tasks') {
     return '/now  /new <name>  /rename <name>  /delete  /refresh  /quit'
   }
-  return '/tasks  /refresh  /quit  h/l or ←/→ nodes  j/k logs  type query and Enter'
+  return '/tasks  /refresh  /quit  ←/→ nodes  Tab focus pane  j/k scroll pane  type query and Enter'
 })
 const footerStatus = computed(() => (loopAI.loading ? '[loading]' : `[${loopAI.toast}]`))
 </script>
