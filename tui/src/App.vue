@@ -239,9 +239,11 @@ const {
   chatAreaHeight,
   nodeBoardLabel,
   visibleNodeCards,
-  transcriptViewport,
-  eventViewport,
-  userPreviewLines,
+  userMarkdown,
+  runtimeMarkdown,
+  transcriptMarkdown,
+  toolScrollOffset: toolPaneScrollTop,
+  assistantScrollOffset: assistantPaneScrollTop,
   nodeCardWidth,
   nodeCardGap
 } = useNowPanel({
@@ -321,9 +323,13 @@ const {
         :w="cols"
         :h="chatAreaHeight"
         :now-active-pane="nowActivePane"
-        :user-preview-lines="userPreviewLines"
-        :event-viewport="eventViewport"
-        :transcript-viewport="transcriptViewport"
+        :user-markdown="userMarkdown"
+        :runtime-markdown="runtimeMarkdown"
+        :transcript-markdown="transcriptMarkdown"
+        :tool-scroll-top="toolPaneScrollTop"
+        :assistant-scroll-top="assistantPaneScrollTop"
+        @update:tool-scroll-top="(value) => (toolScrollOffset = value)"
+        @update:assistant-scroll-top="(value) => (assistantScrollOffset = value)"
       />
     </template>
 

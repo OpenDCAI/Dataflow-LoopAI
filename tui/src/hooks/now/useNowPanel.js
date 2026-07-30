@@ -1,6 +1,6 @@
 import { computed, watch } from 'vue'
 import { formatTime, formatValue, padRight, truncate, wrapText } from '../../lib/format.js'
-import { formatConversationLine, normalizeConversationItem, summarizeEvent } from '../../lib/messages.js'
+import { normalizeConversationItem, summarizeEvent } from '../../lib/messages.js'
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
@@ -96,23 +96,14 @@ export function useNowPanel({
 
   const transcriptEntries = computed(() => {
     const items = Array.isArray(conversation.value) ? conversation.value : []
-    if (!items.length) return [{ role: 'system', text: local('empty') }]
-    return items.flatMap((item) => {
-      const normalized = normalizeConversationItem(item)
-      return formatConversationLine(normalized, Math.max(20, bodyWidth.value - 8), local).map((line) => ({
-        role: normalized.role,
-        text: line
-      }))
-    })
+    if (!items.length) return []
+    return items.map((item) => normalizeConversationItem(item))
   })
 
   const eventEntries = computed(() => {
     const items = Array.isArray(sessionEvents.value) ? sessionEvents.value : []
-    if (!items.length) return [{ tone: 'default', text: local('empty') }]
-    return items.flatMap((item) => summarizeEvent(item.payload || {}, local).map((line) => ({
-      tone: line.startsWith('[error]') ? 'error' : line.startsWith('[tool]') ? 'tool' : 'default',
-      text: line
-    })))
+    if (!items.length) return []
+    return items.flatMap((item) => summarizeEvent(item.payload || {}, local))
   })
 
   const transcriptBoxHeight = computed(() => clamp(chatAreaHeight.value - 2, 6, 14))
@@ -141,40 +132,22 @@ export function useNowPanel({
     { immediate: true }
   )
 
-  function lineStyleForRole(role) {
-    if (role === 'user') return { fg: 'cyanBright' }
-    if (role === 'assistant') return { fg: 'greenBright' }
-    if (role === 'tool') return { fg: 'yellowBright' }
-    return { fg: 'whiteBright' }
-  }
+  const userMarkdown = computed(() => String(latestUser.value || '-'))
 
-  function lineStyleForEvent(tone) {
-    if (tone === 'error') return { fg: 'redBright' }
-    if (tone === 'tool') return { fg: 'yellowBright' }
-    return { fg: 'whiteBright' }
-  }
-
-  const transcriptViewport = computed(() => {
-    const innerHeight = Math.max(1, transcriptBoxHeight.value - 2)
-    const safeOffset = clamp(assistantScrollOffset.value || 0, 0, Math.max(0, transcriptEntries.value.length - innerHeight))
-    return transcriptEntries.value.slice(safeOffset, safeOffset + innerHeight).map((line) => ({
-      ...line,
-      style: lineStyleForRole(line.role)
-    }))
+  const runtimeMarkdown = computed(() => {
+    if (!eventEntries.value.length) return local('empty')
+    return eventEntries.value.map((line) => `- ${String(line).replace(/^[-*]\s*/, '')}`).join('\n')
   })
 
-  const eventViewport = computed(() => {
-    const innerHeight = Math.max(1, eventBoxHeight.value - 2)
-    const safeOffset = clamp(toolScrollOffset.value || 0, 0, Math.max(0, eventEntries.value.length - innerHeight))
-    return eventEntries.value.slice(safeOffset, safeOffset + innerHeight).map((line) => ({
-      ...line,
-      style: lineStyleForEvent(line.tone)
-    }))
+  const transcriptMarkdown = computed(() => {
+    if (!transcriptEntries.value.length) return local('empty')
+    return transcriptEntries.value
+      .map((item) => {
+        const title = item.role === 'assistant' ? '### Assistant' : item.role === 'user' ? '### User' : `### ${String(item.role || 'message')}`
+        return `${title}\n\n${item.content || ''}`
+      })
+      .join('\n\n')
   })
-
-  const userPreviewLines = computed(() =>
-    wrapText(String(latestUser.value || '-'), Math.max(16, Math.floor(bodyWidth.value * 0.28) - 4)).slice(-3)
-  )
 
   return {
     summaryHeight,
@@ -184,9 +157,11 @@ export function useNowPanel({
     chatAreaHeight,
     nodeBoardLabel,
     visibleNodeCards,
-    transcriptViewport,
-    eventViewport,
-    userPreviewLines,
+    userMarkdown,
+    runtimeMarkdown,
+    transcriptMarkdown,
+    toolScrollOffset,
+    assistantScrollOffset,
     nodeCardWidth: NODE_CARD_WIDTH,
     nodeCardGap: NODE_CARD_GAP
   }
