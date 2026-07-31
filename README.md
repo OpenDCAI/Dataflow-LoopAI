@@ -298,7 +298,7 @@ Node / skill-specific notes:
 * **Obtainer Node**: the legacy `ObtainerAgent` is retired. Dataset search, download, lake ingest, and SFT export should use `skills/obtainer/SKILL.md`, `docs/OBTAINERCLI_USAGE.md`, and `python -m loopai.skills.ObtainerCLI.cli`. New dataset-acquisition workers resolve model endpoints from the warehouse model pool, `CODEX_*`/`DEEPSEEK_*` environment variables, or the starter system config.
 * **Constructor Node**: post-processing, cleaning, and format mapping use the core LoopAI environment installed by `pip install -e .`. Constructor calls an OpenAI-compatible chat endpoint through `constructor.model_path`, `constructor.base_url`, and `constructor.api_key`; if these are empty, several paths fall back to the Analyzer model settings. Benchmark-aware cleaning can additionally use `constructor.benchmark_source_dir` or benchmark pool fields, and the postprocess v2 path may use `TAVILY_API_KEY` for source reference search.
 * **WebCrawler Node**: web crawling remains available as an extensible runtime node and can be combined with Obtainer and Constructor flows for data acquisition pipelines.
-* **Trainer Skill**: local training normally requires `LLaMA-Factory` or `verl`. Set `trainer.train_framework` to `llamafactory` or `verl`. For LlamaFactory, set `trainer.llamafactory_dir` to the LLaMA-Factory repository and `trainer.llamafactory_env_path` to the environment root or `bin` directory, for example `/path/to/miniconda3/envs/loopai-llamafactory/bin`. For verl, provide `verl_dir` and `verl_env_path` in the trainer or system config. Trainer launches the selected framework as a managed subprocess, streams logs back to LoopAI, and keeps the Skill call in the foreground until training completes, fails, or is cancelled.
+* **Trainer Node**: local training normally requires `LLaMA-Factory` or `verl`. Set `trainer.train_framework` to `llamafactory` or `verl`. For LlamaFactory, set `trainer.llamafactory_dir` to the LLaMA-Factory repository and `trainer.llamafactory_env_path` to the environment root or `bin` directory, for example `/path/to/miniconda3/envs/loopai-llamafactory/bin`. For verl, provide `verl_dir` and `verl_env_path` in the trainer or system config. Trainer launches the selected framework as a managed subprocess, streams logs back to LoopAI, and keeps the Skill call in the foreground until training completes, fails, or is cancelled.
 
 These fields can be provided through the WebUI Configer flow, in node state, or in `starter.yaml` under the corresponding `judger`, `analyzer`, `obtainer`, `constructor`, `trainer`, or `system` sections.
 
@@ -313,6 +313,13 @@ LoopAI organizes its main runtime around **independent and composable nodes**, w
 * Handles user interaction and intent parsing
 * Uses `codex-sdk` to coordinate downstream skills and nodes
 * Manages the overall execution workflow
+
+### 🔁 Looper Node
+
+* Acts as the continuity layer between the user conversation and the starter
+* Automatically maintains the chat flow, summarizes recent conversation context, and fills in follow-up parameters when possible
+* Talks to the starter on the user's behalf so the loop can continue without manual turn-by-turn intervention
+* Helps keep long-running closed-loop workflows from being interrupted when the next step is already implied by the conversation
 
 ### 🤖 Judger Node
 
@@ -346,9 +353,10 @@ LoopAI organizes its main runtime around **independent and composable nodes**, w
 We will continue improving LoopAI in the following directions:
 
 * 💻 **Broader Domain Support**
-* 🤖 **Stronger Runtime Autonomy**
-* 🌐 **Online Platform & Community**
-* 📊 **Advanced Visualization Tools**
+* 🧪 **Training Strategy and Data Selection Optimization**
+* 🛡️ **Stronger Starter Boundary Capabilities and Safety Constraints**
+* 📏 **Vertical-domain Evaluation Optimization**
+* 🧩 **Plugin-based Nodes**
 
 ---
 
