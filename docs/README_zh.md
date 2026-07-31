@@ -291,13 +291,13 @@ conda create -n loopai-verl python=3.10
 
 请根据本机 CUDA/PyTorch 版本，分别按照 `vllm`、`LLaMA-Factory`、`verl` 的官方安装方式安装依赖。LoopAI 不在主依赖里固定这些包的版本，因为 GPU 环境通常需要按机器单独适配。
 
-各节点 / 技能依赖说明：
+各技能依赖说明：
 
-* **Judger Node**：如果需要本地评测模型，通常需要在独立环境中安装 `vllm`，并将 `judger.eval_vllm_env_path` 配置为该环境的 Python 可执行文件，例如 `/path/to/miniconda3/envs/loopai-vllm/bin/python`。当 `judger.eval_base_url` 为空时，Judger 会使用这个解释器在子进程中启动本地 vLLM OpenAI 兼容服务，并读取 `eval_vllm_port`、`eval_vllm_tensor_parallel_size`、`eval_vllm_gpu_memory_utilization`、`eval_env_configs` 等参数。如果你已经手动启动了兼容服务，则填写 `judger.eval_base_url` 即可。
-* **Analyzer Node**：Analyzer 通过 `analyzer.analyze_base_url`、`analyzer.analyze_model_path`、`analyzer.analyze_api_key` 调用 OpenAI 兼容聊天接口。本地分析时，可以复用 vLLM 环境启动分析模型，并将 `analyze_base_url` 指向该服务。当前 Analyzer 不会自动拉起 vLLM。
-* **Obtainer Node**：旧的 `ObtainerAgent` 已退休。数据搜索、下载、入湖和 SFT 导出应使用 `skills/obtainer/SKILL.md`、`docs/OBTAINERCLI_USAGE.md` 和 `python -m loopai.skills.ObtainerCLI.cli`。新的 dataset-acquisition worker 会从 warehouse model pool、`CODEX_*`/`DEEPSEEK_*` 环境变量或 starter system config 解析模型端点。
-* **Constructor Node**：后处理、清洗和格式映射使用 `pip install -e .` 安装的 LoopAI 主环境。Constructor 通过 `constructor.model_path`、`constructor.base_url`、`constructor.api_key` 调用 OpenAI 兼容聊天接口；如果这些字段为空，部分路径会回退使用 Analyzer 的模型配置。Benchmark-aware 清洗可以额外使用 `constructor.benchmark_source_dir` 或 benchmark pool 相关字段，postprocess v2 流程也可能使用 `TAVILY_API_KEY` 做 source reference 搜索。
-* **WebCrawler Node**：Web 抓取仍然作为可扩展运行时节点存在，可以和 Obtainer、Constructor 流程结合使用，组成数据获取链路。
+* **Judger Skill**：如果需要本地评测模型，通常需要在独立环境中安装 `vllm`，并将 `judger.eval_vllm_env_path` 配置为该环境的 Python 可执行文件，例如 `/path/to/miniconda3/envs/loopai-vllm/bin/python`。当 `judger.eval_base_url` 为空时，Judger 会使用这个解释器在子进程中启动本地 vLLM OpenAI 兼容服务，并读取 `eval_vllm_port`、`eval_vllm_tensor_parallel_size`、`eval_vllm_gpu_memory_utilization`、`eval_env_configs` 等参数。如果你已经手动启动了兼容服务，则填写 `judger.eval_base_url` 即可。
+* **Analyzer Skill**：Analyzer 通过 `analyzer.analyze_base_url`、`analyzer.analyze_model_path`、`analyzer.analyze_api_key` 调用 OpenAI 兼容聊天接口。本地分析时，可以复用 vLLM 环境启动分析模型，并将 `analyze_base_url` 指向该服务。当前 Analyzer 不会自动拉起 vLLM。
+* **Obtainer Skill**：旧的 `ObtainerAgent` 已退休。数据搜索、下载、入湖和 SFT 导出应使用 `skills/obtainer/SKILL.md`、`docs/OBTAINERCLI_USAGE.md` 和 `python -m loopai.skills.ObtainerCLI.cli`。新的 dataset-acquisition worker 会从 warehouse model pool、`CODEX_*`/`DEEPSEEK_*` 环境变量或 starter system config 解析模型端点。
+* **Constructor Skill**：后处理、清洗和格式映射使用 `pip install -e .` 安装的 LoopAI 主环境。Constructor 通过 `constructor.model_path`、`constructor.base_url`、`constructor.api_key` 调用 OpenAI 兼容聊天接口；如果这些字段为空，部分路径会回退使用 Analyzer 的模型配置。Benchmark-aware 清洗可以额外使用 `constructor.benchmark_source_dir` 或 benchmark pool 相关字段，postprocess v2 流程也可能使用 `TAVILY_API_KEY` 做 source reference 搜索。
+* **WebCrawler Skill**：Web 抓取仍然作为可扩展运行时节点存在，可以和 Obtainer、Constructor 流程结合使用，组成数据获取链路。
 * **Trainer Skill**：本地训练通常需要 `LLaMA-Factory` 或 `verl`。将 `trainer.train_framework` 设置为 `llamafactory` 或 `verl`。使用 LlamaFactory 时，需要配置 `trainer.llamafactory_dir` 为 LLaMA-Factory 仓库路径，并配置 `trainer.llamafactory_env_path` 为环境根目录或 `bin` 目录，例如 `/path/to/miniconda3/envs/loopai-llamafactory/bin`。使用 verl 时，可在 trainer 或 system 配置中提供 `verl_dir` 和 `verl_env_path`。Trainer 会通过内部任务管理器拉起对应训练框架的子进程并持续回传日志；Skill 调用会保持前台同步，直到训练完成、失败或取消。
 
 这些字段可以通过 WebUI 的 Configer 流程、节点 state，或 `starter.yaml` 中对应的 `judger`、`analyzer`、`obtainer`、`constructor`、`trainer`、`system` 配置段提供。
