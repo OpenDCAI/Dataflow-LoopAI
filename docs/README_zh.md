@@ -166,6 +166,8 @@ cp examples/config/starter.yaml ./starter.yaml
 system:
   api_port: 8855
   tavily_api_key: ""
+  codex_workspace: "<当前项目目录>"
+  codex_home: "<当前项目目录>/codex_home"
 
 model:
   proxy_base_url: "http://127.0.0.1:{和api_port一致}/responseProxy/v1"
@@ -186,7 +188,7 @@ model:
       enabled: true
 ```
 
-服务启动后，其它大部分配置都可以再进入 WebUI 的 Configer 流程中补齐或调整。实际启动时，最关键的是端口和至少一条可用的默认模型池配置。
+服务启动后，其它大部分配置都可以再进入 WebUI 的 Configer 流程中补齐或调整。实际启动时，最关键的是端口和至少一条可用的默认模型池配置。 `codex_workspace` 应指向当前项目目录，`codex_home` 一般指向 `<当前项目目录>/codex_home`。
 
 配置说明：
 

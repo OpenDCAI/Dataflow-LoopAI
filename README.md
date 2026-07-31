@@ -166,6 +166,8 @@ cp examples/config/starter.yaml ./starter.yaml
 system:
   api_port: 8855
   tavily_api_key: ""
+  codex_workspace: "<current project directory>"
+  codex_home: "<current project directory>/codex_home"
 
 model:
   proxy_base_url: "http://127.0.0.1:{same as api_port}/responseProxy/v1"
@@ -186,7 +188,7 @@ model:
       enabled: true
 ```
 
-After the service starts, most other settings can be completed or adjusted from the WebUI Configer flow. In practice, the most important bootstrap items are the API port and a working default model-pool entry.
+After the service starts, most other settings can be completed or adjusted from the WebUI Configer flow. In practice, the most important bootstrap items are the API port and a working default model-pool entry. `codex_workspace` should point to the current project directory, and `codex_home` should usually point to `<current project directory>/codex_home`.
 
 Configuration notes:
 
