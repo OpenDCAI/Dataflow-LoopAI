@@ -23,7 +23,7 @@ export function useNowPanel({
   toolScrollOffset,
   assistantScrollOffset
 }) {
-  const NODE_CARD_WIDTH = 44
+  const NODE_CARD_WIDTH = 70
   const NODE_CARD_GAP = 2
   const NODE_CARD_HEIGHT_MIN = 15
   const NODE_CARD_HEIGHT_MAX = 20
@@ -89,8 +89,8 @@ export function useNowPanel({
       customTitle: local('custom_info'),
       stateBorderStyle: index === 0 && nowActivePane.value === 'state' ? { fg: 'cyanBright' } : { fg: 'white' },
       customBorderStyle: index === 0 && nowActivePane.value === 'custom' ? { fg: 'magentaBright' } : { fg: 'white' },
-      stateLines: stateLinesFor(card, index, Math.floor((NODE_CARD_WIDTH - 11) / 2), Math.max(1, nodesAreaHeight.value - 11)),
-      customLines: customLinesFor(card, index, Math.floor((NODE_CARD_WIDTH - 11) / 2), Math.max(1, nodesAreaHeight.value - 11))
+      stateLines: stateLinesFor(card, index, Math.floor((NODE_CARD_WIDTH - 11) / 2), Math.max(1, nodesAreaHeight.value - 9)),
+      customLines: customLinesFor(card, index, Math.floor((NODE_CARD_WIDTH - 11) / 2), Math.max(1, nodesAreaHeight.value - 9))
     }))
   )
 

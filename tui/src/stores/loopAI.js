@@ -396,6 +396,10 @@ export const useLoopAI = defineStore('loopAI', () => {
     if (command === '/now') {
       await refreshTasks(true)
       ensureTaskSelection()
+      if (!currentTask.value?.task_id) {
+        toast.value = local('Cannot open /now because no task exists yet.')
+        return true
+      }
       appConfig.setPage('now')
       scrollOffset.value = 0
       nodeScrollOffset.value = 0
@@ -404,8 +408,8 @@ export const useLoopAI = defineStore('loopAI', () => {
       toolScrollOffset.value = 1000000
       assistantScrollOffset.value = 1000000
       nowActivePane.value = 'state'
-      if (currentTask.value?.task_id) await refreshCurrent(true)
-      toast.value = currentTask.value?.task_id ? local('Synced') : local('No task selected')
+      await refreshCurrent(true)
+      toast.value = local('Synced')
       return true
     }
     if (command === '/refresh') {

@@ -61,9 +61,9 @@ onBeforeUnmount(() => {
 
     <TBox
       :x="1"
-      :y="3"
+      :y="2"
       :w="Math.floor((w - 5) / 2)"
-      :h="Math.max(6, h - 7)"
+      :h="Math.max(7, h - 5)"
       border
       :title="card.stateTitle"
       :style="card.stateBorderStyle"
@@ -81,9 +81,9 @@ onBeforeUnmount(() => {
 
     <TBox
       :x="Math.floor((w - 5) / 2) + 2"
-      :y="3"
+      :y="2"
       :w="Math.floor((w - 5) / 2)"
-      :h="Math.max(6, h - 7)"
+      :h="Math.max(7, h - 5)"
       border
       :title="card.customTitle"
       :style="card.customBorderStyle"

@@ -26,6 +26,7 @@ export const i18n = {
   },
   'Delete cancelled': { en: 'Delete cancelled', zh: '已取消删除' },
   'No task selected': { en: 'No task selected', zh: '未选择任务' },
+  'Cannot open /now because no task exists yet.': { en: 'Cannot open /now because no task exists yet.', zh: '当前还没有任务，无法进入 /now' },
   'Delete task failed': { en: 'Delete task failed', zh: '删除任务失败' },
   'Task deleted': { en: 'Task deleted', zh: '任务已删除' },
   'Name cannot be empty': { en: 'Name cannot be empty', zh: '名称不能为空' },

@@ -339,7 +339,7 @@ const {
 </script>
 
 <template>
-  <TView :x="0" :y="0" :w="cols" :h="rows" focusable autoFocus @keydown="onSurfaceKeydown">
+  <TView :x="0" :y="0" :w="cols" :h="rows" focusable autoFocus @keydownCapture="onSurfaceKeydown">
     <AppHeader
       :cols="cols"
       :page="page"
