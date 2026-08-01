@@ -32,11 +32,25 @@ def generate_verl_grpo_config(state: Dict[str, Any], template_path: str) -> Dict
     if not isinstance(raw, dict):
         raise ValueError(f"Verl GRPO template must contain a YAML mapping: {path}")
 
-    config = copy.deepcopy(raw)
-    if config.get("framework") != "verl" or config.get("stage") != "grpo":
+    if raw.get("framework") != "verl" or raw.get("stage") != "grpo":
         raise ValueError("Verl template must declare framework: verl and stage: grpo")
 
     trainer = state.get("trainer") or {}
+    previous_config = trainer.get("_trainer_previous_config")
+    inherit_previous = bool(trainer.get("verl_inherit_previous_config", True))
+    if (
+        inherit_previous
+        and isinstance(previous_config, dict)
+        and previous_config.get("framework") == "verl"
+        and previous_config.get("stage") == "grpo"
+    ):
+        # Previous YAML has already crossed the user approval boundary. Use it
+        # as the hyperparameter baseline, then replace every round-scoped field.
+        config = copy.deepcopy(previous_config)
+        inherited = True
+    else:
+        config = copy.deepcopy(raw)
+        inherited = False
     run_dir = Path(str(trainer.get("trainer_output_dir") or trainer.get("output_dir") or "./outputs")).resolve()
     version_id = str(trainer.get("trainer_version_id") or run_dir.name)
     train_value = trainer.get("train_input_dataset_path")
@@ -99,6 +113,7 @@ def generate_verl_grpo_config(state: Dict[str, Any], template_path: str) -> Dict
 
     loopai_reward = config.setdefault("loopai_reward", {})
     loopai_reward["mode"] = reward_mode
+    loopai_reward["origin"] = str(trainer.get("verl_reward_origin") or "user")
     loopai_reward["preset"] = reward_preset or None
     loopai_reward["function_path"] = resolved_reward_path
     loopai_reward["function_name"] = reward_function_name
@@ -108,6 +123,30 @@ def generate_verl_grpo_config(state: Dict[str, Any], template_path: str) -> Dict
         trainer.get("verl_selection_metric") or "val-core/*/acc/mean@*"
     )
     result["selection_mode"] = str(trainer.get("verl_selection_mode") or "max")
+    if trainer.get("verl_multi_round_enabled", False):
+        # A later round can only consume an exported Hugging Face model. Smoke
+        # templates used to disable both checkpointing and export, so make the
+        # multi-round contract explicit in the generated YAML shown to the user.
+        result["export_huggingface"] = True
+        try:
+            save_freq = int(overrides.get("trainer.save_freq", -1))
+        except (TypeError, ValueError):
+            save_freq = -1
+        if save_freq <= 0:
+            try:
+                test_freq = int(overrides.get("trainer.test_freq", 1))
+            except (TypeError, ValueError):
+                test_freq = 1
+            overrides["trainer.save_freq"] = max(1, test_freq)
+
+    config["loopai_round"] = {
+        "round_index": int(trainer.get("trainer_round_index") or 1),
+        "version_id": version_id,
+        "parent_version_id": trainer.get("trainer_parent_version_id") or None,
+        "inherited_previous_config": inherited,
+        "data_manifest_path": trainer.get("verl_data_manifest_path") or None,
+        "model_inheritance": copy.deepcopy(trainer.get("trainer_model_inheritance") or {}),
+    }
     config = strip_retired_tracking_config(config)
     config.setdefault("overrides", {})["trainer.logger"] = ["console", "file"]
     assert_no_retired_tracking(config)
@@ -128,6 +167,7 @@ def generate_verl_config_explanation(config: Dict[str, Any]) -> str:
     overrides = config.get("overrides") or {}
     result = config.get("result") or {}
     loopai_reward = config.get("loopai_reward") or {}
+    loopai_round = config.get("loopai_round") or {}
     lines = [
         "Verl GRPO configuration",
         f"- entrypoint: {config.get('entrypoint')}",
@@ -142,5 +182,8 @@ def generate_verl_config_explanation(config: Dict[str, Any]) -> str:
         f"- reward preset: {loopai_reward.get('preset') or 'custom'}",
         f"- reward function: {overrides.get('reward.custom_reward_function.path')}",
         f"- selection metric: {result.get('selection_metric')} ({result.get('selection_mode')})",
+        f"- round: {loopai_round.get('round_index')} (parent={loopai_round.get('parent_version_id')})",
+        f"- inherited previous config: {loopai_round.get('inherited_previous_config')}",
+        f"- data manifest: {loopai_round.get('data_manifest_path')}",
     ]
     return "\n".join(lines) + "\n"

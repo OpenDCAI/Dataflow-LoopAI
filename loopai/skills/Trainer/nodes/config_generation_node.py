@@ -1,11 +1,10 @@
 """
 配置生成节点
-根据任务描述生成 LlamaFactory 训练配置（YAML格式）
+生成 LlamaFactory SFT 或 Verl GRPO 训练配置（YAML格式）
 """
 
 import os
 import yaml
-from pathlib import Path
 from loopai.schema.states import LoopAIState
 from loopai.skills.Trainer.utils.config_generator import ConfigGenerator, generate_config_explanation
 from loopai.skills.Trainer.utils.verl_config_generator import (
@@ -22,7 +21,7 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
     """
     配置生成节点
     
-    根据任务描述和数据集信息生成合理的 LlamaFactory 训练配置
+    根据任务描述和数据集信息生成对应后端训练配置
     
     Args:
         state: LoopAIState 对象，需要包含：
@@ -155,9 +154,9 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
                 or './output/trainer'
             )
             os.makedirs(output_dir, exist_ok=True)
-            config_output_path = state.get('trainer', {}).get('train_output_config_path')
-            if not config_output_path or Path(str(config_output_path)).suffix.lower() not in {'.yaml', '.yml'}:
-                config_output_path = os.path.join(output_dir, 'training_config.yaml')
+            # Every prepare() round owns a version-scoped YAML. Reusing a stale
+            # path would overwrite the previous round's approved configuration.
+            config_output_path = os.path.join(output_dir, 'training_config.yaml')
 
             config = generate_verl_grpo_config(state, template_path)
             config_output_path = save_verl_grpo_config(config, config_output_path)

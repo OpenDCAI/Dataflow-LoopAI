@@ -75,7 +75,8 @@
 - 用户要求查看 Judger 过程或评测明细时，优先读取 `judger.pkl` 事件流
 - `train` 优先使用 Trainer Skill
 - SFT 必须使用 `train_stage=sft, train_framework=llamafactory`；GRPO 必须使用 `train_stage=grpo, train_framework=verl`，不要交叉组合
-- Verl GRPO 默认使用 Conda 环境 `verl`，输入必须是包含 `prompt`、`data_source`、`reward_model` 的训练/验证 Parquet；优先使用 `auto` 或经过用户确认的 LoopAI Reward 预设，只有预设无法覆盖任务时才使用自定义 reward Python 文件
+- Verl GRPO 默认使用 Conda 环境 `verl`；原生输入使用包含 `prompt`、`data_source`、`reward_model` 的 Parquet，Constructor 生成的 JSON/JSONL 则交给 Trainer 在 `prepare()` 内转换、切分并记录 manifest，不要要求 Constructor 输出 Verl 专用格式；优先使用 `auto` 或经过用户确认的 LoopAI Reward 预设，无法可靠识别时必须请用户指定，不得猜测 reward 或 ground truth
+- Verl 多轮默认继承上一轮已确认 YAML 的训练超参和成功导出的最佳 Hugging Face 模型，但每轮必须刷新当前数据、输出目录和 version，并重新展示完整 YAML 取得确认
 - `obtain`、训练前数据获取、SFT 数据集构造、能力定向提升数据规划，优先读取 Obtainer Skill：`skills/obtainer/SKILL.md`
 - 涉及 DataMixer、数据湖入湖、SFT recipe/export、按 math/code/text2sql/reasoning 域找数据时，先按 `skills/obtainer/SKILL.md` 和其中的 ObtainerCLI 流程执行，不要从 `outputs/` 里的旧 run 或旧 recipe 反推当前流程
 - 执行数据搜集/下载/入湖时，starter 外层只能通过 CLI wrapper 启动 `dataset-acquisition-agent`；如果运行环境不是当前 shell 的 Python，先设置 `LOOPAI_PYTHON_EXECUTABLE=/path/to/loopai-env/bin/python`，再用 `${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm ... dataset-acquisition-agent start`，或在 start 命令上显式传 `--python-executable /path/to/loopai-env/bin/python`；然后轮询/续跑。不要使用通用 `spawn_agent` worker，不要在外层自己创建 SearchAgent task JSON、调用 `searchagent`、调用 `download manifest` 或直接入湖

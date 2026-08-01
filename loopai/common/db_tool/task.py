@@ -155,7 +155,19 @@ def _extract_state_section(states_config: dict[str, Any], section_name: str) -> 
 
 def _coerce_update_item(raw_item: Any) -> dict[str, Any]:
     if isinstance(raw_item, dict):
-        return format_value(dict(raw_item))
+        # Configer accepts both schema-style wrappers (``{"value": ...}``)
+        # and direct field values.  A direct mapping value must not be mistaken
+        # for the wrapper itself; that used to turn fields such as
+        # constructor.mapping_results into None.  Likewise, infer the wrapper
+        # type when callers omit it so ``{"value": {...}}`` remains a mapping
+        # instead of being stringified.
+        if "value" not in raw_item and "default" not in raw_item and "type" not in raw_item:
+            return {"value": dict(raw_item), "type": "dict"}
+        item = dict(raw_item)
+        if "type" not in item:
+            value = item.get("value", item.get("default"))
+            item["type"] = wrap_attr(value)["type"]
+        return format_value(item)
     return {"value": raw_item}
 
 
