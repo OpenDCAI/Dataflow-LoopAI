@@ -7,6 +7,38 @@ Trainer Skill 是 Dataflow-LoopAI 中负责模型训练的技能实现，支持�
 
 Trainer 不依赖 MCP。对调用方仍保持同步返回语义，但训练、进度持久化和结果收尾由独立本地 Worker 持有；Codex/API 会话提前结束不会中断 Worker。两条路径都先生成完整 YAML，用户确认后才启动训练。
 
+## 命令行入口
+
+安装项目后可以通过 `loopai-trainer` 直接调用同一套 Trainer Skill。CLI
+不会创建另一套训练实现，也不会改变 API、前端或独立 Worker 的行为。
+
+```bash
+pip install -e .
+
+# 1. 生成最终 YAML；从 JSON 结果的 data 中读取 config_yaml、
+#    config_path、config_sha256 和 trainer_version_id。
+loopai-trainer prepare \
+  --config ./starter.yaml \
+  --task-id my-task
+
+# 2. 用户确认 YAML 后，使用 prepare 返回的同一个 version ID 启动训练。
+loopai-trainer run-prepared \
+  --config ./starter.yaml \
+  --task-id my-task \
+  --version-id <trainer_version_id> \
+  --prepared-config <config_path> \
+  --sha256 <config_sha256>
+
+# 查看状态、事件和分析结果。
+loopai-trainer status --task-id my-task --version-id <trainer_version_id>
+loopai-trainer events --task-id my-task --version-id <trainer_version_id>
+loopai-trainer analyze --task-id my-task
+```
+
+如果任务配置保存在数据库中，可同时传入 `--db-path`。`prepare` 与
+`run-prepared` 必须使用相同的任务配置来源；CLI 不提供绕过 YAML 确认的直接
+`run` 子命令。
+
 ## Verl GRPO 最小配置
 
 ```python
