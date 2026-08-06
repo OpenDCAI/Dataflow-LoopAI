@@ -455,11 +455,10 @@ class TrainerAgent(BaseAgent):
                 message="正在检查训练所需的配置字段...",
                 data={"stage": "field_validation"},
             )
-            # 如果 obtainer/constructor 有映射输出，自动填充训练数据集路径
+            # 如果 Obtainer 已产出最终训练数据，自动填充训练数据集路径。
             if not state.get('trainer', {}).get('train_input_dataset_path'):
                 obtainer_output = state.get('obtainer', {}).get('mapping_results', {}) if state.get('obtainer', {}).get('mapping_results') else {}
-                constructor_output = state.get('constructor', {}).get('mapping_results', {}) if state.get('constructor', {}).get('mapping_results') else {}
-                auto_dataset = obtainer_output.get('output_file') or constructor_output.get('output_file')
+                auto_dataset = obtainer_output.get('output_file')
                 if auto_dataset:
                     state.setdefault('trainer', {})['train_input_dataset_path'] = auto_dataset
                     logger.info(f"自动从上游映射结果填充训练数据集路径: {auto_dataset}")

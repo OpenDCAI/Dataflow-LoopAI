@@ -37,26 +37,21 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
     prepare_trainer_run(state)
     
     try:
-        # 获取数据集路径 - 优先使用 obtainer/constructor 映射结果
+        # SFT 可以直接消费 Obtainer 的最终导出；RL 数据必须显式配置。
         obtainer_output_file = state.get('obtainer', {}).get('mapping_results', {}).get('output_file') if state.get('obtainer', {}).get('mapping_results') else None
-        constructor_output_file = state.get('constructor', {}).get('mapping_results', {}).get('output_file') if state.get('constructor', {}).get('mapping_results') else None
         
         framework = state.get('trainer', {}).get('train_framework')
         if framework == "verl":
-            # Constructor/Obtainer currently produce SFT JSON. An explicitly supplied
-            # RL Parquet must not be silently replaced by those artifacts.
+            # Obtainer's SFT export must not replace an explicitly supplied RL Parquet.
             dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
         elif obtainer_output_file and os.path.exists(obtainer_output_file):
             dataset_path = obtainer_output_file
             logger.info(f"使用 obtainer 映射结果作为训练数据集: {dataset_path}")
-        elif constructor_output_file and os.path.exists(constructor_output_file):
-            dataset_path = constructor_output_file
-            logger.info(f"使用 constructor 映射结果作为训练数据集: {dataset_path}")
         else:
             dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
         
         if not dataset_path:
-            raise ValueError("缺少训练数据集路径 (train_input_dataset_path)，且 obtainer/constructor 映射结果中也未找到输出文件")
+            raise ValueError("缺少训练数据集路径 (train_input_dataset_path)，且 obtainer 最终导出中也未找到输出文件")
         
         # 同步更新到 trainer state，确保后续节点统一使用
         state.setdefault('trainer', {})['train_input_dataset_path'] = dataset_path
