@@ -7,6 +7,13 @@ from itertools import islice
 from pathlib import Path
 from typing import Any, Iterable
 
+from loopai.utils.hf_endpoints import (
+    DEFAULT_HF_ENDPOINTS,
+    apply_hf_endpoint as _apply_hf_endpoint,
+    endpoint_reachable as _endpoint_reachable,
+    hf_endpoint_chain as _hf_endpoint_chain,
+)
+
 from .errors import ObtainerCliError
 from .models import canonical_json, utc_now
 
@@ -19,11 +26,62 @@ def _ensure_hf_mirror_env() -> None:
     endpoint = (
         os.environ.get("HF_ENDPOINT")
         or os.environ.get("HF_HUB_ENDPOINT")
-        or "https://hf-mirror.com"
+        or DEFAULT_HF_ENDPOINTS[0]
     )
     os.environ.setdefault("HF_ENDPOINT", endpoint)
     os.environ.setdefault("HF_HUB_ENDPOINT", endpoint)
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
+
+def _load_hf_dataset(dataset_id: str, *, split: str, streaming: bool) -> Any:
+    """Load a dataset with multi-level endpoint fallback.
+
+    Each endpoint is probed first (short timeout, no retry), then tried in
+    order (explicit config, official hub, mirrors, configured extras).  The
+    per-endpoint config auto-discovery fallback is kept: when a bare load
+    fails, the first config is resolved and retried against the same endpoint
+    before moving on.  Only when every endpoint fails is a combined error
+    raised, so one dead mirror cannot sink the whole download run.
+    """
+    errors: list[str] = []
+    for endpoint in _hf_endpoint_chain():
+        if not _endpoint_reachable(endpoint):
+            errors.append(f"{endpoint}: unreachable (probe failed)")
+            continue
+        _apply_hf_endpoint(endpoint)
+        try:
+            return _load_hf_dataset_once(dataset_id, split=split, streaming=streaming)
+        except Exception as exc:
+            errors.append(f"{endpoint}: {type(exc).__name__}: {str(exc)[:300]}")
+            continue
+    raise ObtainerCliError(
+        "HF_DOWNLOAD_ALL_ENDPOINTS_FAILED",
+        f"all HuggingFace endpoints failed for dataset {dataset_id!r}",
+        hint="\n".join(errors),
+    )
+
+
+def _load_hf_dataset_once(dataset_id: str, *, split: str, streaming: bool) -> Any:
+    from datasets import get_dataset_config_names, load_dataset
+    from datasets.download.download_config import DownloadConfig
+
+    kwargs: dict[str, Any] = {
+        "split": split,
+        "streaming": streaming,
+        # Fail fast on a bad endpoint so the next mirror in the chain is tried
+        # promptly instead of burning huggingface_hub's built-in retries.
+        "download_config": DownloadConfig(max_retries=0),
+    }
+    try:
+        return load_dataset(dataset_id, **kwargs)
+    except Exception as first_error:
+        try:
+            configs = get_dataset_config_names(dataset_id)
+        except Exception:
+            configs = []
+        if not configs:
+            raise first_error
+        return load_dataset(dataset_id, configs[0], **kwargs)
 
 
 def _safe_name(value: str) -> str:
@@ -112,22 +170,6 @@ def _write_jsonl(
     }
 
 
-def _load_hf_dataset(dataset_id: str, *, split: str, streaming: bool) -> Any:
-    _ensure_hf_mirror_env()
-    from datasets import get_dataset_config_names, load_dataset
-
-    try:
-        return load_dataset(dataset_id, split=split, streaming=streaming)
-    except Exception as first_error:
-        try:
-            configs = get_dataset_config_names(dataset_id)
-        except Exception:
-            configs = []
-        if not configs:
-            raise first_error
-        return load_dataset(dataset_id, configs[0], split=split, streaming=streaming)
-
-
 def _export_huggingface_jsonl(
     *,
     item: dict[str, Any],
@@ -153,6 +195,7 @@ def _export_huggingface_jsonl(
 
     _ensure_hf_mirror_env()
     dataset = _load_hf_dataset(dataset_id, split=split, streaming=streaming)
+    endpoint_used = os.environ.get("HF_ENDPOINT") or ""
     effective_max_rows = _effective_max_rows(max_rows)
     effective_max_bytes = _effective_max_bytes(max_bytes_per_dataset)
     selected_rows = islice(dataset, effective_max_rows)
@@ -170,6 +213,7 @@ def _export_huggingface_jsonl(
         "source": "huggingface",
         "dataset_id": dataset_id,
         "split": split,
+        "endpoint_used": endpoint_used,
         "rows_written": rows_written,
         "bytes_written": int(write_result["bytes_written"]),
         "max_rows_requested": max_rows,
