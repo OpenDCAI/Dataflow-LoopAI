@@ -262,9 +262,7 @@ def _build_relevant_state_snapshot(state: dict[str, Any]) -> dict[str, Any]:
         "judger",
         "analyzer",
         "obtainer",
-        "constructor",
         "trainer",
-        "webcrawler",
         "configer",
     ]
     snapshot: dict[str, Any] = {}

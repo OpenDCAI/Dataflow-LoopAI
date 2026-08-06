@@ -200,11 +200,10 @@ Agent-specific notes:
 
 * **JudgerAgent**: for local model evaluation, install `vllm` in a separate environment and set `judger.eval_vllm_env_path` to the Python executable, for example `/path/to/miniconda3/envs/loopai-vllm/bin/python`. When `judger.eval_base_url` is empty, Judger uses this interpreter to start a local vLLM OpenAI-compatible API server in a subprocess, with parameters such as `eval_vllm_port`, `eval_vllm_tensor_parallel_size`, `eval_vllm_gpu_memory_utilization`, and `eval_env_configs`. If you already run a compatible service yourself, set `judger.eval_base_url` and Judger will use that service instead.
 * **AnalyzerAgent**: Analyzer calls an OpenAI-compatible chat endpoint through `analyzer.analyze_base_url`, `analyzer.analyze_model_path`, and `analyzer.analyze_api_key`. For local analysis, you can serve the analysis model with vLLM in the same vLLM environment and point `analyze_base_url` to it. Analyzer does not currently start vLLM by itself.
-* **ObtainerCLI/DataMixer**: the legacy LangGraph `ObtainerAgent` is retired. Dataset search, download, lake ingest, and SFT export should use `skills/obtainer/SKILL.md`, `docs/OBTAINERCLI_USAGE.md`, and `python -m loopai.skills.ObtainerCLI.cli`. New dataset-acquisition workers resolve model endpoints from the warehouse model pool, `CODEX_*`/`DEEPSEEK_*` environment variables, or the starter system config.
-* **ConstructorAgent**: post-processing, cleaning, and format mapping use the core LoopAI environment installed by `pip install -e .`. Constructor calls an OpenAI-compatible chat endpoint through `constructor.model_path`, `constructor.base_url`, and `constructor.api_key`; if these are empty, several paths fall back to the Analyzer model settings. Benchmark-aware cleaning can additionally use `constructor.benchmark_source_dir` or benchmark pool fields, and the postprocess v2 path may use `TAVILY_API_KEY` for source reference search.
+* **ObtainerCLI/DataMixer**: this is the only supported data workflow. Use `skills/obtainer/SKILL.md`, `docs/OBTAINERCLI_USAGE.md`, and `python -m loopai.skills.ObtainerCLI.cli` for hosted-dataset and webpage acquisition, download, normalization, lake ingest, cleaning, deduplication, quality processing, schema mapping, recipe planning, and final training-data export. Retired standalone data agents must not be scheduled. Managed workers resolve model endpoints from the warehouse model pool, `CODEX_*`/`DEEPSEEK_*` environment variables, or the starter system config.
 * **Trainer Skill**: local training normally requires `LLaMA-Factory` or `verl`. Set `trainer.train_framework` to `llamafactory` or `verl`. For LlamaFactory, set `trainer.llamafactory_dir` to the LLaMA-Factory repository and `trainer.llamafactory_env_path` to the environment root or `bin` directory, for example `/path/to/miniconda3/envs/loopai-llamafactory/bin`. For verl, provide `verl_dir` and `verl_env_path` in the trainer or system config. Trainer launches the selected framework as a managed subprocess, streams logs back to LoopAI, and keeps the Skill call in the foreground until training completes, fails, or is cancelled.
 
-These fields can be provided through the WebUI Configer flow, in Agent state, or in `starter.yaml` under the corresponding `judger`, `analyzer`, `obtainer`, `constructor`, `trainer`, or `system` sections.
+These fields can be provided through the WebUI Configer flow, in Agent state, or in `starter.yaml` under the corresponding `judger`, `analyzer`, `obtainer`, `trainer`, or `system` sections.
 
 ---
 
@@ -230,12 +229,12 @@ Each Agent in LoopAI is implemented as an **independent and composable subgraph*
 * Identifies failure patterns and error types
 * Generates interpretable diagnostic reports
 
-### 🤖 ObtainerCLI/DataMixer & WebCrawlerAgent
+### 🤖 ObtainerCLI/DataMixer
 
-* Discovers and downloads domain-specific datasets
-* Ingests datasets into the DataMixer warehouse with dataset cards and lineage
-* Exports training-ready data through DataMixer recipes
-* Supports extensible web data crawling
+* Discovers hosted datasets and collects domain webpages through managed acquisition workers
+* Downloads, normalizes, and ingests data into the DataMixer warehouse with dataset cards and lineage
+* Cleans, deduplicates, validates, and maps heterogeneous data
+* Plans DataMixer recipes and exports final training-ready datasets
 
 ### 🛠️ Trainer Skill
 

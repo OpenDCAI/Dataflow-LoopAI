@@ -1,18 +1,18 @@
 # Trainer Agent 详细指南
 
-`TrainerAgent` 是 LoopAI 闭环里负责模型更新的节点。它会把前面 `Analyzer`、`Obtainer`、`Constructor` 准备好的训练数据，转化为一次完整的微调任务，并将本地训练指标、checkpoint 等写回 `state`，供下一轮 `Judger` 使用。
+`TrainerAgent` 是 LoopAI 闭环里负责模型更新的节点。它会把 ObtainerCLI/DataMixer 导出的最终训练数据转化为一次完整的微调任务，并将本地训练指标、checkpoint 等写回 `state`，供下一轮 `Judger` 使用。
 
 当前支持两条严格配对的训练路径：使用 [LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) 执行 SFT，以及使用 Verl 执行 GRPO。两条路径共享配置审批、版本化状态、持久化 Worker 和本地指标接口，但数据格式、训练 YAML、checkpoint 形式与结果选择规则分别处理。
 
 ## 在闭环中的位置
 
 ```text
-Judger -> Analyzer -> Obtainer / WebCrawler -> Constructor -> Trainer -> Judger（下一轮）
+Judger -> Analyzer -> ObtainerCLI/DataMixer -> Trainer -> Judger（下一轮）
 ```
 
 Trainer 的输入通常包括：
 
-- 上游 `Constructor` 或 `Obtainer` 的 `mapping_results.output_file`，或显式给定的 `train_input_dataset_path`
+- 上游 `Obtainer` 的 `mapping_results.output_file`，或显式给定的 `train_input_dataset_path`
 - 一份训练任务描述：`train_input_task_description`
 - 一份 LLaMA-Factory 训练配置模板：`train_input_config_template_path`
 - 一个基础模型路径：`train_input_model_name`
@@ -59,7 +59,7 @@ LLaMA-Factory 模式下必填字段包括：
 
 特别说明：
 
-如果没有显式提供 `train_input_dataset_path`，Trainer 会优先尝试从 `state.obtainer.mapping_results.output_file` 或 `state.constructor.mapping_results.output_file` 中读取上游产物。
+如果没有显式提供 `train_input_dataset_path`，Trainer 会尝试从 `state.obtainer.mapping_results.output_file` 中读取最终导出产物。
 
 ### 1. 数据检查节点：`data_check`
 
@@ -153,7 +153,7 @@ LLM 辅助模式下，如果 `ConfigGenerator` 初始化时提供了 `model_path
 | --- | --- | --- |
 | `train_framework` | `str` | 训练框架。目前 UI 只暴露 `llamafactory`。 |
 | `llamafactory_dir` | `str` | LLaMA-Factory 仓库根目录，用于注册数据集。 |
-| `train_input_dataset_path` | `str` | 训练数据集路径，支持 `.json` / `.jsonl`。如果未提供，会尝试使用 `obtainer/constructor.mapping_results.output_file`。 |
+| `train_input_dataset_path` | `str` | 训练数据集路径，支持 `.json` / `.jsonl`。如果未提供，会尝试使用 `obtainer.mapping_results.output_file`。 |
 | `train_input_task_description` | `str` | 任务描述，用于决定规则模式下的学习率、epoch、LoRA 参数等。 |
 | `train_input_config_template_path` | `str` | YAML 模板路径，例如 `loopai/skills/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml`。 |
 | `train_input_model_name` | `str` | 基础模型名称或本地路径，最终写入 `model_name_or_path`。 |
@@ -223,12 +223,11 @@ LLM 辅助模式下，如果 `ConfigGenerator` 初始化时提供了 `model_path
 
 ### 模式 D：从上游 `mapping_results` 接力
 
-如果 Trainer 是在 `Constructor` 或 `Obtainer` 之后被串联调用的，可以省略 `train_input_dataset_path`。
+如果 Trainer 是在 ObtainerCLI/DataMixer 最终导出之后被串联调用的，可以省略 `train_input_dataset_path`。
 
 Trainer 会按优先级自动尝试：
 
 - `obtainer.mapping_results.output_file`
-- `constructor.mapping_results.output_file`
 
 但以下字段仍然必须提供：
 

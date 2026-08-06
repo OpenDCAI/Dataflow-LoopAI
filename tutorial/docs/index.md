@@ -18,7 +18,7 @@ hero:
 
 features:
   - title: 从对话出发的优化流程
-    details: 先和 Starter 对话，再进入 Judger、Analyzer、Obtainer、Constructor、Trainer 等子 Agent 执行具体任务。
+    details: 先和 Starter 对话，再进入 Judger、Analyzer、ObtainerCLI、Trainer 等节点执行具体任务。
   - title: 不只是评测，而是完整闭环
     details: LoopAI 覆盖评测、分析、数据获取、数据后处理和训练，适合做真正可持续迭代的模型优化。
   - title: WebUI 与终端双入口

@@ -87,7 +87,7 @@ Analyzer 会自动推荐 metric，并执行对应的指标计算。
 - 分析报告
 - 数据构造建议
 - 模型优化建议
-- 可供 `Obtainer` 或 `WebCrawler` 使用的后续优化方向
+- 可供 ObtainerCLI/DataMixer 使用的后续优化方向
 
 ## 不同任务下重点分析什么
 
@@ -141,7 +141,7 @@ Analyzer 位于：
 在完整闭环中，它通常处在下面这个位置：
 
 ```text
-模型生成 -> Judger 执行评测 -> Analyzer 分析结果 -> Obtainer / WebCrawler 获取新数据 -> 再次训练与评测
+模型生成 -> Judger 执行评测 -> Analyzer 分析结果 -> ObtainerCLI/DataMixer 获取并处理数据 -> 再次训练与评测
 ```
 
 因此，Analyzer 更像是整个闭环中的“诊断与决策层”。

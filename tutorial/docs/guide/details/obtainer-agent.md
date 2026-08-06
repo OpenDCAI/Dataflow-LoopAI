@@ -1,66 +1,56 @@
 # ObtainerCLI/DataMixer 详细指南
 
-旧的 LangGraph `ObtainerAgent` 已退休。现在应使用 ObtainerCLI/DataMixer 根据已有问题诊断结果获取更合适的数据，并完成下载、入湖、dataset card 注册、派生字段校验和训练数据导出。
+ObtainerCLI/DataMixer 是当前唯一可用的数据工作流。它负责从数据需求到最终训练数据的完整链路，不需要在中间切换到其他数据 Agent。
 
-## 核心职责
+## 完整链路
 
-- 根据分析结论获取候选数据
-- 为后续数据处理准备原始样本
-
-## 进入它之前通常要准备什么
-
-更理想的前置条件是：
-
-- 已经有分析报告
-- 已经明确想补什么类型的数据
-- 检索、模型或外部资源配置已经到位
-
-## 关键配置
-
-ObtainerCLI/DataMixer 的外层 worker 可以通过显式 `--model` 或运行时配置启动；SearchAgent 的检索决策模型默认优先读取 starter DB / `starter.yaml` 中注册的 `system.starter_*` 配置，不从 warehouse model pool 继承。只有显式传 `--model-name` / `--base-url` / `--api-key` 时才会覆盖 starter 默认值；`OBTAINER_*` 仅作为没有 starter 配置时的兜底。
-
-| 字段 | 作用 |
-| --- | --- |
-| `model_path` / `base_url` / `api_key` | 调用 OpenAI-compatible 聊天模型，用于查询理解、URL 选择、下载决策和格式映射。 |
-| `search_engine` / `tavily_api_key` | 配置网页搜索；`tavily_api_key` 也可以通过 `TAVILY_API_KEY` 提供。 |
-| `kaggle_username` / `kaggle_key` | 配置 Kaggle 数据集下载；也可以使用 `KAGGLE_USERNAME` / `KAGGLE_KEY`。 |
-| `rag_api_base_url` / `rag_api_key` / `rag_embed_model` | 配置 RAG 嵌入模型；为空时通常复用 Obtainer 的模型服务配置。 |
-| `max_urls` / `max_depth` / `concurrent_limit` / `topk_urls` / `url_timeout` | 控制搜索与网页探索范围。 |
-| `category` | 数据类别，通常为 `PT` 或 `SFT`。 |
-| `default_mapping_format` | 非空时可跳过格式确认，直接进入预设格式映射。 |
-
-如果需要使用网页抓取或 Kaggle 流程，除了 Python 依赖外，通常还需要在主环境中执行一次 `playwright install`。
-
-## 它的输入和输出可以怎么理解
-
-输入通常包括：
-
-- 问题模式
-- 数据需求描述
-- 检索相关配置
-
-输出通常包括：
-
-- 候选数据
-- 原始样本集合
-- 可供 `Constructor` 继续处理的数据结果
-
-## 在闭环中的位置
-
-Obtainer 处在“发现问题之后，生成训练数据之前”的数据获取环节。
-
-它通常位于：
+1. 解析 Analyzer 报告或用户的数据需求。
+2. 通过托管 `dataset-acquisition-agent` 并行执行 hosted dataset 检索和垂直领域网页采集。
+3. 在 worker 内完成候选筛选、下载、规范化和 DataMixer 入湖。
+4. 使用 DataMixer operator 执行清洗、去重、质量处理和格式映射。
+5. 根据当前数据需求规划 recipe，并由 `sft-export-agent` 导出最终训练数据。
+6. 保留 dataset card、lineage、manifest、snapshot、recipe fingerprint 和导出报告。
 
 ```text
-Judger -> Analyzer -> Obtainer -> Constructor -> Trainer
+Judger -> Analyzer -> ObtainerCLI/DataMixer -> Trainer
 ```
 
-其中 Analyzer 负责指出问题，Obtainer 负责围绕这些问题补充新的数据来源。
+## 启动数据获取
 
-## 使用时最该关注什么
+外层 Agent 必须读取 `skills/obtainer/SKILL.md`，再通过 CLI wrapper 启动托管 worker。不要在外层直接调用 SearchAgent、WebAgent、download manifest 或入湖命令。
 
-- 获取的数据是否真的对症
-- 数据量是否足够
-- 是否还需要引入网页抓取等额外来源
-- 外部资源配置是否完整可用
-- 输出结果是否方便后续清洗和格式化
+```bash
+python -m loopai.skills.ObtainerCLI.cli dm --lake .loopai/lake.yaml \
+  dataset-acquisition-agent start \
+  --run ./outputs/acquisition_run \
+  --objective "collect code-repair instruction pairs" \
+  --keywords "buggy fixed Python code pairs" \
+  --target-datasets 20
+```
+
+使用 `dataset-acquisition-agent status` 轮询结果；同一目标的可恢复问题使用 `resume`，目标或策略发生变化时重新 `start`。
+
+## 数据处理与导出
+
+数据进入 warehouse 后，继续使用 `loopai-obtainercli dm ...` 完成 schema 检查、DataFlow operator 处理、索引、recipe、snapshot、lineage 和 export。生产 SFT 数据使用托管 `sft-export-agent`：
+
+```bash
+loopai-obtainercli dm --root /path/to/warehouse sft-export-agent start \
+  --run ./outputs/sft_export_run \
+  --analysis-report ./outputs/analyzer_report.md \
+  --format alpaca \
+  --target-records 100000 \
+  --out ./outputs/sft_export_run/export
+```
+
+只有 `final_report.json` 没有 blocker，且 manifest、snapshot、schema 校验和导出路径均有效时，才把最终数据路径交给 Trainer。
+
+## 重点检查
+
+- 数据是否匹配当前失败类型和目标样本形态
+- 许可证、来源和派生字段是否有完整 provenance
+- 清洗、去重、质量门和格式映射是否有可复查证据
+- recipe 的样本/Token 预算和 bucket 比例是否来自当前任务
+- 最终导出是否包含 manifest、snapshot、lineage 和稳定的数据路径
+
+完整命令和约束以 `skills/obtainer/SKILL.md` 与 `docs/OBTAINERCLI_USAGE.md` 为准。

@@ -238,32 +238,24 @@ http://localhost:8855
 
 基于分析报告，可以进一步使用 ObtainerCLI/DataMixer 做数据获取、入湖和训练数据导出。旧的 LangGraph `ObtainerAgent` 已退休。
 
-当前数据获取常见有两类路径：
-
-- `Obtainer`
-- `WebCrawler`
-
-### 2. 进入 Constructor
-
-拿到数据之后，可以进入 `ConstructorAgent` 做数据后处理。
-
-这一阶段通常包括：
+ObtainerCLI 的托管 acquisition worker 会同时处理 hosted dataset 检索和垂直领域网页采集。获取完成后继续在同一个 ObtainerCLI/DataMixer 链路中执行：
 
 - 数据清洗
-- 数据合成
 - 去重与筛选
+- 质量处理和格式映射
+- recipe 规划和最终训练数据导出
 
 目标是减少无效样本和潜在数据泄露风险。
 
-### 3. 查看处理进度
+### 2. 查看处理进度
 
-Constructor 执行过程中，右侧聊天框通常会展示：
+ObtainerCLI worker 执行过程中，右侧聊天框通常会展示：
 
 - 数据处理进度
-- 数据合成过程
+- 数据获取与导出过程
 - 结果概览
 
-### 4. 启动 Trainer
+### 3. 启动 Trainer
 
 数据准备完成后，就可以执行 `Trainer` 做训练。
 
@@ -273,7 +265,7 @@ Constructor 执行过程中，右侧聊天框通常会展示：
 
 因此如果要进入训练阶段，请提前准备好训练环境与相关路径配置。
 
-### 5. 观察训练过程
+### 4. 观察训练过程
 
 训练期间，节点面板通常会实时展示：
 
