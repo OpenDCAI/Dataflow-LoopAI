@@ -16,6 +16,10 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 
 from .. import llm, schema
+from ..quality_validation import (
+    validate_topic_records,
+    validated_semantic_signals,
+)
 from ..utils import extract_text
 from .base import Batch, Operator, OperatorContext, OperatorSpec, register
 
@@ -43,7 +47,9 @@ class LLMOperator(Operator):
                  max_concurrency: int = DEFAULT_CONCURRENCY, cache: bool = True,
                  rpm: int = 0, max_retries: int = 3,
                  max_input_chars: int = 2000, cost_per_1k: float = 0.0,
-                 max_tokens: int | None = None, **_):
+                 max_tokens: int | None = None, output_retries: int = 1,
+                 strict_output: bool = False, strict_transport: bool = True,
+                 **_):
         self.model_name = model
         self.chunk_size = max(1, min(int(chunk_size), MAX_CHUNK))
         self.max_concurrency = max(1, int(max_concurrency))
@@ -53,6 +59,9 @@ class LLMOperator(Operator):
         self.max_input_chars = int(max_input_chars)
         self.cost_per_1k = float(cost_per_1k)
         self.max_tokens = int(max_tokens or 0)
+        self.output_retries = max(0, int(output_retries))
+        self.strict_output = bool(strict_output)
+        self.strict_transport = bool(strict_transport)
         self.model_spec = None
         self._cache_dir = None
         self._lock = None
@@ -64,11 +73,16 @@ class LLMOperator(Operator):
         import threading
         from pathlib import Path
         from ..models import ModelPool
+        pool = ModelPool(ctx.root)
+        if not self.model_name:
+            self.model_name = pool.default_name()
         if not self.model_name:
             raise ValueError(
-                f"{self.spec.name} requires a 'model' arg naming a model in the "
-                f"pool (register one with `datamixer model add`)")
-        self.model_spec = ModelPool(ctx.root).get(self.model_name)
+                f"{self.spec.name} has no resolved default model; start the managed "
+                "acquisition worker or explicitly pass a registered operator model"
+            )
+        self.model_spec = pool.get(self.model_name)
+        self._check_local_openai_service()
         self._lock = threading.Lock()
         self._rl_lock = threading.Lock()
         self.usage = {"calls": 0, "cache_hits": 0, "errors": 0,
@@ -77,12 +91,60 @@ class LLMOperator(Operator):
             self._cache_dir = Path(ctx.root) / "llm_cache"
             self._cache_dir.mkdir(parents=True, exist_ok=True)
 
+    def _check_local_openai_service(self) -> None:
+        """Fail pipeline setup before crawling when a local vLLM is down."""
+        import urllib.error
+        import urllib.request
+        from urllib.parse import urlsplit, urlunsplit
+
+        spec = self.model_spec
+        if spec is None or spec.response_format != "openaichat":
+            return
+        parsed = urlsplit(spec.api_url)
+        if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+            return
+        if parsed.scheme not in {"http", "https"}:
+            return
+        marker = "/chat/completions"
+        if marker not in parsed.path:
+            return
+        models_path = parsed.path.split(marker, 1)[0].rstrip("/") + "/models"
+        models_url = urlunsplit(
+            (parsed.scheme, parsed.netloc, models_path, "", "")
+        )
+        request = urllib.request.Request(
+            models_url,
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=min(5, spec.timeout)) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (OSError, ValueError, urllib.error.URLError) as exc:
+            raise RuntimeError(
+                f"local model service for {self.model_name!r} is unavailable "
+                f"at {models_url}: {exc}"
+            ) from exc
+        ids = {
+            str(item.get("id") or "")
+            for item in (payload.get("data") or [])
+            if isinstance(item, dict)
+        } if isinstance(payload, dict) else set()
+        if ids and spec.model not in ids:
+            raise RuntimeError(
+                f"local model service at {models_url} does not expose "
+                f"{spec.model!r}; available: {sorted(ids)}"
+            )
+
     # -- to override -------------------------------------------------------
     def build_messages(self, chunk: Batch) -> list[dict]:
         raise NotImplementedError
 
     def apply(self, chunk: Batch, data: dict) -> None:
         raise NotImplementedError
+
+    def validate_output(self, chunk: Batch, data: dict) -> None:  # noqa: ARG002
+        """Raise when a syntactically valid JSON object is semantically unusable."""
 
     # -- engine ------------------------------------------------------------
     def _cache_path(self, messages):
@@ -136,15 +198,56 @@ class LLMOperator(Operator):
         self._account(messages, text, cached=False)
         return text
 
-    def _do_chunk(self, chunk: Batch) -> None:
-        try:
-            text = self._complete(self.build_messages(chunk))
-            self.apply(chunk, llm.parse_json(text))
-        except Exception as e:  # noqa: BLE001 - per-chunk isolation
-            with self._lock:
-                self.usage["errors"] += 1
-            for row in chunk:
-                row["llm_error"] = str(e)[:200]
+    def _do_chunk(self, chunk: Batch) -> tuple[str, str] | None:
+        messages = self.build_messages(chunk)
+        last_error: Exception | None = None
+        last_kind = "semantic"
+        for attempt in range(self.output_retries + 1):
+            text = ""
+            try:
+                text = self._complete(messages)
+                data = llm.parse_json(text)
+                self.apply(chunk, data)
+                self.validate_output(chunk, data)
+                for row in chunk:
+                    row.pop("llm_error", None)
+                return None
+            except Exception as exc:  # noqa: BLE001 - bounded semantic repair
+                last_error = exc
+                last_kind = (
+                    "transport"
+                    if isinstance(exc, RuntimeError)
+                    else "semantic"
+                )
+                # Never preserve a syntactically/semantically invalid response:
+                # a durable pipeline retry must make a fresh model request.
+                path = self._cache_path(messages)
+                if path is not None:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                if attempt < self.output_retries and text:
+                    messages = [
+                        *messages,
+                        {"role": "assistant", "content": text},
+                        {
+                            "role": "user",
+                            "content": (
+                                "The previous JSON was incomplete or invalid: "
+                                f"{str(exc)[:300]}. Return the complete required "
+                                "JSON object now. Do not return an empty object."
+                            ),
+                        },
+                    ]
+                    continue
+                break
+        with self._lock:
+            self.usage["errors"] += 1
+        error = str(last_error or "invalid model output")[:200]
+        for row in chunk:
+            row["llm_error"] = error
+        return error, last_kind
 
     def usage_report(self) -> dict:
         u = dict(self.usage or {})
@@ -160,7 +263,16 @@ class LLMOperator(Operator):
             return batch
         workers = min(self.max_concurrency, len(chunks))
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            list(ex.map(self._do_chunk, chunks))
+            errors = [error for error in ex.map(self._do_chunk, chunks) if error]
+        if errors and self.strict_output:
+            raise RuntimeError(
+                f"{self.spec.name} received invalid model output: {errors[0][0]}"
+            )
+        transport_errors = [error for error in errors if error[1] == "transport"]
+        if transport_errors and self.strict_transport:
+            raise RuntimeError(
+                f"{self.spec.name} model service failed: {transport_errors[0][0]}"
+            )
         return batch
 
 
@@ -171,12 +283,23 @@ _DEFAULT_INSTRUCTION = (
     "item's content; do not infer a label from the source URL or prior metadata."
 )
 
-# The output JSON schema is fixed and minimal: only index + label list.
+# The output JSON schema includes an auditable confidence.  Downstream quality
+# gates must be able to distinguish a model classification from a caller simply
+# assigning ``domain=finance`` during ingest.  The classifier emits a generic
+# ``semantic_signals`` list (no vertical vocabulary), so the same judgement
+# chain follows whichever topic the WebAgent explored.
 _SCHEMA_HINT = (
-    'Return ONLY a JSON object with this exact schema, no prose:\n'
-    '{"results": [{"index": <int>, "labels": [<string>, ...]}]}\n'
+    "Return ONLY a JSON object with this exact schema, no prose:\n"
+    '{"results": [{"index": <int>, "labels": [<string>, ...], "confidence": <number 0..1>, '
+    '"semantic_signals": [{"type": <string>, "evidence": <exact quote>, "confidence": <number 0..1>}]}]}\n'
     "- index: the item index exactly as given\n"
-    "- labels: a non-empty subset of the allowed labels; put the primary domain first\n"
+    "- labels: a non-empty subset of the allowed labels; put the primary domain first; "
+    "labels=[] when the item is unrelated to the acquisition focus\n"
+    "- confidence: confidence that the primary label is supported by the item content\n"
+    "- semantic_signals: only for accepted labels, return at least two distinct, directly "
+    "supported semantic categories; otherwise return []\n"
+    "- every semantic signal evidence must be a short exact quote from the item; "
+    "generic words alone are not evidence\n"
     "- include one results entry per item; use no labels outside the allowed list"
 )
 
@@ -192,6 +315,9 @@ class DomainClassify(LLMOperator):
       * ``field``           core column to receive the primary label (default ``domain``)
       * ``sync_lake``       include the current lake's registered/observed
                             domain classes (default ``true``)
+      * ``focus_keywords``  the WebAgent's exploration keywords; items that are
+                            not directly related to this focus are marked
+                            unrelated (labels=[]) instead of being admitted
       * ``prompt``          optional custom instruction (JSON schema is always appended)
       * ``chunk_size``      items per LLM call, <=10 (default 10)
       * ``max_concurrency`` thread cap (default 64)
@@ -202,23 +328,31 @@ class DomainClassify(LLMOperator):
     and optional labels.  Thus labels such as ``text2sql`` already used by a
     lake remain available without editing every pipeline YAML.
 
-    Writes the full label list to ``tags.domain_labels`` (and the legacy
-    ``tags.labels`` alias) and the first label to ``field`` so recipe filters
-    such as ``domain='code'`` continue to work.
+    Writes the full label list, primary-label confidence and classifier identity
+    to tags.  The first label is also written to ``field`` so recipe filters such
+    as ``domain='code'`` continue to work.  The generic ``semantic_signals``
+    field carries the grounded evidence that downstream quality filters check.
     """
     spec = OperatorSpec(
-        "domain_classify", "1.1", "score", gpu_required=False,
+        "domain_classify", "1.3", "score", gpu_required=False,
         description="LLM domain classifier using persistent + lake-synchronised labels.")
 
     def __init__(self, model=None, labels=None, prompt=None, field="domain",
-                 sync_lake=True, chunk_size=MAX_CHUNK,
+                 sync_lake=True, focus_keywords=None, chunk_size=MAX_CHUNK,
                  max_concurrency=DEFAULT_CONCURRENCY, **kw):
+        kw.setdefault("strict_output", False)
+        kw.setdefault("strict_transport", True)
         super().__init__(model, chunk_size, max_concurrency, **kw)
         if labels is None:
             labels = []
         if not isinstance(labels, (list, tuple)):
             raise ValueError("domain_classify labels must be a JSON list")
+        if focus_keywords is None:
+            focus_keywords = []
+        if not isinstance(focus_keywords, (list, tuple)):
+            raise ValueError("domain_classify focus_keywords must be a JSON list")
         self.extra_labels = _unique_labels(labels)
+        self.focus_keywords = _unique_labels(focus_keywords)
         self.labels: list[str] = []
         self.prompt = prompt
         self.field = field
@@ -254,10 +388,17 @@ class DomainClassify(LLMOperator):
         items = [{"index": i,
                   "text": extract_text(r.get("content", r))[:self.max_input_chars]}
                  for i, r in enumerate(chunk)]
+        focus = ""
+        if self.focus_keywords:
+            focus = (
+                "\nAcquisition focus: " + ", ".join(self.focus_keywords) + ".\n"
+                "Only items directly related to this focus are acceptable; "
+                "unrelated items must return labels=[] and semantic_signals=[].\n"
+            )
         user = (
             f"Allowed labels: {self.labels}\n\n"
             f"Items (classify each by index):\n"
-            f"{_json(items)}\n\n{_SCHEMA_HINT}"
+            f"{_json(items)}\n\n{focus}{_SCHEMA_HINT}"
         )
         return [
             {"role": "system", "content": self.prompt or _DEFAULT_INSTRUCTION},
@@ -275,8 +416,110 @@ class DomainClassify(LLMOperator):
             row = chunk[idx]
             row["domain_labels"] = labels     # full list -> tags.domain_labels
             row["labels"] = labels            # backward-compatible tag alias
-            if labels:
-                row[self.field] = labels[0]   # primary -> core column
+            row["topic_match"] = bool(labels)  # focus relevance decided by the LLM
+            if not labels:
+                continue
+            try:
+                confidence = float(entry.get("confidence"))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            row["domain_confidence"] = max(0.0, min(1.0, confidence))
+            row["domain_classifier"] = f"{self.spec.name}@{self.spec.version}"
+            row["domain_classifier_model"] = self.model_name
+            row[self.field] = labels[0]   # primary -> core column
+            semantic_signals, _ = validated_semantic_signals(
+                entry.get("semantic_signals"),
+                row.get("content", row),
+            )
+            row["semantic_signals"] = semantic_signals
+            row["signal_generator"] = f"{self.spec.name}@{self.spec.version}"
+
+    def validate_output(self, chunk: Batch, data: dict) -> None:  # noqa: ARG002
+        # Every row must have a classification verdict; an empty label list is a
+        # valid verdict (item unrelated to the focus) and is dropped downstream.
+        missing = []
+        for index, row in enumerate(chunk):
+            if "domain_labels" not in row:
+                missing.append(index)
+        if missing:
+            raise ValueError(
+                f"missing valid domain classification for indexes {missing}"
+            )
+
+
+@register("topic_quality_filter")
+class TopicQualityFilter(Operator):
+    """Admit rows whose LLM domain judgement matches the WebAgent's focus.
+
+    ``domain_classify`` already judged relevance against the campaign's
+    ``focus_keywords`` and emitted grounded semantic signals.  This filter
+    enforces a deterministic admission threshold on that evidence: a recognised
+    classifier, a non-empty label list (focus relevance), a confidence floor,
+    and at least ``min_semantic_signals`` grounded signal categories whose
+    evidence appears verbatim in the content.  No vertical (e.g. finance) is
+    hard-wired, so the same step follows whichever topic the WebAgent explored.
+    """
+
+    spec = OperatorSpec(
+        "topic_quality_filter",
+        "1.0",
+        "filter",
+        description=(
+            "Filter LLM-classified rows by focus relevance, confidence and "
+            "grounded semantic signal categories."
+        ),
+    )
+
+    def __init__(
+        self,
+        min_semantic_signals: int = 2,
+        min_classifier_confidence: float = 0.8,
+        min_signal_confidence: float = 0.7,
+        allowed_signal_types: list[str] | None = None,
+        **_,
+    ):
+        self.min_semantic_signals = max(0, int(min_semantic_signals))
+        self.min_classifier_confidence = float(min_classifier_confidence)
+        self.min_signal_confidence = float(min_signal_confidence)
+        self.allowed_signal_types = (
+            _unique_labels(allowed_signal_types)
+            if allowed_signal_types is not None else None
+        )
+
+    def process(self, batch: Batch, ctx: OperatorContext) -> Batch:  # noqa: ARG002
+        candidates = []
+        for row in batch:
+            # Provenance fields live in tags while classifier outputs are
+            # top-level during the in-flight pipeline.
+            candidates.append({**dict(row.get("tags") or {}), **row})
+        _, report = validate_topic_records(
+            candidates,
+            defaults={},
+            content_key="content",
+            allowed_signal_types=(
+                frozenset(self.allowed_signal_types)
+                if self.allowed_signal_types else None
+            ),
+            min_semantic_signals=self.min_semantic_signals,
+            min_classifier_confidence=self.min_classifier_confidence,
+            min_signal_confidence=self.min_signal_confidence,
+        )
+        accepted = []
+        for row, decision in zip(batch, report["records"]):
+            if row.get("llm_error"):
+                decision.setdefault("rejection_reasons", []).append(
+                    "topic_classifier_output_invalid"
+                )
+                decision["classification_error"] = str(row["llm_error"])[:200]
+                decision["accepted"] = False
+            row["topic_quality_passed"] = bool(decision["accepted"])
+            row["topic_quality_findings"] = list(
+                decision.get("rejection_reasons") or []
+            )
+            row["topic_quality_report"] = decision
+            if decision["accepted"]:
+                accepted.append(row)
+        return accepted
 
 
 def _json(obj) -> str:

@@ -69,16 +69,34 @@ class ModelPool:
     def __init__(self, root):
         self.path = Path(root) / "models.json"
         self._models: dict[str, dict] = {}
+        self._default_model = ""
         if self.path.exists():
-            self._models = json.loads(self.path.read_text()).get("models", {})
+            payload = json.loads(self.path.read_text())
+            self._models = payload.get("models", {})
+            self._default_model = str(payload.get("default_model") or "")
 
     def _save(self):
         self.path.write_text(
-            json.dumps({"models": self._models}, ensure_ascii=False, indent=2))
+            json.dumps(
+                {"default_model": self._default_model, "models": self._models},
+                ensure_ascii=False,
+                indent=2,
+            ))
 
     def add(self, spec: ModelSpec) -> None:
         self._models[spec.name] = asdict(spec)
         self._save()
+
+    def set_default(self, name: str) -> None:
+        if name not in self._models:
+            raise KeyError(
+                f"model {name!r} not in pool (have: {sorted(self._models)})"
+            )
+        self._default_model = name
+        self._save()
+
+    def default_name(self) -> str:
+        return self._default_model if self._default_model in self._models else ""
 
     def get(self, name: str) -> ModelSpec:
         if name not in self._models:
@@ -89,6 +107,8 @@ class ModelPool:
     def remove(self, name: str) -> bool:
         if name in self._models:
             del self._models[name]
+            if self._default_model == name:
+                self._default_model = ""
             self._save()
             return True
         return False
