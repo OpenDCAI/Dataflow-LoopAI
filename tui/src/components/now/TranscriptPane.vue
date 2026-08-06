@@ -1,42 +1,48 @@
 <script setup>
-import { computed } from 'vue'
-import { Box, Text } from '@vue-tui/runtime'
-import { useAppConfig } from '../../stores/appConfig.js'
-import { useLoopAI } from '../../stores/loopAI.js'
-import { formatConversationLine, normalizeConversationItem, summarizeEvent } from '../../lib/messages.js'
+import AssistantPane from './AssistantPane.vue'
+import RuntimePane from './RuntimePane.vue'
+import UserPane from './UserPane.vue'
 
-const appConfig = useAppConfig()
-const loopAI = useLoopAI()
-const lines = computed(() => {
-  const result = []
-  result.push(`${appConfig.local('Conversation')}`)
-  result.push('------------')
-  if (!loopAI.conversation.length) {
-    result.push(appConfig.local('empty'))
-  } else {
-    for (const item of loopAI.conversation) {
-      result.push(...formatConversationLine(normalizeConversationItem(item), 100, appConfig.local))
-      result.push('')
-    }
-  }
-  result.push(`${appConfig.local('Runtime Events')}`)
-  result.push('--------------')
-  if (!loopAI.sessionEvents.length) {
-    result.push(appConfig.local('empty'))
-  } else {
-    for (const event of loopAI.sessionEvents) {
-      result.push(...summarizeEvent(event.payload || {}, appConfig.local))
-      result.push('')
-    }
-  }
-  return result
+const props = defineProps({
+  x: { type: Number, required: true },
+  y: { type: Number, required: true },
+  w: { type: Number, required: true },
+  h: { type: Number, required: true },
+  nowActivePane: { type: String, required: true },
+  userMarkdown: { type: String, required: true },
+  runtimeMarkdown: { type: String, required: true },
+  transcriptMarkdown: { type: String, required: true },
+  toolScrollTop: { type: Number, required: true },
+  assistantScrollTop: { type: Number, required: true },
+  runtimeBottomSnapToken: { type: Number, required: true },
+  assistantBottomSnapToken: { type: Number, required: true }
 })
+
+const emit = defineEmits(['update:toolScrollTop', 'update:assistantScrollTop'])
 </script>
 
 <template>
-  <Box flexDirection="column">
-    <Text v-for="(line, index) in lines" :key="`transcript-${index}`" wrap="truncate-end">
-      {{ line }}
-    </Text>
-  </Box>
+  <UserPane :x="x" :y="y" :w="Math.floor(w * 0.3)" :h="h" :content="userMarkdown" />
+  <RuntimePane
+    :x="x + Math.floor(w * 0.3)"
+    :y="y"
+    :w="Math.floor(w * 0.3)"
+    :h="h"
+    :active="nowActivePane === 'tool'"
+    :content="runtimeMarkdown"
+    :scroll-top="toolScrollTop"
+    :bottom-snap-token="runtimeBottomSnapToken"
+    @update:scroll-top="(value) => emit('update:toolScrollTop', value)"
+  />
+  <AssistantPane
+    :x="x + Math.floor(w * 0.6)"
+    :y="y"
+    :w="w - Math.floor(w * 0.6)"
+    :h="h"
+    :active="nowActivePane === 'assistant'"
+    :content="transcriptMarkdown"
+    :scroll-top="assistantScrollTop"
+    :bottom-snap-token="assistantBottomSnapToken"
+    @update:scroll-top="(value) => emit('update:assistantScrollTop', value)"
+  />
 </template>

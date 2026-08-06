@@ -861,6 +861,57 @@ export class starter {
   }
  
   /**
+  * @summary Terminate running looper
+  * @param {String} [pathsession_id] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async starterCodexSessionLooperTerminate(pathsession_id,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'post',
+        url:'/starter/codex/session/'+pathsession_id+'/looper/terminate',
+        data:{},
+        params:{},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
   * @summary Terminate codex session
   * @param {String} [pathsession_id] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
@@ -1054,6 +1105,14 @@ starter.starterCodexSessionLooper.fullPath=`${axios.defaults.baseURL}/starter/co
 * @description starterCodexSessionLooper url链接，不包含baseURL
 */
 starter.starterCodexSessionLooper.path=`/starter/codex/session/{session_id}/looper`
+/**
+* @description starterCodexSessionLooperTerminate url链接，包含baseURL
+*/
+starter.starterCodexSessionLooperTerminate.fullPath=`${axios.defaults.baseURL}/starter/codex/session/{session_id}/looper/terminate`
+/**
+* @description starterCodexSessionLooperTerminate url链接，不包含baseURL
+*/
+starter.starterCodexSessionLooperTerminate.path=`/starter/codex/session/{session_id}/looper/terminate`
 /**
 * @description starterCodexSessionTerminate url链接，包含baseURL
 */
@@ -2161,6 +2220,59 @@ export class obtainer {
   }
  
   /**
+  * @summary 获取 WebAgent 到 L3 数据流水线的实时概览
+  * @param {undefined} [lake] 
+  * @param {undefined} [root] 
+  * @param {undefined} [run_id] 
+  * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
+  * @param {Function} [uploadProgress] 上传回调函数
+  * @param {Function} [downloadProgress] 下载回调函数
+  */
+  static async getObtainerWebAgentOverview(lake,root,run_id,cancelSource,uploadProgress,downloadProgress){
+    return await new Promise((resolve,reject)=>{
+      let responseType = "json";
+      let options = {
+        method:'get',
+        url:'/obtainer/webagent/overview',
+        data:{},
+        params:{lake,root,run_id},
+        headers:{
+          "Content-Type":""
+        },
+        onUploadProgress:uploadProgress,
+        onDownloadProgress:downloadProgress
+      }
+      // support wechat mini program
+      if (cancelSource!=undefined){
+        options.cancelToken = cancelSource.token
+      }
+      if (responseType != "json"){
+        options.responseType = responseType;
+      }
+      axios(options)
+      .then(res=>{
+        if (res.config.responseType=="blob"){
+          resolve(new Blob([res.data],{
+            type: res.headers["content-type"].split(";")[0]
+          }))
+        }else{
+          resolve(res.data);
+          return res.data
+        }
+      }).catch(err=>{
+        if (err.response){
+          if (err.response.data)
+            reject(err.response.data)
+          else
+            reject(err.response);
+        }else{
+          reject(err)
+        }
+      })
+    })
+  }
+ 
+  /**
   * @summary 异步重建 Obtainer 数据湖监控 cache
   * @param {undefined} [lake] 
   * @param {CancelTokenSource} [cancelSource] Axios Cancel Source 对象，可以取消该请求
@@ -2579,6 +2691,14 @@ obtainer.getObtainerLakeMonitor.fullPath=`${axios.defaults.baseURL}/obtainer/lak
 * @description getObtainerLakeMonitor url链接，不包含baseURL
 */
 obtainer.getObtainerLakeMonitor.path=`/obtainer/lake/monitor`
+/**
+* @description getObtainerWebAgentOverview url链接，包含baseURL
+*/
+obtainer.getObtainerWebAgentOverview.fullPath=`${axios.defaults.baseURL}/obtainer/webagent/overview`
+/**
+* @description getObtainerWebAgentOverview url链接，不包含baseURL
+*/
+obtainer.getObtainerWebAgentOverview.path=`/obtainer/webagent/overview`
 /**
 * @description rebuildObtainerLakeMonitor url链接，包含baseURL
 */

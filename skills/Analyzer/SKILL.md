@@ -14,14 +14,20 @@ entry directly.
 
 ## Runtime Entry
 ```python
-from loopai.skills.Analyzer import run
+from loopai.skills.Analyzer import run, resume_run
 
 run(state=None, resume=False, from_node=None, baseline_result_path=None)
+resume_run(state=None, from_node=None, baseline_result_path=None)
 ```
 
 `run(...)` is the Codex/sub-agent process entry. It emits the unified LoopAI
 payload to stdout and exits, matching the latest Judger skill pattern. For
 in-process calls use `run_analyzer_standalone(...)`.
+
+Use `resume_run(...)` for continuation. It always passes `resume=True` and
+selects the latest incomplete version checkpoint for the task. A normal
+`run(...)` also resumes the latest incomplete version by default. To explicitly
+start a new run, pass `new_version=True` (or use the CLI `--new-version`).
 
 ```json
 {

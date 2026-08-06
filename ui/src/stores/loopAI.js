@@ -111,8 +111,8 @@ export const useLoopAI = defineStore('useLoopAI', () => {
     })
     const looperTakeover = ref({
         timer: null,
-        seconds: 5,
-        duration: 5,
+        seconds: 15,
+        duration: 15,
         active: false
     })
     const clearLooperTakeoverCountdown = ({ resetSeconds = true, keepActive = false } = {}) => {

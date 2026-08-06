@@ -4,8 +4,8 @@ system:
     proxy_base_url: "http://127.0.0.1:8855/responseProxy/v1"
     proxy_api_key: "loopai-local-proxy"
     default_model: "medium"
-    codex_model: "high"
-    looper_model: "medium"
+    codex_model: "A"
+    looper_model: "B"
     default_tier: "medium"
     pool:
       - tier: "high"
@@ -18,7 +18,7 @@ system:
         response_format: ""
         enabled: true
       - tier: "medium"
-        name: "medium"
+        name: "B"
         api_key: "env:LOOPAI_MEDIUM_MODEL_API_KEY"
         base_url: "http://123.129.219.111:3000/v1"
         model_name: "gpt-4o-mini"
@@ -27,7 +27,7 @@ system:
         response_format: ""
         enabled: true
       - tier: "low"
-        name: "B"
+        name: "C"
         api_key: "env:LOOPAI_LOW_MODEL_API_KEY"
         base_url: "http://123.129.219.111:3000/v1"
         model_name: "gpt-4o-mini"
@@ -100,9 +100,7 @@ default_states:
     # 默认使用 LLaMA-Factory SFT。启用 Verl GRPO 时，将下面两项改为
     # train_framework: "verl" / train_stage: "grpo"，并填写 Parquet 数据路径。
     train_framework: "llamafactory"
-    train_stage: "sft"
-    trainer_persistent_worker: true
-    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/"
+    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory"
     llamafactory_env_path: "/home/lpc/miniconda3/envs/lmf/bin/"
     CUDA_VISIBLE_DEVICES: "0,1"
     train_input_dataset_path: "/home/lpc/repos/Dataflow-LoopAI/data/alpaca_en_demo.json" # to defined the path of training dataset (json/jsonl format)

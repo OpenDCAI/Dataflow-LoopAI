@@ -3,178 +3,143 @@ import { useWindowSize } from '@vue-tui/runtime'
 import { storeToRefs } from 'pinia'
 import { useAppConfig } from '../../stores/appConfig.js'
 import { useLoopAI } from '../../stores/loopAI.js'
-import { box, formatTime, formatValue, mergeColumns, padRight, wrapText } from '../../lib/format.js'
-import { formatConversationLine, normalizeConversationItem, summarizeEvent } from '../../lib/messages.js'
+import { formatTime, formatValue, wrapText } from '../../lib/format.js'
+import { normalizeConversationItem, summarizeEvent } from '../../lib/messages.js'
 
-const CARD_WIDTH = 46
-const CARD_GAP = 2
-const TRANSCRIPT_MIN_HEIGHT = 8
-const TRANSCRIPT_MAX_HEIGHT = 18
-
-function buildProgressBar(progress, width = 12) {
-  if (typeof progress !== 'number') return null
-  const clamped = Math.max(0, Math.min(1, progress))
-  const filled = Math.round(clamped * width)
-  return `[${'#'.repeat(filled)}${'.'.repeat(Math.max(0, width - filled))}] ${Math.round(clamped * 100)}%`
+function clampOffset(offset, max) {
+  return Math.max(0, Math.min(offset, Math.max(0, max)))
 }
 
-function buildStateColumn(appConfig, card, width) {
-  const lines = [padRight(appConfig.local('state'), width), '-'.repeat(width)]
-  if (!card.stateEntries.length) {
-    lines.push('-')
-    return lines
+function slicePane(lines, offset, height) {
+  const safeHeight = Math.max(1, height)
+  const maxOffset = Math.max(0, lines.length - safeHeight)
+  const safeOffset = clampOffset(offset, maxOffset)
+  return {
+    lines: lines.slice(safeOffset, safeOffset + safeHeight),
+    maxOffset,
+    safeOffset,
+    summary: `${Math.min(lines.length, safeOffset + 1)}-${Math.min(lines.length, safeOffset + safeHeight)}/${lines.length || 0}`
   }
-  for (const entry of card.stateEntries) {
-    lines.push(...wrapText(`${entry.key}: ${formatValue(entry.value, width * 2)}`, width))
-    lines.push('')
+}
+
+function buildStateLines(card, width) {
+  if (!card?.stateEntries?.length) return ['-']
+  return card.stateEntries.flatMap((entry) => {
+    const lines = wrapText(`${entry.key}: ${formatValue(entry.value, width * 3)}`, width)
+    return [...lines, '']
+  })
+}
+
+function buildCustomLines(card, width) {
+  if (!card?.customGroups?.length) return ['-']
+  return card.customGroups.flatMap((group) => {
+    const lines = [group.key]
+    if (group.message) lines.push(...wrapText(`msg: ${group.message}`, width))
+    if (typeof group.progress === 'number') lines.push(`progress: ${Math.round(group.progress * 100)}%`)
+    if (group.data !== undefined) lines.push(...wrapText(`data: ${formatValue(group.data, width * 3)}`, width))
+    if (group.updatedAt) lines.push(`updated: ${formatTime(group.updatedAt)}`)
+    return [...lines, '-'.repeat(Math.max(6, width - 2))]
+  })
+}
+
+function latestConversationByRole(conversation, role) {
+  for (let i = conversation.length - 1; i >= 0; i -= 1) {
+    const item = normalizeConversationItem(conversation[i])
+    if (item.role === role) return item
   }
-  return lines
+  return null
 }
 
-function buildCustomBlock(group, width) {
-  const body = []
-  if (group.message) body.push(...wrapText(`msg: ${group.message}`, width - 2))
-  if (typeof group.progress === 'number') body.push(buildProgressBar(group.progress, Math.max(6, width - 14)))
-  if (group.data !== undefined) body.push(...wrapText(`data: ${formatValue(group.data, width * 2)}`, width - 2))
-  if (group.updatedAt) body.push(...wrapText(`updated: ${formatTime(group.updatedAt)}`, width - 2))
-  if (!body.length) body.push(formatValue(group.raw, width - 2))
-  return box(group.key, body, width, Math.min(Math.max(body.length + 2, 4), 8))
-}
-
-function buildCustomColumn(appConfig, card, width) {
-  const lines = [padRight(appConfig.local('custom_info'), width), '-'.repeat(width)]
-  if (!card.customGroups.length) {
-    lines.push('-')
-    return lines
-  }
-  for (const group of card.customGroups) {
-    lines.push(...buildCustomBlock(group, width))
-    lines.push('')
-  }
-  return lines
-}
-
-function buildNodeCard(appConfig, card, width, height) {
-  const innerWidth = Math.max(12, width - 2)
-  const columnWidth = Math.max(8, Math.floor((innerWidth - 3) / 2))
-  const stateLines = buildStateColumn(appConfig, card, columnWidth)
-  const customLines = buildCustomColumn(appConfig, card, columnWidth)
-  const body = [
-    `status: ${card.running ? 'RUNNING' : card.runtimeStatus}`,
-    `updated: ${card.runtimeUpdatedLabel || '-'}`,
-    ''
-  ]
-  const mergedColumns = mergeColumns([stateLines, customLines], 3)
-  body.push(...mergedColumns)
-  return box(`${card.label} · ${card.running ? 'RUNNING' : card.runtimeStatus}`, body, width, height)
-}
-
-function colorForEntry(entry) {
-  if (entry.kind === 'conversation') {
-    if (entry.role === 'user') return 'cyan'
-    if (entry.role === 'assistant') return 'green'
-    if (entry.role === 'tool') return 'yellow'
-    return 'white'
-  }
-  if (entry.kind === 'section') return 'magenta'
-  if (entry.kind === 'event') return 'yellow'
-  return 'white'
-}
-
-function buildTranscriptEntries(appConfig, conversation, sessionEvents, width) {
-  const entries = []
-  entries.push({ kind: 'section', text: appConfig.local('Conversation') })
-  entries.push({ kind: 'divider', text: '------------', dim: true })
-  if (!conversation.length) {
-    entries.push({ kind: 'empty', text: appConfig.local('empty'), dim: true })
-  } else {
-    for (const item of conversation) {
-      const normalized = normalizeConversationItem(item)
-      const lines = formatConversationLine(normalized, width, appConfig.local)
-      for (const line of lines) {
-        entries.push({ kind: 'conversation', role: normalized.role, text: line })
-      }
-      entries.push({ kind: 'spacer', text: '' })
+function buildToolLines(events, local, width) {
+  if (!events.length) return [local('empty')]
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const lines = summarizeEvent(events[i].payload || {}, local)
+    if (lines?.length) {
+      return lines.flatMap((line) => wrapText(line, width).concat(['']))
     }
   }
+  return [local('empty')]
+}
 
-  entries.push({ kind: 'section', text: appConfig.local('Runtime Events') })
-  entries.push({ kind: 'divider', text: '--------------', dim: true })
-  if (!sessionEvents.length) {
-    entries.push({ kind: 'empty', text: appConfig.local('empty'), dim: true })
-  } else {
-    for (const event of sessionEvents) {
-      for (const line of summarizeEvent(event.payload || {}, appConfig.local)) {
-        entries.push({ kind: 'event', text: line })
-      }
-      entries.push({ kind: 'spacer', text: '' })
-    }
-  }
-  return entries
+function buildAssistantLines(conversation, width) {
+  const assistant = latestConversationByRole(conversation, 'assistant')
+  if (!assistant?.content) return ['Thinking...']
+  return wrapText(assistant.content, width)
+}
+
+function buildUserLines(conversation, width) {
+  const user = latestConversationByRole(conversation, 'user')
+  if (!user?.content) return ['-']
+  return wrapText(user.content, width)
 }
 
 export function useNowView() {
   const appConfig = useAppConfig()
   const loopAI = useLoopAI()
-  const { nodeCards, conversation, sessionEvents, scrollOffset, nodeScrollOffset } = storeToRefs(loopAI)
+  const {
+    nodeCards,
+    conversation,
+    sessionEvents,
+    nodeScrollOffset,
+    nowActivePane,
+    nodeStateScrollOffset,
+    nodeCustomScrollOffset,
+    toolScrollOffset,
+    assistantScrollOffset
+  } = storeToRefs(loopAI)
   const windowSize = useWindowSize()
 
   const columns = computed(() => windowSize.columns.value || 120)
   const rows = computed(() => windowSize.rows.value || 40)
-  const contentWidth = computed(() => Math.max(40, columns.value - 8))
-  const nodeBoardHeight = computed(() => Math.max(14, Math.min(20, rows.value - 20)))
-  const cardsPerPage = computed(() => Math.max(1, Math.floor((contentWidth.value + CARD_GAP) / (CARD_WIDTH + CARD_GAP))))
-  const nodePageCount = computed(() => Math.max(1, Math.ceil(nodeCards.value.length / cardsPerPage.value)))
-  const currentNodePage = computed(() => {
-    if (!nodeCards.value.length) return 1
-    return Math.floor(nodeScrollOffset.value / cardsPerPage.value) + 1
-  })
+  const contentWidth = computed(() => Math.max(50, columns.value - 8))
+  const nodePaneHeight = computed(() => Math.max(8, Math.min(12, Math.floor(rows.value * 0.28))))
+  const chatPaneHeight = computed(() => Math.max(8, Math.min(14, Math.floor(rows.value * 0.34))))
+  const paneInnerWidth = computed(() => Math.max(18, Math.floor((contentWidth.value - 8) / 2)))
+  const assistantWidth = computed(() => Math.max(24, contentWidth.value - 6))
 
-  const visibleNodeCards = computed(() => {
-    const safeOffset = Math.max(0, Math.min(nodeScrollOffset.value, Math.max(0, nodeCards.value.length - 1)))
-    return nodeCards.value.slice(safeOffset, safeOffset + cardsPerPage.value)
-  })
+  const focusedNodeIndex = computed(() => clampOffset(nodeScrollOffset.value, nodeCards.value.length - 1))
+  const focusedNode = computed(() => nodeCards.value[focusedNodeIndex.value] || null)
+  const nodeHint = computed(() => `node ${nodeCards.value.length ? focusedNodeIndex.value + 1 : 0}/${nodeCards.value.length}  pane=${nowActivePane.value}  Tab switch · ←/→ node · j/k scroll`)
 
-  const nodeBoardLines = computed(() => {
-    if (!visibleNodeCards.value.length) {
-      return box(appConfig.local('Nodes'), [appConfig.local('No node data available for this task yet.')], contentWidth.value, 6)
-    }
-    const cards = visibleNodeCards.value.map((card) => buildNodeCard(appConfig, card, CARD_WIDTH, nodeBoardHeight.value))
-    return mergeColumns(cards, CARD_GAP)
-  })
+  const stateLines = computed(() => buildStateLines(focusedNode.value, paneInnerWidth.value))
+  const customLines = computed(() => buildCustomLines(focusedNode.value, paneInnerWidth.value))
+  const userLines = computed(() => buildUserLines(conversation.value, assistantWidth.value))
+  const toolLines = computed(() => buildToolLines(sessionEvents.value, appConfig.local, assistantWidth.value))
+  const assistantLines = computed(() => buildAssistantLines(conversation.value, assistantWidth.value))
 
-  const transcriptHeight = computed(() => {
-    const preferred = rows.value - nodeBoardHeight.value - 16
-    return Math.max(TRANSCRIPT_MIN_HEIGHT, Math.min(TRANSCRIPT_MAX_HEIGHT, preferred))
-  })
-  const transcriptWidth = computed(() => Math.max(30, contentWidth.value - 4))
-  const transcriptEntries = computed(() => buildTranscriptEntries(appConfig, conversation.value, sessionEvents.value, transcriptWidth.value))
-  const maxScroll = computed(() => Math.max(0, transcriptEntries.value.length - transcriptHeight.value))
-  const visibleTranscriptEntries = computed(() => transcriptEntries.value.slice(scrollOffset.value, scrollOffset.value + transcriptHeight.value))
-  const nodeHint = computed(() => `nodes ${currentNodePage.value}/${nodePageCount.value}  ←/→ or h/l`)
+  const stateViewport = computed(() => slicePane(stateLines.value, nodeStateScrollOffset.value, nodePaneHeight.value))
+  const customViewport = computed(() => slicePane(customLines.value, nodeCustomScrollOffset.value, nodePaneHeight.value))
+  const toolViewport = computed(() => slicePane(toolLines.value, toolScrollOffset.value, 4))
+  const assistantViewportHeight = computed(() => Math.max(4, chatPaneHeight.value - 7))
+  const assistantViewport = computed(() => slicePane(assistantLines.value, assistantScrollOffset.value, assistantViewportHeight.value))
 
   watch(
-    transcriptEntries,
+    [assistantLines, toolLines],
     () => {
-      scrollOffset.value = maxScroll.value
+      assistantScrollOffset.value = Math.max(0, assistantLines.value.length - assistantViewportHeight.value)
+      toolScrollOffset.value = Math.max(0, toolLines.value.length - 4)
     },
     { immediate: true }
   )
 
-  const transcriptRenderItems = computed(() =>
-    visibleTranscriptEntries.value.map((entry, index) => ({
-      key: `transcript-${index}-${scrollOffset.value}`,
-      text: entry.text,
-      color: colorForEntry(entry),
-      dim: Boolean(entry.dim)
-    }))
-  )
+  const paneBorderColor = computed(() => ({
+    state: nowActivePane.value === 'state' ? 'cyan' : 'white',
+    custom: nowActivePane.value === 'custom' ? 'cyan' : 'white',
+    tool: nowActivePane.value === 'tool' ? 'yellow' : 'white',
+    assistant: nowActivePane.value === 'assistant' ? 'green' : 'white'
+  }))
 
   return {
-    nodeBoardLines,
+    focusedNode,
     nodeHint,
-    transcriptHeight,
-    transcriptRenderItems,
-    maxScroll
+    nodePaneHeight,
+    chatPaneHeight,
+    paneBorderColor,
+    stateViewport,
+    customViewport,
+    userLines,
+    toolViewport,
+    assistantViewport,
+    assistantWidth
   }
 }

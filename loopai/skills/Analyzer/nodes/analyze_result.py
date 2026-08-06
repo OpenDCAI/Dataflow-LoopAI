@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Dict, Any
 from loopai.common.event_tool import StreamEvent
 from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.skills.Analyzer.utils.stream import get_analyzer_resume_progress
 from loopai.common.prompts.prompt_loader import PromptLoader
 from langchain_openai import ChatOpenAI
 from loopai.schema.states import LoopAIState
@@ -71,6 +72,9 @@ def _batch_one_with_heartbeat(
     end_progress: float,
     data: Dict[str, Any] | None = None,
 ) -> str:
+    resume_progress = get_analyzer_resume_progress()
+    if resume_progress:
+        start_progress = max(start_progress, min(resume_progress, end_progress))
     stop_event = threading.Event()
 
     def _heartbeat() -> None:

@@ -43,6 +43,8 @@ datamixer.toml
 .yarnrc.yml
 .yarn
 
+
+# 本地运行产物
 /envs/
 /model/
 /pkgs/
@@ -50,3 +52,10 @@ datamixer.toml
 /.cache/
 /.hf_cache/
 /.datamixer/
+
+# DataMixer warehouse 运行目录
+blobs/
+lineage/
+dataset_cards/
+obtainer_runs/
+

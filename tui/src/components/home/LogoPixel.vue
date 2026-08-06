@@ -1,6 +1,10 @@
 <script setup>
-import { computed } from 'vue'
-import { Box, Text } from '@vue-tui/runtime'
+import { TText, TView } from '@simon_he/vue-tui'
+
+const props = defineProps({
+  x: { type: Number, default: 0 },
+  y: { type: Number, default: 0 }
+})
 
 const palette = {
   ' ': null,
@@ -11,7 +15,7 @@ const palette = {
   p: '#7030A0'
 }
 
-const rows = computed(() => [
+const rows = [
   'oo    oo   oooo   oooo   pppp    aa      ii',
   'oo   ooo  oo  oo oo  oo  pp pp  aaaa     ii',
   'oo  oo oo oo  oo oo  oo  pppp  aa  aa    ii',
@@ -19,19 +23,31 @@ const rows = computed(() => [
   'oooo   oo  oooo   oooo   pp    aa  aa    ii',
   '   gggggg    bbbb    yyyyyy    gggggg      ',
   '  gggggggg  bbbbbb  yyyyyyyy  gggggggg     '
-].map((line) => line.split('')))
+].map((line) => line.split(''))
+
+const cells = rows.flatMap((row, rowIndex) =>
+  row.map((cell, colIndex) => ({
+    key: `${rowIndex}-${colIndex}`,
+    x: colIndex * 2,
+    y: rowIndex,
+    color: palette[cell] || null
+  }))
+)
+
+const width = Math.max(...rows.map((row) => row.length)) * 2
+const height = rows.length
 </script>
 
 <template>
-  <Box flexDirection="column">
-    <Box v-for="(row, rowIndex) in rows" :key="`logo-row-${rowIndex}`" flexDirection="row">
-      <Text
-        v-for="(cell, colIndex) in row"
-        :key="`logo-cell-${rowIndex}-${colIndex}`"
-        :backgroundColor="palette[cell] || undefined"
-      >
-        {{ '  ' }}
-      </Text>
-    </Box>
-  </Box>
+  <TView :x="props.x" :y="props.y" :w="width" :h="height">
+    <TText
+      v-for="cell in cells"
+      :key="cell.key"
+      :x="cell.x"
+      :y="cell.y"
+      :w="2"
+      value="  "
+      :style="cell.color ? { bg: cell.color } : undefined"
+    />
+  </TView>
 </template>

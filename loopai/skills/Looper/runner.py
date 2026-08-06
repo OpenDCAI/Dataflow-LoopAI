@@ -817,6 +817,24 @@ async def run_looper_once(
             )
         )
         return state
+    except asyncio.CancelledError as exc:
+        writer.set_running(
+            StreamEvent(
+                current="looper.status",
+                message="Looper stop by interrupted.",
+                progress=1.0
+            )
+        )
+        emit_error(
+            exc,
+            code=ErrorCode.INTERRUPTED,
+            recoverable=False,
+            message="Looper planning pass interrupted.",
+            stream_writer=writer,
+            exit_process=False,
+            print_payload=False,
+        )
+        raise
     except Exception as exc:
         emit_error(
             exc,

@@ -1,5 +1,8 @@
 <template>
-    <div class="value-input-row-item">
+    <div
+        class="value-input-row-item"
+        :class="{ expanded: ['editor', 'bench_list'].includes(computedUIType) }"
+    >
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
         <editor-preview
             v-if="computedUIType === 'editor'"
@@ -8,6 +11,11 @@
             :lock="lock"
             @update:modelValue="editorModel = $event"
         ></editor-preview>
+        <bench-list
+            v-if="computedUIType === 'bench_list'"
+            :model-value="modelValue"
+            :lock="lock"
+        ></bench-list>
         <fv-text-box
             v-if="computedUIType === 'text'"
             v-model="textModel"
@@ -124,9 +132,10 @@ import { useTheme } from '@/stores/theme'
 
 import directorySelector from '@/components/general/directorySelector.vue'
 import editorPreview from '@/components/manage/config/valueInput/editorPreview.vue'
+import benchList from '@/components/manage/config/valueInput/benchList.vue'
 
 export default {
-    components: { directorySelector, editorPreview },
+    components: { directorySelector, editorPreview, benchList },
     props: { modelValue: { default: () => ({}) }, name: { default: '' }, lock: { default: true } },
     data() {
         return { show: { dir: false } }
@@ -164,6 +173,7 @@ export default {
             const listChoices = this.modelValue.allowed_values || this.modelValue.options
             if (this.modelValue.ui_type === 'list' && listChoices && listChoices.length)
                 return 'list'
+            if (this.modelValue.ui_type === 'bench_list') return 'bench_list'
             if (this.modelValue.value === null || this.modelValue.value === undefined) return 'none'
             if (this.modelValue.ui_type === 'file_path') return 'dir'
             if (this.modelValue.ui_type === 'textarea') return 'editor'
@@ -253,6 +263,11 @@ export default {
     display: flex;
     align-items: center;
     overflow: visible;
+
+    &.expanded {
+        width: 100%;
+        align-items: flex-start;
+    }
 
     .none-value {
         @include HcenterVcenter;

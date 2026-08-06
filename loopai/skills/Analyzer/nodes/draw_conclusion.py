@@ -12,7 +12,11 @@ from loopai.logger import get_logger
 
 from loopai.common.prompts.prompt_loader import PromptLoader
 from loopai.common.event_tool import StreamEvent
-from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
+from loopai.skills.Analyzer.utils.stream import (
+    checkpoint_analyzer_progress,
+    get_analyzer_resume_progress,
+    get_safe_stream_writer,
+)
 from loopai.skills.Analyzer.history_compare import (
     build_historical_comparison,
     render_historical_comparison_text,
@@ -564,6 +568,59 @@ def draw_conclusion_node(state: LoopAIState):
                 progress=progress,
                 data=data
             ).json())
+        if progress is not None:
+            checkpoint_analyzer_progress(
+                state,
+                progress,
+                stage=message,
+                data=data,
+            )
+
+    # The report JSON/text are durable stage artifacts. When the process is
+    # interrupted after this boundary, continue with the remaining report
+    # work instead of rebuilding the whole draw_conclusion node.
+    if get_analyzer_resume_progress() >= 0.7:
+        outdir = Path(_ensure_analyzer_outdir(state))
+        report_candidates = sorted(
+            (
+                path
+                for path in outdir.glob("final_report_*.json")
+                if not path.name.endswith(".obtainer.json")
+            ),
+            key=lambda path: path.stat().st_mtime,
+        )
+        if report_candidates:
+            report_path = report_candidates[-1]
+            with report_path.open("r", encoding="utf-8") as file_obj:
+                final_json = json.load(file_obj)
+            obtainer_stats = final_json.get("obtainer_stats") or {}
+            run_ts = report_path.stem.removeprefix("final_report_")
+            final_txt_path = outdir / f"final_report_{run_ts}.txt"
+            analyzer = _analyzer(state)
+            analyzer["analyze_output_final_report_json_path"] = str(report_path)
+            if analyzer.get("output_obtainer_report", False):
+                _emit("继续生成 obtainer 细粒度报告", progress=0.8)
+                llm = init_model(state)
+                try:
+                    obtainer_prompt = build_obtainer_prompt(final_json, obtainer_stats)
+                    obtainer_text = llm.batch([obtainer_prompt])[0].content
+                except Exception as exc:
+                    logger.error(f"生成 obtainer 报告时出错：{exc}")
+                    obtainer_text = ""
+                obtainer_json_path = outdir / f"final_report_{run_ts}.obtainer.json"
+                obtainer_txt_path = outdir / f"final_report_{run_ts}.obtainer.txt"
+                obtainer_json_path.write_text(
+                    json.dumps(obtainer_stats, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                obtainer_txt_path.write_text(
+                    make_obtainer_human_text(obtainer_stats, llm_text=obtainer_text),
+                    encoding="utf-8",
+                )
+                analyzer["analyze_output_obtainer_json_path"] = str(obtainer_json_path)
+                analyzer["analyze_output_obtainer_txt_path"] = str(obtainer_txt_path)
+            _emit("最终报告生成完成", progress=1.0)
+            return state
 
     final_json_path = None
     _emit("开始生成最终报告", progress=0.0)
@@ -699,6 +756,7 @@ def draw_conclusion_node(state: LoopAIState):
             "suggestion_path": suggest_path,
             "final_report": final_txt_path,
         })
+        _emit("改进建议阶段完成", progress=0.7)
         logger.info(f"→ {suggest_path}")
         logger.info(f"→ {final_txt_path}")
 

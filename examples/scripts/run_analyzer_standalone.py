@@ -78,9 +78,20 @@ def _parse_args() -> argparse.Namespace:
         help="Analyzer run version id. Use a new value for version2 to avoid reusing an old finished checkpoint.",
     )
     parser.add_argument(
+        "--new-version",
+        action="store_true",
+        help="Force a new Analyzer version instead of resuming an unfinished one.",
+    )
+    parser.add_argument(
         "--baseline-result-path",
         default=None,
         help="Optional previous jsonl result path for Historical Comparison.",
+    )
+    parser.add_argument(
+        "--analyze-batch-size",
+        type=int,
+        default=None,
+        help="Number of failed samples per Analyzer model batch. Default: 20.",
     )
     parser.add_argument("--resume", action="store_true", help="Resume using Configer/external runtime state.")
     parser.add_argument("--from-node", default=None, help="Force Analyzer to resume from a specific step.")
@@ -123,6 +134,8 @@ def main() -> None:
             checkpoint_path=args.checkpoint_path,
             version_id=args.version_id,
             baseline_result_path=args.baseline_result_path,
+            analyze_batch_size=args.analyze_batch_size,
+            force_new_version=args.new_version,
             stream_stdout=args.stream_stdout,
             emit_status=False,
         )
