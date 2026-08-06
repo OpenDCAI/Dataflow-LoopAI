@@ -63,7 +63,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         })
     }
 
-    const taskStatus = ref({
+    const emptyTaskStatus = () => ({
         started: false,
         running: false,
         waiting_llm: true,
@@ -75,11 +75,14 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         custom_info: null,
         update_custom_info: null
     })
+    const taskStatus = ref(emptyTaskStatus())
     const getStatus = async (task_id = currentTask.value?.task_id) => {
         if (!task_id) return
+        const requestedTaskId = task_id
         await proxy.$api.starter
             .getAgentStatus(task_id)
             .then((res) => {
+                if (currentTask.value?.task_id !== requestedTaskId) return
                 if (res.code === 200) {
                     taskStatus.value.started = true
                     for (let key in taskStatus.value) {
@@ -138,6 +141,11 @@ export const useLoopAI = defineStore('useLoopAI', () => {
 
     const setCurrentTask = async (task) => {
         currentTask.value = task || null
+        taskStatus.value = emptyTaskStatus()
+        taskMessages.value = []
+        msgStreamModel.value.msgs = []
+        msgStreamModel.value.loading = false
+        msgStreamModel.value.status = 'stale'
         closeMsgStream()
         clearLooperTakeoverCountdown()
         await getMessages()

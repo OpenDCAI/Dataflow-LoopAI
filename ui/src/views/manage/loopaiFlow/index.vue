@@ -201,48 +201,13 @@ export default {
                         status: 'Agent',
                         stateKey: 'obtainer',
                         graphClsPrefix: 'obtainer',
-                        include_nodes: ['obtainer'],
+                        include_nodes: ['obtainer', 'obtainercli'],
                         icon: 'GiftboxOpen',
                         nodeInfo:
-                            'Obtainer Agent for obtaining the data from external datasets and run the data synthesis.',
+                            'ObtainerCLI handles acquisition, processing, recipe planning, and final training-data export.',
                         iconColor: 'rgba(90, 45, 133, 1)',
                         reverseHandle: true,
                         borderColor: 'rgba(90, 45, 133, 0.8)'
-                    }
-                },
-                {
-                    id: 'webcrawler',
-                    type: 'agent-node',
-                    position: { x: 230, y: 1127 },
-                    data: {
-                        label: 'Webcrawler',
-                        status: 'Agent',
-                        stateKey: 'webcrawler',
-                        graphClsPrefix: 'webcrawler',
-                        include_nodes: ['webcrawler'],
-                        icon: 'GiftboxOpen',
-                        nodeInfo: 'Webcrawler Agent for crawling the web and obtaining the data.',
-                        iconColor: 'rgba(207, 85, 128, 1)',
-                        reverseHandle: true,
-                        borderColor: 'rgba(207, 85, 128, 0.8)'
-                    }
-                },
-                {
-                    id: 'constructor',
-                    type: 'agent-node',
-                    position: { x: -190, y: 800 },
-                    data: {
-                        label: 'Constructor',
-                        status: 'Agent',
-                        stateKey: 'constructor',
-                        graphClsPrefix: 'constructor',
-                        include_nodes: ['constructor'],
-                        icon: 'OEM',
-                        nodeInfo:
-                            'Constructor Agent for post proceesing the data obtained by Obtainer and WebCrawler.',
-                        iconColor: 'rgba(56, 78, 205, 1)',
-                        reverseHandle: true,
-                        borderColor: 'rgba(56, 78, 205, 0.8)'
                     }
                 },
                 {
@@ -266,7 +231,7 @@ export default {
                 {
                     id: 'analyzer',
                     type: 'agent-node',
-                    position: { x: 910, y: 800 },
+                    position: { x: 1360, y: 800 },
                     data: {
                         label: 'Analyzer',
                         status: 'Agent',
@@ -338,37 +303,7 @@ export default {
                 {
                     id: '3',
                     type: 'base-edge',
-                    source: 'analyzer',
-                    target: 'webcrawler',
-                    animated: true,
-                    data: {
-                        label: 'next to'
-                    }
-                },
-                {
-                    id: '4',
-                    type: 'base-edge',
                     source: 'obtainer',
-                    target: 'constructor',
-                    animated: true,
-                    data: {
-                        label: 'next to'
-                    }
-                },
-                {
-                    id: '5',
-                    type: 'base-edge',
-                    source: 'webcrawler',
-                    target: 'constructor',
-                    animated: true,
-                    data: {
-                        label: 'next to'
-                    }
-                },
-                {
-                    id: '6',
-                    type: 'base-edge',
-                    source: 'constructor',
                     target: 'trainer',
                     animated: true,
                     data: {

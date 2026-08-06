@@ -1,5 +1,11 @@
 <template>
-    <base-node v-bind="props" :data="thisData" :running="runningMe" :rowLayoutContent="true">
+    <base-node
+        v-bind="props"
+        :class="{ 'obtainer-node': isObtainerNode }"
+        :data="thisData"
+        :running="displayRunning"
+        :rowLayoutContent="true"
+    >
         <div v-if="showGenericState" class="col-wrapper" style="width: 250px">
             <div class="fv-loading-block">
                 <fv-progress-ring
@@ -44,7 +50,8 @@
         <div
             v-if="showCustomInfoPanel"
             class="col-wrapper"
-            style="width: 250px; flex-shrink: 0"
+            :class="{ 'obtainer-panel-wrapper': isObtainerNode }"
+            :style="{ width: isObtainerNode ? '980px' : '250px', flexShrink: 0 }"
         >
             <!-- Agent 的通用 CustomInfo 展示 -->
             <template v-if="showCustomInfoPanel">
@@ -67,6 +74,8 @@
                         :is="customStatusPanel"
                         :foreground="thisData.iconColor"
                         :graphClsPrefix="thisData.graphClsPrefix"
+                        :running="runtimeRunning"
+                        @active-change="setCustomPanelActive"
                     />
                     <div
                         v-if="showGenericCustomInfo"
@@ -298,17 +307,35 @@ const customStatusTitle = computed(() => {
     return appConfig.local('Custom Info')
 })
 
-const runningMe = computed(() => {
+const runtimeRunning = computed(() => {
     try {
         return loopAI.taskStatus.node_status.some((node) => {
+            const nodeName = String(node.node_name || '').toLowerCase()
+            const includedNodes = thisData.value.include_nodes.map((item) =>
+                String(item || '').toLowerCase()
+            )
+            const matchesObtainerCli = isObtainerNode.value && nodeName === 'obtainercli'
             return (
-                thisData.value.include_nodes.includes(node.node_name) && node.status === 'running'
+                (includedNodes.includes(nodeName) || matchesObtainerCli) &&
+                ['queued', 'running'].includes(String(node.status || '').toLowerCase())
             )
         })
     } catch (e) {
         return false
     }
 })
+const customPanelActive = ref(null)
+const displayRunning = computed(() => {
+    if (isObtainerNode.value && customPanelActive.value !== null) {
+        return customPanelActive.value
+    }
+    return runtimeRunning.value
+})
+const runningMe = displayRunning
+
+const setCustomPanelActive = (active) => {
+    customPanelActive.value = Boolean(active)
+}
 
 const loading = ref(false)
 
@@ -325,6 +352,18 @@ const emitUpdateRunValue = (item) => {}
 
     .scroll-list {
         overflow-y: overlay;
+    }
+
+    .obtainer-panel-wrapper {
+        min-width: 860px;
+
+        .node-group-item {
+            padding: 4px;
+        }
+    }
+
+    &.obtainer-node .lp-flow-node-container {
+        max-height: 640px;
     }
 }
 </style>

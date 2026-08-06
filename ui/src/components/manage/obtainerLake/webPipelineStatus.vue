@@ -66,6 +66,18 @@
                     </div>
                 </section>
 
+                <section v-if="pipeline.continuous" class="section-block pipeline-overview">
+                    <div class="section-heading">
+                        <span>整体持续流水线</span>
+                        <span class="status-badge" :class="pipelineState">{{ pipelineStatusText }}</span>
+                    </div>
+                    <div class="pipeline-summary">
+                        <span><b>{{ formatNumber(pipeline.selected || 0) }}</b> 已进入处理链路</span>
+                        <span>{{ pipeline.source_done ? '输入已封口' : 'WebAgent 持续供数中' }}</span>
+                    </div>
+                    <p v-if="pipeline.error" class="pipeline-error" :title="pipeline.error">{{ pipeline.error }}</p>
+                </section>
+
                 <section class="section-block">
                     <div class="section-heading">
                         <span>数据分层</span>
@@ -128,6 +140,41 @@
                             <span class="worker-query" :title="worker.query">{{ worker.query }}</span>
                         </div>
                         <div v-if="workers.length === 0" class="empty-line">暂无运行中的 worker</div>
+                    </div>
+                </section>
+
+                <section v-if="pipelineQueues.length" class="section-block">
+                    <div class="section-heading">
+                        <span>后处理队列</span>
+                        <small>{{ pipelineQueues.length }} stages</small>
+                    </div>
+                    <div class="pipeline-queue-table">
+                        <div class="pipeline-queue-head">
+                            <span>阶段</span>
+                            <span>待处理</span>
+                            <span>运行中</span>
+                            <span>已处理</span>
+                            <span>失败</span>
+                        </div>
+                        <div v-for="item in pipelineQueues" :key="item.key" class="pipeline-queue-row">
+                            <strong :title="item.name">{{ pipelineQueueLabel(item.name) }}</strong>
+                            <span>{{ formatNumber(item.pending) }}</span>
+                            <span class="running-count">{{ formatNumber(item.running) }}</span>
+                            <span class="processed-count">{{ formatNumber(item.processed) }}</span>
+                            <span :class="{ 'failed-count': item.failed }">{{ formatNumber(item.failed) }}</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section v-if="pipelineFeedback.length" class="section-block feedback-block">
+                    <div class="section-heading">
+                        <span>阶段反馈</span>
+                        <small>{{ pipelineFeedback.length }}</small>
+                    </div>
+                    <div v-for="(item, index) in pipelineFeedback" :key="`${item.source}-${index}`" class="feedback-row">
+                        <span class="feedback-state" :class="feedbackState(item.state)"></span>
+                        <strong :title="item.source">{{ pipelineQueueLabel(item.source) }}</strong>
+                        <span :title="item.message">{{ item.message }}</span>
                     </div>
                 </section>
 
@@ -202,6 +249,9 @@ let refreshTimer = null
 const layers = computed(() => overview.value?.layers || [])
 const stages = computed(() => overview.value?.stages || [])
 const campaign = computed(() => overview.value?.campaign || null)
+const pipeline = computed(() => overview.value?.pipeline || {})
+const pipelineQueues = computed(() => pipeline.value?.queues || [])
+const pipelineFeedback = computed(() => pipeline.value?.feedback || [])
 const acquisition = computed(() => overview.value?.acquisition || null)
 const otherActiveAcquisitions = computed(() => overview.value?.other_active_acquisitions || [])
 const workers = computed(() => campaign.value?.workers || [])
@@ -283,6 +333,24 @@ const campaignStatusText = computed(() => ({
     failed: '失败'
 }[normalize(campaign.value?.status).toLowerCase()] || '未运行'))
 
+const pipelineState = computed(() => {
+    const status = normalize(pipeline.value?.status).toLowerCase()
+    if (['running', 'queued'].includes(status)) return 'running'
+    if (status === 'paused') return 'paused'
+    if (['failed', 'completed_with_errors'].includes(status)) return 'warning'
+    if (status === 'completed') return 'completed'
+    return 'idle'
+})
+
+const pipelineStatusText = computed(() => ({
+    running: '持续运行中',
+    queued: '正在启动',
+    paused: '已暂停',
+    completed: '已完成',
+    completed_with_errors: '完成但有错误',
+    failed: '失败'
+}[normalize(pipeline.value?.status).toLowerCase()] || '等待数据'))
+
 const headerSubtitle = computed(() => {
     if (acquisition.value?.active) return `主 Agent 运行中 · ${acquisitionPhaseText.value}`
     if (!campaign.value) return '尚未发现 WebAgent campaign'
@@ -351,6 +419,24 @@ const stageStateText = (state) => ({
 const taskStatusText = (status) => ({
     pending: '等待', running: '运行', succeeded: '成功', failed: '失败'
 }[status] || status || '未知')
+
+const pipelineQueueLabel = (name) => ({
+    webpage_to_pt: '正文提取',
+    domain_classify: '领域分类',
+    pt_to_sft_qa: 'SFT QA 生成',
+    pt_to_sft_code: '代码 SFT',
+    pt_to_sft_text2sql: 'Text2SQL SFT',
+    sft_validate: 'SFT 校验',
+    webagent: 'WebAgent'
+}[normalize(name)] || normalize(name) || '流水线')
+
+const feedbackState = (state) => {
+    const value = normalize(state).toLowerCase()
+    if (['running', 'queued'].includes(value)) return 'running'
+    if (value === 'completed' || value === 'succeeded') return 'completed'
+    if (['failed', 'completed_with_errors'].includes(value)) return 'warning'
+    return 'waiting'
+}
 
 const refresh = async () => {
     if (!isAvailable.value) return
@@ -513,6 +599,24 @@ onBeforeUnmount(() => {
     .queue-cell.running b { color: rgba(22, 110, 207, 1); }
     .queue-cell.succeeded b { color: rgba(27, 133, 90, 1); }
     .queue-cell.failed b { color: rgba(196, 69, 55, 1); }
+    .pipeline-summary { display: flex; justify-content: space-between; gap: 8px; color: rgba(88, 92, 104, 1); font-size: 10px; }
+    .pipeline-summary b { color: rgba(28, 105, 185, 1); font-size: 12px; }
+    .pipeline-error { margin: 7px 0 0; overflow: hidden; color: rgba(174, 59, 49, 1); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .pipeline-queue-table { overflow: hidden; border: 1px solid rgba(95, 99, 116, .12); border-radius: 5px; }
+    .pipeline-queue-head, .pipeline-queue-row { display: grid; grid-template-columns: minmax(96px, 1.7fr) repeat(4, minmax(42px, .65fr)); align-items: center; min-height: 28px; }
+    .pipeline-queue-head { color: rgba(112, 116, 127, 1); background: rgba(80, 87, 112, .05); font-size: 9px; }
+    .pipeline-queue-row { border-top: 1px solid rgba(95, 99, 116, .09); color: rgba(78, 82, 94, 1); font-size: 10px; }
+    .pipeline-queue-head span, .pipeline-queue-row span, .pipeline-queue-row strong { min-width: 0; padding: 5px 4px; text-align: right; }
+    .pipeline-queue-head span:first-child, .pipeline-queue-row strong { overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+    .running-count { color: rgba(22, 110, 207, 1); }
+    .processed-count { color: rgba(27, 133, 90, 1); }
+    .failed-count { color: rgba(196, 69, 55, 1); font-weight: 700; }
+    .feedback-row { display: grid; grid-template-columns: 7px minmax(70px, .65fr) minmax(0, 1.7fr); gap: 6px; align-items: center; min-height: 25px; color: rgba(82, 86, 98, 1); font-size: 10px; }
+    .feedback-row strong, .feedback-row > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .feedback-state { width: 7px; height: 7px; border-radius: 50%; background: rgba(154, 160, 166, 1); }
+    .feedback-state.running { background: rgba(35, 135, 235, 1); }
+    .feedback-state.completed { background: rgba(42, 159, 109, 1); }
+    .feedback-state.warning { background: rgba(220, 125, 25, 1); }
     .worker-list { display: grid; gap: 5px; margin-top: 8px; }
     .worker-row { display: grid; grid-template-columns: 8px max-content minmax(0, 1fr); gap: 6px; align-items: center; color: rgba(74, 78, 90, 1); font-size: 10px; }
     .worker-query, .recent-query, .work-message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
