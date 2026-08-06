@@ -171,10 +171,10 @@ http://localhost:8855/docs
 
 #### ✅ 方式二：命令行模式
 
-启动 LoopAI：
+启动 LoopAI 后端服务：
 
 ```bash
-python examples/scripts/run_starter.py
+python api/start.py
 ```
 
 ---

@@ -166,10 +166,10 @@ Frontend source setup, Vite proxy configuration, and UI release publishing are c
 
 #### ✅ Option B: Terminal Mode
 
-Start LoopAI:
+Start the LoopAI backend service:
 
 ```bash
-python examples/scripts/run_starter.py
+python api/start.py
 ```
 
 ---

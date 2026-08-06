@@ -12,14 +12,14 @@ WebUI 更适合第一次完整体验，而终端模式更适合开发、调试�
 如果你想直接启动主流程，可以运行：
 
 ```bash
-python examples/scripts/run_starter.py
+python api/start.py
 ```
 
 这条命令更适合：
 
 - 验证主流程配置
-- 调试 Starter 调度逻辑
-- 在没有 WebUI 的场景下直接体验任务流
+- 启动后端服务（默认端口 8855），供 WebUI / TUI 或 API 调用
+- 在没有 WebUI 的场景下通过 API 体验完整任务流
 
 ## 子 Agent 单独启动
 
