@@ -1,10 +1,10 @@
-"""Query -> resource URL -> depth-two raw HTML -> DataMixer L1.
+"""Query -> relevant resource URLs -> bounded raw HTML crawl -> DataMixer L1.
 
 The small observe/action/tool loop is inspired by the MIT-licensed
 ``browser-use`` project (https://github.com/browser-use/browser-use), but is
 implemented locally so DataMixer does not inherit that project's large runtime
 surface.  The terminal action is deliberately a tool call:
-``submit_resource_url``.  A prose answer from the model can never complete a
+``submit_resource_urls``.  A prose answer from the model can never complete a
 run.
 """
 from __future__ import annotations
@@ -18,12 +18,12 @@ import re
 import socket
 import time
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import parse_qsl, quote_plus, unquote, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
@@ -54,6 +54,17 @@ _PROXY_ENV_KEYS = (
     "HTTPS_PROXY", "https_proxy",
     "HTTP_PROXY", "http_proxy",
     "ALL_PROXY", "all_proxy",
+)
+_LLM_SUMMARY_PROVIDERS = {
+    "baidu", "bing", "duckduckgo_html", "github", "tavily",
+}
+_PROXY_DOH_URL = "https://1.1.1.1/dns-query"
+_RUBRIC_DIMENSIONS = (
+    "query_coverage",
+    "source_authority",
+    "content_substance",
+    "crawl_yield",
+    "complementary_value",
 )
 
 
@@ -109,6 +120,34 @@ def playwright_proxy_settings(proxy: str) -> dict[str, str] | None:
     return out
 
 
+def playwright_process_env() -> dict[str, str] | None:
+    """Return a child environment for an optional user-space browser runtime."""
+
+    configured = str(
+        os.environ.get("PLAYWRIGHT_RUNTIME_PREFIX") or ""
+    ).strip()
+    prefix = Path(configured) if configured else Path.cwd() / ".cache" / "playwright-runtime"
+    library_dir = prefix / "lib"
+    if not library_dir.is_dir():
+        return None
+    env = dict(os.environ)
+    existing = str(env.get("LD_LIBRARY_PATH") or "").strip()
+    env["LD_LIBRARY_PATH"] = (
+        f"{library_dir}{os.pathsep}{existing}" if existing else str(library_dir)
+    )
+    fontconfig_dir = prefix / "etc" / "fonts"
+    if fontconfig_dir.is_dir():
+        env["FONTCONFIG_PATH"] = str(fontconfig_dir)
+    share_dir = prefix / "share"
+    if share_dir.is_dir():
+        existing_share = str(env.get("XDG_DATA_DIRS") or "").strip()
+        env["XDG_DATA_DIRS"] = (
+            f"{share_dir}{os.pathsep}{existing_share}"
+            if existing_share else str(share_dir)
+        )
+    return env
+
+
 @dataclass
 class WebCrawlerDMConfig:
     """Bounded runtime configuration for ``webcrawler_dm``."""
@@ -125,6 +164,9 @@ class WebCrawlerDMConfig:
     github_token_env: str = "GITHUB_TOKEN"
     search_timeout: float = 15.0
     tavily_api_key: str = ""
+    search_llm_summary: bool = True
+    search_summary_results: int = 5
+    search_summary_chars: int = 4000
     proxy: str = ""
     use_env_proxy: bool = True
     browser_backend: str = "auto"
@@ -137,6 +179,7 @@ class WebCrawlerDMConfig:
     timeout: float = 25.0
     max_retries: int = 2
     max_html_bytes: int = 4_000_000
+    page_cache_entries: int = 64
     max_observation_chars: int = 3000
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -155,15 +198,18 @@ class WebCrawlerDMConfig:
         self.max_links_per_page = max(1, int(self.max_links_per_page))
         self.search_results = max(1, int(self.search_results))
         self.search_timeout = max(1.0, float(self.search_timeout))
+        self.search_summary_results = max(1, min(20, int(self.search_summary_results)))
+        self.search_summary_chars = max(500, min(20_000, int(self.search_summary_chars)))
         self.request_delay = max(0.0, float(self.request_delay))
         self.timeout = max(1.0, float(self.timeout))
         self.max_retries = max(0, int(self.max_retries))
         self.max_html_bytes = max(16_384, int(self.max_html_bytes))
+        self.page_cache_entries = max(2, min(1024, int(self.page_cache_entries)))
         if self.search_provider not in {
-            "auto", "bing", "github", "tavily", "duckduckgo_html"
+            "auto", "baidu", "bing", "github", "tavily", "duckduckgo_html"
         }:
             raise ValueError(
-                "search_provider must be auto, bing, github, tavily, or duckduckgo_html"
+                "search_provider must be auto, baidu, bing, github, tavily, or duckduckgo_html"
             )
         if self.browser_backend not in {"auto", "httpx", "playwright"}:
             raise ValueError("browser_backend must be auto, httpx, or playwright")
@@ -187,9 +233,26 @@ class SearchResult:
     snippet: str = ""
     rank: int = 0
     provider: str = ""
+    search_snippet: str = ""
+    summary: str = ""
+    # Compatibility-only fields for older consumers. They are never used as
+    # an acceptance/rejection gate; the multi-dimensional rubric below owns
+    # selection evidence.
+    relevance_score: float = 0.0
+    relevant: bool | None = None
+    llm_enriched: bool = False
+    summary_model: str = ""
+    fetch_mode: str = ""
+    summary_error: str = ""
+    rubric_scores: dict[str, float] = field(default_factory=dict)
+    rubric_evidence: dict[str, str] = field(default_factory=dict)
+    rubric_decision: str = "uncertain"
+    decision_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        data["content"] = self.summary or self.snippet
+        return data
 
 
 @dataclass
@@ -227,6 +290,7 @@ class WebCrawlerDMResult:
     run_id: str
     query: str
     selected_url: str
+    selected_urls: list[str]
     submitted_by_tool: bool
     agent_steps: int
     max_steps: int
@@ -255,6 +319,62 @@ class WebCrawlerDMResult:
 
 class WebCrawlerDMError(RuntimeError):
     pass
+
+
+def _normalize_rubric(
+    item: dict[str, Any],
+) -> tuple[dict[str, float], dict[str, str], str, str]:
+    """Validate one grounded five-dimension URL rubric from the LLM.
+
+    A single low dimension can never make a candidate an exclusion.  Exclusion
+    is trusted only with a complete rubric, a grounded reason, and at least two
+    independently weak (1-2) dimensions.  Invalid/partial output remains
+    ``uncertain`` for the main web agent to inspect.
+    """
+
+    raw_rubric = item.get("rubric")
+    raw_rubric = raw_rubric if isinstance(raw_rubric, dict) else {}
+    scores: dict[str, float] = {}
+    evidence: dict[str, str] = {}
+    for dimension in _RUBRIC_DIMENSIONS:
+        value = raw_rubric.get(dimension)
+        if not isinstance(value, dict):
+            continue
+        try:
+            score = float(value.get("score"))
+        except (TypeError, ValueError):
+            continue
+        if not 1.0 <= score <= 5.0:
+            continue
+        scores[dimension] = score
+        evidence[dimension] = re.sub(
+            r"\s+", " ", str(value.get("evidence") or "")
+        ).strip()[:500]
+
+    reason = re.sub(
+        r"\s+", " ", str(item.get("decision_reason") or "")
+    ).strip()[:1000]
+    raw_decision = str(item.get("decision") or "uncertain").strip().lower()
+    decision_aliases = {
+        "include": "supporting",
+        "relevant": "supporting",
+        "reject": "exclude",
+        "irrelevant": "exclude",
+    }
+    decision = decision_aliases.get(raw_decision, raw_decision)
+    if decision not in {"core", "supporting", "exclude", "uncertain"}:
+        decision = "uncertain"
+    if len(scores) != len(_RUBRIC_DIMENSIONS) or not reason:
+        decision = "uncertain"
+    if decision == "exclude":
+        weak_dimensions = sum(score <= 2.0 for score in scores.values())
+        if weak_dimensions < 2:
+            decision = "uncertain"
+            reason = (
+                reason + "; exclusion downgraded to uncertain because fewer "
+                "than two rubric dimensions were weak"
+            )[:1000]
+    return scores, evidence, decision, reason
 
 
 def canonicalize_url(url: str) -> str:
@@ -423,39 +543,80 @@ class WebSearchClient:
 
     def __init__(self, config: WebCrawlerDMConfig):
         self.config = config
+        self.last_attempts: list[dict[str, Any]] = []
+        self.last_provider = ""
 
     def search(self, query: str, max_results: int | None = None) -> list[SearchResult]:
         limit = max_results or self.config.search_results
-        provider = self.primary_provider()
+        provider = self.configured_primary_provider()
         errors = []
         providers = [provider]
-        if self.config.search_provider == "auto":
+        if self.config.search_provider in {"auto", "tavily"}:
             providers.extend(
-                p for p in ("bing", "duckduckgo_html") if p != provider
+                p for p in ("bing", "baidu", "duckduckgo_html") if p != provider
             )
+        self.last_attempts = []
+        self.last_provider = ""
         for item in providers:
             try:
-                if item == "tavily":
-                    rows = self._tavily(query, limit)
-                elif item == "bing":
-                    rows = self._bing(query, limit)
-                elif item == "github":
-                    rows = self._github(query, limit)
-                else:
-                    rows = self._duckduckgo_html(query, limit)
-                if rows:
-                    deduped = self._dedup(rows, limit)
-                    if deduped:
-                        return deduped
+                deduped = self.search_provider(query, item, limit)
+                if deduped:
+                    self.last_provider = item
+                    self.last_attempts.append({
+                        "provider": item,
+                        "ok": True,
+                        "results": len(deduped),
+                    })
+                    return deduped
+                self.last_attempts.append({
+                    "provider": item,
+                    "ok": False,
+                    "error": "no_results",
+                })
             except Exception as exc:  # noqa: BLE001 - provider fallback
-                errors.append(f"{item}: {type(exc).__name__}: {exc}")
+                error = f"{type(exc).__name__}: {exc}"[:1000]
+                errors.append(f"{item}: {error}")
+                self.last_attempts.append({
+                    "provider": item,
+                    "ok": False,
+                    "error": error,
+                })
         detail = "; ".join(errors) if errors else f"no results from {', '.join(providers)}"
         raise WebCrawlerDMError("web search failed: " + detail)
 
-    def primary_provider(self) -> str:
+    def search_provider(
+        self,
+        query: str,
+        provider: str,
+        limit: int,
+    ) -> list[SearchResult]:
+        """Search exactly one provider for LLM-rubric-aware continuation."""
+
+        if provider == "tavily":
+            rows = self._tavily(query, limit)
+        elif provider == "bing":
+            rows = self._bing(query, limit)
+        elif provider == "baidu":
+            rows = self._baidu(query, limit)
+        elif provider == "github":
+            rows = self._github(query, limit)
+        elif provider == "duckduckgo_html":
+            rows = self._duckduckgo_html(query, limit)
+        else:
+            raise ValueError(f"unknown search provider: {provider}")
+        deduped = self._dedup(rows, limit)
+        for row in deduped:
+            row.search_snippet = row.search_snippet or row.snippet
+        return deduped
+
+    def configured_primary_provider(self) -> str:
         if self.config.search_provider != "auto":
             return self.config.search_provider
         return "tavily" if self.config.tavily_api_key else "bing"
+
+    def primary_provider(self) -> str:
+        """Provider currently serving results, or the first configured attempt."""
+        return self.last_provider or self.configured_primary_provider()
 
     @staticmethod
     def _dedup(
@@ -537,7 +698,13 @@ class WebSearchClient:
             proxy=proxy or None,
             trust_env=False,
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            detail = re.sub(
+                r"tvly-[A-Za-z0-9_-]+", "<redacted>", response.text[:1000]
+            ).strip()
+            raise WebCrawlerDMError(
+                f"Tavily HTTP {response.status_code}: {detail or 'empty response'}"
+            )
         return [
             SearchResult(
                 url=str(row.get("url") or ""),
@@ -589,6 +756,101 @@ class WebSearchClient:
                 rows.append(SearchResult(url=url, title=anchor, provider="bing"))
                 if len(rows) >= limit:
                     break
+        if rows:
+            return rows
+        return self._bing_rss(query, limit)
+
+    def _bing_rss(self, query: str, limit: int) -> list[SearchResult]:
+        """Use Bing's RSS output when the HTML page is an anti-bot shell."""
+        import html
+        import httpx
+        from xml.etree import ElementTree
+
+        proxy, _ = self.config.resolved_proxy()
+        response = httpx.get(
+            "https://www.bing.com/search",
+            params={
+                "q": query,
+                "format": "rss",
+                "count": max(5, limit),
+                "setlang": "en-US",
+            },
+            headers={"User-Agent": self.config.user_agent},
+            follow_redirects=True,
+            timeout=self.config.search_timeout,
+            proxy=proxy or None,
+            trust_env=False,
+        )
+        response.raise_for_status()
+        root = ElementTree.fromstring(response.content)
+        rows = []
+        for item in root.findall(".//item"):
+            url = str(item.findtext("link") or "").strip()
+            title = html.unescape(str(item.findtext("title") or "")).strip()
+            description = html.unescape(
+                str(item.findtext("description") or "")
+            )
+            description = re.sub(r"<[^>]+>", " ", description)
+            description = re.sub(r"\s+", " ", description).strip()
+            if not url:
+                continue
+            rows.append(SearchResult(
+                url=url,
+                title=title,
+                snippet=description[:1200],
+                provider="bing",
+                fetch_mode="bing_rss",
+            ))
+            if len(rows) >= limit:
+                break
+        return rows
+
+    def _baidu(self, query: str, limit: int) -> list[SearchResult]:
+        import httpx
+
+        proxy, _ = self.config.resolved_proxy()
+        response = httpx.get(
+            "https://www.baidu.com/s",
+            params={"wd": query, "rn": max(10, limit)},
+            headers={
+                "User-Agent": self.config.user_agent,
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6",
+            },
+            follow_redirects=True,
+            timeout=self.config.search_timeout,
+            proxy=proxy or None,
+            trust_env=False,
+        )
+        response.raise_for_status()
+        rows = []
+        try:
+            from bs4 import BeautifulSoup
+
+            soup = BeautifulSoup(response.text, "html.parser")
+            for item in soup.select("div.result, div.c-container"):
+                link = item.select_one("h3 a[href]")
+                if link is None:
+                    continue
+                caption = item.select_one(
+                    ".c-abstract, .content-right_8Zs40, .c-span-last, .content-right"
+                )
+                rows.append(SearchResult(
+                    url=str(link.get("href") or ""),
+                    title=link.get_text(" ", strip=True),
+                    snippet=caption.get_text(" ", strip=True) if caption else "",
+                    provider="baidu",
+                ))
+                if len(rows) >= limit:
+                    break
+        except ImportError:
+            parser = parse_page(response.text)
+            for href, anchor in parser.links:
+                url = canonicalize_url(urljoin(str(response.url), href))
+                if not url or _hostname(url).endswith("baidu.com"):
+                    continue
+                rows.append(SearchResult(url=url, title=anchor, provider="baidu"))
+                if len(rows) >= limit:
+                    break
         return rows
 
     def _duckduckgo_html(self, query: str, limit: int) -> list[SearchResult]:
@@ -638,9 +900,17 @@ class WebPageFetcher:
             proxy=self._proxy or None,
             trust_env=False,
         )
-        self.cache: dict[str, FetchedPage] = {}
+        self.cache: OrderedDict[str, FetchedPage] = OrderedDict()
         self._robots: dict[str, RobotFileParser | None] = {}
         self._last_request: dict[str, float] = {}
+        # With an explicit HTTP proxy the proxy, not this process, resolves the
+        # destination for the actual connection.  Re-resolving the same host
+        # locally before every page therefore cannot pin the connected address
+        # and can create false SSRF failures when a local DNS interceptor
+        # intermittently returns a reserved sink address.  Remember only hosts
+        # whose first complete local answer was public.  Direct connections are
+        # deliberately revalidated on every request below.
+        self._proxy_validated_public_hosts: set[str] = set()
         self._playwright = None
         self._browser = None
         self._context = None
@@ -684,14 +954,64 @@ class WebPageFetcher:
             return
         if host == "localhost" or host.endswith(".localhost"):
             raise WebCrawlerDMError(f"private/local URL is not allowed: {url}")
-        try:
-            addresses = {item[4][0] for item in socket.getaddrinfo(host, None)}
-        except socket.gaierror as exc:
-            raise WebCrawlerDMError(f"cannot resolve {host}: {exc}") from None
+        if self._proxy and host in self._proxy_validated_public_hosts:
+            return
+        if self._proxy:
+            addresses = self._resolve_addresses_through_proxy(host)
+        else:
+            try:
+                addresses = {item[4][0] for item in socket.getaddrinfo(host, None)}
+            except socket.gaierror as exc:
+                raise WebCrawlerDMError(f"cannot resolve {host}: {exc}") from None
+        if not addresses:
+            raise WebCrawlerDMError(f"cannot resolve {host}: no A/AAAA records")
         for address in addresses:
             ip = ipaddress.ip_address(address)
             if not ip.is_global:
                 raise WebCrawlerDMError(f"non-public address is not allowed: {host} -> {ip}")
+        if self._proxy:
+            self._proxy_validated_public_hosts.add(host)
+
+    def _resolve_addresses_through_proxy(self, host: str) -> set[str]:
+        """Resolve with public DoH over the same proxy used for page fetches.
+
+        Local DNS is not the connection resolver in proxy mode and may return
+        an interceptor sink such as ``2001::1``.  Querying DoH through the
+        configured proxy aligns SSRF validation with the actual egress path
+        without weakening the global-address requirement.
+        """
+
+        addresses: set[str] = set()
+        errors = []
+        for record_type in ("A", "AAAA"):
+            try:
+                response = self._http.get(
+                    _PROXY_DOH_URL,
+                    params={"name": host, "type": record_type},
+                    headers={"Accept": "application/dns-json"},
+                    timeout=min(self.config.timeout, 10.0),
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if int(payload.get("Status", -1)) not in {0, 3}:
+                    raise ValueError(f"DNS status {payload.get('Status')}")
+                for answer in payload.get("Answer") or []:
+                    if not isinstance(answer, dict) or answer.get("type") not in {1, 28}:
+                        continue
+                    value = str(answer.get("data") or "").strip()
+                    try:
+                        ipaddress.ip_address(value)
+                    except ValueError:
+                        continue
+                    addresses.add(value)
+            except Exception as exc:  # noqa: BLE001 - combine A/AAAA diagnostics
+                errors.append(f"{record_type}: {type(exc).__name__}: {exc}")
+        if not addresses and errors:
+            raise WebCrawlerDMError(
+                f"cannot resolve {host} through proxy DoH: "
+                + "; ".join(errors)[:800]
+            )
+        return addresses
 
     def _wait_for_host(self, url: str) -> None:
         if self.config.request_delay <= 0:
@@ -729,7 +1049,9 @@ class WebPageFetcher:
         if not canonical:
             raise WebCrawlerDMError(f"invalid HTTP(S) URL: {url!r}")
         if canonical in self.cache:
-            return self.cache[canonical]
+            page = self.cache.pop(canonical)
+            self.cache[canonical] = page
+            return page
         self._validate_public_url(canonical)
         if not self._robots_allowed(canonical):
             raise WebCrawlerDMError(f"robots.txt disallows crawling: {canonical}")
@@ -740,8 +1062,7 @@ class WebPageFetcher:
             try:
                 page = self._fetch_http(canonical)
                 if backend == "httpx" or not self._needs_browser(page):
-                    self.cache[canonical] = page
-                    self.cache[page.canonical_url] = page
+                    self._cache_page(canonical, page)
                     return page
                 errors.append("HTTP page looked blocked or required JavaScript")
             except Exception as exc:  # noqa: BLE001 - browser fallback
@@ -749,13 +1070,22 @@ class WebPageFetcher:
         if backend in {"auto", "playwright"}:
             try:
                 page = self._fetch_playwright(canonical)
-                self.cache[canonical] = page
-                self.cache[page.canonical_url] = page
+                self._cache_page(canonical, page)
                 return page
             except Exception as exc:  # noqa: BLE001
-                self._playwright_error = f"{type(exc).__name__}: {exc}"[:500]
-                errors.append(f"playwright: {self._playwright_error}")
+                # ``_start_browser`` persists launch/runtime failures itself.
+                # A per-page 403, timeout, or navigation error must not poison
+                # every later fallback or overwrite its actual error evidence.
+                detail = self._playwright_error or f"{type(exc).__name__}: {exc}"[:1000]
+                errors.append(f"playwright: {detail}")
         raise WebCrawlerDMError(f"failed to fetch {canonical}: " + "; ".join(errors))
+
+    def _cache_page(self, requested_url: str, page: FetchedPage) -> None:
+        for key in dict.fromkeys((requested_url, page.canonical_url)):
+            self.cache.pop(key, None)
+            self.cache[key] = page
+        while len(self.cache) > self.config.page_cache_entries:
+            self.cache.popitem(last=False)
 
     def _fetch_http(self, url: str) -> FetchedPage:
         self._wait_for_host(url)
@@ -809,7 +1139,12 @@ class WebPageFetcher:
 
     @staticmethod
     def _needs_browser(page: FetchedPage) -> bool:
-        lowered = f"{page.title} {page.text_preview} {page.html[:5000]}".lower()
+        # Bot-marker strings inside executable/config markup are not evidence
+        # that the delivered page is a challenge. Wikipedia, for example,
+        # embeds an hCaptcha edit setting in otherwise complete article HTML.
+        # Restrict marker checks to parsed visible evidence; retain the
+        # low-visible-text/script heuristic for actual JavaScript shells.
+        lowered = f"{page.title} {page.text_preview}".lower()
         if any(marker in lowered for marker in _BOT_MARKERS):
             return True
         visible = len(re.sub(r"\s+", " ", page.text_preview))
@@ -818,6 +1153,8 @@ class WebPageFetcher:
     def _start_browser(self) -> None:
         if self._browser is not None:
             return
+        if self._playwright_error:
+            raise WebCrawlerDMError(self._playwright_error)
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -825,30 +1162,45 @@ class WebPageFetcher:
                 "Playwright is not installed; install playwright and run "
                 "`playwright install chromium`"
             ) from None
-        self._playwright = sync_playwright().start()
-        launch_kwargs: dict[str, Any] = {
-            "headless": self.config.headless,
-            "args": ["--disable-blink-features=AutomationControlled"],
-        }
-        proxy_settings = playwright_proxy_settings(self._proxy)
-        if proxy_settings:
-            launch_kwargs["proxy"] = proxy_settings
-        self._browser = self._playwright.chromium.launch(**launch_kwargs)
-        self._context = self._browser.new_context(
-            user_agent=self.config.user_agent,
-            locale="en-US",
-            viewport={"width": 1440, "height": 1000},
-        )
-        if self.config.use_playwright_stealth:
-            try:
-                from playwright_stealth import Stealth
+        try:
+            self._playwright = sync_playwright().start()
+            launch_kwargs: dict[str, Any] = {
+                "headless": self.config.headless,
+                "args": ["--disable-blink-features=AutomationControlled"],
+            }
+            proxy_settings = playwright_proxy_settings(self._proxy)
+            if proxy_settings:
+                launch_kwargs["proxy"] = proxy_settings
+            process_env = playwright_process_env()
+            if process_env is not None:
+                launch_kwargs["env"] = process_env
+            self._browser = self._playwright.chromium.launch(**launch_kwargs)
+            self._context = self._browser.new_context(
+                user_agent=self.config.user_agent,
+                locale="en-US",
+                viewport={"width": 1440, "height": 1000},
+            )
+            if self.config.use_playwright_stealth:
+                try:
+                    from playwright_stealth import Stealth
 
-                self._stealth = Stealth(
-                    navigator_user_agent_override=self.config.user_agent
-                )
-                self._stealth.apply_stealth_sync(self._context)
-            except ImportError:
-                self._stealth = None
+                    self._stealth = Stealth(
+                        navigator_user_agent_override=self.config.user_agent
+                    )
+                    self._stealth.apply_stealth_sync(self._context)
+                except ImportError:
+                    self._stealth = None
+        except Exception as exc:  # noqa: BLE001 - cache unavailable browser
+            self._playwright_error = f"{type(exc).__name__}: {exc}"[:1000]
+            for obj in (self._context, self._browser):
+                try:
+                    if obj is not None:
+                        obj.close()
+                except Exception:
+                    pass
+            self._context = None
+            self._browser = None
+            raise WebCrawlerDMError(self._playwright_error) from exc
 
     def _fetch_playwright(self, url: str) -> FetchedPage:
         self._start_browser()
@@ -869,6 +1221,9 @@ class WebPageFetcher:
                 wait_until="domcontentloaded",
                 timeout=int(self.config.timeout * 1000),
             )
+            status = response.status if response is not None else 200
+            if status >= 400:
+                raise WebCrawlerDMError(f"HTTP {status}")
             try:
                 page.wait_for_load_state("networkidle", timeout=3000)
             except Exception:
@@ -881,7 +1236,6 @@ class WebPageFetcher:
             final_url = canonicalize_url(page.url) or url
             parser = parse_page(html)
             title, preview, canonical_hint = parser.summary()
-            status = response.status if response is not None else 200
             headers = response.headers if response is not None else {}
             return FetchedPage(
                 requested_url=url,
@@ -905,10 +1259,10 @@ class WebPageFetcher:
 
 
 class WebCrawlerTools:
-    """Tools exposed to the model, including the unique terminal URL tool."""
+    """Tools exposed to the model, including the terminal root-URL tool."""
 
     tool_names = (
-        "search_web", "open_page", "extract_related_urls", "submit_resource_url"
+        "search_web", "open_page", "extract_related_urls", "submit_resource_urls"
     )
 
     def __init__(
@@ -928,7 +1282,15 @@ class WebCrawlerTools:
         self.known: dict[str, dict[str, Any]] = {}
         self.opened: dict[str, FetchedPage] = {}
         self.submitted_url = ""
+        self.submitted_urls: list[str] = []
         self.submission_reason = ""
+        self.search_summary = {
+            "enabled": bool(config.search_llm_summary),
+            "attempted": 0,
+            "enriched": 0,
+            "model": config.model or "",
+            "error": "",
+        }
 
     def execute(self, tool: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
         args = arguments if isinstance(arguments, dict) else {}
@@ -938,6 +1300,12 @@ class WebCrawlerTools:
             return self.open_page(str(args.get("url") or ""))
         if tool == "extract_related_urls":
             return self.extract_related_urls(str(args.get("url") or ""))
+        if tool == "submit_resource_urls":
+            return self.submit_resource_urls(
+                args.get("urls"), str(args.get("reason") or "")
+            )
+        # Compatibility for persisted traces and third-party callers.  The
+        # model-facing contract advertises only the plural terminal tool.
         if tool == "submit_resource_url":
             return self.submit_resource_url(
                 str(args.get("url") or ""), str(args.get("reason") or "")
@@ -950,16 +1318,291 @@ class WebCrawlerTools:
         except (TypeError, ValueError):
             limit = self.config.search_results
         rows = self.search_client.search(query, max(1, min(limit, 20)))
+        provider = (
+            self.search_client.primary_provider()
+            if hasattr(self.search_client, "primary_provider")
+            else str(rows[0].provider if rows else self.config.search_provider)
+        )
+        summary_reports = []
+        if self.config.search_llm_summary and provider in _LLM_SUMMARY_PROVIDERS:
+            self._summarize_search_results(query, rows)
+            summary_reports.append(dict(self.search_summary))
+
+        def has_rubric_inclusions(values: list[SearchResult]) -> bool:
+            return any(
+                row.rubric_decision in {"core", "supporting"}
+                for row in values
+            )
+
+        # A non-empty provider response is not automatically useful. In auto
+        # and Tavily modes, continue the direct-search chain when the LLM rubric
+        # finds no core/supporting URL, while retaining every candidate and its
+        # evidence for the main Agent.
+        if (
+            self.config.search_llm_summary
+            and provider in _LLM_SUMMARY_PROVIDERS
+            and self.config.search_provider in {"auto", "tavily"}
+            and not has_rubric_inclusions(rows)
+            and hasattr(self.search_client, "search_provider")
+        ):
+            attempted = {
+                str(item.get("provider") or "")
+                for item in getattr(self.search_client, "last_attempts", [])
+            }
+            seen_urls = {row.url for row in rows}
+            for fallback_provider in ("bing", "baidu", "duckduckgo_html"):
+                if fallback_provider in attempted:
+                    continue
+                try:
+                    extra = self.search_client.search_provider(
+                        query,
+                        fallback_provider,
+                        max(1, min(limit, 20)),
+                    )
+                    if not extra:
+                        raise WebCrawlerDMError("no_results")
+                    self.search_client.last_attempts.append({
+                        "provider": fallback_provider,
+                        "ok": True,
+                        "results": len(extra),
+                        "continued_by": "llm_rubric_no_inclusions",
+                    })
+                    self.search_client.last_provider = fallback_provider
+                    provider = fallback_provider
+                    self._summarize_search_results(query, extra)
+                    summary_reports.append(dict(self.search_summary))
+                    for row in extra:
+                        if row.url not in seen_urls:
+                            seen_urls.add(row.url)
+                            rows.append(row)
+                    if has_rubric_inclusions(rows):
+                        break
+                except Exception as exc:  # noqa: BLE001 - continue provider chain
+                    self.search_client.last_attempts.append({
+                        "provider": fallback_provider,
+                        "ok": False,
+                        "error": f"{type(exc).__name__}: {exc}"[:1000],
+                        "continued_by": "llm_rubric_no_inclusions",
+                    })
+
+        if summary_reports:
+            errors = [
+                str(report.get("error") or "")
+                for report in summary_reports
+                if report.get("error")
+            ]
+            self.search_summary = {
+                "enabled": True,
+                "attempted": sum(int(report.get("attempted") or 0) for report in summary_reports),
+                "enriched": sum(int(report.get("enriched") or 0) for report in summary_reports),
+                "model": self.config.model or "",
+                "error": "; ".join(errors)[:1000],
+            }
         for row in rows:
-            self.known[row.url] = {
+            candidate = {
                 "url": row.url,
                 "title": row.title[:300],
-                "snippet": row.snippet[:600],
+                "snippet": (row.summary or row.snippet)[:600],
+                "search_snippet": row.search_snippet[:600],
                 "source": "search",
                 "rank": row.rank,
                 "provider": row.provider,
+                "llm_enriched": row.llm_enriched,
+                "relevance_score": row.relevance_score,
+                "relevant": row.relevant,
+                "rubric_scores": dict(row.rubric_scores),
+                "rubric_evidence": dict(row.rubric_evidence),
+                "rubric_decision": row.rubric_decision,
+                "decision_reason": row.decision_reason,
             }
-        return {"ok": True, "query": query, "results": [row.to_dict() for row in rows]}
+            previous = self.known.get(row.url) or {}
+            decision_priority = {
+                "core": 0,
+                "supporting": 1,
+                "uncertain": 2,
+                "exclude": 3,
+            }
+            if previous and decision_priority.get(
+                str(previous.get("rubric_decision") or "uncertain"), 2
+            ) < decision_priority.get(row.rubric_decision, 2):
+                # Inclusion evidence from any search pass cannot be erased by
+                # one later, narrower rubric assessment.
+                for key in (
+                    "llm_enriched", "relevance_score", "relevant",
+                    "rubric_scores", "rubric_evidence", "rubric_decision",
+                    "decision_reason",
+                ):
+                    candidate[key] = previous.get(key)
+            self.known[row.url] = candidate
+        return {
+            "ok": True,
+            "query": query,
+            "provider": provider,
+            "provider_attempts": list(
+                getattr(self.search_client, "last_attempts", [])
+            ),
+            "llm_summary": dict(self.search_summary),
+            "results": [row.to_dict() for row in rows],
+        }
+
+    def _summarize_search_results(
+        self,
+        query: str,
+        rows: list[SearchResult],
+    ) -> None:
+        selected = rows[: self.config.search_summary_results]
+        self.search_summary = {
+            "enabled": True,
+            "attempted": len(selected),
+            "enriched": 0,
+            "model": self.config.model or "",
+            "error": "",
+        }
+        if not selected:
+            return
+        try:
+            model_spec = (
+                ModelPool(self.root).get(self.config.model)
+                if self.config.model else None
+            )
+        except (KeyError, ValueError, OSError) as exc:
+            model_spec = None
+            self.search_summary["error"] = (
+                f"model resolution failed: {exc}"[:500]
+            )
+        if model_spec is None:
+            error = (
+                self.search_summary["error"]
+                or "no model configured for search summary"
+            )
+            self.search_summary["error"] = error
+            for row in selected:
+                row.summary_error = error
+            return
+
+        evidence_rows = []
+        for index, row in enumerate(selected):
+            row.search_snippet = row.search_snippet or row.snippet
+            page_text = ""
+            fetch_error = ""
+            try:
+                page = self.fetcher.fetch(row.url)
+                row.fetch_mode = page.fetch_mode
+                row.url = page.canonical_url or row.url
+                row.title = page.title or row.title
+                page_text = page.text_preview[: self.config.search_summary_chars]
+            except Exception as exc:  # noqa: BLE001 - snippet-only fallback
+                row.fetch_mode = "search_snippet"
+                fetch_error = f"{type(exc).__name__}: {exc}"[:500]
+            evidence_rows.append({
+                "index": index,
+                "title": row.title[:500],
+                "url": row.url,
+                "search_snippet": row.search_snippet[:1200],
+                "page_text": page_text,
+            })
+            if fetch_error:
+                row.summary_error = (
+                    "page fetch failed; summarized search snippet: " + fetch_error
+                )
+
+        system_content = (
+            "You are a grounded web-search result summarizer and URL rubric "
+            "grader. Use only the supplied search snippet and webpage text. "
+            "Write a concise summary in the query's language and score five "
+            "independent dimensions from 1 to 5 with grounded evidence: "
+            "query_coverage, source_authority, content_substance, crawl_yield, "
+            "and complementary_value. Scale anchors: 1=absent or conflicting, "
+            "2=weak, 3=usable, 4=strong, 5=primary or exceptional. Make a "
+            "holistic decision: core, supporting, exclude, or uncertain. One "
+            "low score is never sufficient for exclude; exclude requires at "
+            "least two independently weak dimensions and a grounded reason. "
+            "Fetch failure is not a relevance dimension. Generic homepages, "
+            "entity background, lexical matches, and thin pages must be judged "
+            "through all five dimensions, never by one aggregate score. Never "
+            "invent facts. Return one JSON object with a results array containing "
+            "exactly the supplied index."
+        )
+        rubric_schema = {
+            dimension: {"score": 1, "evidence": "grounded evidence"}
+            for dimension in _RUBRIC_DIMENSIONS
+        }
+        errors = []
+        # Keep each response below the configured model's 1024-token cap. A
+        # truncated multi-result JSON response must not erase good evidence for
+        # the other candidates.
+        for evidence_row, row in zip(evidence_rows, selected):
+            index = int(evidence_row["index"])
+            messages = [
+                {"role": "system", "content": system_content},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "query": query,
+                            "required_schema": {
+                                "results": [{
+                                    "index": index,
+                                    "summary": "grounded summary",
+                                    "rubric": rubric_schema,
+                                    "decision": "uncertain",
+                                    "decision_reason": "holistic rubric reason",
+                                }]
+                            },
+                            "evidence": [evidence_row],
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ]
+            try:
+                raw = llm.complete(
+                    model_spec,
+                    messages,
+                    json_mode=True,
+                    max_retries=self.config.max_retries,
+                )
+                payload = llm.parse_json(raw)
+                summaries = payload.get("results") if isinstance(payload, dict) else None
+                if not isinstance(summaries, list):
+                    raise ValueError("LLM summary response has no results array")
+                item = next(
+                    (
+                        value for value in summaries
+                        if isinstance(value, dict)
+                        and str(value.get("index", "")) == str(index)
+                    ),
+                    summaries[0] if len(summaries) == 1 and isinstance(summaries[0], dict) else None,
+                )
+                if not item:
+                    raise ValueError("LLM omitted this result")
+                summary = re.sub(
+                    r"\s+", " ", str(item.get("summary") or "")
+                ).strip()
+                if not summary:
+                    raise ValueError("LLM returned an empty summary")
+                scores, rubric_evidence, decision, decision_reason = _normalize_rubric(item)
+                row.summary = summary[:1600]
+                row.rubric_scores = scores
+                row.rubric_evidence = rubric_evidence
+                row.rubric_decision = decision
+                row.decision_reason = decision_reason
+                row.relevant = (
+                    True if decision in {"core", "supporting"}
+                    else False if decision == "exclude"
+                    else None
+                )
+                row.llm_enriched = True
+                row.summary_model = model_spec.name or model_spec.model
+                self.search_summary["enriched"] += 1
+            except Exception as exc:  # noqa: BLE001 - isolate one candidate
+                error = f"{type(exc).__name__}: {exc}"[:500]
+                errors.append(f"{index}: {error}")
+                row.summary_error = (
+                    row.summary_error + "; " if row.summary_error else ""
+                ) + error
+        if errors:
+            self.search_summary["error"] = "; ".join(errors)[:1000]
 
     def open_page(self, url: str) -> dict[str, Any]:
         canonical = canonicalize_url(url)
@@ -1018,33 +1661,93 @@ class WebCrawlerTools:
             "count": len(links),
         }
 
-    def submit_resource_url(self, url: str, reason: str = "") -> dict[str, Any]:
-        canonical = canonicalize_url(url)
-        if not canonical:
-            return {"ok": False, "error": f"invalid URL: {url!r}"}
-        if canonical not in self.known and canonical not in self.opened:
+    def submit_resource_urls(
+        self,
+        urls: Any,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        if not isinstance(urls, (list, tuple)) or not urls:
             return {
                 "ok": False,
-                "error": "URL was not discovered by search/open/crawler tools",
-                "url": canonical,
+                "error": "urls must be a non-empty array of discovered relevant URLs",
             }
-        opened = self.open_page(canonical)
-        if not opened.get("ok"):
-            return {"ok": False, "error": "submitted URL could not be fetched", "detail": opened}
-        self.submitted_url = str(opened["url"])
+        submitted = []
+        invalid = []
+        undiscovered = []
+        for value in urls:
+            canonical = canonicalize_url(str(value or ""))
+            if not canonical:
+                invalid.append(str(value or ""))
+                continue
+            if canonical not in self.known and canonical not in self.opened:
+                undiscovered.append(canonical)
+                continue
+            if canonical not in submitted:
+                submitted.append(canonical)
+        if invalid or undiscovered:
+            return {
+                "ok": False,
+                "error": "every submitted URL must be valid and discovered by a tool",
+                "invalid_urls": invalid,
+                "undiscovered_urls": undiscovered,
+            }
+
+        explicitly_excluded = [
+            url for url in submitted
+            if bool((self.known.get(url) or {}).get("llm_enriched"))
+            and (self.known.get(url) or {}).get("rubric_decision") == "exclude"
+        ]
+        if explicitly_excluded:
+            return {
+                "ok": False,
+                "error": "multi-dimensional LLM rubric excludes submitted URLs",
+                "excluded_urls": explicitly_excluded,
+            }
+        required_by_rubric = {
+            url for url, row in self.known.items()
+            if bool(row.get("llm_enriched"))
+            and row.get("rubric_decision") in {"core", "supporting"}
+        }
+        missing = sorted(required_by_rubric.difference(submitted))
+        if missing:
+            return {
+                "ok": False,
+                "error": "submit every URL included by the multi-dimensional LLM rubric",
+                "missing_rubric_urls": missing,
+            }
+
+        self.submitted_urls = submitted
+        self.submitted_url = submitted[0]
         self.submission_reason = reason[:1000]
         return {
             "ok": True,
             "submitted": True,
-            "url": self.submitted_url,
+            "urls": list(self.submitted_urls),
+            "count": len(self.submitted_urls),
             "reason": self.submission_reason,
         }
 
-    def candidate_snapshot(self, limit: int = 20) -> list[dict[str, Any]]:
+    def submit_resource_url(self, url: str, reason: str = "") -> dict[str, Any]:
+        """Backward-compatible single-root wrapper around the plural tool."""
+
+        result = self.submit_resource_urls([url], reason)
+        if result.get("submitted"):
+            result["url"] = self.submitted_url
+        return result
+
+    def candidate_snapshot(self, limit: int = 80) -> list[dict[str, Any]]:
         rows = list(self.known.values())
+        decision_priority = {
+            "core": 0,
+            "supporting": 1,
+            "uncertain": 2,
+            "exclude": 3,
+        }
         rows.sort(key=lambda row: (
+            decision_priority.get(
+                str(row.get("rubric_decision") or "uncertain"), 2
+            ),
             int(row.get("rank") or 9999),
-            -float(row.get("score") or 0.0),
             str(row.get("url") or ""),
         ))
         return [
@@ -1059,13 +1762,13 @@ class WebCrawlerTools:
 
 _AGENT_SYSTEM_PROMPT = """You are the Domain Data Acquisition web agent (legacy alias: webcrawler_dm), a focused resource-page discovery agent.
 
-Your sole goal is to find ONE primary, authoritative, content-rich resource page that best answers the user's query. Prefer first-party or otherwise reputable sources appropriate to the topic. Avoid search result pages, home pages, login pages, tag/category pages, social media, and thin aggregators.
+Your sole goal is to find ALL authoritative, content-rich resource pages that are relevant to the user's query. Prefer first-party or otherwise reputable sources appropriate to the topic. Avoid search result pages, generic home pages, login pages, tag/category pages, social media, lexical coincidences, and thin aggregators.
 
 You have exactly four tools:
 1. search_web(query, max_results): search for candidate pages.
 2. open_page(url): inspect a candidate page.
 3. extract_related_urls(url): the special crawler tool; extract relevant links from the current page so you can find a more specific resource page.
-4. submit_resource_url(url, reason): the ONLY valid way to finish and return the URL.
+4. submit_resource_urls(urls, reason): the ONLY valid way to finish and return every relevant root URL.
 
 Return only one JSON object per step:
 {"tool":"<tool name>","arguments":{...},"reason":"short reason"}
@@ -1076,14 +1779,17 @@ Rules:
 - For global code repositories and other global technical ecosystems, use concise English discovery terms. For other ecosystems, use the terminology and language that their search index is most likely to understand.
 - Keep provider queries concise and search-ready; put investigation details in your internal reason, not in the query.
 - The state includes remaining_search_calls. When it reaches zero, inspect or submit existing candidates instead of searching again.
-- Treat every core concept in the user's query as mandatory. Judge the title, snippet, URL, and opened-page evidence together before selecting a resource.
+- Treat every core concept in the user's query as mandatory. Judge the title, snippet, URL, five-dimensional LLM rubric, and opened-page evidence together before selecting resources.
 - Reject lexical coincidences and pages whose actual purpose is unrelated, even when one or more query words appear in their metadata.
 - Use provider-native search syntax or qualifiers when they help preserve all mandatory concepts.
-- Never submit a candidate that you judge unrelated merely to finish. A failed run is preferable to contaminating the dataset.
+- Never accept or reject a URL from one aggregate relevance score. Use all rubric dimensions: query_coverage, source_authority, content_substance, crawl_yield, and complementary_value. One weak dimension is not enough to reject a candidate.
+- Submit every discovered candidate supported as relevant by the holistic evidence. In particular, include every LLM-enriched candidate whose rubric_decision is core or supporting; inspect uncertain candidates with page evidence when useful.
+- Never submit a candidate whose rubric_decision is exclude or one that you judge unrelated merely to finish. A failed run is preferable to contaminating the dataset.
+- Fetchability is not relevance. A discovered authoritative URL may still be submitted when open_page is blocked but its grounded search evidence establishes relevance; the crawler will record its fetch failure independently.
 - Inspect enough evidence before submitting.
 - Use extract_related_urls when the current page is an index, documentation root, or collection page.
 - Never answer the user's topic question and never return prose instead of a tool call.
-- Finish by calling submit_resource_url. A plain URL or a field named `url` is not a valid final answer.
+- Finish by calling submit_resource_urls with one deduplicated array containing all relevant roots. A plain URL, a field named `url`, or a partial relevant set is not a valid final answer.
 """
 
 
@@ -1094,16 +1800,21 @@ class ToolCallingWebAgentKernel:
         self.config = config
         self.model_spec = ModelPool(root).get(config.model) if config.model else None
 
-    def discover(self, query: str, tools: WebCrawlerTools) -> tuple[str, list[dict[str, Any]], int]:
+    def discover(
+        self,
+        query: str,
+        tools: WebCrawlerTools,
+    ) -> tuple[list[str], list[dict[str, Any]], int]:
         if self.model_spec is None:
-            return self._fallback(query, tools, [], "no model configured")
+            raise WebCrawlerDMError(
+                "LLM model is required; deterministic URL fallback is disabled"
+            )
         trace: list[dict[str, Any]] = []
         recent: list[dict[str, Any]] = []
         seen_actions: set[str] = set()
         tool_counts: dict[str, int] = {}
-        # Reserve the final action for deterministic submit_resource_url. This
-        # makes max_steps a hard total-tool budget, not only an LLM-loop budget.
-        for step in range(1, self.config.max_steps):
+        terminal_tools = {"submit_resource_urls", "submit_resource_url"}
+        for step in range(1, self.config.max_steps + 1):
             state = {
                 "query": query,
                 "search_provider": (
@@ -1122,7 +1833,9 @@ class ToolCallingWebAgentKernel:
                 "remaining_steps": self.config.max_steps - step + 1,
                 "known_candidates": tools.candidate_snapshot(),
                 "recent_tool_observations": recent[-6:],
-                "must_finish_with": "submit_resource_url",
+                "must_finish_with": "submit_resource_urls",
+                "must_submit_all_relevant": True,
+                "soft_step_limit_reached": step >= self.config.soft_step_limit,
             }
             messages = [
                 {"role": "system", "content": _AGENT_SYSTEM_PROMPT},
@@ -1141,7 +1854,7 @@ class ToolCallingWebAgentKernel:
                 reason = str(action.get("reason") or "")
                 if not isinstance(arguments, dict):
                     arguments = {}
-                if reason and tool == "submit_resource_url" and not arguments.get("reason"):
+                if reason and tool in terminal_tools and not arguments.get("reason"):
                     arguments["reason"] = reason
                 action_key = json.dumps(
                     {"tool": tool, "arguments": arguments},
@@ -1159,7 +1872,7 @@ class ToolCallingWebAgentKernel:
                             "candidate"
                         ),
                     }
-                elif action_key in seen_actions and tool != "submit_resource_url":
+                elif action_key in seen_actions and tool not in terminal_tools:
                     observation = {
                         "ok": False,
                         "error": "duplicate tool action; choose a new URL/tool or submit the best resource",
@@ -1182,101 +1895,12 @@ class ToolCallingWebAgentKernel:
                 "observation": compact,
             })
             recent.append({"tool": tool, "observation": compact})
-            if tool == "submit_resource_url" and observation.get("submitted"):
-                return tools.submitted_url, trace, step
-            if tools.known and step >= self.config.soft_step_limit:
-                reason = (
-                    f"soft limit reached: step={step}, "
-                    f"search_calls={tool_counts.get('search_web', 0)}"
-                )
-                return self._fallback(query, tools, trace, reason)
-            errors = sum(1 for item in trace if not item["observation"].get("ok", False))
-            if errors >= 4:
-                return self._fallback(query, tools, trace, "repeated tool/model errors")
-        return self._fallback(query, tools, trace, "max_steps reached")
-
-    def _fallback(
-        self,
-        query: str,
-        tools: WebCrawlerTools,
-        trace: list[dict[str, Any]],
-        reason: str,
-    ) -> tuple[str, list[dict[str, Any]], int]:
-        remaining = self.config.max_steps - len(trace)
-        if remaining <= 0:
-            raise WebCrawlerDMError(
-                f"agent exhausted max_steps={self.config.max_steps} without a URL"
-            )
-        if not tools.known:
-            if remaining < 2:
-                raise WebCrawlerDMError(
-                    "no URL candidates and insufficient step budget for search + submit"
-                )
-            observation = tools.search_web(query)
-            trace.append({
-                "step": len(trace) + 1,
-                "tool": "search_web",
-                "arguments": {"query": query},
-                "reason": f"deterministic fallback: {reason}",
-                "observation": _compact_observation(observation, self.config.max_observation_chars),
-                "fallback": True,
-            })
-            remaining -= 1
-        candidates = tools.candidate_snapshot(limit=30)
-        scored = self._score_candidates(query, candidates, tools)
-        # Verify only as many top candidates as fit while always reserving one
-        # final submit step. Already-open pages cost no extra action.
-        verify_budget = min(4, max(0, remaining - 1))
-        for _, url in sorted(scored, reverse=True)[:verify_budget]:
-            if url in tools.opened or url in tools.fetcher.cache:
-                continue
-            opened = tools.open_page(url)
-            trace.append({
-                "step": len(trace) + 1,
-                "tool": "open_page",
-                "arguments": {"url": url},
-                "reason": "deterministic candidate verification",
-                "observation": _compact_observation(opened, self.config.max_observation_chars),
-                "fallback": True,
-            })
-            remaining -= 1
-            if remaining <= 1:
-                break
-        scored = self._score_candidates(query, candidates, tools)
-        if not scored:
-            raise WebCrawlerDMError(f"agent could not find a fetchable resource URL ({reason})")
-        selected = max(scored)[1]
-        submitted = tools.submit_resource_url(selected, f"deterministic fallback: {reason}")
-        trace.append({
-            "step": len(trace) + 1,
-            "tool": "submit_resource_url",
-            "arguments": {"url": selected, "reason": reason},
-            "reason": "required terminal tool",
-            "observation": _compact_observation(submitted, self.config.max_observation_chars),
-            "fallback": True,
-        })
-        if not submitted.get("submitted"):
-            raise WebCrawlerDMError(f"fallback URL submission failed: {submitted}")
-        return tools.submitted_url, trace, len(trace)
-
-    @staticmethod
-    def _score_candidates(
-        query: str,
-        candidates: list[dict[str, Any]],
-        tools: WebCrawlerTools,
-    ) -> list[tuple[float, str]]:
-        del query  # The deterministic fallback must not imitate semantic judgment.
-        scored = []
-        for candidate in candidates:
-            url = canonicalize_url(str(candidate.get("url") or ""))
-            if not url or not _looks_like_html_url(url):
-                continue
-            page = tools.opened.get(url) or tools.fetcher.cache.get(url)
-            score = -float(candidate.get("rank") or 10) * 0.05
-            if page is not None:
-                score += 3.0 + min(4.0, len(page.html) / 50_000.0)
-            scored.append((score, url))
-        return scored
+            if tool in terminal_tools and observation.get("submitted"):
+                return list(tools.submitted_urls), trace, step
+        raise WebCrawlerDMError(
+            f"LLM agent exhausted max_steps={self.config.max_steps} without "
+            "an explicit submit_resource_urls call; deterministic fallback is disabled"
+        )
 
 
 def _compact_observation(value: dict[str, Any], limit: int) -> dict[str, Any]:
@@ -1309,13 +1933,13 @@ class WebCrawlerDMAgent(WebAgent):
 
     spec = WebAgentSpec(
         name="webcrawler_dm",
-        version="1.0.0",
+        version="1.1.0",
         description=(
-            "Tool-calling web agent that returns one resource URL, traverses "
-            "related links to depth two, and ingests raw HTML as DataMixer L1."
+            "LLM tool-calling web agent that submits every relevant resource "
+            "URL, traverses related links, and ingests raw HTML as DataMixer L1."
         ),
         input_type="query",
-        output_type="resource_url+L1_raw_html",
+        output_type="resource_urls+L1_raw_html",
     )
 
     def __init__(
@@ -1358,8 +1982,35 @@ class WebCrawlerDMAgent(WebAgent):
             root=str(store.root),
         )
         kernel = ToolCallingWebAgentKernel(self.config, root=str(store.root))
-        selected_url, trace, steps = kernel.discover(query, tools)
-        pages, failures = self._crawl(selected_url, query, root=str(store.root))
+        run_dir = Path(store.root) / "webcrawler_dm_runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        progress_path = run_dir / "progress.json"
+        manifest = run_dir / "pages.jsonl"
+        failure_manifest = run_dir / "failures.jsonl"
+        self._write_progress(progress_path, {
+            "run_id": run_id,
+            "status": "running",
+            "phase": "discover",
+            "query": query,
+            "max_pages": self.config.max_pages,
+            "max_depth": self.config.max_depth,
+            "pages_fetched": 0,
+            "pages_ingested": 0,
+            "pages_failed": 0,
+            "failure_manifest": str(failure_manifest),
+        })
+        try:
+            selected_urls, trace, steps = kernel.discover(query, tools)
+        except Exception as exc:
+            self._write_progress(progress_path, {
+                "run_id": run_id,
+                "status": "failed",
+                "phase": "discover",
+                "query": query,
+                "error": f"{type(exc).__name__}: {exc}"[:2000],
+            })
+            raise
+        selected_url = selected_urls[0]
         dataset_id = store.catalog.resolve_dataset(dataset)
         if dataset_id is None:
             dataset_id = store.catalog.add_dataset(
@@ -1373,48 +2024,144 @@ class WebCrawlerDMAgent(WebAgent):
                     "quality_level": "L1",
                 },
             )
-        records = self._records(
-            pages,
-            query=query,
-            root_url=selected_url,
-            run_id=run_id,
-            agent_steps=steps,
-            campaign_id=campaign_id,
-            parent_query=parent_query,
-            subgoal_index=subgoal_index,
-            subgoal_metadata=subgoal_metadata,
-        )
         record_domain = str((subgoal_metadata or {}).get("domain") or "web")
-        ingest = store.ingest_records(
-            dataset_id,
-            records,
-            defaults={
-                "quality_level": "L1",
-                "modality": "text",
-                "stage": "pretrain",
-                "domain": record_domain,
-                "source": "webcrawler_dm",
-                "license": self.config.license,
-                "processing_level": "raw_html",
-                "source_kind": "webpage_html",
-            },
-            decontaminate=False,
-        )
+        ingest_defaults = {
+            "quality_level": "L1",
+            "modality": "text",
+            "stage": "pretrain",
+            "domain": record_domain,
+            "source": "webcrawler_dm",
+            "license": self.config.license,
+            "processing_level": "raw_html",
+            "source_kind": "webpage_html",
+        }
+        record_batch: list[dict[str, Any]] = []
+        pages_ingested = 0
+        streamed_pages = 0
+        progress_events = 0
+
+        def flush_records() -> None:
+            nonlocal pages_ingested
+            if not record_batch:
+                return
+            ingest = store.ingest_records(
+                dataset_id,
+                list(record_batch),
+                defaults=ingest_defaults,
+                decontaminate=False,
+            )
+            pages_ingested += ingest.written
+            record_batch.clear()
+
+        with (
+            manifest.open("w", encoding="utf-8") as manifest_handle,
+            failure_manifest.open("w", encoding="utf-8") as failure_handle,
+        ):
+            def on_page(
+                page_row: tuple[FetchedPage, int, str, str, str],
+            ) -> None:
+                nonlocal streamed_pages
+                page, depth, parent_url, discovered_by, root_url = page_row
+                streamed_pages += 1
+                manifest_handle.write(json.dumps({
+                    "url": page.canonical_url,
+                    "title": page.title,
+                    "depth": depth,
+                    "parent_url": parent_url,
+                    "root_url": root_url,
+                    "discovered_by": discovered_by,
+                    "http_status": page.status,
+                    "fetch_mode": page.fetch_mode,
+                    "playwright_stealth": page.stealth_applied,
+                    "html_chars": len(page.html),
+                    "content_sha256": hashlib.sha256(
+                        page.html.encode("utf-8", "replace")
+                    ).hexdigest(),
+                }, ensure_ascii=False) + "\n")
+                record_batch.extend(self._records(
+                    [page_row],
+                    query=query,
+                    selected_urls=selected_urls,
+                    run_id=run_id,
+                    agent_steps=steps,
+                    campaign_id=campaign_id,
+                    parent_query=parent_query,
+                    subgoal_index=subgoal_index,
+                    subgoal_metadata=subgoal_metadata,
+                ))
+                if len(record_batch) >= 16:
+                    flush_records()
+
+            def on_progress(progress: dict[str, Any]) -> None:
+                nonlocal progress_events
+                progress_events += 1
+                if progress_events % 25 and progress.get("current_depth") != 0:
+                    return
+                self._write_progress(progress_path, {
+                    "run_id": run_id,
+                    "status": "running",
+                    "phase": "crawl_and_ingest_l1",
+                    "query": query,
+                    "selected_urls": selected_urls,
+                    "max_pages": self.config.max_pages,
+                    "max_depth": self.config.max_depth,
+                    "pages_ingested": pages_ingested,
+                    "failure_manifest": str(failure_manifest),
+                    **progress,
+                })
+
+            def on_failure(failure: dict[str, str]) -> None:
+                failure_handle.write(
+                    json.dumps(failure, ensure_ascii=False) + "\n"
+                )
+                # Failure evidence must survive Ctrl-C or a dead executor so a
+                # large crawl can be stopped and diagnosed without reproduction.
+                failure_handle.flush()
+
+            try:
+                _, failures, pages_fetched, pages_failed = self._crawl(
+                    selected_urls,
+                    query,
+                    root=str(store.root),
+                    on_page=on_page,
+                    progress_callback=on_progress,
+                    failure_callback=on_failure,
+                    retain_pages=False,
+                )
+                flush_records()
+            except Exception as exc:
+                self._write_progress(progress_path, {
+                    "run_id": run_id,
+                    "status": "failed",
+                    "phase": "crawl_and_ingest_l1",
+                    "query": query,
+                    "selected_urls": selected_urls,
+                    "pages_fetched": streamed_pages,
+                    "pages_ingested": pages_ingested,
+                    "failure_manifest": str(failure_manifest),
+                    "error": f"{type(exc).__name__}: {exc}"[:2000],
+                })
+                raise
         result = WebCrawlerDMResult(
             run_id=run_id,
             query=query,
             selected_url=selected_url,
-            submitted_by_tool=bool(tools.submitted_url),
+            selected_urls=selected_urls,
+            submitted_by_tool=bool(tools.submitted_urls),
             agent_steps=steps,
             max_steps=self.config.max_steps,
             model=self.config.model,
             dataset=dataset,
             dataset_id=dataset_id,
-            pages_fetched=len(pages),
-            pages_ingested=ingest.written,
-            pages_failed=len(failures),
+            pages_fetched=pages_fetched,
+            pages_ingested=pages_ingested,
+            pages_failed=pages_failed,
             crawl_depth=self.config.max_depth,
-            search_provider=self.config.search_provider,
+            search_provider=(
+                self.search_client.primary_provider()
+                if hasattr(self.search_client, "primary_provider")
+                else self.config.search_provider
+            ),
             browser=self.fetcher.browser_status(),
             trace=trace,
             failures=failures,
@@ -1422,7 +2169,24 @@ class WebCrawlerDMAgent(WebAgent):
             parent_query=parent_query,
             subgoal_index=subgoal_index,
         )
-        result.lineage_path = self._write_run_artifacts(store, result, pages)
+        result.lineage_path = self._write_run_artifacts(
+            store,
+            result,
+            [],
+            manifest_path=manifest,
+        )
+        self._write_progress(progress_path, {
+            "run_id": run_id,
+            "status": "completed",
+            "phase": "completed",
+            "query": query,
+            "selected_urls": selected_urls,
+            "pages_fetched": pages_fetched,
+            "pages_ingested": pages_ingested,
+            "pages_failed": pages_failed,
+            "failure_manifest": str(failure_manifest),
+            "lineage_path": result.lineage_path,
+        })
         return result
 
     def run_many(
@@ -1448,6 +2212,14 @@ class WebCrawlerDMAgent(WebAgent):
                     })
         finally:
             self.close()
+        selected_urls = []
+        for row in results:
+            row_urls = row.get("selected_urls")
+            if not isinstance(row_urls, list):
+                row_urls = [row.get("selected_url")]
+            for url in row_urls:
+                if url and url not in selected_urls:
+                    selected_urls.append(url)
         return {
             "webagent": self.spec.name,
             "version": self.spec.version,
@@ -1455,7 +2227,7 @@ class WebCrawlerDMAgent(WebAgent):
             "inputs": len(queries),
             "succeeded": len(results),
             "failed": len(errors),
-            "selected_urls": [row["selected_url"] for row in results],
+            "selected_urls": selected_urls,
             "pages_fetched": sum(row["pages_fetched"] for row in results),
             "pages_ingested": sum(row["pages_ingested"] for row in results),
             "elapsed_s": round(time.time() - started, 3),
@@ -1466,48 +2238,136 @@ class WebCrawlerDMAgent(WebAgent):
 
     def _crawl(
         self,
-        selected_url: str,
+        selected_urls: list[str],
         query: str,
         *,
         root: str,
-    ) -> tuple[list[tuple[FetchedPage, int, str, str]], list[dict[str, str]]]:
-        queue = deque([(canonicalize_url(selected_url), 0, "", "agent_submit")])
-        queued = {canonicalize_url(selected_url)}
+        on_page: Callable[
+            [tuple[FetchedPage, int, str, str, str]], None
+        ] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        failure_callback: Callable[[dict[str, str]], None] | None = None,
+        retain_pages: bool = True,
+    ) -> tuple[
+        list[tuple[FetchedPage, int, str, str, str]],
+        list[dict[str, str]],
+        int,
+        int,
+    ]:
+        del root  # Reserved for future per-lake crawl hooks.
+        seeds = []
+        for value in selected_urls:
+            canonical = canonicalize_url(value)
+            if canonical and canonical not in seeds:
+                seeds.append(canonical)
+        # Put every submitted root ahead of child links.  This gives each root
+        # a chance to consume the shared page budget before breadth expansion.
+        # If there are more successful roots than max_pages, the roots that
+        # cannot be attempted are reported explicitly below instead of being
+        # silently sliced out of the queue.
+        queue = deque(
+            (seed, 0, "", "agent_submit", seed)
+            for seed in seeds
+        )
+        queued = set(seeds)
         visited: set[str] = set()
-        pages: list[tuple[FetchedPage, int, str, str]] = []
+        materialized: set[str] = set()
+        fetched_count = 0
+        pages: list[tuple[FetchedPage, int, str, str, str]] = []
         failures: list[dict[str, str]] = []
-        while queue and len(pages) < self.config.max_pages:
-            url, depth, parent_url, discovered_by = queue.popleft()
+        failure_count = 0
+        while queue and fetched_count < self.config.max_pages:
+            url, depth, parent_url, discovered_by, root_url = queue.popleft()
             if not url or url in visited:
                 continue
             visited.add(url)
             try:
                 page = self.fetcher.fetch(url)
             except Exception as exc:  # noqa: BLE001 - per-page isolation
-                failures.append({"url": url, "error": str(exc)[:1000]})
+                failure_count += 1
+                failure = {
+                    "url": url,
+                    "root_url": root_url,
+                    "error": str(exc)[:1000],
+                }
+                if len(failures) < 5000:
+                    failures.append(failure)
+                if failure_callback:
+                    failure_callback(failure)
+                if progress_callback:
+                    progress_callback({
+                        "pages_fetched": fetched_count,
+                        "pages_failed": failure_count,
+                        "queue_size": len(queue),
+                        "visited": len(visited),
+                        "current_url": url,
+                        "current_depth": depth,
+                    })
                 continue
             canonical = page.canonical_url
-            if canonical in {item[0].canonical_url for item in pages}:
+            if canonical in materialized:
                 continue
-            pages.append((page, depth, parent_url, discovered_by))
+            materialized.add(canonical)
+            fetched_count += 1
+            page_row = (page, depth, parent_url, discovered_by, root_url)
+            if retain_pages:
+                pages.append(page_row)
+            if on_page:
+                on_page(page_row)
+            if progress_callback:
+                progress_callback({
+                    "pages_fetched": fetched_count,
+                    "pages_failed": failure_count,
+                    "queue_size": len(queue),
+                    "visited": len(visited),
+                    "current_url": canonical,
+                    "current_depth": depth,
+                })
             if depth >= self.config.max_depth:
                 continue
             try:
                 links = self._collect_crawl_links(page, query)
             except Exception as exc:  # noqa: BLE001 - preserve page and continue
-                failures.append({
+                failure_count += 1
+                failure = {
                     "url": canonical,
+                    "root_url": root_url,
                     "error": f"related-link extraction: {type(exc).__name__}: {exc}"[:1000],
-                })
+                }
+                if len(failures) < 5000:
+                    failures.append(failure)
+                if failure_callback:
+                    failure_callback(failure)
                 links = []
             for link in links:
-                if len(pages) + len(queue) >= self.config.max_pages:
+                if fetched_count + len(queue) >= self.config.max_pages:
                     break
                 if link.url in visited or link.url in queued:
                     continue
                 queued.add(link.url)
-                queue.append((link.url, depth + 1, canonical, "crawler_tool"))
-        return pages, failures
+                queue.append((
+                    link.url,
+                    depth + 1,
+                    canonical,
+                    "crawler_tool",
+                    root_url,
+                ))
+        for seed in seeds:
+            if seed not in visited:
+                failure_count += 1
+                failure = {
+                    "url": seed,
+                    "root_url": seed,
+                    "error": (
+                        "crawl page budget exhausted before submitted root "
+                        "could be fetched"
+                    ),
+                }
+                if len(failures) < 5000:
+                    failures.append(failure)
+                if failure_callback:
+                    failure_callback(failure)
+        return pages, failures, fetched_count, failure_count
 
     def _collect_crawl_links(
         self,
@@ -1525,10 +2385,10 @@ class WebCrawlerDMAgent(WebAgent):
 
     def _records(
         self,
-        pages: list[tuple[FetchedPage, int, str, str]],
+        pages: list[tuple[FetchedPage, int, str, str, str]],
         *,
         query: str,
-        root_url: str,
+        selected_urls: list[str],
         run_id: str,
         agent_steps: int,
         campaign_id: str = "",
@@ -1538,8 +2398,11 @@ class WebCrawlerDMAgent(WebAgent):
     ) -> list[dict[str, Any]]:
         retrieved_at = datetime.now(timezone.utc).isoformat()
         record_domain = str((subgoal_metadata or {}).get("domain") or "web")
+        canonical_roots = [
+            canonicalize_url(url) for url in selected_urls if canonicalize_url(url)
+        ]
         records = []
-        for page, depth, parent_url, discovered_by in pages:
+        for page, depth, parent_url, discovered_by, root_url in pages:
             html_sha = hashlib.sha256(page.html.encode("utf-8", "replace")).hexdigest()
             record = {
                 "content": {
@@ -1558,6 +2421,7 @@ class WebCrawlerDMAgent(WebAgent):
                 "parent_url": parent_url,
                 "root_url": canonicalize_url(root_url),
                 "selected_resource_url": canonicalize_url(root_url),
+                "selected_resource_urls": canonical_roots,
                 "discovered_by": discovered_by,
                 "retrieved_at": retrieved_at,
                 "http_status": page.status,
@@ -1583,30 +2447,47 @@ class WebCrawlerDMAgent(WebAgent):
         return records
 
     @staticmethod
+    def _write_progress(path: Path, payload: dict[str, Any]) -> None:
+        payload = {
+            **payload,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+
+    @staticmethod
     def _write_run_artifacts(
         store: DataStore,
         result: WebCrawlerDMResult,
-        pages: list[tuple[FetchedPage, int, str, str]],
+        pages: list[tuple[FetchedPage, int, str, str, str]],
+        *,
+        manifest_path: Path | None = None,
     ) -> str:
         run_dir = Path(store.root) / "webcrawler_dm_runs" / result.run_id
         run_dir.mkdir(parents=True, exist_ok=True)
-        manifest = run_dir / "pages.jsonl"
-        with manifest.open("w", encoding="utf-8") as handle:
-            for page, depth, parent_url, discovered_by in pages:
-                handle.write(json.dumps({
-                    "url": page.canonical_url,
-                    "title": page.title,
-                    "depth": depth,
-                    "parent_url": parent_url,
-                    "discovered_by": discovered_by,
-                    "http_status": page.status,
-                    "fetch_mode": page.fetch_mode,
-                    "playwright_stealth": page.stealth_applied,
-                    "html_chars": len(page.html),
-                    "content_sha256": hashlib.sha256(
-                        page.html.encode("utf-8", "replace")
-                    ).hexdigest(),
-                }, ensure_ascii=False) + "\n")
+        manifest = manifest_path or (run_dir / "pages.jsonl")
+        if manifest_path is None:
+            with manifest.open("w", encoding="utf-8") as handle:
+                for page, depth, parent_url, discovered_by, root_url in pages:
+                    handle.write(json.dumps({
+                        "url": page.canonical_url,
+                        "title": page.title,
+                        "depth": depth,
+                        "parent_url": parent_url,
+                        "root_url": root_url,
+                        "discovered_by": discovered_by,
+                        "http_status": page.status,
+                        "fetch_mode": page.fetch_mode,
+                        "playwright_stealth": page.stealth_applied,
+                        "html_chars": len(page.html),
+                        "content_sha256": hashlib.sha256(
+                            page.html.encode("utf-8", "replace")
+                        ).hexdigest(),
+                    }, ensure_ascii=False) + "\n")
         lineage_dir = Path(store.root) / "lineage"
         lineage_dir.mkdir(exist_ok=True)
         lineage = lineage_dir / f"{result.run_id}.json"
@@ -1636,12 +2517,12 @@ class DomainDataAcquisitionAgent(WebCrawlerDMAgent):
 
     spec = WebAgentSpec(
         name="domain_data_acquisition",
-        version="1.0.0",
+        version="1.1.0",
         description=(
-            "Domain data-acquisition web agent: discovers authoritative vertical "
-            "resource pages, traverses related links to depth two, and ingests "
-            "raw HTML as DataMixer L1."
+            "Domain data-acquisition web agent: submits all LLM-relevant vertical "
+            "resource pages, traverses related links, and ingests raw HTML as "
+            "DataMixer L1."
         ),
         input_type="domain_query",
-        output_type="resource_url+L1_raw_html",
+        output_type="resource_urls+L1_raw_html",
     )

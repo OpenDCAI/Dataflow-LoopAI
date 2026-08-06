@@ -8,11 +8,6 @@ from loopai.logger import get_logger
 
 logger = get_logger()
 
-try:
-    from langchain_community.tools import DuckDuckGoSearchRun
-except ImportError:
-    DuckDuckGoSearchRun = None
-
 
 class WebTools:
     """Web search and reading tools"""
@@ -43,8 +38,13 @@ class WebTools:
         return httpx.AsyncClient(**client_kwargs)
     
     @staticmethod
-    async def search_web(query: str, search_engine: str = "tavily", tavily_api_key: str = None) -> str:
-        """Search the web using specified search engine"""
+    async def search_web(
+        query: str,
+        search_engine: str = "tavily",
+        tavily_api_key: str = None,
+        max_results: int = 10,
+    ) -> str:
+        """Search the web with structured Tavily/direct-search fallback."""
         if isinstance(query, (list, tuple)):
             query = ", ".join([str(x) for x in query if x])
         elif not isinstance(query, str):
@@ -54,9 +54,82 @@ class WebTools:
 
         if search_engine.lower() == "jina":
             return await WebTools._jina_search(query)
-        if search_engine.lower() == "duckduckgo":
-            return await WebTools._duckduckgo_search(query)
-        return await WebTools._tavily_search(query, tavily_api_key=tavily_api_key)
+        details = await WebTools.search_web_detailed(
+            query,
+            search_engine=search_engine,
+            tavily_api_key=tavily_api_key,
+            max_results=max_results,
+        )
+        return WebTools._format_search_results(details.get("results", []))
+
+    @staticmethod
+    async def search_web_detailed(
+        query: str,
+        search_engine: str = "tavily",
+        tavily_api_key: str = None,
+        max_results: int = 10,
+    ) -> Dict[str, Any]:
+        """Return provider, attempts, and structured search results.
+
+        Tavily and ``auto`` both fall back through Bing, Baidu, and the
+        DuckDuckGo HTML endpoint. Direct-provider rows retain stable URLs so
+        callers can fetch pages and run their own LLM summary layer.
+        """
+        if isinstance(query, (list, tuple)):
+            query = ", ".join([str(x) for x in query if x])
+        elif not isinstance(query, str):
+            query = str(query)
+        engine = str(search_engine or "auto").strip().lower()
+        provider = {
+            "duckduckgo": "duckduckgo_html",
+            "google": "auto",
+            "jina": "auto",
+        }.get(engine, engine)
+        if provider not in {
+            "auto", "baidu", "bing", "github", "tavily", "duckduckgo_html"
+        }:
+            provider = "auto"
+
+        from loopai.agents.Obtainer.datamixer.webagents.webcrawler_dm import (
+            WebCrawlerDMConfig,
+            WebSearchClient,
+        )
+
+        config = WebCrawlerDMConfig(
+            search_provider=provider,
+            search_results=max(1, min(int(max_results or 10), 30)),
+            tavily_api_key=tavily_api_key or os.getenv("TAVILY_API_KEY", ""),
+            search_llm_summary=False,
+        )
+        client = WebSearchClient(config)
+        rows = await asyncio.to_thread(client.search, query, config.search_results)
+        logger.info(
+            "[WebSearch] provider=%s results=%s attempts=%s",
+            client.primary_provider(),
+            len(rows),
+            client.last_attempts,
+        )
+        attempts = list(client.last_attempts)
+        return {
+            "query": query,
+            "provider": client.primary_provider(),
+            "provider_attempts": attempts,
+            "attempts": attempts,
+            "results": [row.to_dict() for row in rows],
+        }
+
+    @staticmethod
+    def _format_search_results(results: List[Dict[str, Any]]) -> str:
+        formatted = []
+        for item in results:
+            formatted.append("\n".join([
+                f"标题: {item.get('title') or '无标题'}",
+                f"URL: {item.get('url') or ''}",
+                f"摘要: {item.get('content') or item.get('snippet') or ''}",
+                f"来源: {item.get('provider') or ''}",
+                "---",
+            ]))
+        return "\n".join(formatted)
 
     @staticmethod
     async def _tavily_search(query: str, tavily_api_key: str = None) -> str:
@@ -106,15 +179,14 @@ class WebTools:
 
     @staticmethod
     async def _duckduckgo_search(query: str) -> str:
-        """Search using DuckDuckGo"""
-        if DuckDuckGoSearchRun is None:
-            logger.info("[DuckDuckGo] Dependency missing, returning empty result")
-            return ""
+        """Search DuckDuckGo HTML without an optional Python integration."""
         try:
-            search_tool = DuckDuckGoSearchRun()
-            result_text = await asyncio.to_thread(search_tool.run, query)
-            logger.info("[DuckDuckGo] Search completed")
-            return result_text
+            details = await WebTools.search_web_detailed(
+                query,
+                search_engine="duckduckgo",
+                max_results=10,
+            )
+            return WebTools._format_search_results(details.get("results", []))
         except Exception as e:
             logger.info(f"[DuckDuckGo] Search error: {e}")
             return ""
@@ -160,12 +232,12 @@ class WebTools:
                         logger.info("[Jina Search] Search completed (text mode)")
                         return text_content[:15000]
 
-                logger.info("[Jina Search] No results, falling back to DuckDuckGo")
-                return await WebTools._duckduckgo_search(query)
+                logger.info("[Jina Search] No results, using provider fallback")
+                return await WebTools.search_web(query, "auto")
 
         except Exception as e:
-            logger.info(f"[Jina Search] Error: {e}, falling back to DuckDuckGo")
-            return await WebTools._duckduckgo_search(query)
+            logger.info(f"[Jina Search] Error: {e}, using provider fallback")
+            return await WebTools.search_web(query, "auto")
 
     @staticmethod
     async def read_with_jina_reader(url: str) -> Dict[str, Any]:
@@ -316,5 +388,3 @@ class WebTools:
                 if url:
                     urls.append(url)
         return list(dict.fromkeys(urls))  # Remove duplicates
-
-
