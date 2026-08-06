@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import obtainer_context, read_lake_config, write_lake_config
+from .config import OBTAINER_ACTIVE_BINDING_KEYS, obtainer_context, read_lake_config, write_lake_config
 from .datamixer_adapter import warehouse_root
 from .errors import ObtainerCliError
 from .monitor_state import read_monitor_state
@@ -410,6 +410,18 @@ def update_lake_obtainer_context(
         "obtainer_context": context,
         "warnings": [],
     }
+
+
+def unbind_lake_obtainer_context(
+    *,
+    link_path: str | Path = ".loopai/lake.yaml",
+) -> dict[str, Any]:
+    """Clear active task/run bindings so a stale task_id never leaks into a
+    new task. WebAgent defaults (model, workers, ...) are intentionally kept."""
+    return update_lake_obtainer_context(
+        link_path=link_path,
+        updates={key: "" for key in OBTAINER_ACTIVE_BINDING_KEYS},
+    )
 
 
 def delete_lake_pointer(

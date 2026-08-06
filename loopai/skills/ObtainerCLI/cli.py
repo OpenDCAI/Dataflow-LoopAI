@@ -6,7 +6,6 @@ import io
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .datamixer_adapter import (
@@ -24,6 +23,7 @@ from .lake_manager import (
     delete_lake_pointer,
     load_lake_pointer,
     scan_lake_candidates,
+    unbind_lake_obtainer_context,
     update_lake_obtainer_context,
 )
 from .monitor_state import start_background_rebuild, update_monitor_delta
@@ -193,17 +193,15 @@ def _lake_warehouse_for_agent(*, lake: str, root: str) -> str:
         return ""
     if not warehouse.is_dir() or not (warehouse / "datamixer.toml").is_file():
         raise ObtainerCliError(
-            "DATAMIXER_WAREHOUSE_NOT_FOUND",
-            f"DataMixer warehouse is not initialized: {warehouse}",
-            hint="Load or initialize a lake, then use `dm --lake .loopai/lake.yaml dataset-acquisition-agent start ...`.",
+            "LAKE_NOT_LOADED",
+            f"DataMixer lake is not loaded: no initialized warehouse at {warehouse}",
+            hint=(
+                "Load or initialize the lake first with `dm lake init --root <lake-root>` "
+                "or `dm lake load --warehouse <warehouse>`, then retry the worker."
+            ),
             exit_code=2,
         )
     return str(warehouse)
-
-
-def _default_acquisition_run(warehouse: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    return str(Path(warehouse) / "obtainer_runs" / f"acquisition_{stamp}")
 
 
 def _inject_lake_runtime_defaults(args: list[str], *, lake: str, root: str) -> tuple[list[str], str]:
@@ -216,14 +214,6 @@ def _inject_lake_runtime_defaults(args: list[str], *, lake: str, root: str) -> t
     effective_root = root
     if command in {"dataset-acquisition-agent", "sft-export-agent"}:
         effective_root = _lake_warehouse_for_agent(lake=lake, root=root)
-    if command == "dataset-acquisition-agent":
-        action = args[1] if len(args) > 1 else ""
-        if action in {"start", "status", "resume"} and not _has_option(args, "--run"):
-            run_dir = str(context.get("obtainer_active_acquisition_run") or "")
-            if not run_dir and action == "start":
-                run_dir = _default_acquisition_run(effective_root)
-            if run_dir:
-                args = [*args, "--run", run_dir]
     if args[:3] == ["webagent", "campaign", "start"]:
         if len(args) == 3 or args[3].startswith("-"):
             args = [*args[:3], str(context.get("obtainer_webagent") or "domain_data_acquisition"), *args[3:]]
@@ -238,12 +228,22 @@ def _inject_lake_runtime_defaults(args: list[str], *, lake: str, root: str) -> t
     return args, effective_root
 
 
-def _persist_lake_runtime_context(*, lake: str, args: list[str], result: dict) -> None:
+def _persist_lake_runtime_context(
+    *, lake: str, args: list[str], result: dict, task_id: str = ""
+) -> None:
     if not lake or not args:
         return
     updates: dict[str, str] = {}
     if args[0] == "dataset-acquisition-agent" and result.get("run_dir"):
         updates["obtainer_active_acquisition_run"] = str(result["run_dir"])
+        if task_id:
+            updates["obtainer_active_task_id"] = task_id
+        if result.get("webagent_model"):
+            updates["obtainer_webagent_model"] = str(result["webagent_model"])
+        if result.get("resolved_model"):
+            updates["obtainer_resolved_model"] = str(result["resolved_model"])
+        if result.get("model_source"):
+            updates["obtainer_model_source"] = str(result["model_source"])
     if args[:3] == ["webagent", "campaign", "start"]:
         payload = result.get("result") if isinstance(result.get("result"), dict) else result
         if isinstance(payload, dict):
@@ -258,13 +258,24 @@ def _persist_lake_runtime_context(*, lake: str, args: list[str], result: dict) -
         update_lake_obtainer_context(link_path=lake, updates=updates)
 
 
-def _run_dm_command(argv: list[str], *, lake: str = "", root: str = "") -> dict:
+def _run_dm_command(
+    argv: list[str], *, lake: str = "", root: str = "", task_id: str = ""
+) -> dict:
     args = list(argv or [])
     if args and args[0] == "--":
         args = args[1:]
     if args and args[0] == "lake":
         return _run_dm_lake_command(args[1:], lake=lake)
     args, root = _inject_lake_runtime_defaults(args, lake=lake, root=root)
+    if args[:1] == ["dataset-acquisition-agent"]:
+        action = args[1] if len(args) > 1 else ""
+        if action in {"start", "status", "resume"} and not _has_option(args, "--run"):
+            raise ObtainerCliError(
+                "DATASET_ACQUISITION_AGENT_RUN_REQUIRED",
+                f"dataset-acquisition-agent {action} requires --run <run_dir>",
+                hint="Pass the same explicit --run directory to start, status, and resume.",
+                exit_code=2,
+            )
     if args and args[0] == "sft-export-agent":
         result = run_sft_export_agent(args[1:], root=root)
         result.setdefault("ok", True)
@@ -273,15 +284,15 @@ def _run_dm_command(argv: list[str], *, lake: str = "", root: str = "") -> dict:
         result.setdefault("warnings", [])
         return result
     if args and args[0] == "dataset-acquisition-agent":
-        result = run_dataset_acquisition_agent(args[1:], root=root)
+        result = run_dataset_acquisition_agent(args[1:], root=root, task_id=task_id)
         result.setdefault("ok", True)
         result.setdefault("command", "dm.dataset-acquisition-agent")
         result.setdefault("status", "success")
         result.setdefault("warnings", [])
-        _persist_lake_runtime_context(lake=lake, args=args, result=result)
+        _persist_lake_runtime_context(lake=lake, args=args, result=result, task_id=task_id)
         return result
     result = _run_datamixer_command(args, lake=lake, root=root)
-    _persist_lake_runtime_context(lake=lake, args=args, result=result)
+    _persist_lake_runtime_context(lake=lake, args=args, result=result, task_id=task_id)
     return result
 
 
@@ -314,6 +325,8 @@ def _run_dm_lake_command(argv: list[str], *, lake: str = "") -> dict:
     context = sub.add_parser("context", help="show or update persistent Obtainer defaults for this lake")
     context.add_argument("--link", default=lake or ".loopai/lake.yaml")
     context.add_argument("--set", dest="context_updates", action="append", default=[], metavar="KEY=VALUE")
+    unbind = sub.add_parser("unbind", help="clear active task/run bindings (task_id, acquisition run, campaign)")
+    unbind.add_argument("--link", default=lake or ".loopai/lake.yaml")
     monitor = sub.add_parser("monitor")
     monitor_sub = monitor.add_subparsers(dest="monitor_action", required=True)
     monitor_rebuild = monitor_sub.add_parser("rebuild")
@@ -357,6 +370,8 @@ def _run_dm_lake_command(argv: list[str], *, lake: str = "") -> dict:
             key, value = item.split("=", 1)
             updates[key.strip()] = value.strip()
         return update_lake_obtainer_context(link_path=parsed.link, updates=updates)
+    if parsed.lake_action == "unbind":
+        return unbind_lake_obtainer_context(link_path=parsed.link)
     if parsed.lake_action == "monitor" and parsed.monitor_action == "rebuild":
         warehouse = parsed.warehouse
         if not warehouse:
@@ -650,7 +665,12 @@ def run(argv: list[str] | None = None) -> int:
                 streaming=args.streaming,
             )
         elif args.command == "dm":
-            result = _run_dm_command(args.dm_args, lake=args.dm_lake, root=args.dm_root)
+            result = _run_dm_command(
+                args.dm_args,
+                lake=args.dm_lake,
+                root=args.dm_root,
+                task_id=args.task_id,
+            )
         else:
             parser.error("Unsupported command")
             return 2

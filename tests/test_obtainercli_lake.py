@@ -25,19 +25,16 @@ from loopai.skills.ObtainerCLI.monitor_state import monitor_state_path
 from loopai.agents.Obtainer.datamixer.clusters import update_dataset_clusters
 from loopai.agents.Obtainer.datamixer.store import DataStore
 
-
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-
 def _last_json(capsys) -> dict:
     out = capsys.readouterr().out.strip().splitlines()
     assert out
     return json.loads(out[-1])
-
 
 def _dm(root: Path, args: list[str], capsys) -> dict:
     exit_code = run(["dm", "--root", str(root), *args])
@@ -45,7 +42,6 @@ def _dm(root: Path, args: list[str], capsys) -> dict:
     assert exit_code == 0, payload
     assert payload["command"] == "dm"
     return payload["result"]
-
 
 def _set_starter_model_pool(tmp_path: Path, monkeypatch) -> Path:
     starter_config = tmp_path / "starter.yaml"
@@ -83,6 +79,58 @@ def _set_starter_model_pool(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setenv("STARTER_CONFIG", str(starter_config))
     return starter_config
 
+def _write_successful_acquisition_artifacts(run_dir: Path) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    state_path = run_dir / "thread.json"
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    state.update({
+        "resolved_model": "deepseek-chat",
+        "webagent_model": "codex",
+        "model_source": "codex_default",
+    })
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    target_datasets = int(state.get("target_datasets") or 1)
+    manifest_dir = run_dir / "manifest"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / "data_mix_plan.json").write_text(
+        json.dumps({
+            "objective": "finance SFT data",
+            "target_datasets": target_datasets,
+            "buckets": [{
+                "name": "finance",
+                "weight": 1.0,
+                "target_datasets": target_datasets,
+                "search_objectives": ["finance instruction and QA datasets"],
+                "quality_gates": {"task_type": "SFT", "domain": "finance"},
+                "rationale": "The current task is entirely finance-focused.",
+            }],
+        }),
+        encoding="utf-8",
+    )
+    search_dir = run_dir / "manifest" / "searchagent"
+    search_dir.mkdir(parents=True, exist_ok=True)
+    (search_dir / "searchagent_manifest.json").write_text(
+        json.dumps({"ok": True, "status": "completed", "candidates": []}),
+        encoding="utf-8",
+    )
+    (run_dir / "manifest" / "webagent_start.json").write_text(
+        json.dumps({
+            "run_id": "campaign-1",
+            "dataset": "finance_web_l1",
+            "status": "completed",
+            "queue": {"succeeded": 1},
+        }),
+        encoding="utf-8",
+    )
+    (run_dir / "manifest" / "webagent_campaign_status.json").write_text(
+        json.dumps({
+            "run_id": "campaign-1",
+            "dataset": "finance_web_l1",
+            "status": "completed",
+            "queue": {"succeeded": 1},
+        }),
+        encoding="utf-8",
+    )
 
 def test_lake_context_persists_with_the_loaded_warehouse(tmp_path: Path) -> None:
     lake_root = tmp_path / "code_lake"
@@ -106,6 +154,53 @@ def test_lake_context_persists_with_the_loaded_warehouse(tmp_path: Path) -> None
     assert current["obtainer_context"]["obtainer_webagent_model"] == "deepseek-proxy"
     assert current["obtainer_context"]["obtainer_active_acquisition_run"].endswith("acquisition_01")
     assert canonical["obtainer_webagent_model"] == "deepseek-proxy"
+
+def test_dm_lake_unbind_clears_active_bindings_but_keeps_webagent_defaults(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    lake_root = tmp_path / "code_lake"
+    warehouse = lake_root / "warehouse"
+    DataStore.init(warehouse).close()
+    pointer = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    write_lake_config(pointer, root=lake_root, warehouse=warehouse)
+    update_lake_obtainer_context(
+        link_path=pointer,
+        updates={
+            "obtainer_webagent": "domain_data_acquisition",
+            "obtainer_webagent_model": "deepseek-chat",
+            "obtainer_webagent_workers": "4",
+            "obtainer_active_task_id": "fdda07da-dead-beef-task",
+            "obtainer_active_acquisition_run": str(warehouse / "obtainer_runs" / "acquisition_stale"),
+            "obtainer_active_campaign_id": "campaign-stale",
+            "obtainer_active_l1_dataset": "finance_web_l1",
+        },
+    )
+
+    exit_code = run(["dm", "lake", "unbind", "--link", str(pointer)])
+    payload = _last_json(capsys)
+
+    assert exit_code == 0
+    assert payload["status"] == "success"
+    assert payload["command"] == "dm lake context"
+    context = payload["obtainer_context"]
+    assert context["obtainer_active_task_id"] == ""
+    assert context["obtainer_active_acquisition_run"] == ""
+    assert context["obtainer_active_campaign_id"] == ""
+    assert context["obtainer_active_l1_dataset"] == ""
+    assert context["obtainer_webagent"] == "domain_data_acquisition"
+    assert context["obtainer_webagent_model"] == "deepseek-chat"
+    assert context["obtainer_webagent_workers"] == "4"
+    current = current_lake_pointer(link_path=pointer)
+    assert current["obtainer_context"]["obtainer_active_task_id"] == ""
+
+
+def test_dm_lake_unbind_requires_a_loaded_pointer(tmp_path: Path, capsys) -> None:
+    missing = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    exit_code = run(["dm", "lake", "unbind", "--link", str(missing)])
+    payload = _last_json(capsys)
+    assert exit_code == 2
+    assert payload["error_code"] == "LAKE_POINTER_MISSING"
 
 
 def test_dataset_acquisition_agent_uses_lake_warehouse_and_persists_default_run(
@@ -138,17 +233,24 @@ def test_dataset_acquisition_agent_uses_lake_warehouse_and_persists_default_run(
             str(pointer),
             "dataset-acquisition-agent",
             "start",
-            "--objective",
-            "collect code data",
+        ]
+    )
+    payload = _last_json(capsys)
+    assert exit_code == 2, payload
+    assert payload["error_code"] == "DATASET_ACQUISITION_AGENT_RUN_REQUIRED"
+
+    run_dir = warehouse / "obtainer_runs" / "acquisition_01"
+    exit_code = run(
+        [
+            "dm", "--lake", str(pointer), "dataset-acquisition-agent", "start",
+            "--run", str(run_dir), "--objective", "collect code data",
         ]
     )
     payload = _last_json(capsys)
     assert exit_code == 0, payload
-    run_dir = Path(payload["run_dir"])
-    assert run_dir.parent == warehouse / "obtainer_runs"
+    assert Path(payload["run_dir"]) == run_dir
     current = current_lake_pointer(link_path=pointer)
     assert current["obtainer_context"]["obtainer_active_acquisition_run"] == str(run_dir)
-
 
 def test_dataset_acquisition_agent_rejects_a_sqlite_file_as_warehouse(
     tmp_path: Path,
@@ -171,6 +273,66 @@ def test_dataset_acquisition_agent_rejects_a_sqlite_file_as_warehouse(
     payload = _last_json(capsys)
     assert exit_code == 2
     assert payload["error_code"] == "DATASET_ACQUISITION_AGENT_WAREHOUSE_INVALID"
+
+def test_dataset_acquisition_agent_start_requires_loaded_lake(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"  # never initialized
+    run_dir = tmp_path / "acquisition_run"
+    _set_starter_model_pool(tmp_path, monkeypatch)
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "dataset-acquisition-agent",
+            "start",
+            "--run",
+            str(run_dir),
+            "--objective",
+            "ingest math datasets",
+            "--target-datasets",
+            "1",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 2
+    assert payload["error_code"] == "LAKE_NOT_LOADED"
+    assert "dm lake init" in payload["hint"] or "dm lake load" in payload["hint"]
+    assert not (run_dir / "thread.json").exists()
+
+
+def test_dataset_acquisition_agent_dry_run_skips_lake_loaded_check(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"  # never initialized; dry-run is planning only
+    run_dir = tmp_path / "acquisition_run"
+    _set_starter_model_pool(tmp_path, monkeypatch)
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "dataset-acquisition-agent",
+            "start",
+            "--run",
+            str(run_dir),
+            "--objective",
+            "ingest math datasets",
+            "--dry-run",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 0
+    assert payload["status"] == "dry_run"
 
 
 def test_obtainercli_dm_init_ingest_query_index_and_recipe_export(tmp_path: Path, capsys) -> None:
@@ -341,7 +503,6 @@ def test_obtainercli_dm_init_ingest_query_index_and_recipe_export(tmp_path: Path
         ("_dm", "input", "instruction", "output", "source_uri")
     }
 
-
 def test_datamixer_ingest_skips_registered_benchmark_contamination(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "warehouse"
     bench_file = tmp_path / "bench.txt"
@@ -376,7 +537,7 @@ def test_datamixer_ingest_skips_registered_benchmark_contamination(tmp_path: Pat
             "--quality-level",
             "L3",
             "--domain",
-            "finance",
+            "general",
             "--task-type",
             "SFT",
         ],
@@ -399,6 +560,367 @@ def test_datamixer_ingest_skips_registered_benchmark_contamination(tmp_path: Pat
     assert "unique training sample" in serialized
     assert bench_text not in serialized
 
+def test_finance_ingest_batch_writes_all_rows_without_record_gate(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "records.jsonl"
+    _write_jsonl(
+        records,
+        [
+            {
+                "content": {
+                    "instruction": "Explain revenue in this financial statement",
+                    "output": "Use net income from the cash flow statement.",
+                },
+                "source_uri": "https://www.sec.gov/edgar/one",
+                "source_dataset_id": "sec-filings",
+            },
+            {
+                "content": {
+                    "instruction": "Review this movie",
+                    "output": "Good acting.",
+                },
+                "source_uri": "https://example.invalid/movie",
+                "source_dataset_id": "Finance_Alpaca_v2",
+            },
+        ],
+    )
+    _dm(warehouse, ["init"], capsys)
+
+    result = _dm(
+        warehouse,
+        [
+            "ingest", "finance_batch", "--file", str(records),
+            "--quality-level", "L3", "--domain", "finance",
+        ],
+        capsys,
+    )
+
+    assert result["ingested"] == 2
+    assert result["quality_level"] == "L3"
+    assert "finance_quality_report" not in result
+    assert "finance_accepted" not in result
+    query = _dm(warehouse, ["query", "--dataset", "finance_batch", "--limit", "10"], capsys)
+    assert query["total"] == 2
+
+def test_finance_ingest_preserves_caller_classifier_metadata_as_tags(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "mixed.jsonl"
+    common_evidence = {
+        "domain_labels": ["finance"],
+        "domain_confidence": 0.96,
+        "domain_classifier": "domain_classify@1.3",
+        "domain_classifier_model": "codex",
+        "finance_semantic_signals": [
+            {"type": "accounting_metric", "evidence": "net income", "confidence": 0.95},
+            {"type": "financial_statement", "evidence": "cash flow statement", "confidence": 0.93},
+        ],
+    }
+    _write_jsonl(
+        records,
+        [
+            {
+                "content": {
+                    "instruction": "Explain revenue and net income in this financial statement",
+                    "output": "Read the cash flow statement with the SEC filing.",
+                },
+                "source_uri": "https://www.sec.gov/edgar/accepted",
+                "source_dataset_id": "sec-filings",
+                **common_evidence,
+            },
+            {
+                "content": {
+                    "instruction": "Explain revenue and net income in this financial statement",
+                    "output": "Read the cash flow statement from this blog.",
+                },
+                "source_uri": "https://finance-blog.example/rejected",
+                "source_dataset_id": "untrusted-blog",
+                **common_evidence,
+            },
+            {
+                "content": {
+                    "instruction": "Review this movie and its acting",
+                    "output": "The travel scenes and pets were entertaining.",
+                },
+                "source_uri": "https://www.sec.gov/edgar/not-finance",
+                "source_dataset_id": "sec-filings",
+                **common_evidence,
+            },
+        ],
+    )
+    _dm(warehouse, ["init"], capsys)
+
+    result = _dm(
+        warehouse,
+        [
+            "ingest", "mixed_finance", "--file", str(records),
+            "--quality-level", "L3", "--domain", "finance",
+        ],
+        capsys,
+    )
+
+    assert result["ingested"] == 3
+    store = DataStore.open(warehouse)
+    try:
+        rows = store.catalog.query(
+            dataset_id=store.catalog.resolve_dataset("mixed_finance")
+        )
+    finally:
+        store.close()
+    assert len(rows) == 3
+    assert all(
+        row["tags"]["domain_classifier"] == "domain_classify@1.3"
+        for row in rows
+    )
+    assert all(
+        len(row["tags"]["finance_semantic_signals"]) == 2
+        for row in rows
+    )
+
+def test_finance_ingest_never_invokes_per_row_llm_classification(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.agents.Obtainer.datamixer import llm
+
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "unverified.jsonl"
+    _write_jsonl(records, [{
+        "content": {
+            "instruction": "Explain revenue from the income statement",
+            "output": "Compare revenue with net income.",
+        },
+        "source_uri": "https://www.sec.gov/edgar/auto",
+        "source_dataset_id": "sec-filings",
+    }])
+
+    def fail_if_called(*args, **kwargs):  # noqa: ARG001
+        raise AssertionError("batch ingest must not run per-row LLM classification")
+
+    monkeypatch.setattr(llm, "complete", fail_if_called)
+    _dm(warehouse, ["init"], capsys)
+
+    result = _dm(
+        warehouse,
+        [
+            "ingest", "auto_finance", "--file", str(records),
+            "--quality-level", "L3", "--domain", "finance",
+        ],
+        capsys,
+    )
+
+    assert result["ingested"] == 1
+    store = DataStore.open(warehouse)
+    try:
+        rows = store.catalog.query(
+            dataset_id=store.catalog.resolve_dataset("auto_finance")
+        )
+    finally:
+        store.close()
+    assert len(rows) == 1
+    assert rows[0]["tags"]["source_dataset_id"] == "sec-filings"
+
+def test_finance_export_requires_policy_and_writes_source_report(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "records.jsonl"
+    recipe_path = tmp_path / "recipe.yaml"
+    export_dir = tmp_path / "export"
+    _write_jsonl(
+        records,
+        [{
+            "content": {
+                "instruction": "Explain revenue in this SEC financial statement",
+                "output": "Use net income from the filing.",
+            },
+            "source_uri": "https://www.sec.gov/edgar/one",
+            "source_dataset_id": "sec-filings",
+            "domain_labels": ["finance"],
+            "domain_confidence": 0.96,
+            "domain_classifier": "domain_classify@1.3",
+            "domain_classifier_model": "codex",
+            "finance_semantic_signals": [
+                {"type": "accounting_metric", "evidence": "revenue", "confidence": 0.97},
+                {"type": "financial_statement", "evidence": "financial statement", "confidence": 0.95},
+            ],
+        }],
+    )
+    recipe_path.write_text(
+        yaml.safe_dump({
+            "recipe": {
+                "name": "finance_gate_missing",
+                "stage": "sft",
+                "total_samples": 1,
+                "buckets": [{"name": "finance", "weight": 1, "filter": "domain='finance'"}],
+                "export": {
+                    "format": "jsonl",
+                    "schema": {"fields": {
+                        "instruction": {"sources": ["instruction"]},
+                        "input": {"sources": ["input"], "required": False, "default": ""},
+                        "output": {"sources": ["output"]},
+                    }},
+                },
+            }
+        }),
+        encoding="utf-8",
+    )
+    _dm(warehouse, ["init"], capsys)
+    _dm(
+        warehouse,
+        [
+            "ingest", "Finance_Alpaca_v2", "--file", str(records),
+            "--quality-level", "L3", "--domain", "finance", "--stage", "sft",
+        ],
+        capsys,
+    )
+
+    exit_code = run([
+        "dm", "--root", str(warehouse), "recipe", "export", str(recipe_path),
+        "--out", str(export_dir),
+    ])
+    payload = _last_json(capsys)
+
+    assert exit_code == 1
+    result = payload["details"]
+    assert result["error_code"] == "finance_quality_policy_missing"
+    assert result["finance_quality"]["finance_samples"] == 1
+    assert (export_dir / "finance_quality_report.json").exists()
+    assert not list(export_dir.glob("part-*.jsonl"))
+
+    rejected_dir = tmp_path / "rejected_export"
+    recipe_doc = yaml.safe_load(recipe_path.read_text(encoding="utf-8"))
+    recipe_doc["recipe"]["quality_gates"] = {
+        "finance": {
+            "min_field_valid_rate": 1.0,
+            "min_classifier_confidence": 0.99,
+            "min_classifier_pass_rate": 1.0,
+            "sample_size": 1,
+            "manual_review": {"required": False},
+        }
+    }
+    recipe_path.write_text(yaml.safe_dump(recipe_doc), encoding="utf-8")
+    exit_code = run([
+        "dm", "--root", str(warehouse), "recipe", "export", str(recipe_path),
+        "--out", str(rejected_dir),
+    ])
+    payload = _last_json(capsys)
+    rejected = payload["details"]["finance_quality"]
+
+    assert exit_code == 1
+    assert rejected["code"] == "finance_quality_rejected"
+    assert rejected["sources"][0]["rejection_reasons"] == [
+        "classifier_pass_rate_below_threshold",
+    ]
+    assert len(rejected["sources"][0]["manual_review_sample"]) == 1
+    assert not list(rejected_dir.glob("part-*.jsonl"))
+
+def test_finance_export_enforces_llm_and_field_gates_across_sources(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "records.jsonl"
+    recipe_path = tmp_path / "recipe.yaml"
+    export_dir = tmp_path / "export"
+    _write_jsonl(
+        records,
+        [
+            {
+                "content": {
+                    "instruction": "Explain revenue in the financial statement",
+                    "output": "Use net income from the SEC filing.",
+                },
+                "source_uri": "https://www.sec.gov/edgar/one",
+                "source_dataset_id": "sec-filings",
+                "domain_labels": ["finance"],
+                "domain_confidence": 0.96,
+                "domain_classifier": "domain_classify@1.3",
+                "domain_classifier_model": "codex",
+                "finance_semantic_signals": [
+                    {"type": "accounting_metric", "evidence": "revenue", "confidence": 0.97},
+                    {"type": "financial_statement", "evidence": "financial statement", "confidence": 0.94},
+                ],
+            },
+            {
+                "content": {
+                    "instruction": "Explain revenue and cash flow in this financial statement for a corporate bond",
+                    "output": "Read the cash flow statement.",
+                },
+                "source_uri": "https://finance-blog.example/two",
+                "source_dataset_id": "independent-finance-blog",
+                "domain_labels": ["finance"],
+                "domain_confidence": 0.92,
+                "domain_classifier": "domain_classify@1.3",
+                "domain_classifier_model": "codex",
+                "finance_semantic_signals": [
+                    {"type": "accounting_metric", "evidence": "cash flow", "confidence": 0.95},
+                    {"type": "financial_instrument", "evidence": "corporate bond", "confidence": 0.93},
+                ],
+            },
+        ],
+    )
+    recipe = {
+        "recipe": {
+            "name": "finance_gate",
+            "stage": "sft",
+            "total_samples": 2,
+            "buckets": [{"name": "finance", "weight": 1, "filter": "domain='finance'"}],
+            "quality_gates": {
+                "finance": {
+                    "min_field_valid_rate": 1.0,
+                    "min_classifier_confidence": 0.8,
+                    "min_classifier_pass_rate": 1.0,
+                    "min_semantic_signals": 2,
+                    "min_semantic_signal_pass_rate": 1.0,
+                    "sample_size": 2,
+                    "manual_review": {"required": False},
+                }
+            },
+            "export": {
+                "format": "jsonl",
+                "schema": {"fields": {
+                    "instruction": {"sources": ["instruction"]},
+                    "input": {"sources": ["input"], "required": False, "default": ""},
+                    "output": {"sources": ["output"]},
+                }},
+            },
+        }
+    }
+    recipe_path.write_text(yaml.safe_dump(recipe), encoding="utf-8")
+    _dm(warehouse, ["init"], capsys)
+    _dm(
+        warehouse,
+        [
+            "ingest", "sec_finance", "--file", str(records), "--quality-level", "L3",
+            "--domain", "finance", "--stage", "sft",
+        ],
+        capsys,
+    )
+
+    exported = _dm(
+        warehouse,
+        ["recipe", "export", str(recipe_path), "--out", str(export_dir)],
+        capsys,
+    )
+    report = json.loads((export_dir / "finance_quality_report.json").read_text(encoding="utf-8"))
+
+    assert exported["selected_samples"] == 2
+    assert report["ok"] is True
+    assert report["source_count"] == 2
+    assert all(source["field_valid_rate"] == 1.0 for source in report["sources"])
+    assert all(source["classifier_pass_rate"] == 1.0 for source in report["sources"])
+    assert all(source["semantic_signal_pass_rate"] == 1.0 for source in report["sources"])
+    assert sum(len(source["manual_review_sample"]) for source in report["sources"]) == 2
+    manifest = json.loads((export_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["finance_quality"]["code"] == "finance_quality_passed"
 
 def test_contam_add_removes_existing_benchmark_contamination(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "warehouse"
@@ -433,7 +955,7 @@ def test_contam_add_removes_existing_benchmark_contamination(tmp_path: Path, cap
             "--quality-level",
             "L3",
             "--domain",
-            "finance",
+            "general",
             "--task-type",
             "SFT",
         ],
@@ -462,7 +984,6 @@ def test_contam_add_removes_existing_benchmark_contamination(tmp_path: Path, cap
     serialized = json.dumps(content, ensure_ascii=False)
     assert "unique training sample" in serialized
     assert bench_text not in serialized
-
 
 def test_dm_ingest_registers_dataset_card_and_validates_derived_fields(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "warehouse"
@@ -547,7 +1068,6 @@ def test_dm_ingest_registers_dataset_card_and_validates_derived_fields(tmp_path:
     assert content["answer"] == "2"
     assert content["train_output"].endswith("\n2")
 
-
 def test_dm_ingest_rejects_empty_declared_derived_field(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "warehouse"
     records = tmp_path / "input" / "bad.jsonl"
@@ -588,7 +1108,6 @@ def test_dm_ingest_rejects_empty_declared_derived_field(tmp_path: Path, capsys) 
     assert exit_code != 0
     assert "derived fields must be non-empty" in json.dumps(payload)
     assert not (warehouse / "dataset_cards" / "bad_sft.md").exists()
-
 
 def test_recipe_export_defaults_to_cluster_similarity_sampling_with_random_fallback(
     tmp_path: Path,
@@ -703,7 +1222,6 @@ def test_recipe_export_defaults_to_cluster_similarity_sampling_with_random_fallb
     assert len(random_rows) == 2
     assert all(row["_dm"]["cluster_similarity"] is not None for row in clustered_rows)
 
-
 def test_sft_recipe_export_requires_explicit_schema_mapping(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "warehouse"
     records = tmp_path / "input" / "math.jsonl"
@@ -771,7 +1289,6 @@ def test_sft_recipe_export_requires_explicit_schema_mapping(tmp_path: Path, caps
     assert payload["details"]["blocked"] is True
     assert payload["details"]["error_code"] == "missing_export_schema_mapping"
     assert payload["details"]["export_schema"]["code"] == "missing_export_schema_mapping"
-
 
 def test_sft_recipe_export_mapping_normalizes_heterogeneous_keys(
     tmp_path: Path,
@@ -857,7 +1374,6 @@ def test_sft_recipe_export_mapping_normalizes_heterogeneous_keys(
     }
     assert {row["instruction"] for row in rows} == {"1+1?", "2+2?"}
     assert {row["output"] for row in rows} == {"2", "4"}
-
 
 def test_sft_recipe_export_supports_bucket_schema_templates(
     tmp_path: Path,
@@ -1009,7 +1525,6 @@ def test_sft_recipe_export_supports_bucket_schema_templates(
         "SELECT id FROM users WHERE active = TRUE;"
     )
 
-
 def test_sft_recipe_export_reports_mapping_failures_for_agent_repair(
     tmp_path: Path,
     capsys,
@@ -1097,7 +1612,6 @@ def test_sft_recipe_export_reports_mapping_failures_for_agent_repair(
     assert "final" in details["export_schema"]["failures"][0]["available_source_keys"]
     assert not (export_dir / "part-00000.jsonl").exists()
 
-
 def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
     tmp_path: Path,
     monkeypatch,
@@ -1130,26 +1644,37 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
         sample_line = next(line for line in prompt.splitlines() if line.startswith("- Sample JSONL file:"))
         sample_path = Path(sample_line.split(":", 1)[1].strip())
         rows = [json.loads(line) for line in sample_path.read_text(encoding="utf-8").splitlines()]
-        processed = work_dir / "processed.jsonl"
-        processed.parent.mkdir(parents=True, exist_ok=True)
-        with processed.open("w", encoding="utf-8") as handle:
-            for row in rows:
-                handle.write(
-                    json.dumps(
-                        {
-                            "sample_id": row["sample_id"],
-                            "raw_content": row["raw_content"],
-                            "math_answer_quality": 0.95,
-                        },
-                        ensure_ascii=False,
+        full_line = next(
+            line for line in prompt.splitlines()
+            if line.startswith("- Full input JSONL")
+        )
+        full_path = Path(full_line.split(":", 1)[1].strip())
+        full_rows = [json.loads(line) for line in full_path.read_text(encoding="utf-8").splitlines()]
+
+        def write_processed(src_rows, name):
+            processed = work_dir / name
+            processed.parent.mkdir(parents=True, exist_ok=True)
+            with processed.open("w", encoding="utf-8") as handle:
+                for row in src_rows:
+                    handle.write(
+                        json.dumps(
+                            {
+                                **row,
+                                "math_answer_quality": 0.95,
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
                     )
-                    + "\n"
-                )
+            return processed
+
+        processed = write_processed(rows, "processed.jsonl")
+        full_processed = write_processed(full_rows, "full_processed.jsonl")
         pipeline = work_dir / "pipeline.py"
         pipeline.write_text("# generated by fake codex\n", encoding="utf-8")
         return {
             "ok": True,
-            "mode": "trial_run",
+            "mode": "full_run",
             "operator_decision": {
                 "ops": ["FormatStrPromptedGenerator", "GeneralFilter"],
                 "field_flow": "raw_content -> math_answer_quality",
@@ -1159,9 +1684,12 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
             "processed_jsonl": str(processed),
             "trial_rows_in": len(rows),
             "trial_rows_out": len(rows),
+            "full_processed_jsonl": str(full_processed),
+            "full_rows_in": len(full_rows),
+            "full_rows_out": len(full_rows),
             "stdout_tail": "",
             "errors": [],
-            "summary": "trial ok",
+            "summary": "trial and full run ok",
         }
 
     monkeypatch.setattr(dataflow_agent, "run_via_sdk", fake_run_via_sdk)
@@ -1230,12 +1758,36 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
         capsys,
     )
 
+    assert result["mode"] == "full_run"
     assert result["trial_rows_exported"] == 2
+    assert result["full_rows_exported"] == 2
+    assert result["full_rows_out"] == 2
     assert result["applied"] is True
     assert result["merge"]["updated"] == 2
+    assert result["agent_result"]["full_output_audit"] == {
+        "input_rows": 2,
+        "output_rows": 2,
+        "retained_input_rows": 2,
+        "dropped_input_rows": 0,
+        "unique_output_sample_ids": 2,
+        "original_fields_preserved": True,
+        "added_fields": ["math_answer_quality"],
+    }
+    assert result["agent_result"]["output_audit"] == {
+        "input_rows": 2,
+        "output_rows": 2,
+        "retained_input_rows": 2,
+        "dropped_input_rows": 0,
+        "unique_output_sample_ids": 2,
+        "original_fields_preserved": True,
+        "added_fields": ["math_answer_quality"],
+    }
     assert "generating-dataflow-pipeline" in captured["prompt"]
+    assert "launch the full processing" in captured["prompt"]
     assert "sub-agents" in captured["prompt"]
+    assert "after removing complete `<think>`" in captured["prompt"]
     assert Path(result["trial_jsonl"]).exists()
+    assert Path(result["full_jsonl"]).exists()
 
     query = _dm(
         warehouse,
@@ -1253,6 +1805,345 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
     tags = [json.loads(row["tags_json"]) for row in query["rows"]]
     assert [tag["math_answer_quality"] for tag in tags] == [0.95, 0.95]
 
+def test_dataflow_operator_llm_uses_default_qwen_not_codex_model(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from loopai.agents.Obtainer.datamixer import dataflow_agent
+
+    (tmp_path / "starter.yaml").write_text(
+        yaml.safe_dump({
+            "system": {
+                "model": {
+                    "proxy_base_url": "http://127.0.0.1:8855/responseProxy/v1",
+                    "proxy_api_key": "proxy-key",
+                    "default_model": "qwen3-14b-fp8",
+                    "codex_model": "deepseek-chat",
+                    "default_tier": "medium",
+                    "pool": [
+                        {
+                            "tier": "medium",
+                            "name": "qwen3-14b-fp8",
+                            "model_name": "qwen3-14b-fp8",
+                            "base_url": "http://127.0.0.1:8000/v1",
+                            "api_key": "local-key",
+                        },
+                        {
+                            "tier": "high",
+                            "name": "deepseek-chat",
+                            "model_name": "deepseek-chat",
+                            "base_url": "https://api.deepseek.com/v1",
+                            "api_key": "deepseek-key",
+                        },
+                    ],
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dataflow_agent, "_project_root", lambda: tmp_path)
+
+    config = dataflow_agent.operator_llm_config_from_starter()
+
+    assert config == {
+        "api_url": "http://127.0.0.1:8855/responseProxy/v1/chat/completions",
+        "model_name": "qwen3-14b-fp8",
+        "api_key_env": "DF_API_KEY",
+        "api_key": "proxy-key",
+    }
+
+def test_dataflow_agent_rejects_incomplete_intermediate_response(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.agents.Obtainer.datamixer import dataflow_agent
+
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input.jsonl"
+    _write_jsonl(records, [{"content": {"text": "finance quality sample"}}])
+
+    monkeypatch.setattr(
+        dataflow_agent,
+        "run_via_sdk",
+        lambda *args, **kwargs: {"summary": "Let me inspect more files."},
+    )
+
+    _dm(warehouse, ["init"], capsys)
+    _dm(
+        warehouse,
+        ["model", "add", "--name", "codex-test", "--api-url", "mock://agent"],
+        capsys,
+    )
+    _dm(
+        warehouse,
+        [
+            "ingest", "finance_l2", "--file", str(records),
+            "--quality-level", "L2", "--domain", "general",
+        ],
+        capsys,
+    )
+
+    exit_code = run([
+        "dm", "--root", str(warehouse), "dataflow", "agent-run",
+        "--target", "audit quality", "--model", "codex-test",
+        "--dataset", "finance_l2", "--trial-rows", "1", "--json",
+    ])
+    payload = _last_json(capsys)
+
+    assert exit_code == 1
+    assert payload["ok"] is False
+    assert payload["error_code"] == "DATAMIXER_COMMAND_FAILED"
+    assert "incomplete final result" in payload["details"]["error"]
+
+def test_dataflow_agent_continues_incomplete_thread_until_valid(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.agents.Obtainer.datamixer import dataflow_agent
+
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input.jsonl"
+    work_dir = tmp_path / "agent"
+    _write_jsonl(records, [{"content": {"text": "finance quality sample"}}])
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_run(prompt, prov, cwd, timeout=600, thread_id=None, **kwargs):  # noqa: ARG001
+        calls.append((prompt, thread_id))
+        if len(calls) == 1:
+            return {"summary": "Inspecting operators.", "thread_id": "thread-1"}
+        trial_path = work_dir / "trial_input.jsonl"
+        full_path = work_dir / "full_input.jsonl"
+        processed = work_dir / "processed.jsonl"
+        full_processed = work_dir / "full_processed.jsonl"
+        pipeline = work_dir / "pipeline.py"
+        processed.write_text(trial_path.read_text(encoding="utf-8"), encoding="utf-8")
+        full_processed.write_text(full_path.read_text(encoding="utf-8"), encoding="utf-8")
+        pipeline.write_text("# generated pipeline\n", encoding="utf-8")
+        full_rows = [json.loads(line) for line in full_path.read_text(encoding="utf-8").splitlines()]
+        return {
+            "ok": True,
+            "mode": "full_run",
+            "operator_decision": {
+                "ops": ["HashDeduplicateFilter"],
+                "field_flow": "raw_content -> exact_dedup_label",
+                "reason": "remove exact duplicates",
+            },
+            "pipeline_path": str(pipeline),
+            "processed_jsonl": str(processed),
+            "trial_rows_in": 1,
+            "trial_rows_out": 1,
+            "full_processed_jsonl": str(full_processed),
+            "full_rows_in": len(full_rows),
+            "full_rows_out": len(full_rows),
+            "stdout_tail": "",
+            "errors": [],
+            "summary": "trial and full complete",
+        }
+
+    monkeypatch.setattr(dataflow_agent, "run_via_sdk", fake_run)
+    _dm(warehouse, ["init"], capsys)
+    _dm(
+        warehouse,
+        ["model", "add", "--name", "codex-test", "--api-url", "mock://agent"],
+        capsys,
+    )
+    _dm(
+        warehouse,
+        [
+            "ingest", "finance_l2", "--file", str(records),
+            "--quality-level", "L2", "--domain", "general",
+        ],
+        capsys,
+    )
+
+    result = _dm(
+        warehouse,
+        [
+            "dataflow", "agent-run", "--target", "audit quality",
+            "--model", "codex-test", "--dataset", "finance_l2",
+            "--trial-rows", "1", "--work-dir", str(work_dir),
+        ],
+        capsys,
+    )
+
+    assert result["agent_result"]["mode"] == "full_run"
+    assert len(calls) == 2
+    assert calls[1][1] == "thread-1"
+    assert "Finish the operator decision" in calls[1][0]
+
+def test_dataflow_agent_rejects_rewritten_original_metadata(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.agents.Obtainer.datamixer import dataflow_agent
+
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input.jsonl"
+    work_dir = tmp_path / "agent"
+    _write_jsonl(
+        records,
+        [{
+            "content": {"text": "finance quality sample"},
+            "retrieved_at": "2026-08-01T04:02:05.341781+00:00",
+        }],
+    )
+
+    def fake_run(prompt, prov, cwd, timeout=600, **kwargs):  # noqa: ARG001
+        trial_path = work_dir / "trial_input.jsonl"
+        full_path = work_dir / "full_input.jsonl"
+        row = json.loads(trial_path.read_text(encoding="utf-8"))
+        bad_row = json.loads(full_path.read_text(encoding="utf-8"))
+        bad_row["retrieved_at"] = bad_row["retrieved_at"].replace("T", " ")
+        processed = work_dir / "processed.jsonl"
+        full_processed = work_dir / "full_processed.jsonl"
+        pipeline = work_dir / "pipeline.py"
+        processed.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        full_processed.write_text(json.dumps(bad_row) + "\n", encoding="utf-8")
+        pipeline.write_text("# generated pipeline\n", encoding="utf-8")
+        return {
+            "ok": True,
+            "mode": "full_run",
+            "operator_decision": {
+                "ops": ["PandasOperator"],
+                "field_flow": "raw_content -> quality_score",
+                "reason": "score quality",
+            },
+            "pipeline_path": str(pipeline),
+            "processed_jsonl": str(processed),
+            "trial_rows_in": 1,
+            "trial_rows_out": 1,
+            "full_processed_jsonl": str(full_processed),
+            "full_rows_in": 1,
+            "full_rows_out": 1,
+            "stdout_tail": "",
+            "errors": [],
+            "summary": "trial and full complete",
+        }
+
+    monkeypatch.setattr(dataflow_agent, "run_via_sdk", fake_run)
+    _dm(warehouse, ["init"], capsys)
+    _dm(
+        warehouse,
+        ["model", "add", "--name", "codex-test", "--api-url", "mock://agent"],
+        capsys,
+    )
+    _dm(
+        warehouse,
+        [
+            "ingest", "finance_l2", "--file", str(records),
+            "--quality-level", "L2", "--domain", "general",
+        ],
+        capsys,
+    )
+
+    exit_code = run([
+        "dm", "--root", str(warehouse), "dataflow", "agent-run",
+        "--target", "audit quality", "--model", "codex-test",
+        "--dataset", "finance_l2", "--trial-rows", "1",
+        "--work-dir", str(work_dir), "--json",
+    ])
+    payload = _last_json(capsys)
+
+    assert exit_code == 1
+    assert payload["ok"] is False
+    assert "did not preserve original input fields exactly" in payload["details"]["error"]
+    assert "retrieved_at" in payload["details"]["error"]
+
+
+def test_dataflow_agent_delivers_trial_pipeline_for_upstream_full_run(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.agents.Obtainer.datamixer import dataflow_agent
+
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input.jsonl"
+    work_dir = tmp_path / "agent"
+    _write_jsonl(records, [{"content": {"text": "finance quality sample"}}])
+
+    def fake_run(prompt, prov, cwd, timeout=600, **kwargs):  # noqa: ARG001
+        trial_path = work_dir / "trial_input.jsonl"
+        processed = work_dir / "processed.jsonl"
+        pipeline = work_dir / "pipeline.py"
+        processed.write_text(trial_path.read_text(encoding="utf-8"), encoding="utf-8")
+        pipeline.write_text("# generated pipeline\n", encoding="utf-8")
+        return {
+            "ok": True,
+            "mode": "trial_run",
+            "operator_decision": {
+                "ops": ["HashDeduplicateFilter"],
+                "field_flow": "raw_content -> exact_dedup_label",
+                "reason": "remove exact duplicates",
+            },
+            "pipeline_path": str(pipeline),
+            "processed_jsonl": str(processed),
+            "trial_rows_in": 1,
+            "trial_rows_out": 1,
+            "full_processed_jsonl": None,
+            "full_rows_in": None,
+            "full_rows_out": None,
+            "stdout_tail": "",
+            "errors": [],
+            "summary": "trial only",
+        }
+
+    monkeypatch.setattr(dataflow_agent, "run_via_sdk", fake_run)
+    _dm(warehouse, ["init"], capsys)
+    _dm(
+        warehouse,
+        ["model", "add", "--name", "codex-test", "--api-url", "mock://agent"],
+        capsys,
+    )
+    _dm(
+        warehouse,
+        [
+            "ingest", "finance_l2", "--file", str(records),
+            "--quality-level", "L2", "--domain", "general",
+        ],
+        capsys,
+    )
+
+    exit_code = run([
+        "dm", "--root", str(warehouse), "dataflow", "agent-run",
+        "--target", "audit quality", "--model", "codex-test",
+        "--dataset", "finance_l2", "--trial-rows", "1",
+        "--work-dir", str(work_dir), "--json",
+    ])
+    payload = _last_json(capsys)
+
+    # The DataFlow agent only delivers the trial-verified pipeline; the
+    # full run is executed upstream via the chunked runner.
+    assert exit_code == 0
+    assert payload["ok"] is True
+    details = payload["result"]
+    assert details["mode"] == "trial_run"
+    upstream = details["upstream"]
+    assert upstream["delivered_pipeline"] is True
+    assert "dataflow_chunked_runner" in upstream["chunked_run_command"]
+    assert "--chunk-size 10000" in upstream["chunked_run_command"]
+    assert "apply-jsonl" in upstream["apply_command"]
+    assert details["applied"] is False
+    assert details["merge"] is None
+
+
+def test_parse_llm_scalar_score_ignores_reasoning_numbers_and_fails_closed() -> None:
+    from loopai.agents.Obtainer.datamixer.dataflow_agent import parse_llm_scalar_score
+
+    assert parse_llm_scalar_score(
+        "<think>Check dimensions 1, 2, 3, 4, and 5. Maybe score 2.</think>\n4"
+    ) == 4
+    assert parse_llm_scalar_score("<answer>5</answer>") == 5
+
+    with pytest.raises(ValueError, match="one integer"):
+        parse_llm_scalar_score("<think>score 4")
+    with pytest.raises(ValueError, match="allowed range"):
+        parse_llm_scalar_score("0")
+    with pytest.raises(ValueError, match="multiple"):
+        parse_llm_scalar_score("<answer>2</answer><answer>4</answer>")
 
 def test_sft_recipe_defaults_to_100k_records_when_budget_is_missing(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "warehouse"
@@ -1315,7 +2206,6 @@ def test_sft_recipe_defaults_to_100k_records_when_budget_is_missing(tmp_path: Pa
     assert plan["total_samples"] == 100000
     assert "short on samples" in plan["warnings"][0]
 
-
 def test_failure_taxonomy_recipe_rejects_broad_proxy_filters(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "warehouse"
     recipe_path = tmp_path / "bad_recipe.yaml"
@@ -1348,7 +2238,6 @@ def test_failure_taxonomy_recipe_rejects_broad_proxy_filters(tmp_path: Path, cap
     assert payload["error_code"] == "DATAMIXER_COMMAND_FAILED"
     assert "semantic failure tag" in payload["hint"]
 
-
 def test_dm_lake_pointer_resolves_to_datamixer_warehouse(tmp_path: Path, capsys) -> None:
     lake_root = tmp_path / "lake"
     warehouse = lake_root / "warehouse"
@@ -1361,7 +2250,6 @@ def test_dm_lake_pointer_resolves_to_datamixer_warehouse(tmp_path: Path, capsys)
     payload = _last_json(capsys)
     assert result == 0
     assert payload["result"]["samples"] == 0
-
 
 def test_dm_lake_pointer_prefers_root_when_root_is_datamixer_warehouse(tmp_path: Path, capsys) -> None:
     lake_root = tmp_path / "lake"
@@ -1393,7 +2281,6 @@ def test_dm_lake_pointer_prefers_root_when_root_is_datamixer_warehouse(tmp_path:
     assert payload["result"]["warehouse"] == str(lake_root.resolve())
     assert payload["result"]["samples"] == 1
 
-
 def test_dm_lake_load_reuses_existing_datamixer_warehouse(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "shared" / "warehouse"
     link = tmp_path / "repo" / ".loopai" / "lake.yaml"
@@ -1413,7 +2300,6 @@ def test_dm_lake_load_reuses_existing_datamixer_warehouse(tmp_path: Path, capsys
     assert result == 0
     assert status["result"]["warehouse"] == str(warehouse.resolve())
 
-
 def test_dm_lake_delete_unloads_pointer_and_preserves_warehouse(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "shared" / "warehouse"
     link = tmp_path / "repo" / ".loopai" / "lake.yaml"
@@ -1430,7 +2316,6 @@ def test_dm_lake_delete_unloads_pointer_and_preserves_warehouse(tmp_path: Path, 
     assert payload["warehouse_deleted"] is False
     assert not link.exists()
     assert (warehouse / "datamixer.toml").exists()
-
 
 def test_dm_lake_scan_discovers_project_lakes_and_marks_active(tmp_path: Path, capsys) -> None:
     lake_root = tmp_path / "lake"
@@ -1460,7 +2345,6 @@ def test_dm_lake_scan_discovers_project_lakes_and_marks_active(tmp_path: Path, c
     assert len(active) == 1
     assert active[0]["warehouse"] == str(warehouse.resolve())
     assert active[0]["warehouse_exists"] is True
-
 
 def test_sft_export_agent_start_dry_run_writes_isolated_worker_prompt(
     tmp_path: Path,
@@ -1514,6 +2398,38 @@ def test_sft_export_agent_start_dry_run_writes_isolated_worker_prompt(
     status_payload = _last_json(capsys)
     assert exit_code == 0
     assert status_payload["status"]["state"] == "dry_run"
+
+def test_sft_export_agent_start_requires_loaded_lake(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"  # never initialized
+    run_dir = tmp_path / "sft_export_run"
+    report = tmp_path / "analysis_report.md"
+    report.write_text("Need SFT math data.", encoding="utf-8")
+    _set_starter_model_pool(tmp_path, monkeypatch)
+
+    exit_code = run(
+        [
+            "dm",
+            "--root",
+            str(warehouse),
+            "sft-export-agent",
+            "start",
+            "--run",
+            str(run_dir),
+            "--analysis-report",
+            str(report),
+            "--target-records",
+            "10",
+        ]
+    )
+    payload = _last_json(capsys)
+
+    assert exit_code == 2
+    assert payload["error_code"] == "LAKE_NOT_LOADED"
+    assert "dm lake init" in payload["hint"] or "dm lake load" in payload["hint"]
 
 
 def test_sft_export_agent_resume_reuses_saved_thread_id(
@@ -1582,7 +2498,6 @@ def test_sft_export_agent_resume_reuses_saved_thread_id(
     assert status["worker_ok"] is False
     assert status["acceptance_ok"] is False
 
-
 def test_sft_export_agent_acceptance_feedback_retries_until_valid(
     tmp_path: Path,
     monkeypatch,
@@ -1591,7 +2506,7 @@ def test_sft_export_agent_acceptance_feedback_retries_until_valid(
     from loopai.skills.ObtainerCLI import sft_export_agent
 
     warehouse = tmp_path / "warehouse"
-    warehouse.mkdir()
+    DataStore.init(warehouse).close()
     run_dir = tmp_path / "sft_export_run"
     report = tmp_path / "analysis_report.md"
     report.write_text("Need two Alpaca records.", encoding="utf-8")
@@ -1601,7 +2516,35 @@ def test_sft_export_agent_acceptance_feedback_retries_until_valid(
     def write_export(*, invalid: bool) -> None:
         export_dir = run_dir / "export"
         export_dir.mkdir(parents=True, exist_ok=True)
+        recipe_dir = run_dir / "recipe"
+        recipe_dir.mkdir(parents=True, exist_ok=True)
         source = "text" if invalid else "answer"
+        (recipe_dir / "recipe_plan.json").write_text(
+            json.dumps({
+                "budget_kind": "sample",
+                "total_samples": 2,
+                "buckets": [{
+                    "name": "bucket_a",
+                    "weight": 1.0,
+                    "target_samples": 2,
+                    "available_samples": 2,
+                }],
+            }),
+            encoding="utf-8",
+        )
+        (recipe_dir / "mix_plan.json").write_text(
+            json.dumps({
+                "budget_kind": "sample",
+                "target_records": 2,
+                "buckets": [{
+                    "name": "bucket_a",
+                    "weight": 1.0,
+                    "target_records": 2,
+                    "rationale": "The Analyzer requested this capability only.",
+                }],
+            }),
+            encoding="utf-8",
+        )
         (export_dir / "part-00000.jsonl").write_text(
             "\n".join(
                 [
@@ -1641,12 +2584,26 @@ def test_sft_export_agent_acceptance_feedback_retries_until_valid(
                             }
                         ],
                     },
+                    "summary": {
+                        "selected_samples": 2,
+                        "buckets": [{
+                            "bucket": "bucket_a",
+                            "weight": 1.0,
+                            "target": 2,
+                            "realized_samples": 2,
+                        }],
+                    },
                 }
             ),
             encoding="utf-8",
         )
         (run_dir / "final_report.json").write_text(
-            json.dumps({"ok": True, "export_path": str(export_dir)}),
+            json.dumps({
+                "ok": True,
+                "export_path": str(export_dir),
+                "planned_mix": {"bucket_a": 2},
+                "actual_mix": {"bucket_a": 2},
+            }),
             encoding="utf-8",
         )
 
@@ -1685,7 +2642,6 @@ def test_sft_export_agent_acceptance_feedback_retries_until_valid(
     assert status["state"] == "completed"
     assert status["acceptance_ok"] is True
 
-
 def test_sft_export_agent_start_defaults_to_background(
     tmp_path: Path,
     monkeypatch,
@@ -1694,6 +2650,7 @@ def test_sft_export_agent_start_defaults_to_background(
     from loopai.skills.ObtainerCLI import sft_export_agent
 
     warehouse = tmp_path / "warehouse"
+    DataStore.init(warehouse).close()
     run_dir = tmp_path / "sft_export_run"
     report = tmp_path / "analysis_report.md"
     report.write_text("Need Alpaca SFT math data.", encoding="utf-8")
@@ -1739,7 +2696,6 @@ def test_sft_export_agent_start_defaults_to_background(
     assert captured["warehouse"] == warehouse.resolve()
     assert Path(captured["prompt_path"]).exists()
     assert (run_dir / "thread.json").exists()
-
 
 def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
     tmp_path: Path,
@@ -1795,7 +2751,7 @@ def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
     assert "SearchAgent task JSON:" in prompt
     assert "manifest/tasks.json" in prompt
     assert "manifest/searchagent/searchagent_manifest.json" in prompt
-    assert "model list --json" in prompt
+    assert "use its non-empty `webagent_model` exactly" in prompt
     assert "launch SearchAgent and WebAgent in" in prompt
     assert "webagent campaign start domain_data_acquisition" in prompt
     assert "SEARCHAGENT_PID" in prompt
@@ -1832,7 +2788,6 @@ def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
     assert state["max_bytes_per_dataset"] == 2147483648
     assert state["provider"]["model_pool_name"] == "codex"
     assert state["provider"]["model"] == "codex"
-
 
 def test_dataset_acquisition_agent_model_requires_starter_model_pool(
     tmp_path: Path,
@@ -1886,7 +2841,6 @@ def test_dataset_acquisition_agent_model_requires_starter_model_pool(
     assert "Starter model pool" in payload["message"]
     assert not (run_dir / "thread.json").exists()
 
-
 def test_obtainercli_provider_prefers_codex_model_from_starter_pool(
     tmp_path: Path,
     monkeypatch,
@@ -1939,6 +2893,50 @@ def test_obtainercli_provider_prefers_codex_model_from_starter_pool(
     assert meta["upstream_model_name"] == "deepseek-chat"
     assert meta["requested_model"] == "deepseek-chat"
 
+def test_obtainercli_provider_uses_nested_codex_default_not_default_tier(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI.sft_export_agent import _resolve_provider
+
+    starter_config = tmp_path / "starter.yaml"
+    starter_config.write_text(
+        yaml.safe_dump({
+            "system": {
+                "model": {
+                    "default_model": "local-qwen",
+                    "default_tier": "medium",
+                    "codex_model": "deepseek-chat",
+                    "proxy_base_url": "http://127.0.0.1:8855/responseProxy/v1",
+                    "pool": [
+                        {
+                            "tier": "medium",
+                            "name": "local-qwen",
+                            "model_name": "qwen3-14b-fp8",
+                            "base_url": "http://127.0.0.1:8000/v1",
+                        },
+                        {
+                            "tier": "high",
+                            "name": "deepseek-chat",
+                            "model_name": "deepseek-chat",
+                            "base_url": "https://api.deepseek.com/v1",
+                            "api_key": "deepseek-key",
+                        },
+                    ],
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STARTER_CONFIG", str(starter_config))
+
+    prov, meta = _resolve_provider(tmp_path, None)
+
+    assert prov["model"] == "deepseek-chat"
+    assert meta["model_pool_name"] == "deepseek-chat"
+    assert meta["upstream_model_name"] == "deepseek-chat"
+    assert meta["tier"] == "high"
+    assert meta["requested_model"] == "deepseek-chat"
 
 def test_obtainercli_provider_does_not_silently_fallback_unknown_pool_model(
     tmp_path: Path,
@@ -1978,7 +2976,6 @@ def test_obtainercli_provider_does_not_silently_fallback_unknown_pool_model(
 
     assert exc.value.error_code == "OBTAINERCLI_MODEL_NOT_FOUND"
 
-
 def test_dataset_acquisition_agent_start_defaults_to_background(
     tmp_path: Path,
     monkeypatch,
@@ -1987,6 +2984,7 @@ def test_dataset_acquisition_agent_start_defaults_to_background(
     from loopai.skills.ObtainerCLI import dataset_acquisition_agent
 
     warehouse = tmp_path / "warehouse"
+    DataStore.init(warehouse).close()
     run_dir = tmp_path / "acquisition_run"
     _set_starter_model_pool(tmp_path, monkeypatch)
     monkeypatch.setenv("CODEX_BASE_URL", "http://bad-env.example/v1")
@@ -2033,7 +3031,13 @@ def test_dataset_acquisition_agent_start_defaults_to_background(
     state = json.loads((run_dir / "thread.json").read_text(encoding="utf-8"))
     assert state["provider"]["model_pool_name"] == "codex"
     assert state["provider"]["model"] == "codex"
-
+    assert state["resolved_model"] == "deepseek-chat"
+    assert state["webagent_model"] == "codex"
+    assert state["model_source"] == "codex_default"
+    registered = json.loads((warehouse / "models.json").read_text(encoding="utf-8"))
+    assert registered["default_model"] == "codex"
+    assert registered["models"]["codex"]["model"] == "deepseek-chat"
+    assert registered["models"]["codex"]["response_format"] == "response"
 
 def test_dataset_acquisition_agent_large_start_uses_scaled_default_timeout(
     tmp_path: Path,
@@ -2043,6 +3047,7 @@ def test_dataset_acquisition_agent_large_start_uses_scaled_default_timeout(
     from loopai.skills.ObtainerCLI import dataset_acquisition_agent
 
     warehouse = tmp_path / "warehouse"
+    DataStore.init(warehouse).close()
     run_dir = tmp_path / "acquisition_run"
     _set_starter_model_pool(tmp_path, monkeypatch)
     captured: dict[str, object] = {}
@@ -2080,7 +3085,6 @@ def test_dataset_acquisition_agent_large_start_uses_scaled_default_timeout(
     assert payload["status"] == "background_started"
     assert captured["timeout"] > 3600
 
-
 def test_dataset_acquisition_agent_resume_reuses_saved_thread_id(
     tmp_path: Path,
     monkeypatch,
@@ -2110,6 +3114,7 @@ def test_dataset_acquisition_agent_resume_reuses_saved_thread_id(
     def fake_run_via_sdk(prompt, prov, cwd, timeout=600, network=True, thread_id=None, **kwargs):
         captured["prompt"] = prompt
         captured["thread_id"] = thread_id
+        _write_successful_acquisition_artifacts(run_dir)
         (run_dir / "final_report.json").write_text(
             json.dumps({"ok": True, "datasets_ingested": 1}),
             encoding="utf-8",
@@ -2141,7 +3146,6 @@ def test_dataset_acquisition_agent_resume_reuses_saved_thread_id(
     status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
     assert status["state"] == "completed"
     assert status["worker_ok"] is True
-
 
 def test_dataset_acquisition_worker_env_isolates_outer_task_context(
     monkeypatch,
@@ -2182,7 +3186,6 @@ def test_dataset_acquisition_worker_env_isolates_outer_task_context(
     assert "OBTAINER_BASE_URL" not in env
     assert "OBTAINER_API_KEY" not in env
 
-
 def test_dataset_acquisition_worker_preserves_custom_hf_endpoint(
     monkeypatch,
 ) -> None:
@@ -2194,7 +3197,6 @@ def test_dataset_acquisition_worker_preserves_custom_hf_endpoint(
 
     assert env["HF_ENDPOINT"] == "https://hf.internal.example"
     assert env["HF_HUB_ENDPOINT"] == "https://hf.internal.example"
-
 
 def test_datamixer_codex_prompt_uses_current_python_executable(
     monkeypatch,
@@ -2210,7 +3212,6 @@ def test_datamixer_codex_prompt_uses_current_python_executable(
     assert f"DM={codex.loopai_python_executable()} -m loopai.agents.Obtainer.datamixer" in prompt
     assert "QUALITY_LEVEL=L2" in prompt
     assert '--quality-level "$QUALITY_LEVEL"' in prompt
-
 
 def test_codex_runner_path_uses_configured_node_bin_dir(tmp_path: Path, monkeypatch) -> None:
     from loopai.agents.Obtainer.datamixer import codex
@@ -2228,7 +3229,6 @@ def test_codex_runner_path_uses_configured_node_bin_dir(tmp_path: Path, monkeypa
 
     assert path.split(":")[:2] == [str(node_bin), str(env_bin)]
 
-
 def test_codex_runner_path_does_not_prepend_system_python_bin(monkeypatch) -> None:
     from loopai.agents.Obtainer.datamixer import codex
 
@@ -2238,6 +3238,23 @@ def test_codex_runner_path_does_not_prepend_system_python_bin(monkeypatch) -> No
 
     assert path.split(":")[:3] == ["/opt/node/bin", "/usr/bin", "/bin"]
 
+def test_codex_runner_library_path_prefers_python_environment(
+    tmp_path: Path,
+) -> None:
+    from loopai.agents.Obtainer.datamixer import codex
+
+    python_executable = tmp_path / "env" / "bin" / "python"
+    python_executable.parent.mkdir(parents=True)
+    (tmp_path / "env" / "lib").mkdir()
+    python_executable.write_text("", encoding="utf-8")
+
+    path = codex.runner_library_path(
+        str(python_executable), "/existing/lib:/another/lib"
+    )
+
+    assert path.split(":") == [
+        str(tmp_path / "env" / "lib"), "/existing/lib", "/another/lib",
+    ]
 
 def test_codex_response_proxy_uses_project_config_without_websockets(
     tmp_path: Path,
@@ -2282,7 +3299,6 @@ def test_codex_response_proxy_uses_project_config_without_websockets(
     assert provider["supports_websockets"] is False
     assert parsed["projects"][str(tmp_path.resolve())]["trust_level"] == "trusted"
 
-
 def test_dataset_acquisition_spawn_uses_explicit_python_executable(
     tmp_path: Path,
     monkeypatch,
@@ -2320,7 +3336,6 @@ def test_dataset_acquisition_spawn_uses_explicit_python_executable(
     assert captured["env"]["LOOPAI_PYTHON_EXECUTABLE"] == python_executable
     assert captured["env"]["PATH"].split(":")[0] == str(Path(python_executable).parent)
 
-
 def test_dataset_acquisition_worker_preserves_custom_hf_hub_endpoint(
     monkeypatch,
 ) -> None:
@@ -2333,7 +3348,6 @@ def test_dataset_acquisition_worker_preserves_custom_hf_hub_endpoint(
 
     assert env["HF_ENDPOINT"] == "https://hf.internal.example"
     assert env["HF_HUB_ENDPOINT"] == "https://hf.internal.example"
-
 
 def test_dataset_acquisition_worker_records_thread_started_event(
     tmp_path: Path,
@@ -2355,7 +3369,6 @@ def test_dataset_acquisition_worker_records_thread_started_event(
     assert state["thread_id"] == "thread-acq-new"
     assert status["thread_id"] == "thread-acq-new"
     assert status["state"] == "running"
-
 
 def test_dataset_acquisition_agent_resume_refuses_active_run(
     tmp_path: Path,
@@ -2398,7 +3411,6 @@ def test_dataset_acquisition_agent_resume_refuses_active_run(
     assert exit_code == 2
     assert payload["error_code"] == "DATASET_ACQUISITION_AGENT_RUN_ACTIVE"
 
-
 def test_dataset_acquisition_worker_marks_status_interrupted_on_keyboard_interrupt(
     tmp_path: Path,
     monkeypatch,
@@ -2430,6 +3442,71 @@ def test_dataset_acquisition_worker_marks_status_interrupted_on_keyboard_interru
     assert status["error"] == "KeyboardInterrupt"
     assert status["prompt_path"].endswith("worker_prompt.md")
 
+def test_dataset_acquisition_worker_fails_without_a_successful_final_report(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    run_dir = tmp_path / "acquisition_run"
+    monkeypatch.setattr(
+        dataset_acquisition_agent.codex,
+        "run_via_sdk",
+        lambda *args, **kwargs: {"summary": "worker exited"},
+        raising=False,
+    )
+
+    with pytest.raises(ObtainerCliError) as exc:
+        dataset_acquisition_agent._run_worker(
+            run_dir=run_dir,
+            prompt="test prompt",
+            prov={"base_url": "http://127.0.0.1:8855/responseProxy/v1", "api_key": "dummy", "model": "deepseek-chat"},
+            provider_meta={"source": "test", "model": "deepseek-chat"},
+            timeout=1,
+        )
+
+    assert exc.value.error_code == "DATASET_ACQUISITION_AGENT_FAILED"
+    status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["state"] == "failed"
+    assert status["worker_ok"] is False
+
+def test_dataset_acquisition_worker_rejects_success_without_webagent_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    run_dir = tmp_path / "acquisition_run"
+
+    def fake_run(*args, **kwargs):
+        (run_dir / "final_report.json").write_text(
+            json.dumps({"ok": True, "datasets_ingested": 1}),
+            encoding="utf-8",
+        )
+        return {"summary": "claimed success"}
+
+    monkeypatch.setattr(dataset_acquisition_agent.codex, "run_via_sdk", fake_run, raising=False)
+
+    with pytest.raises(ObtainerCliError) as exc:
+        dataset_acquisition_agent._run_worker(
+            run_dir=run_dir,
+            prompt="test prompt",
+            prov={"base_url": "http://proxy/v1", "api_key": "dummy", "model": "deepseek-chat"},
+            provider_meta={
+                "resolved_model": "deepseek-chat",
+                "webagent_model": "codex",
+                "model_source": "codex_default",
+            },
+            timeout=1,
+        )
+
+    assert exc.value.error_code == "DATASET_ACQUISITION_AGENT_ACCEPTANCE_FAILED"
+    acceptance = json.loads((run_dir / "acceptance_report.json").read_text(encoding="utf-8"))
+    assert {item["code"] for item in acceptance["issues"]} >= {
+        "searchagent_manifest_missing",
+        "webagent_campaign_id_missing",
+        "webagent_l1_evidence_missing",
+    }
 
 def test_dataset_acquisition_worker_preserves_successful_final_report_on_runner_error(
     tmp_path: Path,
@@ -2440,6 +3517,7 @@ def test_dataset_acquisition_worker_preserves_successful_final_report_on_runner_
     run_dir = tmp_path / "acquisition_run"
 
     def raise_after_report(*args, **kwargs):
+        _write_successful_acquisition_artifacts(run_dir)
         (run_dir / "final_report.json").write_text(
             json.dumps({"ok": True, "datasets_ingested": ["finance_sft_100k"]}),
             encoding="utf-8",
@@ -2462,7 +3540,6 @@ def test_dataset_acquisition_worker_preserves_successful_final_report_on_runner_
     assert status["worker_ok"] is True
     assert status["runner_warning"] == "Codex runner timed out after final report"
 
-
 def test_dataset_acquisition_status_reconciles_successful_final_report(
     tmp_path: Path,
     capsys,
@@ -2481,6 +3558,7 @@ def test_dataset_acquisition_status_reconciles_successful_final_report(
         json.dumps({"ok": True, "datasets_ingested": ["finance_sft_100k"]}),
         encoding="utf-8",
     )
+    _write_successful_acquisition_artifacts(run_dir)
 
     exit_code = run(
         [

@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 
 from loopai.agents.Obtainer.datamixer import codex
+from loopai.agents.Obtainer.datamixer.models import ModelPool, ModelSpec
+from loopai.schema.model_pool import responses_url
 
 from .errors import ObtainerCliError
 from .sft_export_agent import _json_read, _json_write, _resolve_provider, _workspace
@@ -20,6 +22,70 @@ DEFAULT_MIN_TIMEOUT_SECONDS = 3600
 DEFAULT_MAX_TIMEOUT_SECONDS = 6 * 3600
 STATUS_FILE = "status.json"
 STATE_FILE = "thread.json"
+
+
+def _resolved_model_metadata(
+    provider: dict,
+    provider_meta: dict,
+    *,
+    requested_model: str = "",
+) -> dict:
+    """Make default-vs-override resolution explicit and durable."""
+    meta = dict(provider_meta)
+    resolved = str(meta.get("upstream_model_name") or provider.get("model") or "").strip()
+    webagent_model = str(meta.get("model_pool_name") or requested_model or "").strip()
+    if not resolved or not webagent_model:
+        raise ObtainerCliError(
+            "OBTAINERCLI_MODEL_RESOLUTION_FAILED",
+            "could not resolve a Codex-default model for the acquisition worker",
+            hint="Configure the Starter model pool with a Codex default before starting acquisition.",
+            exit_code=2,
+        )
+    meta.update({
+        "resolved_model": resolved,
+        "webagent_model": webagent_model,
+        "model_source": "operator_override" if requested_model else "codex_default",
+    })
+    return meta
+
+
+
+def _focus_keywords_arg(focus_keywords: list[str] | None) -> str:
+    """Render the --focus-keywords CLI lines, or nothing when undeclared."""
+    values = [str(item).strip() for item in (focus_keywords or []) if str(item).strip()]
+    return "".join(f"    --focus-keywords {value} \\\n" for value in values)
+
+
+def _ensure_webagent_model(warehouse: Path, provider: dict, provider_meta: dict) -> str:
+    """Register the resolved Codex provider under the WebAgent pool name.
+
+    DataMixer WebAgent accepts a warehouse model-pool name, whereas the inner
+    worker receives a resolved provider.  Keeping this bridge in one place
+    prevents a blank context from silently selecting a local vLLM model.
+    """
+    warehouse.mkdir(parents=True, exist_ok=True)
+    name = str(provider_meta["webagent_model"])
+    spec = ModelSpec(
+        name=name,
+        api_url=responses_url(str(provider.get("base_url") or "")),
+        api_key=str(provider.get("api_key") or ""),
+        response_format="response",
+        model=str(provider_meta["resolved_model"]),
+        note="Managed by ObtainerCLI from the resolved Codex default model.",
+    )
+    pool = ModelPool(warehouse)
+    pool.add(spec)
+    pool.set_default(name)
+    return name
+
+
+def _with_model_resolution(result: dict, provider_meta: dict) -> dict:
+    """Expose the same resolution record from start, resume, and worker runs."""
+    result.update({
+        key: provider_meta.get(key, "")
+        for key in ("resolved_model", "webagent_model", "model_source")
+    })
+    return result
 
 
 def _policy_text() -> str:
@@ -36,22 +102,39 @@ Hard rules:
    {python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} <datamixer-command> --json
 2. Do not use legacy Obtainer lake/table/sample/index commands.
 3. For every normal acquisition, start two complementary discovery streams at
-   the same time and wait for both before deciding what to ingest:
+   the same time:
    - Run Obtainer SearchAgent to discover hosted datasets and construct the
      provider-download candidate manifest.
    - Run DataMixer's registered `domain_data_acquisition` campaign (legacy alias
      `webcrawler_dm`) to collect authoritative vertical-domain resource pages as
      L1 raw HTML in the target warehouse.
    SearchAgent and WebAgent cover different source types; neither substitutes
-   for the other. Keep their artifacts, failures, and accepted outputs separate
-   in the final report. Do not make one stream wait for the other to start.
-   Select an existing DataMixer model-pool name with `dm model list --json`
-   before starting WebAgent. If no model is registered, record a
-   `webagent_model_missing` blocker while continuing SearchAgent; never invent
-   credentials or silently skip the required WebAgent stream. Do not begin
-   `download manifest` until `webagent_start.json` exists, unless a concrete
-   `webagent_model_missing`/launch blocker has been written to final_report.
-4. Use Obtainer SearchAgent and `download manifest` as the acquisition
+   for the other. Start WebAgent with `--detach --auto-process`: its persistent
+   L1 -> L2 -> L3 queues begin consuming each accepted page immediately. Do not
+   wait for the WebAgent campaign to finish before downloading, normalizing, or
+   ingesting the hosted-dataset stream. Wait only for the SearchAgent artifact
+   needed by `download manifest`, then keep polling the WebAgent campaign while
+   the other work continues. Keep their artifacts, failures, and accepted
+   outputs separate in the final report.
+   WebAgent terminal state is not a completion gate for this worker. Continuously
+   evaluate current per-bucket lake record/token counts and quality gates. Once
+   they satisfy the plan, record `lake_ready=true` plus the observed counts and
+   gate evidence in `final_report.json`, then finish the worker's bounded work so
+   the outer agent can immediately start postprocessing, indexing, recipe
+   planning, and export while WebAgent continues producing data. Never wait for
+   empty WebAgent queues or a terminal campaign state.
+   The outer CLI resolves and registers the Codex-default DataMixer model
+   before this worker starts. Read its durable name from `thread.json`; never
+   select a local model or invent credentials. Do not begin `download manifest`
+   until `webagent_start.json` exists; a WebAgent launch blocker is terminal.
+4. Before discovery, write `manifest/data_mix_plan.json`. It must contain the
+   current objective/failure taxonomy, `target_datasets`, a non-empty `buckets`
+   list, each bucket's `name`, `weight`, `target_datasets`, `search_objectives`,
+   `quality_gates`, and a concrete `rationale`. Weights must sum to 1.0. Use it
+   to make SearchAgent task JSON domain-specific and to prevent one capability
+   from crowding out the planned mix. Include the plan and observed acquisition
+   mix in `final_report.json`.
+5. Use Obtainer SearchAgent and `download manifest` as the acquisition
    bridge when appropriate:
    {python_executable} -m loopai.skills.ObtainerCLI.cli searchagent ...
    {python_executable} -m loopai.skills.ObtainerCLI.cli download manifest ...
@@ -60,12 +143,12 @@ Hard rules:
    call SearchAgent once with `--task-json <path> --parallelism <n>`. Keep each
    task's objective and search_keywords domain-specific so one domain cannot
    crowd out another.
-5. If direct web/Hugging Face/Kaggle discovery is more appropriate for the
+6. If direct web/Hugging Face/Kaggle discovery is more appropriate for the
    caller's instruction, write an equivalent manifest yourself and continue.
-6. Before downloading, compare the candidate list against the original user
+7. Before downloading, compare the candidate list against the original user
    request and Analyzer report. Remove clearly unrelated datasets and write
    both a filtered manifest and a rejection report with exact reasons.
-7. Each single dataset is capped at {max_rows_per_dataset} rows and
+8. Each single dataset is capped at {max_rows_per_dataset} rows and
    {max_bytes_per_dataset} output bytes. Do not bypass these caps. Smaller
    sampled downloads are allowed for broad acquisition, but record sampled_rows,
    rows_written, bytes_written, max_rows_effective, max_bytes_effective, and
@@ -74,15 +157,15 @@ Hard rules:
    and `--max-bytes-per-dataset` caps local JSONL output bytes per dataset. If
    the byte cap is reached, keep the partial JSONL and report `truncated`,
    `truncated_reason`, `rows_written`, and `bytes_written`.
-8. Normalize each downloaded dataset to JSONL before ingest. Each row must
+9. Normalize each downloaded dataset to JSONL before ingest. Each row must
    preserve source_uri, source_dataset/source_dataset_id, split, and enough
    payload fields for later SFT/PT processing.
-9. For every accepted dataset, write a Markdown dataset card before ingest and
+10. For every accepted dataset, write a Markdown dataset card before ingest and
    register it during ingest with `--dataset-card <path>`. The card must live in
    this run's manifest directory first and describe source, license, split,
    row count, original fields, derived fields, derivation rules, validation
    checks, intended training use, and known risks.
-10. You may add dataset-specific derived fields during normalization, but only
+11. You may add dataset-specific derived fields during normalization, but only
    by adding fields. Never drop, overwrite, or rename original payload fields.
    The normalized JSONL must preserve the same row count as the selected source
    rows. For complex embedded formats, derive explicit training-ready fields:
@@ -90,12 +173,12 @@ Hard rules:
    into messages/dialogue/instruction-response fields, combine question with
    options/evidence/schema blocks into prompt/input fields, and keep gold
    labels/answers as separate fields.
-11. If derived fields are added, every derived field must be non-empty for every
+12. If derived fields are added, every derived field must be non-empty for every
    row. Pass `--derived-field <name>` for each derived field and
    `--source-row-count <n>` to `dm ingest` so DataMixer validates this before
    writing. If validation fails, fix the normalizer or reject the dataset; do
    not ingest partial rows.
-12. Ingest every accepted dataset through DataMixer `ingest` or `agent-ingest`
+13. Ingest every accepted dataset through DataMixer `ingest` or `agent-ingest`
    with complete tags: source platform, source dataset id, source URL or URI,
    license if known, language if known, domain, task_type, processing_level,
    quality_level, source_kind, split, loop_uuid/version_id when provided, and
@@ -104,19 +187,27 @@ Hard rules:
    for standard SFT/DPO/training samples, and L4 only for output explicitly
    refined by an internal data-lake pipeline. When uncertain, choose the lower
    applicable level and explain the uncertainty; never omit the parameter.
-13. After ingest, run DataMixer status, dataset list, stats, representative query,
+14. After ingest, run DataMixer status, dataset list, stats, representative query,
    and index build when useful for downstream recall.
-14. Write final_report.json with SearchAgent and WebAgent commands/statuses,
+15. Write final_report.json with `lake_ready`, per-bucket planned-versus-observed
+    record/token counts, quality-gate evidence, SearchAgent and WebAgent commands/statuses,
     WebAgent campaign id and L1 datasets, candidates, filtered list, rejections,
     downloads, dataset card paths, derived field specs, validation outcomes,
     ingests, each dataset's selected quality_level and selection rationale,
     DataMixer command summaries, before/after counts, lineage/manifest paths,
     and blockers.
-15. Do not mark ok=true if no dataset was ingested, if accepted datasets are
+16. Do not mark ok=true if no dataset was ingested, if accepted datasets are
     unrelated to the request, if any accepted dataset lacks a registered md
     dataset card, if derived field validation failed, if row count changed
     during derivation, or if required source/provenance tags are missing.
-16. Do not read or print secret/key files.
+17. Do not read or print secret/key files.
+18. Per-record quality approval belongs to post-processing: the WebAgent L2
+    `domain_classify` step receives the campaign `--focus-keywords` and the LLM
+    judgement accepts only items directly related to that focus, backed by
+    grounded semantic signals; `topic_quality_filter` then enforces a
+    confidence/signal threshold on that evidence. No vertical (e.g. finance)
+    is hard-wired, so the same chain follows whichever topic the WebAgent
+    explored.
 """
 
 
@@ -156,7 +247,13 @@ def _worker_env(
         env["LOOPAI_NODE_BIN_DIR"] = node_bin_dir
         entries = [node_bin_dir, *env["PATH"].split(os.pathsep)]
         env["PATH"] = os.pathsep.join(dict.fromkeys(filter(None, entries)))
-    hf_endpoint = env.get("HF_ENDPOINT") or env.get("HF_HUB_ENDPOINT") or "https://hf-mirror.com"
+    from loopai.utils.hf_endpoints import DEFAULT_HF_ENDPOINTS
+
+    hf_endpoint = (
+        env.get("HF_ENDPOINT")
+        or env.get("HF_HUB_ENDPOINT")
+        or DEFAULT_HF_ENDPOINTS[0]
+    )
     env["HF_ENDPOINT"] = hf_endpoint
     env["HF_HUB_ENDPOINT"] = hf_endpoint
     env.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
@@ -256,7 +353,9 @@ def build_start_prompt(
     max_bytes_per_dataset: int,
     discovery_mode: str,
     extra_message: str,
+    focus_keywords: list[str] | None = None,
 ) -> str:
+    focus_keywords_arg = _focus_keywords_arg(focus_keywords)
     policy = _policy_text().format(
         warehouse=str(warehouse),
         max_rows_per_dataset=max_rows_per_dataset,
@@ -304,6 +403,7 @@ Required artifacts:
 - rejections: {run_dir}/manifest/rejections.json
 - SearchAgent task JSON: {run_dir}/manifest/tasks.json
 - SearchAgent manifest: {run_dir}/manifest/searchagent/searchagent_manifest.json
+- acquisition mix plan: {run_dir}/manifest/data_mix_plan.json
 - WebAgent launch result: {run_dir}/manifest/webagent_start.json
 - WebAgent campaign status: {run_dir}/manifest/webagent_campaign_status.json
 - dataset cards: {run_dir}/manifest/dataset_cards/*.md
@@ -313,14 +413,22 @@ Required artifacts:
 - final report: {run_dir}/final_report.json
 
 Required discovery procedure:
-1. Create `{run_dir}/manifest/tasks.json` with a top-level `tasks` list. Run
-   `{codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} model list --json`
-   and select one registered model name as `$WEBAGENT_MODEL`. If there is no
-   registered model, write `webagent_model_missing` to the final report, then
-   still run SearchAgent and report that the required WebAgent stream was blocked.
+1. Create `{run_dir}/manifest/data_mix_plan.json` before creating discovery
+   tasks. It must record the planned capability/domain proportions from the
+   current request and Analyzer failure taxonomy, the `target_datasets` budget,
+   planned count per bucket, source/quality gates, and rationale. Then create
+   `{run_dir}/manifest/tasks.json` with a top-level `tasks` list, where every
+   task belongs to a planned bucket. Read
+   `{run_dir}/thread.json` and use its non-empty `webagent_model` exactly as
+   `$WEBAGENT_MODEL`; it was registered from the resolved Codex default before
+   this worker started. Do not select a different entry from `dm model list`.
+   If this value is absent, write `webagent_model_missing` to final_report and
+   fail the run after recording the blocker; do not continue with SearchAgent
+   or a direct-download fallback.
 2. When `$WEBAGENT_MODEL` is available, launch SearchAgent and WebAgent in
-   parallel. Use separate output files and wait for both PIDs; do not run one
-   only after the other finishes:
+   parallel. The WebAgent command must return after its durable campaign and
+   streaming L1 -> L2 -> L3 consumers are started. Wait for SearchAgent only;
+   do not wait for WebAgent campaign completion before continuing:
 
 ```bash
 (
@@ -342,23 +450,32 @@ SEARCHAGENT_PID=$!
     --model "$WEBAGENT_MODEL" \
     --subquery-count {max(4, min(24, target_datasets))} \
     --workers 4 \
-    --search-provider tavily \
+    --auto-process \
+    --detach \
+{focus_keywords_arg}    --search-provider tavily \
     --json > {run_dir}/manifest/webagent_start.json
 ) &
 WEBAGENT_PID=$!
 wait "$SEARCHAGENT_PID"; SEARCHAGENT_EXIT=$?
-wait "$WEBAGENT_PID"; WEBAGENT_EXIT=$?
+wait "$WEBAGENT_PID"; WEBAGENT_LAUNCH_EXIT=$?
 ```
 
    If `TAVILY_API_KEY` is unavailable, use `--search-provider auto` for the
-   WebAgent command and record the provider choice. A failed stream is not a
-   reason to discard successful output from the other stream.
+   WebAgent command and record the provider choice. A failed WebAgent launch or
+   a failed persistent processing queue is terminal; a still-running campaign
+   is not. It must never be replaced by a direct-download fallback.
 3. Read `{run_dir}/manifest/searchagent/searchagent_manifest.json` and
    `{run_dir}/manifest/webagent_start.json`. Use `dm webagent campaign status
    <run-id> --json` to write `{run_dir}/manifest/webagent_campaign_status.json`.
    Preserve the WebAgent campaign id, selected URLs, L1 dataset names, and
    L1/L2/L3 counts if an automatic pipeline was requested. Do not copy WebAgent
-   HTML into the provider download manifest; it is already in DataMixer.
+   HTML into the provider download manifest; it is already in DataMixer. Continue
+   hosted-data filtering/download/ingest as soon as SearchAgent completes. Do
+   not defer it until WebAgent reaches a terminal state. After each ingest,
+   compare current per-bucket record/token counts and quality evidence with
+   `data_mix_plan.json`. When they pass, write `lake_ready=true` and the evidence
+   to `final_report.json`; do not wait for WebAgent completion or empty queues
+   before completing this worker and handing downstream work back to the caller.
 4. Read `{run_dir}/manifest/searchagent/searchagent_manifest.json`. Copy or
    transform its `candidates`/`download_list` into `{run_dir}/manifest/candidates.json`.
    Do not inspect `{run_dir}/manifest/tasks/`; SearchAgent does not write there.
@@ -411,6 +528,17 @@ wait "$WEBAGENT_PID"; WEBAGENT_EXIT=$?
    is invalid. Do not use non-existent ingest flags such as
    `--source-dataset-id` or `--source-url`; put those values in
    `--tag source_dataset_id=<source_dataset_id>` and `--source-uri ...`.
+   `dm ingest` is the batch lake path: it writes every normalized row with the
+   batch metadata and the chosen `--quality-level`; it does not run per-record
+   LLM approval and it never drops rows. Do not attempt to emulate a per-record
+   quality gate before ingest, and do not use `--domain finance` as if it
+   triggered per-row reclassification - it is only batch-level metadata.
+   Production export runs only
+   after the DataFlowAgent post-processing stage completes and the L4 dataset
+   scale meets the recipe target with at least 1.5x in-lake redundancy per
+   bucket. A dataset alias, source name, or URL is never evidence for
+   `--domain finance`; provenance remains metadata only. Preserve the final
+   export quality report path in final_report.json.
 
 Extra caller instruction:
 {extra_message or '- none'}
@@ -421,6 +549,8 @@ warehouse, and blockers.
 
 
 def build_resume_prompt(*, run_dir: Path, message: str) -> str:
+    state = _json_read(run_dir / STATE_FILE)
+    focus_keywords_arg = _focus_keywords_arg(state.get("focus_keywords"))
     return f"""{_policy_text().format(warehouse='the warehouse recorded in thread.json', max_rows_per_dataset=DEFAULT_MAX_ROWS_PER_DATASET, max_bytes_per_dataset=DEFAULT_MAX_BYTES_PER_DATASET, python_executable=codex.loopai_python_executable())}
 
 # Resume task
@@ -448,6 +578,12 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     start.add_argument("--analysis-report", action="append", default=[])
     start.add_argument("--objective", default="")
     start.add_argument("--keywords", default="")
+    start.add_argument(
+        "--focus-keywords",
+        action="append",
+        default=[],
+        help="WebAgent exploration keyword passed to the LLM quality judgement (repeatable)",
+    )
     start.add_argument("--target-datasets", type=int, default=DEFAULT_TARGET_DATASETS)
     start.add_argument(
         "--max-rows-per-dataset",
@@ -498,11 +634,200 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _command_result(payload: dict) -> dict:
+    """Unwrap ObtainerCLI/DataMixer JSON envelopes without guessing text logs."""
+    current = payload if isinstance(payload, dict) else {}
+    for _ in range(3):
+        nested = current.get("result")
+        if not isinstance(nested, dict):
+            break
+        current = nested
+    return current
+
+
+def _campaign_success_count(payload: dict) -> int:
+    queue = payload.get("queue") if isinstance(payload.get("queue"), dict) else {}
+    values = (
+        queue.get("succeeded"),
+        payload.get("succeeded"),
+        payload.get("pages_ingested"),
+        payload.get("l1_count"),
+    )
+    for value in values:
+        try:
+            if int(value or 0) > 0:
+                return int(value)
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def _validate_data_mix_plan(run_dir: Path, target_datasets: int) -> tuple[dict, list[dict]]:
+    path = run_dir / "manifest" / "data_mix_plan.json"
+    plan = _json_read(path)
+    issues: list[dict] = []
+    if not plan:
+        return plan, [{"code": "data_mix_plan_missing", "artifact": str(path)}]
+
+    buckets = plan.get("buckets")
+    if not isinstance(buckets, list) or not buckets:
+        return plan, [{"code": "data_mix_buckets_missing", "artifact": str(path)}]
+
+    weights = 0.0
+    planned_datasets = 0
+    names: set[str] = set()
+    for index, bucket in enumerate(buckets):
+        if not isinstance(bucket, dict):
+            issues.append({"code": "data_mix_bucket_invalid", "index": index})
+            continue
+        name = str(bucket.get("name") or "").strip()
+        if not name:
+            issues.append({"code": "data_mix_bucket_name_missing", "index": index})
+        elif name in names:
+            issues.append({"code": "data_mix_bucket_duplicate", "name": name})
+        names.add(name)
+        try:
+            weight = float(bucket.get("weight"))
+        except (TypeError, ValueError):
+            weight = 0.0
+        if weight <= 0:
+            issues.append({"code": "data_mix_bucket_weight_invalid", "name": name, "weight": bucket.get("weight")})
+        weights += weight
+        try:
+            bucket_target = int(bucket.get("target_datasets"))
+        except (TypeError, ValueError):
+            bucket_target = -1
+        if bucket_target < 0:
+            issues.append({"code": "data_mix_bucket_target_invalid", "name": name})
+        else:
+            planned_datasets += bucket_target
+        if not bucket.get("search_objectives"):
+            issues.append({"code": "data_mix_search_objectives_missing", "name": name})
+        if not bucket.get("quality_gates"):
+            issues.append({"code": "data_mix_quality_gates_missing", "name": name})
+        if not str(bucket.get("rationale") or "").strip():
+            issues.append({"code": "data_mix_rationale_missing", "name": name})
+
+    if abs(weights - 1.0) > 0.01:
+        issues.append({"code": "data_mix_weights_invalid", "actual": round(weights, 6), "expected": 1.0})
+    declared_target = plan.get("target_datasets")
+    try:
+        declared_target_int = int(declared_target)
+    except (TypeError, ValueError):
+        declared_target_int = 0
+    if declared_target_int != int(target_datasets):
+        issues.append({
+            "code": "data_mix_target_mismatch",
+            "expected": int(target_datasets),
+            "actual": declared_target,
+        })
+    if planned_datasets != int(target_datasets):
+        issues.append({
+            "code": "data_mix_bucket_targets_mismatch",
+            "expected": int(target_datasets),
+            "actual": planned_datasets,
+        })
+    return plan, issues
+
+
+def _validate_successful_run_artifacts(run_dir: Path) -> dict:
+    """Verify that an ``ok=true`` worker really launched both discovery streams."""
+    state = _json_read(run_dir / STATE_FILE)
+    final_report = _json_read(run_dir / "final_report.json")
+    search_manifest = _json_read(run_dir / "manifest" / "searchagent" / "searchagent_manifest.json")
+    web_start_raw = _json_read(run_dir / "manifest" / "webagent_start.json")
+    web_status_raw = _json_read(run_dir / "manifest" / "webagent_campaign_status.json")
+    web_start = _command_result(web_start_raw)
+    web_status = _command_result(web_status_raw)
+    issues: list[dict] = []
+    warnings: list[dict] = []
+    data_mix_plan, data_mix_issues = _validate_data_mix_plan(
+        run_dir,
+        int(state.get("target_datasets") or DEFAULT_TARGET_DATASETS),
+    )
+    issues.extend(data_mix_issues)
+
+    for key in ("resolved_model", "webagent_model", "model_source"):
+        if not state.get(key):
+            issues.append({"code": f"{key}_missing", "artifact": STATE_FILE})
+    if not search_manifest:
+        issues.append({"code": "searchagent_manifest_missing", "artifact": "manifest/searchagent/searchagent_manifest.json"})
+    elif search_manifest.get("ok") is False:
+        issues.append({"code": "searchagent_failed", "detail": search_manifest.get("errors")})
+
+    start_run_id = str(web_start.get("run_id") or "")
+    status_run_id = str(web_status.get("run_id") or "")
+    dataset = str(web_start.get("dataset") or web_status.get("dataset") or "")
+    if not web_start_raw:
+        issues.append({"code": "webagent_start_missing", "artifact": "manifest/webagent_start.json"})
+    if not start_run_id:
+        issues.append({"code": "webagent_campaign_id_missing", "artifact": "manifest/webagent_start.json"})
+    if not web_status_raw:
+        issues.append({"code": "webagent_campaign_status_missing", "artifact": "manifest/webagent_campaign_status.json"})
+    if start_run_id and status_run_id and start_run_id != status_run_id:
+        issues.append({"code": "webagent_campaign_id_mismatch", "start": start_run_id, "status": status_run_id})
+    if not dataset:
+        issues.append({"code": "webagent_l1_dataset_missing"})
+    success_count = max(_campaign_success_count(web_start), _campaign_success_count(web_status))
+    if success_count <= 0:
+        issues.append({"code": "webagent_l1_evidence_missing", "detail": "campaign has no succeeded task/pages/L1 count"})
+    terminal_status = str(web_status.get("status") or web_start.get("status") or "").lower()
+    if terminal_status in {"failed", "completed_with_errors", "cancelled"}:
+        failure = {
+            "code": "webagent_campaign_failed",
+            "status": terminal_status,
+            "error": web_status.get("error") or web_start.get("error"),
+        }
+        # A terminal campaign is not a completion gate for the dataset batch
+        # path as long as L1 evidence was produced; record it as a warning.
+        if success_count > 0:
+            warnings.append(failure)
+        else:
+            issues.append(failure)
+
+    evidence = {
+        "ok": not issues,
+        "resolved_model": state.get("resolved_model") or "",
+        "webagent_model": state.get("webagent_model") or "",
+        "model_source": state.get("model_source") or "",
+        "searchagent_manifest": str(run_dir / "manifest" / "searchagent" / "searchagent_manifest.json"),
+        "campaign_id": start_run_id or status_run_id,
+        "l1_dataset": dataset,
+        "l1_success_count": success_count,
+        "campaign_status": terminal_status,
+        "data_mix_plan": str(run_dir / "manifest" / "data_mix_plan.json"),
+        "planned_mix": data_mix_plan,
+        "issues": issues,
+        "warnings": warnings,
+    }
+    _json_write(run_dir / "acceptance_report.json", evidence)
+    if final_report.get("ok") is True:
+        final_report.update({
+            "resolved_model": evidence["resolved_model"],
+            "webagent_model": evidence["webagent_model"],
+            "model_source": evidence["model_source"],
+            "webagent_campaign_id": evidence["campaign_id"],
+            "webagent_l1_dataset": evidence["l1_dataset"],
+            "webagent_l1_success_count": evidence["l1_success_count"],
+            "data_mix_plan": evidence["data_mix_plan"],
+            "planned_mix": evidence["planned_mix"],
+            "acquisition_acceptance": evidence,
+        })
+        _json_write(run_dir / "final_report.json", final_report)
+    return evidence
+
+
 def _status_payload(run_dir: Path) -> dict:
     status = _json_read(run_dir / STATUS_FILE)
     state = _json_read(run_dir / STATE_FILE)
     final_report = _json_read(run_dir / "final_report.json")
-    if final_report.get("ok") is True and status.get("state") != "completed":
+    active_pid = status.get("pid") if isinstance(status, dict) else None
+    worker_alive = _pid_alive(active_pid) if active_pid else False
+    if (
+        final_report.get("ok") is True
+        and status.get("state") != "completed"
+        and not worker_alive
+    ):
         _complete_from_successful_final_report(
             run_dir,
             thread_id=str(state.get("thread_id") or status.get("thread_id") or ""),
@@ -518,7 +843,7 @@ def _status_payload(run_dir: Path) -> dict:
     pid = status.get("pid") if isinstance(status, dict) else None
     if pid:
         status["process_alive"] = _pid_alive(pid)
-    return {
+    payload = {
         "ok": True,
         "command": "dm.dataset-acquisition-agent.status",
         "run_dir": str(run_dir),
@@ -526,6 +851,32 @@ def _status_payload(run_dir: Path) -> dict:
         "thread": {key: value for key, value in state.items() if key != "provider"},
         "final_report": final_report or None,
     }
+    if (
+        status.get("state") in {"background_started", "running"}
+        and pid
+        and not status.get("process_alive")
+        and final_report.get("ok") is not True
+    ):
+        status.update({
+            "state": "failed",
+            "updated_at": time.time(),
+            "error": (
+                "acquisition worker exited with ok=false in final_report.json"
+                if final_report else
+                "acquisition worker exited before writing final_report.json"
+            ),
+        })
+        _json_write(run_dir / STATUS_FILE, status)
+        payload["status"] = status
+    if payload["status"].get("state") == "failed" or payload["status"].get("worker_ok") is False:
+        raise ObtainerCliError(
+            "DATASET_ACQUISITION_AGENT_FAILED",
+            str(payload["status"].get("error") or "dataset acquisition worker failed"),
+            hint="Inspect the run status, final report, and worker logs; do not use a direct-download fallback.",
+            exit_code=1,
+            details=payload,
+        )
+    return payload
 
 
 def _complete_from_successful_final_report(
@@ -536,6 +887,31 @@ def _complete_from_successful_final_report(
 ) -> dict | None:
     final_report = _json_read(run_dir / "final_report.json")
     if final_report.get("ok") is not True:
+        return None
+    status = _json_read(run_dir / STATUS_FILE)
+    try:
+        started_at = float(status.get("worker_started_at") or 0.0)
+        report_mtime = Path(run_dir / "final_report.json").stat().st_mtime
+    except (OSError, TypeError, ValueError):
+        started_at = 0.0
+        report_mtime = 0.0
+    if started_at and report_mtime < started_at - 1.0:
+        # final_report predates the current worker generation (e.g. resume);
+        # do not mark completed until the running worker rewrites it.
+        return None
+    acceptance = _validate_successful_run_artifacts(run_dir)
+    if not acceptance.get("ok"):
+        _json_write(run_dir / STATUS_FILE, {
+            "state": "failed",
+            "updated_at": time.time(),
+            "thread_id": thread_id or None,
+            "final_report": str(run_dir / "final_report.json"),
+            "worker_ok": False,
+            "error": "acquisition acceptance failed: " + ", ".join(
+                str(item.get("code") or "unknown") for item in acceptance.get("issues", [])
+            ),
+            "acceptance_report": str(run_dir / "acceptance_report.json"),
+        })
         return None
     state = _json_read(run_dir / STATE_FILE)
     saved_thread_id = state.get("thread_id") or thread_id or None
@@ -621,6 +997,7 @@ def _spawn_background(
     _json_write(run_dir / STATUS_FILE, {
         "state": "background_started",
         "updated_at": time.time(),
+        "worker_started_at": time.time(),
         "pid": proc.pid,
         "prompt_path": str(prompt_path),
         "stdout": str(stdout_path),
@@ -681,6 +1058,7 @@ def _run_worker(
     status.update({
         "state": "running",
         "updated_at": time.time(),
+        "worker_started_at": time.time(),
         "prompt_path": str(prompt_path),
         "thread_id": thread_id or None,
     })
@@ -725,15 +1103,59 @@ def _run_worker(
         state["thread_id"] = result["thread_id"]
     state["updated_at"] = time.time()
     state["provider"] = provider_meta
+    state["resolved_model"] = provider_meta.get("resolved_model", state.get("resolved_model", ""))
+    state["webagent_model"] = provider_meta.get("webagent_model", state.get("webagent_model", ""))
+    state["model_source"] = provider_meta.get("model_source", state.get("model_source", ""))
     _json_write(run_dir / STATE_FILE, state)
     _json_write(run_dir / "logs" / f"codex_result_{int(time.time())}.json", result)
     final_report = _json_read(run_dir / "final_report.json")
+    if final_report.get("ok") is not True:
+        error = (
+            "acquisition worker exited without final_report.json"
+            if not final_report
+            else "acquisition worker reported ok=false in final_report.json"
+        )
+        _json_write(run_dir / STATUS_FILE, {
+            "state": "failed",
+            "updated_at": time.time(),
+            "thread_id": state.get("thread_id") or thread_id or None,
+            "final_report": str(run_dir / "final_report.json") if final_report else None,
+            "worker_ok": False,
+            "error": error,
+        })
+        raise ObtainerCliError(
+            "DATASET_ACQUISITION_AGENT_FAILED",
+            error,
+            hint="Inspect final_report.json and worker logs; do not use a direct-download fallback.",
+            exit_code=1,
+        )
+    acceptance = _validate_successful_run_artifacts(run_dir)
+    if not acceptance.get("ok"):
+        error = "acquisition acceptance failed: " + ", ".join(
+            str(item.get("code") or "unknown") for item in acceptance.get("issues", [])
+        )
+        _json_write(run_dir / STATUS_FILE, {
+            "state": "failed",
+            "updated_at": time.time(),
+            "thread_id": state.get("thread_id") or thread_id or None,
+            "final_report": str(run_dir / "final_report.json"),
+            "worker_ok": False,
+            "error": error,
+            "acceptance_report": str(run_dir / "acceptance_report.json"),
+        })
+        raise ObtainerCliError(
+            "DATASET_ACQUISITION_AGENT_ACCEPTANCE_FAILED",
+            error,
+            hint="Inspect acceptance_report.json; do not continue to download/export fallback paths.",
+            exit_code=1,
+            details=acceptance,
+        )
     _json_write(run_dir / STATUS_FILE, {
         "state": "completed",
         "updated_at": time.time(),
         "thread_id": state.get("thread_id") or thread_id or None,
         "final_report": str(run_dir / "final_report.json") if final_report else None,
-        "worker_ok": final_report.get("ok") if final_report else None,
+        "worker_ok": True,
     })
     return {
         "ok": True,
@@ -759,6 +1181,8 @@ def _save_initial_state(
     provider_meta: dict,
     python_executable: str = "",
     node_bin_dir: str = "",
+    task_id: str = "",
+    focus_keywords: list[str] | None = None,
 ) -> None:
     now = time.time()
     state = _json_read(run_dir / STATE_FILE)
@@ -774,7 +1198,14 @@ def _save_initial_state(
         "objective": objective,
         "keywords": keywords,
         "discovery_mode": discovery_mode,
+        "focus_keywords": [
+            str(item).strip() for item in (focus_keywords or []) if str(item).strip()
+        ],
         "provider": provider_meta,
+        "resolved_model": provider_meta.get("resolved_model", ""),
+        "webagent_model": provider_meta.get("webagent_model", ""),
+        "model_source": provider_meta.get("model_source", ""),
+        "task_id": task_id or state.get("task_id", ""),
         "runtime": {
             "python_executable": python_executable,
             "node_bin_dir": node_bin_dir,
@@ -789,7 +1220,7 @@ def _save_initial_state(
     })
 
 
-def run_agent(argv: list[str], *, root: str) -> dict:
+def run_agent(argv: list[str], *, root: str, task_id: str = "") -> dict:
     args = _parse(argv)
     run_dir = Path(args.run).expanduser().resolve()
     if getattr(args, "python_executable", "") or getattr(args, "node_bin_dir", ""):
@@ -826,6 +1257,16 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 hint="Use `dm --lake .loopai/lake.yaml dataset-acquisition-agent start ...` or pass the directory containing datamixer.toml.",
                 exit_code=2,
             )
+        if not args.dry_run and not (warehouse / "datamixer.toml").is_file():
+            raise ObtainerCliError(
+                "LAKE_NOT_LOADED",
+                f"DataMixer lake is not loaded: no initialized warehouse at {warehouse}",
+                hint=(
+                    "Load or initialize the DataMixer lake before starting the worker: "
+                    "`dm lake init --root <lake-root>` or `dm lake load --warehouse <warehouse>`."
+                ),
+                exit_code=2,
+            )
         max_rows = args.max_rows_per_dataset
         if max_rows <= 0 or max_rows > DEFAULT_MAX_ROWS_PER_DATASET:
             max_rows = DEFAULT_MAX_ROWS_PER_DATASET
@@ -837,6 +1278,10 @@ def run_agent(argv: list[str], *, root: str) -> dict:
         python_executable = args.python_executable or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
         node_bin_dir = args.node_bin_dir or os.environ.get("LOOPAI_NODE_BIN_DIR", "")
         prov, provider_meta = _resolve_provider(warehouse, args.model or None)
+        provider_meta = _resolved_model_metadata(
+            prov, provider_meta, requested_model=args.model or ""
+        )
+        _ensure_webagent_model(warehouse, prov, provider_meta)
         _save_initial_state(
             run_dir=run_dir,
             warehouse=warehouse,
@@ -850,6 +1295,8 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             provider_meta=provider_meta,
             python_executable=python_executable,
             node_bin_dir=node_bin_dir,
+            task_id=task_id,
+            focus_keywords=args.focus_keywords,
         )
         prompt = build_start_prompt(
             warehouse=warehouse,
@@ -862,6 +1309,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             max_bytes_per_dataset=max_bytes,
             discovery_mode=args.discovery_mode,
             extra_message=args.message,
+            focus_keywords=args.focus_keywords,
         )
         if not args.dry_run:
             prompt_path = run_dir / "worker_prompt.md"
@@ -876,7 +1324,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 encoding="utf-8",
             )
             if not args.foreground:
-                return _spawn_background(
+                return _with_model_resolution(_spawn_background(
                     run_dir=run_dir,
                     warehouse=warehouse,
                     prompt_path=prompt_path,
@@ -884,15 +1332,15 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                     model=args.model or "",
                     python_executable=python_executable,
                     node_bin_dir=node_bin_dir,
-                )
-        return _run_worker(
+                ), provider_meta)
+        return _with_model_resolution(_run_worker(
             run_dir=run_dir,
             prompt=prompt,
             prov=prov,
             provider_meta=provider_meta,
             timeout=timeout,
             dry_run=args.dry_run,
-        )
+        ), provider_meta)
 
     if args.agent_command == "resume":
         state = _json_read(run_dir / STATE_FILE)
@@ -908,7 +1356,13 @@ def run_agent(argv: list[str], *, root: str) -> dict:
         python_executable = args.python_executable or runtime.get("python_executable") or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
         node_bin_dir = args.node_bin_dir or runtime.get("node_bin_dir") or os.environ.get("LOOPAI_NODE_BIN_DIR", "")
         _apply_runtime_env(python_executable=python_executable, node_bin_dir=node_bin_dir)
-        prov, provider_meta = _resolve_provider(warehouse, args.model or state.get("provider", {}).get("model_pool_name"))
+        requested_model = args.model or str(state.get("provider", {}).get("model_pool_name") or "")
+        prov, provider_meta = _resolve_provider(warehouse, requested_model or None)
+        provider_meta = _resolved_model_metadata(
+            prov, provider_meta,
+            requested_model=args.model or "",
+        )
+        _ensure_webagent_model(warehouse, prov, provider_meta)
         if not args.dry_run:
             active = _active_run_status(run_dir)
             if active:
@@ -944,7 +1398,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 encoding="utf-8",
             )
             if not args.foreground:
-                return _spawn_background(
+                return _with_model_resolution(_spawn_background(
                     run_dir=run_dir,
                     warehouse=warehouse,
                     prompt_path=prompt_path,
@@ -953,8 +1407,8 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                     thread_id=thread_id,
                     python_executable=python_executable,
                     node_bin_dir=node_bin_dir,
-                )
-        return _run_worker(
+                ), provider_meta)
+        return _with_model_resolution(_run_worker(
             run_dir=run_dir,
             prompt=prompt,
             prov=prov,
@@ -962,7 +1416,7 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             timeout=timeout,
             thread_id=thread_id,
             dry_run=args.dry_run,
-        )
+        ), provider_meta)
 
     if args.agent_command == "worker-run":
         state = _json_read(run_dir / STATE_FILE)
@@ -974,7 +1428,13 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 exit_code=2,
             )
         warehouse = Path(state.get("warehouse") or root or "").expanduser().resolve()
-        prov, provider_meta = _resolve_provider(warehouse, args.model or state.get("provider", {}).get("model_pool_name"))
+        requested_model = args.model or str(state.get("provider", {}).get("model_pool_name") or "")
+        prov, provider_meta = _resolve_provider(warehouse, requested_model or None)
+        provider_meta = _resolved_model_metadata(
+            prov, provider_meta,
+            requested_model=args.model or "",
+        )
+        _ensure_webagent_model(warehouse, prov, provider_meta)
         prompt_path = Path(args.prompt)
         if not prompt_path.exists():
             raise ObtainerCliError(
@@ -987,13 +1447,13 @@ def run_agent(argv: list[str], *, root: str) -> dict:
             args.timeout,
             target_datasets=int(state.get("target_datasets") or DEFAULT_TARGET_DATASETS),
         )
-        return _run_worker(
+        return _with_model_resolution(_run_worker(
             run_dir=run_dir,
             prompt=prompt_path.read_text(encoding="utf-8"),
             prov=prov,
             provider_meta=provider_meta,
             timeout=timeout,
             thread_id=args.thread_id,
-        )
+        ), provider_meta)
 
     raise AssertionError(args.agent_command)

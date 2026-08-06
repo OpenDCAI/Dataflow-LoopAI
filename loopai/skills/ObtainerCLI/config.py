@@ -7,15 +7,28 @@ from typing import Any, Dict, Mapping
 # These values are intentionally credential-free. A lake pointer is shared by
 # the UI, ObtainerCLI and isolated workers, so it must retain operational
 # defaults without copying API keys into project state.
+# Active run bindings tied to a concrete task/run. These are cleared by
+# `dm lake unbind` so a stale task_id never leaks into a new task's run.
+OBTAINER_ACTIVE_BINDING_KEYS: tuple[str, ...] = (
+    "obtainer_active_acquisition_run",
+    "obtainer_active_campaign_id",
+    "obtainer_active_l1_dataset",
+    "obtainer_active_task_id",
+)
+
+
 OBTAINER_CONTEXT_DEFAULTS: Dict[str, str] = {
     "obtainer_webagent": "domain_data_acquisition",
     "obtainer_webagent_model": "",
+    "obtainer_resolved_model": "",
+    "obtainer_model_source": "",
     "obtainer_webagent_workers": "4",
     "obtainer_webagent_subquery_count": "24",
     "obtainer_webagent_auto_process": "false",
     "obtainer_active_acquisition_run": "",
     "obtainer_active_campaign_id": "",
     "obtainer_active_l1_dataset": "",
+    "obtainer_active_task_id": "",
 }
 
 

@@ -77,7 +77,9 @@ def _ensure_hf_cache_env(download_dir: Optional[str]) -> None:
     for path in (hf_cache_root, hub_dir, datasets_dir, transformers_dir):
         os.makedirs(path, exist_ok=True)
 
-    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    from loopai.utils.hf_endpoints import DEFAULT_HF_ENDPOINTS
+
+    os.environ.setdefault("HF_ENDPOINT", DEFAULT_HF_ENDPOINTS[0])
     os.environ.setdefault("HF_HUB_ENDPOINT", os.environ["HF_ENDPOINT"])
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     os.environ.setdefault("HF_HOME", hf_cache_root)
