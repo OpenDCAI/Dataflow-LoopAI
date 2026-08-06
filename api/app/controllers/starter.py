@@ -299,7 +299,10 @@ async def starter_codex_session_looper(session_id: str, req: StarterLooperReques
         latest_session = codex_session_store.get(session_id) or session
         latest_status = str((latest_session or {}).get("status") or "")
         if command["op"] == "query":
-            if latest_status in {"submitted", "running", "finishing", "terminating"}:
+            if (
+                codex_session_store.has_active_execution(session_id)
+                or latest_status in {"submitted", "running", "finishing", "terminating"}
+            ):
                 action = {
                     "type": "deferred_running",
                     "message": "Codex session is still running; looper command was planned but not auto-submitted.",

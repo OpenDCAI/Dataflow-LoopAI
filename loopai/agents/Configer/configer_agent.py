@@ -5,7 +5,11 @@ from langgraph.graph import StateGraph
 from langgraph.types import interrupt, Command
 from langgraph.config import get_stream_writer
 
-from loopai.schema.states import LoopAIState, get_state_config_schema
+from loopai.schema.states import (
+    LoopAIState,
+    RETIRED_DATA_AGENT_STATE_SECTIONS,
+    get_state_config_schema,
+)
 from loopai.agents.BaseAgent.base_agent import BaseAgent
 from loopai.schema.events import StreamEvent
 
@@ -41,7 +45,11 @@ class ConfigerAgent(BaseAgent):
             self.system_prompt_type, self.system_prompt_name)
         
         def annotations_to_str(ann: dict) -> dict:
-            return {k: str(v) for k, v in ann.items()}
+            return {
+                k: str(v)
+                for k, v in ann.items()
+                if k not in RETIRED_DATA_AGENT_STATE_SECTIONS
+            }
         state_dict = annotations_to_str(LoopAIState.__annotations__)
 
         fields_statement = get_state_config_schema()

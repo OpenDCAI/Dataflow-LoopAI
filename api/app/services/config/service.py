@@ -9,6 +9,7 @@ from ...models.body import ConfigModel
 from ...models.db_models import StarterConfig
 from ...utils.config.config import format_value, get_state_config, get_system_config
 from loopai.common.tracking import strip_retired_tracking_fields
+from loopai.schema.states import RETIRED_DATA_AGENT_STATE_SECTIONS
 from loopai.schema.system_runtime import migrate_legacy_credentials
 
 
@@ -56,8 +57,12 @@ def _apply_states_config(
 ) -> None:
     default_states = original_config.setdefault("default_states", {})
     for series_key, series_value in states_config.items():
+        if series_key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+            continue
         if series_key == "default":
             for key, value in series_value.items():
+                if key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+                    continue
                 format_item = format_value(value)
                 default_states[key] = format_item["value"]
             continue

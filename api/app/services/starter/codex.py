@@ -281,6 +281,7 @@ def _sync_codex_home_config(
     template["projects"] = {workspace: project_config}
 
     config_path.write_text(tomlkit.dumps(template), encoding="utf-8")
+    _render_agents_manifest(codex_home)
     return codex_home
 
 
@@ -297,6 +298,24 @@ def _ensure_codex_home_seed_files(codex_home: Path) -> None:
             shutil.copytree(source_path, target_path)
         else:
             shutil.copy2(source_path, target_path)
+
+
+def _render_agents_manifest(codex_home: Path) -> None:
+    from loopai.agents.Obtainer.datamixer import codex as obtainer_codex
+
+    template = EXAMPLE_CODEX_HOME / "AGENTS.md"
+    if not template.is_file():
+        return
+    text = template.read_text(encoding="utf-8")
+    if obtainer_codex.ENV_MANIFEST_MARKER not in text:
+        return
+    (codex_home / "AGENTS.md").write_text(
+        text.replace(
+            obtainer_codex.ENV_MANIFEST_MARKER,
+            obtainer_codex.environment_manifest_markdown(),
+        ),
+        encoding="utf-8",
+    )
 
 
 def _resolved_codex_sandbox_mode(system_config: dict[str, Any]) -> str:
@@ -348,6 +367,7 @@ class CodexSessionStore:
         self.sessions: dict[str, dict[str, Any]] = {}
         self.processes: dict[str, asyncio.subprocess.Process] = {}
         self.tasks: dict[str, asyncio.Task[Any]] = {}
+        self.submit_locks: dict[str, asyncio.Lock] = {}
 
     def _new_session(
         self,
@@ -434,7 +454,14 @@ class CodexSessionStore:
     def get_process(self, session_id: str) -> asyncio.subprocess.Process | None:
         return self.processes.get(session_id)
 
-    def clear_process(self, session_id: str) -> asyncio.subprocess.Process | None:
+    def clear_process(
+        self,
+        session_id: str,
+        expected: asyncio.subprocess.Process | None = None,
+    ) -> asyncio.subprocess.Process | None:
+        current = self.processes.get(session_id)
+        if expected is not None and current is not expected:
+            return None
         return self.processes.pop(session_id, None)
 
     def set_task(self, session_id: str, task: asyncio.Task[Any]) -> None:
@@ -443,8 +470,29 @@ class CodexSessionStore:
     def get_task(self, session_id: str) -> asyncio.Task[Any] | None:
         return self.tasks.get(session_id)
 
-    def clear_task(self, session_id: str) -> asyncio.Task[Any] | None:
+    def clear_task(
+        self,
+        session_id: str,
+        expected: asyncio.Task[Any] | None = None,
+    ) -> asyncio.Task[Any] | None:
+        current = self.tasks.get(session_id)
+        if expected is not None and current is not expected:
+            return None
         return self.tasks.pop(session_id, None)
+
+    def submit_lock(self, session_id: str) -> asyncio.Lock:
+        lock = self.submit_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self.submit_locks[session_id] = lock
+        return lock
+
+    def has_active_execution(self, session_id: str) -> bool:
+        task = self.get_task(session_id)
+        if task is not None and not task.done():
+            return True
+        process = self.get_process(session_id)
+        return process is not None and process.returncode is None
 
     def request_termination(self, session_id: str, reason: str = "user_requested") -> dict[str, Any] | None:
         session = self.get(session_id)
@@ -751,66 +799,72 @@ class CodexStarterService:
         session_id: str | None = None,
         env_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if session_id:
-            await self.restore_session_snapshot(session_id)
-        existing_session = self.session_store.get(session_id) if session_id else None
-        if existing_session is not None and existing_session.get("status") in {"submitted", "running", "finishing"}:
-            queued_item = self.session_store.queue_prompt(session_id, prompt)
-            self.session_store.update(session_id, status=existing_session.get("status") or "running")
+        lock_key = session_id or f"new:{uuid.uuid4()}"
+        async with self.session_store.submit_lock(lock_key):
+            if session_id:
+                await self.restore_session_snapshot(session_id)
+            existing_session = self.session_store.get(session_id) if session_id else None
+            if session_id and self.session_store.has_active_execution(session_id):
+                queued_item = self.session_store.queue_prompt(session_id, prompt)
+                self.session_store.update(
+                    session_id,
+                    status=(existing_session or {}).get("status") or "running",
+                )
+                payload = {
+                    "type": "queued",
+                    "session_id": session_id,
+                    "message": "Codex session is already running; prompt queued",
+                    "pending_prompts": (existing_session or {}).get("pending_prompts", []),
+                    "queued_item": queued_item,
+                }
+                self.session_store.record_event(session_id, payload)
+                await self.persist_session_snapshot(session_id)
+                return payload
+
+            session = self.session_store.get_or_create(
+                session_id=session_id,
+                prompt=prompt,
+                workspace=workspace,
+                env_overrides=env_overrides,
+            )
+            resolved_session_id = session["session_id"]
+            self.session_store.update(
+                resolved_session_id,
+                prompt=prompt,
+                workspace=workspace,
+                env_overrides=dict(env_overrides or session.get("env_overrides") or {}),
+                status="submitted",
+                last_error=None,
+            )
+            persisted_thread_id = await self.load_persisted_thread_id(resolved_session_id)
+            if persisted_thread_id and not session.get("codex_thread_id"):
+                self.session_store.update(resolved_session_id, codex_thread_id=persisted_thread_id)
+            await self.persist_session_snapshot(resolved_session_id)
+
+            async def run_in_background() -> None:
+                current_task = asyncio.current_task()
+                try:
+                    async for _ in self.stream(
+                        prompt=prompt,
+                        workspace=workspace,
+                        session_id=resolved_session_id,
+                        env_overrides=env_overrides,
+                    ):
+                        pass
+                finally:
+                    self.session_store.clear_task(resolved_session_id, expected=current_task)
+
+            background_task = asyncio.create_task(run_in_background())
+            self.session_store.set_task(resolved_session_id, background_task)
             payload = {
-                "type": "queued",
-                "session_id": session_id,
-                "message": "Codex session is already running; prompt queued",
-                "pending_prompts": existing_session.get("pending_prompts", []),
-                "queued_item": queued_item,
+                "type": "submitted",
+                "session_id": resolved_session_id,
+                "message": "Codex prompt submitted",
+                "status": "submitted",
             }
-            self.session_store.record_event(session_id, payload)
-            await self.persist_session_snapshot(session_id)
+            self.session_store.record_event(resolved_session_id, payload)
+            await self.persist_session_snapshot(resolved_session_id)
             return payload
-
-        session = self.session_store.get_or_create(
-            session_id=session_id,
-            prompt=prompt,
-            workspace=workspace,
-            env_overrides=env_overrides,
-        )
-        resolved_session_id = session["session_id"]
-        self.session_store.update(
-            resolved_session_id,
-            prompt=prompt,
-            workspace=workspace,
-            env_overrides=dict(env_overrides or session.get("env_overrides") or {}),
-            status="submitted",
-            last_error=None,
-        )
-        persisted_thread_id = await self.load_persisted_thread_id(resolved_session_id)
-        if persisted_thread_id and not session.get("codex_thread_id"):
-            self.session_store.update(resolved_session_id, codex_thread_id=persisted_thread_id)
-        await self.persist_session_snapshot(resolved_session_id)
-
-        async def run_in_background() -> None:
-            try:
-                async for _ in self.stream(
-                    prompt=prompt,
-                    workspace=workspace,
-                    session_id=resolved_session_id,
-                    env_overrides=env_overrides,
-                ):
-                    pass
-            finally:
-                self.session_store.clear_task(resolved_session_id)
-
-        background_task = asyncio.create_task(run_in_background())
-        self.session_store.set_task(resolved_session_id, background_task)
-        payload = {
-            "type": "submitted",
-            "session_id": resolved_session_id,
-            "message": "Codex prompt submitted",
-            "status": "submitted",
-        }
-        self.session_store.record_event(resolved_session_id, payload)
-        await self.persist_session_snapshot(resolved_session_id)
-        return payload
 
     async def terminate(self, session_id: str) -> dict[str, Any]:
         session = self.session_store.get(session_id)
@@ -1334,4 +1388,5 @@ class CodexStarterService:
             await self.persist_session_snapshot(session_id)
             yield _sse(error_payload), None
         finally:
-            self.session_store.clear_process(session_id)
+            if proc is not None:
+                self.session_store.clear_process(session_id, expected=proc)

@@ -13,10 +13,9 @@ STREAM_EVENT_AGENT_NAMES = (
     "looper",
     "judger",
     "obtainer",
-    "constructor",
+    "obtainercli",
     "analyzer",
     "trainer",
-    "webcrawler",
 )
 
 

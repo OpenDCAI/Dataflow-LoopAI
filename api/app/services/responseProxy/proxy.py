@@ -665,11 +665,13 @@ class ResponseProxyService:
             )
         base_url = (
             request_body.get("base_url")
+            or self.system_config.get("codex_base_url")
             or self.system_config.get("base_url")
             or "https://api.deepseek.com"
         )
         api_key = (
             request_body.get("api_key")
+            or self.system_config.get("codex_api_key")
             or self.system_config.get("api_key")
             or ""
         )

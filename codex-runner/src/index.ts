@@ -91,6 +91,21 @@ function resolveSandboxMode(value: string | undefined): SandboxMode {
     }
 }
 
+function errorMessage(error: unknown): string {
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return String(error);
+}
+
+function isBrokenToolHistoryError(error: unknown): boolean {
+    const message = errorMessage(error).toLowerCase();
+    return (
+        message.includes("no tool output found for tool call")
+        || message.includes("no tool output found for function call")
+    );
+}
+
 async function main() {
     writeStderr({
         type: "runner.started",
@@ -139,37 +154,58 @@ async function main() {
     }
     threadOptions.sandboxMode = sandboxMode;
 
-    const thread = threadId
-        ? codex.resumeThread(threadId, threadOptions)
-        : codex.startThread(threadOptions);
-    const { events } = await withTimeout(thread.runStreamed(prompt), timeoutMs);
     const items = new Map<string, ThreadItem>();
     let finalResponse = "";
     let usage: unknown = null;
     const streamErrors: string[] = [];
 
-    for await (const event of events) {
-        const safeEvent = sanitizeEvent(event);
-        writeStdout({
-            type: "event",
-            event: safeEvent
-        });
+    async function runAttempt(resumeThreadId: string): Promise<void> {
+        const thread = resumeThreadId
+            ? codex.resumeThread(resumeThreadId, threadOptions)
+            : codex.startThread(threadOptions);
+        const { events } = await withTimeout(thread.runStreamed(prompt), timeoutMs);
 
-        if (safeEvent.type === "item.started" || safeEvent.type === "item.updated" || safeEvent.type === "item.completed") {
-            items.set(safeEvent.item.id, safeEvent.item);
+        for await (const event of events) {
+            const safeEvent = sanitizeEvent(event);
+            writeStdout({
+                type: "event",
+                event: safeEvent
+            });
 
-            if (safeEvent.item.type === "agent_message") {
-                finalResponse = safeEvent.item.text;
+            if (safeEvent.type === "item.started" || safeEvent.type === "item.updated" || safeEvent.type === "item.completed") {
+                items.set(safeEvent.item.id, safeEvent.item);
+
+                if (safeEvent.item.type === "agent_message") {
+                    finalResponse = safeEvent.item.text;
+                }
+            } else if (safeEvent.type === "turn.completed") {
+                usage = safeEvent.usage;
+            } else if (safeEvent.type === "turn.failed") {
+                throw new Error(safeEvent.error.message);
+            } else if (safeEvent.type === "error") {
+                // The CLI may surface recoverable reconnect notices as `error` events
+                // before it falls back to another transport, so keep streaming here.
+                streamErrors.push(safeEvent.message);
             }
-        } else if (safeEvent.type === "turn.completed") {
-            usage = safeEvent.usage;
-        } else if (safeEvent.type === "turn.failed") {
-            throw new Error(safeEvent.error.message);
-        } else if (safeEvent.type === "error") {
-            // The CLI may surface recoverable reconnect notices as `error` events
-            // before it falls back to another transport, so keep streaming here.
-            streamErrors.push(safeEvent.message);
         }
+    }
+
+    try {
+        await runAttempt(threadId);
+    } catch (error) {
+        if (!threadId || !isBrokenToolHistoryError(error)) {
+            throw error;
+        }
+        writeStderr({
+            type: "runner.thread_recovery",
+            message: "Resumed thread has incomplete tool history; retrying prompt in a new thread",
+            brokenThreadId: threadId,
+            error: errorMessage(error)
+        });
+        items.clear();
+        finalResponse = "";
+        usage = null;
+        await runAttempt("");
     }
 
     writeStdout({

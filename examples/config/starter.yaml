@@ -75,7 +75,7 @@ default_states:
     output_suggestion: true
     analyze_batch_size: 20
 
-  # Obtainer agent configuration (nested structure for ObtainerAgent)
+  # ObtainerCLI/DataMixer context for acquisition, processing, and final export.
   obtainer:
     model_path: "gpt-4o-mini" # if empty, will use starter model
     base_url: "http://123.129.219.111:3000/v1" # if empty, will use starter base_url
@@ -92,60 +92,6 @@ default_states:
     # Webpage dataset node configuration
     max_records_per_page: 20 # Maximum dataset records to generate per webpage (default: 10)
     min_relevance_score: 0.7 # Minimum relevance score for records (0.0-1.0, default: 0.7)
-
-  webcrawler:
-    # 模型凭据来自 system.model；Tavily 凭据来自 system.integrations
-    deepseek_api_base: "http://123.129.219.111:3000/v1"
-    # 模型配置
-    model: "gpt-4o-mini"
-    temperature: 0.7
-    # 查询生成配置
-    num_queries: 5
-    # 爬取策略配置
-    max_pages: 10000
-    crawl_depth: 3
-    max_links_per_page: 5
-    concurrent_pages: 3
-    # 内容过滤配置
-    min_text_length: 500
-    min_code_length: 50
-    min_relevance_score: 6
-    url_patterns: null
-    # 运行时配置
-    request_delay: 2.0
-    timeout: 30
-    max_retries: 3
-    # 输出配置
-    output_format: "jsonl"
-    save_html: false
-    output_dir: ""
-    # 数据集生成配置
-    max_records_per_page: 10
-    dataset_concurrent_limit: 5
-    max_content_length: 50000
-    debug: false
-    # 数据集映射配置
-    sft_mapping_format: "jsonl_sft"
-    pt_mapping_format: "jsonl_pt"
-
-  # Constructor：后处理 / 清洗 / 映射（未填的字段由 API 用 schema 默认值补齐）
-  constructor:
-    postprocess_version: "agent_v2"
-    benchmark_source_dir: ""
-    benchmark_pool_path: "outputs/benchmark_load/benchmark_pool.jsonl"
-    benchmark_pool_size: 500
-    default_mapping_format: "alpaca"
-    max_samples_before_cleaning: 300
-    llm_timeout: 300.0
-    max_retries: 3
-    max_concurrent_mapping: 10
-    debug: false
-    category: ""
-    user_query: ""
-    datasets_background: ""
-    download_dir: ""
-    output_dir: ""
-    prompt_template_dir: ""
 
   # Obtainer debug flag (not nested in obtainer dict)
   obtainer_debug: false
