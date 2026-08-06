@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import os
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from . import utils
 
@@ -30,10 +31,18 @@ class CASStats:
 
 
 class ContentStore:
-    def __init__(self, root: str | os.PathLike, codec: str = "zlib"):
+    def __init__(self, root: str | os.PathLike, codec: str = "zlib",
+                 cache_size: int = 256):
         self.root = Path(root)
         self.blobs = self.root / "blobs"
         self.codec = codec
+        # Small bounded LRU for decoded blobs: exports/recipes read content in
+        # several passes (select -> record) and many rows share a cid, so a
+        # tiny cache removes repeated disk reads + decompression without ever
+        # holding a meaningful share of memory.
+        self._cache_size = max(int(cache_size), 0)
+        self._cache: OrderedDict[str, Any] = OrderedDict()
+        self._cache_lock = threading.Lock()
 
     def _path_for(self, cid: str, codec: str) -> Path:
         # cid looks like "s2-<hex>"; shard on the hex body.
@@ -93,16 +102,53 @@ class ContentStore:
     def get_json(self, cid: str):
         return utils.loads(self.get(cid))
 
+    def _cache_get(self, cid: str) -> Any | None:
+        if not self._cache_size:
+            return None
+        with self._cache_lock:
+            hit = self._cache.get(cid)
+            if hit is None:
+                return None
+            self._cache.move_to_end(cid)
+            return hit
+
+    def _cache_set(self, cid: str, value: Any) -> None:
+        if not self._cache_size:
+            return
+        with self._cache_lock:
+            self._cache[cid] = value
+            self._cache.move_to_end(cid)
+            while len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
+
+    def get(self, cid: str) -> bytes:
+        cached = self._cache_get(cid)
+        if cached is not None:
+            return cached
+        path = self._find(cid)
+        if path is None:
+            raise KeyError(f"cid not found: {cid}")
+        codec = utils.codec_from_ext(path.suffix)
+        raw = utils.decompress(path.read_bytes(), codec)
+        self._cache_set(cid, raw)
+        return raw
+
     def has(self, cid: str) -> bool:
         return self._find(cid) is not None
 
     def delete(self, cid: str) -> bool:
         """Unpin/remove a blob (supports the tombstone/right-to-erasure flow)."""
+        with self._cache_lock:
+            self._cache.pop(cid, None)
         path = self._find(cid)
         if path is None:
             return False
         path.unlink()
         return True
+
+    def clear_cache(self) -> None:
+        with self._cache_lock:
+            self._cache.clear()
 
     # -- introspection -----------------------------------------------------
     def iter_blobs(self) -> Iterator[Path]:

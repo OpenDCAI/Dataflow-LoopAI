@@ -100,6 +100,22 @@ def runner_process_path(python_executable: str | None = None, base_path: str | N
     return os.pathsep.join(entries)
 
 
+def runner_library_path(
+    python_executable: str | None = None,
+    base_path: str | None = None,
+) -> str:
+    """Prefer the active Python environment's native libraries in workers."""
+    python_executable = python_executable or loopai_python_executable()
+    env_lib = Path(python_executable).resolve().parent.parent / "lib"
+    entries: list[str] = []
+    if env_lib.is_dir():
+        entries.append(str(env_lib))
+    for item in (base_path or "").split(os.pathsep):
+        if item and item not in entries:
+            entries.append(item)
+    return os.pathsep.join(entries)
+
+
 @lru_cache(maxsize=1)
 def sdk_available() -> bool:
     """True iff LoopAI's shared codex-runner can be launched."""
@@ -133,6 +149,82 @@ def runtime_status() -> dict:
         "ready": bool(runner and sdk_available()),
         "install_hint": "ensure codex-runner dependencies are installed (`corepack yarn install` in codex-runner)",
     }
+
+
+ENV_MANIFEST_MARKER = "<!-- runtime_environment_manifest -->"
+
+
+def _lake_pointer_summary() -> dict[str, str]:
+    root = _project_root()
+    link = Path(root) / ".loopai" / "lake.yaml" if root else Path(".loopai") / "lake.yaml"
+    values: dict[str, str] = {}
+    if link.is_file():
+        for line in link.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or ":" not in stripped:
+                continue
+            key, value = stripped.split(":", 1)
+            values[key.strip()] = value.strip()
+    root_value = values.get("root", "")
+    warehouse = values.get("warehouse", "")
+    if not warehouse and root_value:
+        warehouse = str((Path(root_value) / "warehouse").resolve())
+    loaded = bool(warehouse and (Path(warehouse) / "datamixer.toml").is_file())
+    return {
+        "link": str(link),
+        "warehouse": warehouse,
+        "loaded": "yes" if loaded else "no",
+    }
+
+
+def environment_manifest_markdown() -> str:
+    """Runtime-detected environment manifest injected into every Codex home."""
+    import loopai
+
+    system = load_starter_system_config_sync(_project_root(), prefer_db=True)
+    system = system if isinstance(system, dict) else {}
+    api_port = os.environ.get("API_PORT") or str(system.get("api_port") or "8855")
+    model_config = system.get("model")
+    model_config = model_config if isinstance(model_config, dict) else {}
+    proxy_base = str(model_config.get("proxy_base_url") or "")
+    default_model = str(model_config.get("default_model") or "")
+    home = codex_home()
+    lake = _lake_pointer_summary()
+    python_executable = loopai_python_executable()
+    corepack = corepack_path() or "未检测到"
+    runner = runner_dir()
+    node = shutil.which("node") or "未检测到"
+    db_path = Path(_project_root()) / "api" / "db" / "db.sqlite3"
+    sdk_text = "yes" if sdk_available() else "no"
+    return "\n".join([
+        f"- **Python 解释器**：`{python_executable}`（loopai 包：`{loopai.__file__}`）",
+        f"- **Node / corepack**：`{node}` / `{corepack}`",
+        f"- **codex-runner**：`{runner}`（Codex SDK 就绪：{sdk_text}）",
+        f"- **CODEX_HOME**：`{home}`",
+        f"- **后端 API**：`http://127.0.0.1:{api_port}`（uvicorn `api.app.main:app`）",
+        f"- **模型代理**：`{proxy_base}`（默认模型：`{default_model}`）",
+        f"- **数据湖指针**：`{lake['link']}` → `{lake['warehouse']}`（loaded: {lake['loaded']}）",
+        f"- **任务库**：`{db_path}`",
+        f"- **标准命令前缀**：`{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {lake['warehouse']} <cmd> --json`",
+    ])
+
+
+def ensure_environment_manifest(home: Path) -> None:
+    """Render the runtime environment manifest into a Codex home's AGENTS.md."""
+    target = home / "AGENTS.md"
+    manifest = environment_manifest_markdown()
+    if target.is_file():
+        text = target.read_text(encoding="utf-8")
+        if ENV_MANIFEST_MARKER in text:
+            target.write_text(text.replace(ENV_MANIFEST_MARKER, manifest), encoding="utf-8")
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "## 运行环境清单\n\n"
+        "以下运行环境信息由系统自动探测并注入，直接按清单使用：\n\n"
+        f"{manifest}\n",
+        encoding="utf-8",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +385,11 @@ def _run_loopai_codex_runner(
     python_executable = loopai_python_executable()
     merged_env["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
     merged_env["PATH"] = runner_process_path(python_executable, merged_env.get("PATH"))
+    library_path = runner_library_path(
+        python_executable, merged_env.get("LD_LIBRARY_PATH")
+    )
+    if library_path:
+        merged_env["LD_LIBRARY_PATH"] = library_path
     proc = subprocess.Popen(
         cmd,
         cwd=runner,
@@ -424,6 +521,8 @@ def run_via_sdk(prompt: str, prov: dict, cwd: str, timeout: int = 600,
                 network: bool = True, thread_id: str | None = None,
                 on_event: Callable[[dict], None] | None = None) -> dict:
     home = codex_home()
+    if home:
+        ensure_environment_manifest(home)
     use_project_config = _requires_project_config(prov)
     if home and use_project_config:
         _sync_runner_project_config(home, prov, cwd)

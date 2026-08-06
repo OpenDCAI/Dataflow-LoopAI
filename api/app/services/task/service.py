@@ -13,6 +13,7 @@ from ...models.db_models import TaskModel, TaskRuntime
 from ...utils.config.config import get_state_config
 from ...utils.task.task import apply_state_config_updates, build_task_state_config, config_format
 from loopai.common.tracking import strip_retired_tracking_fields
+from loopai.schema.states import RETIRED_DATA_AGENT_STATE_SECTIONS
 
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -172,7 +173,12 @@ def parse_task_state_overrides(raw_state: str | None) -> dict[str, Any] | None:
     parsed = json.loads(raw_state)
     if not isinstance(parsed, dict):
         raise ValueError("state must be a JSON object")
-    return strip_retired_tracking_fields(parsed)
+    cleaned = strip_retired_tracking_fields(parsed)
+    return {
+        key: value
+        for key, value in cleaned.items()
+        if key not in RETIRED_DATA_AGENT_STATE_SECTIONS
+    }
 
 
 async def create_task(task_item: TaskItem) -> dict[str, Any]:

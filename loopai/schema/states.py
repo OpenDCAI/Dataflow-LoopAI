@@ -4,6 +4,11 @@ from pydantic import BaseModel, Field
 from loopai.common.i18n.i18n_loader import I18NLoader
 
 
+# Kept in LoopAIState for historical task deserialization, but never exposed as
+# configurable or routable agents in the current ObtainerCLI workflow.
+RETIRED_DATA_AGENT_STATE_SECTIONS = frozenset({"constructor", "webcrawler"})
+
+
 # ==========================================
 # 1. 核心工具函数 (Reducers)
 # ==========================================
@@ -88,7 +93,7 @@ class ObtainerState(BaseModel):
         description="使用的搜索引擎",
         json_schema_extra={
             "ui_type": "select",
-            "options": ["tavily", "google", "bing", "duckduckgo"],
+            "options": ["auto", "tavily", "bing", "baidu", "duckduckgo", "jina"],
             "ui_group": "搜索设置"
         }
     )
@@ -356,7 +361,7 @@ class ObtainerState(BaseModel):
     banckmark_jsonl_path: str = Field(
         default="",
         title="[已废弃] Benchmark JSONL 路径",
-        description="[已废弃] 请使用 constructor.benchmark_source_dir 替代",
+        description="[已废弃] 当前 ObtainerCLI 数据链路不再使用此字段",
         json_schema_extra={"ui_type": "file_path",
                            "ui_group": "已废弃", "deprecated": True}
     )
@@ -1929,8 +1934,6 @@ def get_state_config_schema(language: str = "zh"):
         "analyzer": get_field_statement(AnalyzerState),
         "trainer": get_field_statement(TrainerState),
         "obtainer": get_field_statement(ObtainerState),
-        "constructor": get_field_statement(ConstructorState),
-        "webcrawler": get_field_statement(WebCrawlerState),
     }
 
     return fields_statement
