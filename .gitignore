@@ -37,7 +37,16 @@ codex_home/
 codex-chat-router/target
 .vscode
 codex_home_worker/
+codex_home_dataflow/
 catalog.db
 datamixer.toml
 .yarnrc.yml
 .yarn
+
+/envs/
+/model/
+/pkgs/
+/tools/
+/.cache/
+/.hf_cache/
+/.datamixer/
