@@ -183,10 +183,11 @@ Hard rules:
    license if known, language if known, domain, task_type, processing_level,
    quality_level, source_kind, split, loop_uuid/version_id when provided, and
    acquisition_run. Choose quality_level explicitly for every dataset: L1 for
-   raw source downloads, L2 for extracted/parsed/basic-cleaned source data, L3
-   for standard SFT/DPO/training samples, and L4 only for output explicitly
-   refined by an internal data-lake pipeline. When uncertain, choose the lower
-   applicable level and explain the uncertainty; never omit the parameter.
+   raw webpages, L2 for extracted/parsed/basic-cleaned source data, L3
+   for standard SFT/DPO/training samples (regular hosted SFT/training datasets
+   must be L3, not L1), and L4 only for output explicitly refined by an
+   internal data-lake pipeline. When uncertain, choose the lower applicable
+   level and explain the uncertainty; never omit the parameter.
 14. After ingest, run DataMixer status, dataset list, stats, representative query,
    and index build when useful for downstream recall.
 15. Write final_report.json with `lake_ready`, per-bucket planned-versus-observed
@@ -515,7 +516,7 @@ wait "$WEBAGENT_PID"; WEBAGENT_LAUNCH_EXIT=$?
      --domain <domain> \
      --task-type <task_type> \
      --quality-level <L1|L2|L3|L4> \
-     --processing-level raw \
+     --processing-level <processing_level> \
      --source-kind <source_platform> \
      --source-uri <source_url_or_uri> \
      --split <split> \

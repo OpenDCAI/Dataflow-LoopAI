@@ -118,6 +118,21 @@ def run_pipeline_chunk(
     env["DATAFLOW_INPUT"] = str(chunk_file)
     env["DATAFLOW_CACHE_DIR"] = str(cache_dir)
     env["DATAFLOW_PREFIX"] = prefix
+    # DataFlow LLM operators route through the Starter model-pool default model
+    # (response proxy), so the key/endpoint/model are injected here instead of
+    # requiring an ad-hoc export before every full run.
+    try:
+        from .dataflow_agent import operator_llm_config_from_starter
+
+        llm_cfg = operator_llm_config_from_starter()
+        if llm_cfg.get("api_key"):
+            env.setdefault("DF_API_KEY", llm_cfg["api_key"])
+        if llm_cfg.get("api_url"):
+            env.setdefault("DF_API_URL", llm_cfg["api_url"])
+        if llm_cfg.get("model_name"):
+            env.setdefault("DF_MODEL", llm_cfg["model_name"])
+    except Exception:
+        pass
     stdout_path = cache_dir / "pipeline.stdout.log"
     stderr_path = cache_dir / "pipeline.stderr.log"
     with stdout_path.open("w", encoding="utf-8") as out_fh, \

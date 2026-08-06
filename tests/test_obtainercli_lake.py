@@ -1973,7 +1973,7 @@ def test_dataflow_agent_continues_incomplete_thread_until_valid(
     assert calls[1][1] == "thread-1"
     assert "Finish the operator decision" in calls[1][0]
 
-def test_dataflow_agent_rejects_rewritten_original_metadata(
+def test_dataflow_agent_rejects_dropped_original_metadata(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -1996,7 +1996,7 @@ def test_dataflow_agent_rejects_rewritten_original_metadata(
         full_path = work_dir / "full_input.jsonl"
         row = json.loads(trial_path.read_text(encoding="utf-8"))
         bad_row = json.loads(full_path.read_text(encoding="utf-8"))
-        bad_row["retrieved_at"] = bad_row["retrieved_at"].replace("T", " ")
+        del bad_row["retrieved_at"]  # dropping an original field is fatal
         processed = work_dir / "processed.jsonl"
         full_processed = work_dir / "full_processed.jsonl"
         pipeline = work_dir / "pipeline.py"
@@ -2049,7 +2049,7 @@ def test_dataflow_agent_rejects_rewritten_original_metadata(
 
     assert exit_code == 1
     assert payload["ok"] is False
-    assert "did not preserve original input fields exactly" in payload["details"]["error"]
+    assert "dropped original input fields" in payload["details"]["error"]
     assert "retrieved_at" in payload["details"]["error"]
 
 

@@ -173,6 +173,9 @@ def _dataflow_status_path(root: Path, project_root: str | Path | None = None) ->
         bases.append(root.parents[2])
     for base in bases:
         candidates.extend(base.glob("outputs/*/status.json"))
+        # ``dm dataflow agent-run --work-dir dataflow_work`` writes its status
+        # under the project root; without this the dashboard keeps showing idle.
+        candidates.append(base / "dataflow_work" / "status.json")
         candidates.append(base / "runs" / "dataflow_agent" / "status.json")
     best: Path | None = None
     best_mtime = -1.0

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import llm
-from ..models import ModelPool
+from ..models import ModelPool, system_default_model_name
 from ..store import DataStore
 from .base import create
 from .webcrawler_dm import WebCrawlerDMConfig, mask_proxy_url
@@ -120,9 +120,12 @@ class LLMQueryExpander:
         collected: list[ExpandedQuery] = []
         seen: set[str] = set()
         trace = []
+        # Reasoning models spend part of max_output_tokens on chain-of-thought,
+        # so keep a generous floor to avoid truncating the JSON mid-generation.
+        budget = max(4096, min(8192, 300 + count * 150))
         spec = replace(
             self.model_spec,
-            max_tokens=max(self.model_spec.max_tokens, min(8192, 300 + count * 150)),
+            max_tokens=max(self.model_spec.max_tokens, budget),
         )
         for round_index in range(1, self.max_rounds + 1):
             remaining = count - len(collected)
@@ -891,7 +894,11 @@ class WebAgentCampaignRunner:
         l3_dataset = str(
             settings.get("l3_dataset") or f"{settings['dataset']}_l3_sft"
         )
-        model = str(settings.get("pipeline_model") or settings.get("model") or "")
+        model = str(settings.get("pipeline_model") or "")
+        if not model:
+            # LLM operators use the model-pool default; URL discovery keeps the
+            # Codex default (the campaign model).
+            model = system_default_model_name() or str(settings.get("model") or "")
         extractor = str(settings.get("pipeline_extractor") or "pipeline")
         mineru_gpu = str(settings.get("pipeline_mineru_gpu") or "0")
         focus_keywords = [
@@ -1052,7 +1059,11 @@ class WebAgentCampaignRunner:
         source["filter"] = f"quality_level = 'L1' AND {campaign_filter}"
         l2_dataset = str(settings.get("l2_dataset") or f"{settings['dataset']}_l2_pt")
         l3_dataset = str(settings.get("l3_dataset") or f"{settings['dataset']}_l3_sft")
-        model = str(settings.get("pipeline_model") or settings.get("model") or "")
+        model = str(settings.get("pipeline_model") or "")
+        if not model:
+            # LLM operators use the model-pool default; URL discovery keeps the
+            # Codex default (the campaign model).
+            model = system_default_model_name() or str(settings.get("model") or "")
         extractor = str(settings.get("pipeline_extractor") or "pipeline")
         mineru_gpu = str(settings.get("pipeline_mineru_gpu") or "0")
         for operator in spec.get("operators", []):

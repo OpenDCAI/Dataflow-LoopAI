@@ -59,3 +59,7 @@ lineage/
 dataset_cards/
 obtainer_runs/
 
+
+# 本地 DataMixer 湖与 DataFlow 运行产物
+/lake/
+/dataflow_work/

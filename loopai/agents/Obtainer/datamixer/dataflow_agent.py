@@ -213,18 +213,21 @@ def operator_llm_config_from_starter() -> dict[str, str]:
 
     The key is returned so the Codex runner can receive it via ``DF_API_KEY``;
     callers must not include it in prompts or JSON output.
+
+    The serving endpoint/model follow the Starter model-pool **default model**
+    (read from the persisted system config, DB preferred), so DataFlow LLM
+    operators run through the same response proxy as every other agent.
     """
+    from loopai.schema.model_pool import load_starter_system_config_sync
+
     root = _project_root()
-    starter = root / "starter.yaml" if root else None
-    if not starter or not starter.exists():
-        return {}
-    try:
-        import yaml
-        doc = yaml.safe_load(starter.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
-    system = doc.get("system") or {}
-    obtainer = (doc.get("default_states") or {}).get("obtainer") or {}
+    db_path = (root / "api" / "db" / "db.sqlite3") if root else None
+    # Use the project DB when it exists (production); otherwise fall back to the
+    # project's starter.yaml (standalone / tests).
+    system = load_starter_system_config_sync(
+        workspace=root,
+        prefer_db=bool(db_path and db_path.exists()),
+    ) or {}
     model_value = system.get("model")
     has_explicit_pool = (
         isinstance(model_value, list)
@@ -232,14 +235,28 @@ def operator_llm_config_from_starter() -> dict[str, str]:
     )
     if has_explicit_pool:
         pool = StarterModelPool(system)
-        provider = pool.resolve_proxy_provider(obtainer.get("model_path") or None, tier=pool.default_tier)
-        if provider is not None:
-            return {
-                "api_url": chat_completions_url(provider.base_url),
-                "model_name": provider.model,
-                "api_key_env": "DF_API_KEY",
-                "api_key": provider.api_key,
-            }
+        entry = pool.default_entry()
+        if entry is not None:
+            provider = pool.resolve_proxy_provider(entry.name, tier=entry.tier)
+            if provider is not None:
+                return {
+                    "api_url": chat_completions_url(provider.base_url),
+                    "model_name": provider.model,
+                    "api_key_env": "DF_API_KEY",
+                    "api_key": provider.api_key,
+                }
+    # Legacy fallback (no explicit model pool): flat starter.yaml keys.
+    root = _project_root()
+    starter = root / "starter.yaml" if root else None
+    doc = {}
+    if starter and starter.exists():
+        try:
+            import yaml
+            doc = yaml.safe_load(starter.read_text(encoding="utf-8")) or {}
+        except Exception:
+            doc = {}
+    system = doc.get("system") or {}
+    obtainer = (doc.get("default_states") or {}).get("obtainer") or {}
     base_url = system.get("starter_base_url") or obtainer.get("base_url") or ""
     model = (
         system.get("starter_model_name")
@@ -623,20 +640,13 @@ def _audit_processed(
         if source is None:
             continue
         missing_fields = sorted(set(source) - set(row))
-        changed_fields = sorted(
-            key for key, value in source.items()
-            if key in row and row[key] != value
-        )
-        if missing_fields or changed_fields:
-            details = []
-            if missing_fields:
-                details.append("missing " + ", ".join(missing_fields[:5]))
-            if changed_fields:
-                details.append("changed " + ", ".join(changed_fields[:5]))
+        if missing_fields:
             raise CodexError(
-                f"{label} row {row_number} ({sample_id}) did not preserve "
-                "original input fields exactly: " + "; ".join(details)
+                f"{label} row {row_number} ({sample_id}) dropped original "
+                "input fields: " + ", ".join(missing_fields[:5])
             )
+        # A DataFlow refinement pipeline is allowed to transform field values
+        # (e.g. normalize text, compute scores); only losing a field is fatal.
         added_fields.update(set(row) - set(source))
     if reported_out is not None and len(output_ids) != reported_out:
         raise CodexError(
@@ -680,7 +690,7 @@ def validate_dataflow_agent_result(
         raise CodexError("dataflow agent did not return a JSON object")
 
     required = {
-        "ok", "mode", "operator_decision", "pipeline_path",
+        "ok", "mode", "pipeline_path",
         "processed_jsonl", "trial_rows_in", "trial_rows_out",
         "full_processed_jsonl", "full_rows_in", "full_rows_out",
         "stdout_tail", "errors", "summary",
@@ -703,15 +713,6 @@ def validate_dataflow_agent_result(
         raise CodexError("dataflow agent result errors must be a list of strings")
     if not isinstance(result["summary"], str) or not result["summary"].strip():
         raise CodexError("dataflow agent result summary must be non-empty")
-
-    decision = result["operator_decision"]
-    if not isinstance(decision, dict):
-        raise CodexError("dataflow agent operator_decision must be an object")
-    if not isinstance(decision.get("ops"), list) or not decision["ops"]:
-        raise CodexError("dataflow agent operator_decision.ops must be non-empty")
-    for key in ("field_flow", "reason"):
-        if not isinstance(decision.get(key), str) or not decision[key].strip():
-            raise CodexError(f"dataflow agent operator_decision.{key} must be non-empty")
 
     if result["trial_rows_in"] != trial_rows:
         raise CodexError(

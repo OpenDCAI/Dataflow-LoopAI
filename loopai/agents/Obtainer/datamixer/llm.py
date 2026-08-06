@@ -78,6 +78,15 @@ def _extract_chat(resp: dict) -> str:
 
 
 def _extract_responses(resp: dict) -> str:
+    # Reasoning models (e.g. DeepSeek) can spend the whole token budget on
+    # reasoning, so the upstream returns finish_reason=length with an empty or
+    # partially-truncated message. That is transient (reasoning length varies
+    # per attempt): surface it as a retryable error instead of returning a
+    # truncated payload or crashing the JSON parser.
+    if str(resp.get("status") or "") == "incomplete":
+        raise RuntimeError(
+            "LLM response incomplete (max_output_tokens reached before a complete output)"
+        )
     if resp.get("output_text"):
         return resp["output_text"]
     parts = []
@@ -126,7 +135,8 @@ def _proxy_spec_if_available(spec: ModelSpec) -> ModelSpec:
 
 def _retryable(msg: str) -> bool:
     return ("connection error" in msg or "timed out" in msg
-            or "HTTP 429" in msg or "HTTP 5" in msg)
+            or "HTTP 429" in msg or "HTTP 5" in msg
+            or "incomplete" in msg or "max_output_tokens" in msg)
 
 
 def complete(spec: ModelSpec, messages, json_mode: bool = True,
