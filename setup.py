@@ -67,6 +67,7 @@ setup(
             "loopai-obtainercli=loopai.skills.ObtainerCLI.cli:main",
             "loopai-judger=loopai.skills.Judger.cli:main",
             "loopai-analyzer=loopai.skills.Analyzer.cli:main",
+            "loopai-trainer=loopai.skills.Trainer.cli:main",
         ],
     },
     python_requires=">=3.12",
