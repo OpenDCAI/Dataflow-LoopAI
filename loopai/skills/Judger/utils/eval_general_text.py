@@ -48,6 +48,7 @@ class BenchAdapter:
     eval_status: str = "pending"
     meta: Dict[str, Any] = field(default_factory=dict)
     key_mapping: Dict[str, Any] = field(default_factory=dict)
+    bench_prompt_template: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

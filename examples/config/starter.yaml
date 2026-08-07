@@ -58,13 +58,15 @@ default_states:
 
   judger:
     eval_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
-    eval_base_url: "http://127.0.0.1:8911/v1"
     eval_temperature: 0
     eval_top_p: 0.95
-    eval_test_case_path: "./outputs/test.json"
-    eval_problem_path: "./data/human-eval-v2-20210705-format.jsonl"
-    eval_result_path: "./outputs/result.json"
     eval_batch_size: 20
+    eval_case_num: 10
+    eval_vllm_tensor_parallel_size: 1
+    eval_vllm_gpu_memory_utilization: 0.9
+    cuda_visible_devices: "0"
+    benchlist: []
+    extra_benchlist: []
 
   analyzer:
     analyze_temperature: 0
