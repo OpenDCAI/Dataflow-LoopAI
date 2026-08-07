@@ -116,12 +116,13 @@ prepared = prepare(
 
 ### Verl GRPO State
 
-Use both training and validation Parquet files. When `pyarrow` is available,
-Trainer checks the schema, reads the distinct `data_source` values, and
-semantically validates up to the first 100 rows of each file. Every sampled row
-must contain a non-empty chat-message-list `prompt`, a supported `data_source`,
-and `reward_model.ground_truth`. Without `pyarrow`, Trainer checks the file and
-Parquet magic bytes, emits a warning, and defers schema validation to Verl.
+Native Verl inputs may supply both training and validation Parquet files. When
+the current round instead has Constructor-generated JSON/JSONL, leave
+`verl_source_dataset_path` empty to use `constructor.mapping_results.output_file`,
+or set it explicitly. Trainer converts native/messages/Alpaca/QA records into a
+version-scoped Parquet pair before generating YAML. `pyarrow` is required for
+conversion. Every output row contains a non-empty chat-message-list `prompt`, a
+`data_source`, and `reward_model.ground_truth`.
 
 ```python
 prepared = prepare(
@@ -146,6 +147,61 @@ prepared = prepare(
 )
 ```
 
+### Generated Data and Multi-Round Verl
+
+Keep the boundary between components explicit:
+
+- Constructor generates and cleans task data.
+- Trainer owns Verl-only adaptation, deterministic train/validation splitting,
+  reward contract selection, and executable GRPO config generation.
+- Do not add Verl-specific output formats to Constructor and do not change the
+  existing SFT Constructor path.
+
+On every fresh Verl `prepare()` round:
+
+1. Prefer an explicitly supplied `verl_source_dataset_path`; otherwise use the
+   current Constructor output before any persisted older source.
+2. Reuse native train/validation Parquet unchanged. Convert JSON, JSONL, or
+   non-native Parquet under
+   `{trainer_output_dir}/prepared_data/{train,validation}.parquet`.
+3. Write `dataset_manifest.json` and `rejected_rows.jsonl`. Reject records that
+   lack a reliable prompt or reference answer; never infer ground truth with an
+   LLM or copy the assistant answer into the prompt.
+4. If validation data is absent, split deterministically using
+   `verl_validation_ratio` (default `0.05`) and `verl_split_seed` (default `42`).
+   With `verl_reuse_previous_validation=true`, keep the previous validation
+   Parquet stable only while the resolved reward contract remains compatible;
+   otherwise split validation from the new source.
+5. With `verl_inherit_previous_config=true`, use the preceding successful
+   round's approved `train_config` as the hyperparameter baseline. Always
+   replace train/validation/model paths, reward fields, devices, experiment and
+   checkpoint directories, selection settings, and version metadata.
+6. With `verl_use_previous_best_model=true`, promote `update_model_path` only
+   when the preceding round completed, export did not fail, and the directory
+   contains a loadable Hugging Face config plus weights. Never pass raw FSDP
+   shards into the next round. To deliberately restart from another model,
+   pass a current-call `train_input_model_name`/`model_path` override or set
+   `verl_use_previous_best_model=false` together with the desired model path.
+7. With `verl_multi_round_enabled=true`, the prepared YAML enables Hugging Face
+   export and a positive checkpoint save cadence, including when the selected
+   smoke template originally disabled them.
+8. Show and approve the complete newly generated YAML again. Previous-round
+   approval never authorizes a new round.
+
+Minimal generated-data fields:
+
+```python
+"trainer": {
+    "train_framework": "verl",
+    "train_stage": "grpo",
+    "verl_dir": "/path/to/verl",
+    "train_input_model_name": "/path/to/base-model",
+    "train_input_task_description": "Mathematics GRPO",
+    "verl_data_adapter": "auto",
+    "verl_reward_mode": "auto",
+}
+```
+
 Use exactly one reward mode:
 
 - `auto`: route by Parquet `data_source` through Verl's built-in router. When
@@ -157,6 +213,13 @@ Use exactly one reward mode:
 The preset router imports reward implementations lazily from the configured Verl
 environment. Do not copy Verl reward source into LoopAI and do not silently fall
 back from an unknown `data_source` or preset.
+
+For generated non-native data in `auto` mode, Trainer may recommend an existing
+preset only when task/dataset metadata or an explicit answer marker makes the
+mapping reliable (for example GSM8K, MATH/boxed, DAPO/AIME, Numina/PRIME,
+Geometry3K, or Search-R1-style QA). A user-specified named preset or custom
+reward always wins. If the mapping is ambiguous, stop preparation and ask the
+user to select a preset or custom reward; do not guess.
 
 ## Runtime Configuration
 
@@ -173,6 +236,11 @@ from loopai.skills.Configer import get_configer_task_state_config
 
 cfg = get_configer_task_state_config("trainer", task_id=TASK_ID)
 ```
+
+For Verl data handoff it also reads only `mapping_results` from the task-scoped
+`constructor` and `obtainer` sections as optional, read-only upstream state so
+a Trainer-only invocation can locate the latest output without pulling
+unrelated section configuration or credentials into the worker state.
 
 `DB_PATH` must also be set for task-scoped loading. After the run completes or fails, Trainer Skill writes structured Trainer result fields back through Configer:
 
@@ -193,6 +261,8 @@ Useful environment variables:
 - `TRAIN_STAGE`
 - `TRAIN_DATASET_PATH`
 - `TRAIN_EVAL_DATASET_PATH`
+- `VERL_SOURCE_DATASET_PATH` and `VERL_SOURCE_EVAL_DATASET_PATH`
+- `VERL_DATA_ADAPTER`, `VERL_DATA_SOURCE`, `VERL_VALIDATION_RATIO`, and `VERL_SPLIT_SEED`
 - `TRAIN_MODEL_PATH`
 - `TRAIN_TASK_DESCRIPTION`
 - `TRAIN_CONFIG_TEMPLATE_PATH`
@@ -202,6 +272,7 @@ Useful environment variables:
 - `VERL_ENV_PATH` or `VERL_CONDA_ENV`
 - `VERL_REWARD_MODE`, `VERL_REWARD_PRESET`, and `VERL_REWARD_KWARGS`
 - `VERL_REWARD_FUNCTION_PATH` and `VERL_REWARD_FUNCTION_NAME` for custom reward mode
+- `VERL_INHERIT_PREVIOUS_CONFIG`, `VERL_USE_PREVIOUS_BEST_MODEL`, and `VERL_MULTI_ROUND_ENABLED`
 - `TRAINER_PERSISTENT_WORKER`
 - `CUDA_VISIBLE_DEVICES`
 
@@ -218,7 +289,7 @@ Required Trainer fields:
 - `train_input_config_template_path`
 - `train_input_model_name`
 - for SFT: `train_framework=llamafactory`, `train_stage=sft`, and `llamafactory_dir`
-- for GRPO: `train_framework=verl`, `train_stage=grpo`, `verl_dir`, `train_input_eval_dataset_path`, and a valid reward mode
+- for GRPO: `train_framework=verl`, `train_stage=grpo`, `verl_dir`, either a native train Parquet or generated source/Constructor output, and a valid reward mode. Validation may be supplied, reused, or deterministically split.
 
 ## Versioned Runtime
 
@@ -286,7 +357,7 @@ Fields that usually require user or task-specific input:
 - `train_input_dataset_path`
 - `train_input_model_name`
 - `train_input_task_description`
-- `llamafactory_dir` for SFT, or `verl_dir` and `train_input_eval_dataset_path` for GRPO
+- `llamafactory_dir` for SFT, or `verl_dir` for GRPO. A separate validation path is optional when Trainer can split generated data.
 
 Fields that Trainer can usually prefill:
 
@@ -294,6 +365,9 @@ Fields that Trainer can usually prefill:
 - `train_input_config_template_path`: selects the bundled SFT or GRPO YAML template
 - `verl_env_path`: defaults to Conda environment `verl`
 - `verl_reward_mode`: defaults to `auto`
+- `verl_data_adapter`: defaults to `auto`
+- `verl_validation_ratio` / `verl_split_seed`: default to `0.05` / `42`
+- `verl_inherit_previous_config`, `verl_use_previous_best_model`, `verl_multi_round_enabled`: default to `true`
 - `trainer_persistent_worker`: defaults to `true`
 - `CUDA_VISIBLE_DEVICES`: defaults to `0`
 

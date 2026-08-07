@@ -1,9 +1,10 @@
 """
 数据检查节点
-验证数据集格式是否符合 LlamaFactory 要求
+验证 SFT 数据；为 Verl 准备并验证 GRPO 数据与 reward 协议
 """
 
 import os
+from pathlib import Path
 
 from loopai.skills.Trainer.utils.stream_events import prepare_trainer_run
 from loopai.schema.states import LoopAIState
@@ -12,16 +13,29 @@ from loopai.skills.Trainer.utils.verl_data_checker import (
     check_verl_grpo_inputs,
     generate_verl_data_report,
 )
+from loopai.skills.Trainer.utils.verl_dataset_builder import prepare_verl_grpo_datasets
 from loopai.logger import get_logger
 
 logger = get_logger()
+
+
+def _mapping_output_file(state: LoopAIState, section_name: str):
+    section = state.get(section_name) or {}
+    if not isinstance(section, dict):
+        raise ValueError(f"{section_name} state must be a mapping")
+    mapping = section.get('mapping_results')
+    if mapping in (None, ""):
+        return None
+    if not isinstance(mapping, dict):
+        raise ValueError(f"{section_name}.mapping_results must be a mapping")
+    return mapping.get('output_file')
 
 
 def data_check_node(state: LoopAIState) -> LoopAIState:
     """
     数据检查节点
     
-    检查数据集格式是否符合 LlamaFactory 要求
+    检查 SFT 数据格式；Verl 模式下将生成数据适配为 Parquet 后预检查
     
     Args:
         state: LoopAIState 对象，需要包含：
@@ -38,14 +52,69 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
     
     try:
         # 获取数据集路径 - 优先使用 obtainer/constructor 映射结果
-        obtainer_output_file = state.get('obtainer', {}).get('mapping_results', {}).get('output_file') if state.get('obtainer', {}).get('mapping_results') else None
-        constructor_output_file = state.get('constructor', {}).get('mapping_results', {}).get('output_file') if state.get('constructor', {}).get('mapping_results') else None
+        obtainer_output_file = _mapping_output_file(state, 'obtainer')
+        constructor_output_file = _mapping_output_file(state, 'constructor')
         
-        framework = state.get('trainer', {}).get('train_framework')
+        trainer_state = state.setdefault('trainer', {})
+        framework = trainer_state.get('train_framework')
         if framework == "verl":
-            # Constructor/Obtainer currently produce SFT JSON. An explicitly supplied
-            # RL Parquet must not be silently replaced by those artifacts.
-            dataset_path = state.get('trainer', {}).get('train_input_dataset_path')
+            if trainer_state.get('_trainer_use_prepared_config'):
+                # run_prepared() must validate exactly the train/validation files in
+                # the YAML that the user approved. Never regenerate data at this gate.
+                dataset_path = trainer_state.get('train_input_dataset_path')
+            else:
+                explicit_source = trainer_state.get('_verl_source_dataset_explicit')
+                generated_source = constructor_output_file or obtainer_output_file
+                source_path = (
+                    trainer_state.get('verl_source_dataset_path')
+                    if explicit_source
+                    else generated_source
+                    or trainer_state.get('verl_source_dataset_path')
+                    or trainer_state.get('train_input_dataset_path')
+                )
+                if not source_path:
+                    raise ValueError(
+                        "Verl 缺少数据源；请设置 verl_source_dataset_path，或先让 Constructor 生成数据"
+                    )
+                trainer_state['verl_source_dataset_path'] = source_path
+                if not explicit_source and generated_source:
+                    trainer_state['verl_source_dataset_origin'] = (
+                        'constructor' if constructor_output_file else 'obtainer'
+                    )
+                logger.info(f"准备 Verl GRPO 数据源: {source_path}")
+                prepare_result = prepare_verl_grpo_datasets(state)
+                if generated_source and not explicit_source:
+                    expected_source = Path(str(generated_source)).expanduser().resolve()
+                    actual_source = prepare_result.get('source_path')
+                    if not actual_source or Path(str(actual_source)).expanduser().resolve() != expected_source:
+                        raise RuntimeError(
+                            "Verl prepared data does not come from the current upstream output: "
+                            f"expected {expected_source}, got {actual_source or 'missing'}"
+                        )
+                manifest_reward = prepare_result.get('reward')
+                if not isinstance(manifest_reward, dict):
+                    raise RuntimeError("Verl data manifest is missing its reward contract")
+                manifest_mode = str(manifest_reward.get('mode') or '')
+                current_mode = str(trainer_state.get('verl_reward_mode') or '')
+                if manifest_mode != current_mode:
+                    raise RuntimeError(
+                        f"Verl reward mode mismatch: manifest={manifest_mode}, state={current_mode}"
+                    )
+                if current_mode in {'auto', 'preset'}:
+                    manifest_preset = str(manifest_reward.get('preset') or '')
+                    current_preset = str(trainer_state.get('verl_reward_preset') or '')
+                    if manifest_preset != current_preset:
+                        raise RuntimeError(
+                            "Verl reward preset mismatch: "
+                            f"manifest={manifest_preset}, state={current_preset}"
+                        )
+                dataset_path = trainer_state.get('train_input_dataset_path')
+                logger.info(
+                    "Verl 数据准备完成: train=%s, validation=%s, status=%s",
+                    dataset_path,
+                    trainer_state.get('train_input_eval_dataset_path'),
+                    prepare_result.get('status'),
+                )
         elif obtainer_output_file and os.path.exists(obtainer_output_file):
             dataset_path = obtainer_output_file
             logger.info(f"使用 obtainer 映射结果作为训练数据集: {dataset_path}")
@@ -102,7 +171,6 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
                 for warning in check_result['warnings'][:3]:  # 只显示前3个警告
                     logger.warning(f"  - {warning}")
         elif framework == "verl":
-            trainer_state = state.setdefault('trainer', {})
             if trainer_state.get('train_stage') != 'grpo':
                 raise ValueError("Verl 当前只支持 GRPO")
             eval_path = trainer_state.get('train_input_eval_dataset_path')
