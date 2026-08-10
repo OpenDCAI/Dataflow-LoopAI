@@ -53,6 +53,10 @@ class CampaignConfig:
     pipeline_batch_size: int = 8
     pipeline_extractor: str = "pipeline"
     pipeline_mineru_gpu: str = "0"
+    pipeline_mineru_url: str = ""
+    pipeline_mineru_python: str = ""
+    pipeline_mineru_model: str = ""
+    pipeline_mineru_transport: str = ""
 
     def __post_init__(self) -> None:
         self.subquery_count = max(1, min(64, int(self.subquery_count)))
@@ -901,6 +905,10 @@ class WebAgentCampaignRunner:
             model = system_default_model_name() or str(settings.get("model") or "")
         extractor = str(settings.get("pipeline_extractor") or "pipeline")
         mineru_gpu = str(settings.get("pipeline_mineru_gpu") or "0")
+        mineru_url = str(settings.get("pipeline_mineru_url") or "").strip()
+        mineru_python = str(settings.get("pipeline_mineru_python") or "").strip()
+        mineru_model = str(settings.get("pipeline_mineru_model") or "").strip()
+        mineru_transport = str(settings.get("pipeline_mineru_transport") or "").strip()
         focus_keywords = [
             str(item).strip()
             for item in (settings.get("focus_keywords") or [])
@@ -913,6 +921,14 @@ class WebAgentCampaignRunner:
                 if extractor != "pipeline":
                     args["engine"] = extractor
                 args["mineru_gpu"] = mineru_gpu
+                if mineru_url:
+                    args["mineru_url"] = mineru_url
+                if mineru_python:
+                    args["mineru_python"] = mineru_python
+                if mineru_model:
+                    args["mineru_model"] = mineru_model
+                if mineru_transport:
+                    args["mineru_transport"] = mineru_transport
             elif name in {
                 "domain_classify", "pt_to_sft_qa", "pt_to_sft_code",
                 "pt_to_sft_text2sql",
@@ -1066,6 +1082,10 @@ class WebAgentCampaignRunner:
             model = system_default_model_name() or str(settings.get("model") or "")
         extractor = str(settings.get("pipeline_extractor") or "pipeline")
         mineru_gpu = str(settings.get("pipeline_mineru_gpu") or "0")
+        mineru_url = str(settings.get("pipeline_mineru_url") or "").strip()
+        mineru_python = str(settings.get("pipeline_mineru_python") or "").strip()
+        mineru_model = str(settings.get("pipeline_mineru_model") or "").strip()
+        mineru_transport = str(settings.get("pipeline_mineru_transport") or "").strip()
         for operator in spec.get("operators", []):
             name = operator.get("name")
             args = operator.setdefault("args", {})
@@ -1073,6 +1093,14 @@ class WebAgentCampaignRunner:
                 if extractor != "pipeline":
                     args["engine"] = extractor
                 args["mineru_gpu"] = mineru_gpu
+                if mineru_url:
+                    args["mineru_url"] = mineru_url
+                if mineru_python:
+                    args["mineru_python"] = mineru_python
+                if mineru_model:
+                    args["mineru_model"] = mineru_model
+                if mineru_transport:
+                    args["mineru_transport"] = mineru_transport
             elif name in {"domain_classify", "pt_to_sft_qa"} and model:
                 args["model"] = model
             output = operator.get("output") or operator.get("materialize")

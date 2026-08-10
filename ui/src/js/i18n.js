@@ -1247,6 +1247,46 @@ export default {
         "en": "rows",
         "zh": "行"
     },
+    "Embedding Model": {
+        "en": "Embedding Model",
+        "zh": "Embedding 模型"
+    },
+    "MinerU-HTML Document Parsing": {
+        "en": "MinerU-HTML Document Parsing",
+        "zh": "MinerU-HTML 文档解析"
+    },
+    "Text Field": {
+        "en": "Text Field",
+        "zh": "文本字段"
+    },
+    "GPU": {
+        "en": "GPU",
+        "zh": "GPU"
+    },
+    "Transport": {
+        "en": "Transport",
+        "zh": "传输方式"
+    },
+    "Select Transport": {
+        "en": "Select Transport",
+        "zh": "选择传输方式"
+    },
+    "Select Backend": {
+        "en": "Select Backend",
+        "zh": "选择后端"
+    },
+    "Service URL": {
+        "en": "Service URL",
+        "zh": "服务地址"
+    },
+    "Python Env Path": {
+        "en": "Python Env Path",
+        "zh": "Python 环境路径"
+    },
+    "Model Path": {
+        "en": "Model Path",
+        "zh": "模型路径"
+    },
     "sets": {
         "en": "sets",
         "zh": "集"

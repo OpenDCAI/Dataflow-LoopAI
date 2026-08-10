@@ -225,6 +225,19 @@ def _inject_lake_runtime_defaults(args: list[str], *, lake: str, root: str) -> t
             args.extend(["--subquery-count", str(context["obtainer_webagent_subquery_count"])])
         if str(context.get("obtainer_webagent_auto_process") or "").lower() in {"1", "true", "yes", "on"} and not _has_option(args, "--auto-process"):
             args.append("--auto-process")
+        # Inject MinerU-HTML service settings persisted in the lake pointer so
+        # the campaign pipeline uses the configured document-parsing service.
+        lake_config = pointer.get("config") or {}
+        for flag, key in (
+            ("--pipeline-mineru-url", "mineru_url"),
+            ("--pipeline-mineru-python", "mineru_python"),
+            ("--pipeline-mineru-model", "mineru_model"),
+            ("--pipeline-mineru-gpu", "mineru_gpu"),
+            ("--pipeline-mineru-transport", "mineru_transport"),
+        ):
+            value = str(lake_config.get(key) or "").strip()
+            if value and not _has_option(args, flag):
+                args.extend([flag, value])
     return args, effective_root
 
 

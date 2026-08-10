@@ -64,6 +64,26 @@ def _case_to_dict(case):
     }
 
 
+
+
+def _build_extractor_silently(args) -> None:
+    """Build the extractor while keeping the JSON line protocol on stdout clean.
+
+    Model frameworks (vllm, transformers) and their subprocesses log to the
+    inherited stdout, which would corrupt the one-JSON-line-per-request
+    protocol this worker speaks. Redirect fd 1 to stderr while the model loads
+    and restore it before the request loop starts.
+    """
+    import os
+
+    saved_stdout = os.dup(1)
+    try:
+        os.dup2(2, 1)
+        return _build_extractor(args)
+    finally:
+        os.dup2(saved_stdout, 1)
+        os.close(saved_stdout)
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", required=True)
@@ -77,7 +97,7 @@ def main() -> int:
     parser.add_argument("--output-format", default="mm_md")
     args = parser.parse_args()
 
-    extractor = _build_extractor(args)
+    extractor = _build_extractor_silently(args)
     try:
         for line in sys.stdin:
             if not line.strip():

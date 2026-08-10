@@ -1155,3 +1155,76 @@ def test_campaign_cli_detach_enqueues_and_spawns_resume(
     assert payload["stderr"].endswith(
         ".loopai/campaign_logs/webcampaign-detached.stderr.log"
     )
+
+
+def test_campaign_pipeline_injects_mineru_service_settings(monkeypatch, tmp_path) -> None:
+    """webpage_to_pt picks up the configured MinerU-HTML service settings."""
+    from loopai.agents.Obtainer.datamixer.webagents.campaign import WebAgentCampaignRunner
+
+    root = tmp_path / "warehouse"
+    DataStore.init(root)
+    pipeline = tmp_path / "pipeline.yaml"
+    pipeline.write_text(
+        """pipeline:
+  name: mineru_inject
+  source:
+    dataset: src
+    filter: quality_level = 'L1'
+  operators:
+    - name: webpage_to_pt
+      args:
+        engine: mineru
+        mineru_gpu: 0
+    - name: domain_classify
+      args:
+        model: fake
+    - name: pt_to_sft_qa
+      args:
+        model: fake
+""",
+        encoding="utf-8",
+    )
+    config = {
+        "auto_pipeline": str(pipeline),
+        "dataset": "src_l1",
+        "l2_dataset": "src_l2",
+        "l3_dataset": "src_l3",
+        "pipeline_model": "fake",
+        "pipeline_extractor": "pipeline",
+        "pipeline_mineru_url": "http://127.0.0.1:9999",
+        "pipeline_mineru_python": "/opt/mineru/bin/python",
+        "pipeline_mineru_model": "/models/mineru-html",
+        "pipeline_mineru_transport": "http",
+        "pipeline_mineru_gpu": "2",
+    }
+    runner = WebAgentCampaignRunner(root)
+    try:
+        prepared = runner._prepare_campaign_pipeline("webcampaign-mineru", {"config": config})
+        run_spec = {}
+        captured = {}
+
+        class FakeResult:
+            @staticmethod
+            def to_dict():
+                return {"ok": True}
+
+        def fake_run_pipeline(store, spec, batch_size, progress_callback):  # noqa: ARG001
+            captured["spec"] = spec
+            return FakeResult()
+
+        monkeypatch.setattr(
+            "loopai.agents.Obtainer.datamixer.operators.run_pipeline",
+            fake_run_pipeline,
+        )
+        runner._run_auto_pipeline("webcampaign-mineru", {"config": config})
+    finally:
+        runner.close()
+
+    for spec in (prepared["spec"], captured["spec"]):
+        ops = {item["name"]: item for item in spec["operators"]}
+        args = ops["webpage_to_pt"]["args"]
+        assert args["mineru_url"] == "http://127.0.0.1:9999"
+        assert args["mineru_python"] == "/opt/mineru/bin/python"
+        assert args["mineru_model"] == "/models/mineru-html"
+        assert args["mineru_transport"] == "http"
+        assert args["mineru_gpu"] == "2"

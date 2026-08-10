@@ -1401,6 +1401,10 @@ def cmd_webagent_campaign_start(args) -> int:
         pipeline_batch_size=args.pipeline_batch_size,
         pipeline_extractor=args.pipeline_extractor,
         pipeline_mineru_gpu=args.pipeline_mineru_gpu,
+        pipeline_mineru_url=args.pipeline_mineru_url or "",
+        pipeline_mineru_python=args.pipeline_mineru_python or "",
+        pipeline_mineru_model=args.pipeline_mineru_model or "",
+        pipeline_mineru_transport=args.pipeline_mineru_transport or "",
     )
     if args.detach and args.enqueue_only:
         return _fail(args, "--detach and --enqueue-only cannot be used together")
@@ -2144,6 +2148,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="override webpage_to_pt engine or keep the YAML setting",
     )
     a.add_argument("--pipeline-mineru-gpu", default="0")
+    a.add_argument("--pipeline-mineru-url", default="",
+                   help="MinerU-HTML HTTP service URL (default: http://127.0.0.1:7986)")
+    a.add_argument("--pipeline-mineru-python", default="",
+                   help="MinerU-HTML python executable for the embedded worker; empty uses the project default")
+    a.add_argument("--pipeline-mineru-model", default="",
+                   help="MinerU-HTML model path; empty uses the project default")
+    a.add_argument("--pipeline-mineru-transport", default="",
+                   help="MinerU-HTML transport: auto/http/worker; empty keeps the pipeline YAML setting")
     a.add_argument("--max-steps", type=int, default=30)
     a.add_argument("--soft-step-limit", type=int, default=12,
                    help="campaign long-tail guard before the hard 30-step limit")

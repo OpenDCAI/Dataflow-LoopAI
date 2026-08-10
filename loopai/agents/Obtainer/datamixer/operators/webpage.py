@@ -196,6 +196,7 @@ class WebpageToPT(Operator):
                 env = os.environ.copy()
                 env["CUDA_VISIBLE_DEVICES"] = self.mineru_gpu
                 env.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+                env.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
                 self._mineru = _MinerUHTMLClient(
                     python=self.mineru_python,
                     worker=worker,
@@ -357,13 +358,20 @@ class _MinerUHTMLClient:
         assert self.proc.stdout is not None
         self.proc.stdin.write(request + "\n")
         self.proc.stdin.flush()
-        ready, _, _ = select.select([self.proc.stdout], [], [], self.timeout)
-        if not ready:
-            raise TimeoutError(f"MinerU-HTML worker timed out after {self.timeout}s")
-        line = self.proc.stdout.readline()
-        if not line:
-            raise RuntimeError("MinerU-HTML worker closed its output")
-        response = json.loads(line)
+        line = ""
+        while True:
+            ready, _, _ = select.select([self.proc.stdout], [], [], self.timeout)
+            if not ready:
+                raise TimeoutError(f"MinerU-HTML worker timed out after {self.timeout}s")
+            line = self.proc.stdout.readline()
+            if not line:
+                raise RuntimeError("MinerU-HTML worker closed its output")
+            try:
+                response = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                # Model frameworks may emit a stray log line to stdout; skip it.
+                continue
         if response.get("id") != request_id:
             raise RuntimeError("MinerU-HTML worker response id mismatch")
         if response.get("error"):
@@ -439,10 +447,11 @@ class _MinerUHTMLHTTPClient:
             main_html = response.get("main_html")
             if not isinstance(main_html, str) or not main_html.strip():
                 raise RuntimeError("MinerU-HTML service returned empty main_html")
+            main_content = response.get("main_content")
             results.append({
                 "main_html": main_html,
-                "main_content": None,
-                "error": None,
+                "main_content": main_content if isinstance(main_content, str) else None,
+                "error": response.get("error") or None,
             })
         return results
 

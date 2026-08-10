@@ -7,6 +7,30 @@ from pydantic import BaseModel, Field
 from loopai.common.i18n.i18n_loader import I18NLoader
 
 
+def _default_embedding_config() -> dict[str, Any]:
+    """Embedding 服务配置（与 .loopai/lake.yaml 的 embedding_* 字段对应）。"""
+    return {
+        "provider": "openai-compatible",
+        "base_url": "http://127.0.0.1:8000/v1",
+        "api_key": "",
+        "model": "BAAI/bge-small-zh-v1.5",
+        "backend": "local-jsonl",
+        "text_field": "text",
+    }
+
+
+def _default_mineru_config() -> dict[str, Any]:
+    """MinerU-HTML（Dripper）文档解析服务配置。"""
+    return {
+        "url": "http://127.0.0.1:7986",
+        "python": "",
+        "model": "",
+        "gpu": "0",
+        "transport": "http",
+        "backend": "vllm",
+    }
+
+
 def _default_model_config() -> dict[str, Any]:
     return {
         "proxy_base_url": "",
@@ -15,6 +39,8 @@ def _default_model_config() -> dict[str, Any]:
         "codex_model": "codex",
         "looper_model": "starter",
         "default_tier": "medium",
+        "embedding": _default_embedding_config(),
+        "mineru": _default_mineru_config(),
         "pool": [
             {
                 "tier": "medium",

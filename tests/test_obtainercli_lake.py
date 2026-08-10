@@ -3579,3 +3579,103 @@ def test_dataset_acquisition_status_reconciles_successful_final_report(
     assert status["state"] == "completed"
     assert status["worker_ok"] is True
     assert status["runner_warning"] == "Codex runner timed out after 3600 seconds"
+
+
+def test_update_lake_service_config_patches_embedding_and_mineru(tmp_path) -> None:
+    from loopai.skills.ObtainerCLI.config import update_lake_service_config
+
+    link = tmp_path / ".loopai" / "lake.yaml"
+    link.parent.mkdir(parents=True)
+    link.write_text(
+        "\n".join(
+            [
+                "# LoopAI ObtainerCLI lake pointer",
+                "root: /tmp/lake",
+                "warehouse: /tmp/lake/warehouse",
+                "catalog: datamixer",
+                "backend: datamixer",
+                "namespace: loopai",
+                "auto_embed: false",
+                "embedding_provider: openai-compatible",
+                "embedding_base_url: http://127.0.0.1:8000/v1",
+                "embedding_api_key:",
+                "embedding_model: BAAI/bge-small-zh-v1.5",
+                "embedding_backend: local-jsonl",
+                "embedding_text_field: text",
+                "auto_embed_async: true",
+                "auto_embed_batch_size: 512",
+                "",
+                "# Persistent Obtainer acquisition context (no credentials)",
+                "obtainer_webagent: domain_data_acquisition",
+                "obtainer_webagent_workers: 4",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = update_lake_service_config(
+        link,
+        embedding={"base_url": "http://127.0.0.1:9000/v1", "model": "bge-m3"},
+        mineru={"url": "http://10.0.0.5:7986", "gpu": "1"},
+    )
+    assert result["status"] == "updated"
+    values = read_lake_config(link)
+    assert values["embedding_base_url"] == "http://127.0.0.1:9000/v1"
+    assert values["embedding_model"] == "bge-m3"
+    assert values["mineru_url"] == "http://10.0.0.5:7986"
+    assert values["mineru_gpu"] == "1"
+    assert values["mineru_transport"] == "http"
+    # Unrelated lines and the obtainer context are preserved.
+    assert values["root"] == "/tmp/lake"
+    assert values["obtainer_webagent"] == "domain_data_acquisition"
+    assert values["obtainer_webagent_workers"] == "4"
+    text = link.read_text(encoding="utf-8")
+    assert "# LoopAI ObtainerCLI lake pointer" in text
+
+    # Missing pointer is a no-op.
+    missing = update_lake_service_config(tmp_path / "missing.yaml", embedding={"model": "x"})
+    assert missing["status"] == "pointer_missing"
+
+
+def test_update_lake_service_config_preserves_existing_mineru_keys(tmp_path) -> None:
+    from loopai.skills.ObtainerCLI.config import update_lake_service_config
+
+    link = tmp_path / ".loopai" / "lake.yaml"
+    link.parent.mkdir(parents=True)
+    link.write_text(
+        "\n".join(
+            [
+                "root: /tmp/lake",
+                "warehouse: /tmp/lake/warehouse",
+                "catalog: datamixer",
+                "backend: datamixer",
+                "namespace: loopai",
+                "auto_embed: false",
+                "embedding_provider: openai-compatible",
+                "embedding_base_url: http://127.0.0.1:8000/v1",
+                "embedding_api_key:",
+                "embedding_model: BAAI/bge-small-zh-v1.5",
+                "embedding_backend: local-jsonl",
+                "embedding_text_field: text",
+                "auto_embed_async: true",
+                "auto_embed_batch_size: 512",
+                "mineru_url: http://127.0.0.1:7986",
+                "mineru_python: /opt/mineru/bin/python",
+                "mineru_model: /models/mineru-html",
+                "mineru_gpu: 0",
+                "mineru_transport: http",
+                "mineru_backend: vllm",
+                "obtainer_webagent: domain_data_acquisition",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    update_lake_service_config(link, mineru={"python": "/opt/new-mineru/bin/python"})
+    values = read_lake_config(link)
+    assert values["mineru_python"] == "/opt/new-mineru/bin/python"
+    assert values["mineru_model"] == "/models/mineru-html"
+    assert values["mineru_url"] == "http://127.0.0.1:7986"
+    # No duplicate mineru section comment should be introduced.
+    assert link.read_text(encoding="utf-8").count("MinerU-HTML") == 0

@@ -83,7 +83,7 @@ pipeline:
         chunk_size: 1
         max_concurrency: 4
         max_input_chars: 12000
-        max_tokens: 512
+        max_tokens: 2048
 
     - name: domain_quality_filter
       args:
