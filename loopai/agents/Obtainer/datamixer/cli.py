@@ -189,6 +189,60 @@ def cmd_dataset_add(args) -> int:
     return 0
 
 
+def cmd_dataset_update(args) -> int:
+    s = _open(args)
+    ds_id = s.catalog.resolve_dataset(args.dataset)
+    if not ds_id:
+        s.close()
+        return _fail(args, f"dataset not found: {args.dataset}")
+    fields = {
+        key: getattr(args, key)
+        for key in ("name", "source", "license", "owner", "description")
+        if getattr(args, key) is not None
+    }
+    updated = s.catalog.update_dataset(ds_id, **fields)
+    s.close()
+    if updated is None:
+        return _fail(args, f"dataset not found: {args.dataset}")
+    _emit(args, updated, lambda d: print(json.dumps(d, ensure_ascii=False, indent=2)))
+    return 0
+
+
+def cmd_dataset_delete(args) -> int:
+    if not args.yes:
+        s = _open(args)
+        ds_id = s.catalog.resolve_dataset(args.dataset)
+        ds = s.catalog.get_dataset(ds_id) if ds_id else None
+        s.close()
+        if ds is None:
+            return _fail(args, f"dataset not found: {args.dataset}")
+        _emit(
+            args,
+            {
+                "confirm_required": True,
+                "dataset": ds,
+                "message": f"delete dataset {ds_id} and its samples?",
+            },
+            lambda d: print(d["message"]),
+        )
+        return 0
+    s = _open(args)
+    ds_id = s.catalog.resolve_dataset(args.dataset)
+    if not ds_id:
+        s.close()
+        return _fail(args, f"dataset not found: {args.dataset}")
+    try:
+        result = s.delete_dataset(ds_id, reason=args.reason or "webui delete")
+    except (KeyError, ValueError) as exc:
+        s.close()
+        return _fail(args, str(exc))
+    s.close()
+    _emit(args, result, lambda d: print(
+        f"deleted dataset {d['dataset_id']} ({d['dataset_name']}): "
+        f"{d['erased']} samples, {d['blobs_deleted']} blobs"))
+    return 0
+
+
 def cmd_dataset_list(args) -> int:
     s = _open(args)
     rows = s.catalog.list_datasets()
@@ -428,7 +482,10 @@ def cmd_export_jsonl(args) -> int:
     field = args.field
     written = 0
     try:
-        with open(args.out, "w", encoding="utf-8") as fh:
+        out_path = Path(args.out)
+        if out_path.parent and not out_path.parent.exists():
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as fh:
             for batch in s.catalog.iter_query(where=args.filter, dataset_id=ds_id,
                                               batch_size=args.batch_size):
                 for r in batch:
@@ -1892,6 +1949,17 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--source"); a.add_argument("--license")
     a.add_argument("--owner"); a.add_argument("--description")
     a.set_defaults(func=cmd_dataset_add)
+    a = ds.add_parser("update", help="update dataset registry metadata")
+    a.add_argument("dataset")
+    a.add_argument("--name"); a.add_argument("--source")
+    a.add_argument("--license"); a.add_argument("--owner")
+    a.add_argument("--description")
+    a.set_defaults(func=cmd_dataset_update)
+    a = ds.add_parser("delete", help="delete a dataset and all its samples")
+    a.add_argument("dataset")
+    a.add_argument("--reason", default=None)
+    a.add_argument("--yes", action="store_true", help="confirm deletion")
+    a.set_defaults(func=cmd_dataset_delete)
     a = ds.add_parser("list", help="list datasets")
     a.set_defaults(func=cmd_dataset_list)
     a = ds.add_parser("show", help="show one dataset")

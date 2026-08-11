@@ -311,6 +311,35 @@ class DataStore:
                 "blobs_preserved": blobs_preserved,
                 "vectors_removed": vec_removed}
 
+    def delete_dataset(self, dataset_id: str, reason: str | None = None) -> dict:
+        """Delete a dataset: registry row, all samples, blobs and index entries.
+
+        Returns the erase summary plus the removed registry metadata so callers
+        (CLI / UI) can confirm what was removed.
+        """
+        ds = self.catalog.get_dataset(dataset_id)
+        if ds is None:
+            raise KeyError(f"dataset not found: {dataset_id}")
+        erased = self.erase(
+            dataset_id=dataset_id,
+            reason=reason or f"delete dataset {dataset_id}",
+        )
+        self.catalog.delete_dataset_row(dataset_id)
+        # Best-effort cleanup of the optional markdown dataset card.
+        try:
+            card = self.root / "dataset_cards" / f"{dataset_id}.md"
+            if card.is_file():
+                card.unlink()
+        except OSError:
+            pass
+        return {
+            "dataset_id": dataset_id,
+            "dataset_name": ds.get("name") or "",
+            "erased": int(erased.get("erased") or 0),
+            "blobs_deleted": int(erased.get("blobs_deleted") or 0),
+            "vectors_removed": int(erased.get("vectors_removed") or 0),
+        }
+
     # -- storage stats (demonstrates the space savings) --------------------
     def storage_stats(self) -> dict:
         """Report content-storage efficiency.

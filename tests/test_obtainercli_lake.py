@@ -588,6 +588,89 @@ def test_obtainercli_dm_export_jsonl_records_latest_export(tmp_path: Path, capsy
     assert audit_rows and audit_rows[-1]["output_uri"] == str(out_jsonl.resolve())
 
 
+def test_obtainercli_dataset_management_list_update_delete(tmp_path: Path, capsys) -> None:
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "records.jsonl"
+    _write_jsonl(
+        records,
+        [
+            {"content": {"instruction": "q1", "output": "a1"}, "bug_type": "code", "quality_score": 0.9},
+            {"content": {"instruction": "q2", "output": "a2"}, "bug_type": "math", "quality_score": 0.8},
+        ],
+    )
+
+    init = _dm(warehouse, ["init"], capsys)
+    assert Path(init["initialized"]) == warehouse
+    _dm(
+        warehouse,
+        [
+            "ingest",
+            "manage_ds",
+            "--file",
+            str(records),
+            "--quality-level",
+            "L3",
+            "--stage",
+            "sft",
+            "--domain",
+            "code",
+            "--lang",
+            "zh",
+            "--source",
+            "fixture",
+            "--license",
+            "unknown",
+            "--task-type",
+            "SFT",
+            "--processing-level",
+            "normalized",
+            "--source-kind",
+            "fixture",
+            "--loop-uuid",
+            "loop-manage-ds",
+            "--version-id",
+            "v1",
+        ],
+        capsys,
+    )
+
+    # list carries per-dataset aggregates for the management UI
+    listed = _dm(warehouse, ["dataset", "list"], capsys)["datasets"]
+    assert len(listed) == 1
+    row = listed[0]
+    assert row["n_samples"] == 2
+    assert row["quality_levels"] == {"L3": 2}
+    assert row["domains"] == {"code": 2}
+    assert row["stages"] == {"sft": 2}
+    assert row["last_ingested_at"]
+
+    # update metadata + rename
+    updated = _dm(
+        warehouse,
+        ["dataset", "update", "manage_ds", "--description", "managed via UI", "--owner", "xbr"],
+        capsys,
+    )
+    assert updated["description"] == "managed via UI"
+    assert updated["owner"] == "xbr"
+    renamed = _dm(warehouse, ["dataset", "update", "manage_ds", "--name", "manage_ds_v2"], capsys)
+    assert renamed["name"] == "manage_ds_v2"
+
+    # delete without --yes only asks for confirmation
+    confirm = _dm(warehouse, ["dataset", "delete", "manage_ds_v2"], capsys)
+    assert confirm.get("confirm_required") is True
+    assert _dm(warehouse, ["dataset", "list"], capsys)["datasets"]
+
+    # delete with --yes removes registry + samples
+    deleted = _dm(
+        warehouse,
+        ["dataset", "delete", "manage_ds_v2", "--yes", "--reason", "ui test"],
+        capsys,
+    )
+    assert deleted["erased"] == 2
+    assert deleted["dataset_name"] == "manage_ds_v2"
+    assert _dm(warehouse, ["dataset", "list"], capsys)["datasets"] == []
+
+
 def test_datamixer_ingest_skips_registered_benchmark_contamination(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "warehouse"
     bench_file = tmp_path / "bench.txt"

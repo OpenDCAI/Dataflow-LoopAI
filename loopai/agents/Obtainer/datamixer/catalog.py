@@ -208,12 +208,79 @@ class Catalog:
         return row["id"] if row else None
 
     def list_datasets(self) -> list[dict]:
+        """List datasets with per-dataset record aggregates.
+
+        ``quality_level`` is stored as a tag (``tags_json``), while domain/stage
+        are real indexed columns; both are summarised so the management UI does
+        not need a per-dataset query just to render the list.
+        """
         rows = self.conn.execute(
             "SELECT d.*, "
-            "(SELECT COUNT(*) FROM samples s WHERE s.dataset_id=d.id) AS n_samples "
+            "(SELECT COUNT(*) FROM samples s WHERE s.dataset_id=d.id) AS n_samples, "
+            "(SELECT MAX(s.created_at) FROM samples s WHERE s.dataset_id=d.id) AS last_ingested_at "
             "FROM datasets d ORDER BY created_at"
         ).fetchall()
-        return [dict(r) for r in rows]
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            ds_id = item["id"]
+            item["quality_levels"] = {
+                str(r["quality_level"]): int(r["n"])
+                for r in self.conn.execute(
+                    "SELECT quality_level, COUNT(*) AS n FROM samples WHERE dataset_id=? "
+                    "AND quality_level IS NOT NULL AND quality_level != '' "
+                    "GROUP BY quality_level ORDER BY n DESC",
+                    (ds_id,),
+                )
+            }
+            item["domains"] = {
+                str(r["domain"]): int(r["n"])
+                for r in self.conn.execute(
+                    "SELECT domain, COUNT(*) AS n FROM samples WHERE dataset_id=? "
+                    "AND domain IS NOT NULL AND domain != '' "
+                    "GROUP BY domain ORDER BY n DESC",
+                    (ds_id,),
+                )
+            }
+            item["stages"] = {
+                str(r["stage"]): int(r["n"])
+                for r in self.conn.execute(
+                    "SELECT stage, COUNT(*) AS n FROM samples WHERE dataset_id=? "
+                    "AND stage IS NOT NULL AND stage != '' "
+                    "GROUP BY stage ORDER BY n DESC",
+                    (ds_id,),
+                )
+            }
+            result.append(item)
+        return result
+
+    def update_dataset(
+        self, dataset_id: str, **fields: Any
+    ) -> dict | None:
+        """Update editable dataset registry fields; returns the updated row."""
+        allowed = {"name", "source", "license", "owner", "description"}
+        updates = {
+            key: value
+            for key, value in fields.items()
+            if key in allowed and value is not None
+        }
+        if not updates or not self.get_dataset(dataset_id):
+            return self.get_dataset(dataset_id)
+        assignments = ", ".join(f"{key}=?" for key in updates)
+        self.conn.execute(
+            f"UPDATE datasets SET {assignments} WHERE id=?",
+            (*updates.values(), dataset_id),
+        )
+        self.conn.commit()
+        return self.get_dataset(dataset_id)
+
+    def delete_dataset_row(self, dataset_id: str) -> bool:
+        """Remove the dataset registry row (samples handled by the caller)."""
+        cur = self.conn.execute(
+            "DELETE FROM datasets WHERE id=?", (dataset_id,)
+        )
+        self.conn.commit()
+        return bool(cur.rowcount)
 
     # -- samples -----------------------------------------------------------
     def add_sample(

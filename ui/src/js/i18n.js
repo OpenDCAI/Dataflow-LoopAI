@@ -479,6 +479,10 @@ export default {
         "en": "Workbench",
         "zh": "工作台"
     },
+    "Datasets": {
+        "en": "Datasets",
+        "zh": "数据集"
+    },
     "Lake Management": {
         "en": "Lake Management",
         "zh": "数据湖管理"
