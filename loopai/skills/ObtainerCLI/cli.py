@@ -29,6 +29,7 @@ from .lake_manager import (
 )
 from .models import sha256_text, utc_now
 from .monitor_state import start_background_rebuild, update_monitor_delta
+from .orchestrator_agent import run_agent as run_orchestrator_agent
 from .searchagent import run_searchagent
 from .sft_export_agent import run_agent as run_sft_export_agent
 
@@ -349,6 +350,13 @@ def _run_dm_command(
                 hint="Pass the same explicit --run directory to start, status, and resume.",
                 exit_code=2,
             )
+    if args and args[0] == "obtainer-orchestrator":
+        result = run_orchestrator_agent(args[1:], root=root, lake=lake, task_id=task_id)
+        result.setdefault("ok", True)
+        result.setdefault("command", "dm.obtainer-orchestrator")
+        result.setdefault("status", "success")
+        result.setdefault("warnings", [])
+        return result
     if args and args[0] == "sft-export-agent":
         result = run_sft_export_agent(args[1:], root=root)
         result.setdefault("ok", True)

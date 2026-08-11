@@ -107,6 +107,16 @@ def _datamixer_command_payload() -> dict[str, Any]:
                 ],
             },
             {
+                "key": "orchestrator",
+                "label": "Obtainer Orchestrator",
+                "commands": [
+                    "obtainer-orchestrator start --run outputs/obtainer_run --objective DATA_SHAPE --keywords KW --target-datasets N --message INTENT",
+                    "obtainer-orchestrator status --run outputs/obtainer_run",
+                    "obtainer-orchestrator resume --run outputs/obtainer_run --message WHY",
+                    "obtainer-orchestrator stop --run outputs/obtainer_run",
+                ],
+            },
+            {
                 "key": "ingest",
                 "label": "Ingest",
                 "commands": [

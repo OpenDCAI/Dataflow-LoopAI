@@ -1,6 +1,6 @@
 ---
 name: obtainer
-description: Use this skill when LoopAI needs dataset discovery, acquisition, web-page collection, DataMixer lakehouse operations, data processing, indexing, recipe planning, or production training-data export. In long-running Codex SDK loops, when Analyzer produces an analysis report, failure taxonomy, or user request that implies new training data is needed, Codex must activate this Obtainer skill, interpret the data need, and start the managed dataset-acquisition-agent worker. The worker concurrently runs SearchAgent and the registered DataMixer WebAgent; the outer Codex context must not run either acquisition bridge, download manifest, or ingest directly for normal acquisition.
+description: Use this skill when LoopAI needs dataset discovery, acquisition, web-page collection, DataMixer lakehouse operations, data processing, indexing, recipe planning, or production training-data export. In long-running Codex SDK loops, when Analyzer produces an analysis report, failure taxonomy, or user request that implies new training data is needed, Codex must activate this Obtainer skill, parse the data need into an intent, and delegate the whole workflow to the Obtainer Orchestrator agent (`dm obtainer-orchestrator start`), then poll its structured status. The orchestrator owns lake bootstrap and the dispatch/gating of the managed sub-agents (dataset-acquisition-agent, dataflow agent-run, sft-export-agent); the outer Codex context must not run lake init, acquisition bridges, download manifest, ingest, or export itself for a normal obtain task. The rest of this skill is the domain policy the orchestrator worker follows.
 ---
 
 # Obtainer Skill
@@ -38,6 +38,83 @@ not a generic coding task:
 6. Report warehouse path, datasets, record counts, recipe/export artifacts,
    lineage, manifests, and snapshots.
 
+
+
+## Main-Agent Use: Delegate to the Obtainer Orchestrator
+
+The main agent (starter) must NOT bootstrap the lake, dispatch acquisition /
+export workers, or run DataFlowAgent itself for a normal obtain task. Those
+responsibilities belong to the dedicated Obtainer Orchestrator agent
+(`dm obtainer-orchestrator`). The orchestrator owns lake bootstrap, sub-agent
+dispatch, progress gating and the final deliverable report; the policy below is
+its domain policy. The main agent only parses intent, starts the orchestrator,
+polls its structured status, and reports the terminal artifacts.
+
+### 1. Parse the data need into an intent
+
+Extract from the Analyzer report / user request / recipe: an `--objective`
+(what sample shape is needed), `--keywords` (search / domain hints),
+`--target-datasets` (how many buckets/datasets), and a compact `--message`
+(failure taxonomy, quality gates, proportions).
+
+### 2. Start the orchestrator
+
+```bash
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm \
+  obtainer-orchestrator start \
+  --run ./outputs/obtainer_run_<timestamp> \
+  --objective "buggy and fixed Python code pairs for syntax repair SFT" \
+  --keywords "python syntax error, code repair dataset" \
+  --target-datasets 2 \
+  --message "Analyzer report: ...; require license=unknown and quality>=0.8" \
+  --python-executable /path/to/loopai-env/bin/python
+```
+
+`start` launches the orchestrator's inner Codex SDK worker in the background
+and returns the run directory. Use `--foreground` only when you intend to
+block.
+
+### 3. Poll the orchestrator (fine-grained status contract)
+
+Poll every 30-60s:
+
+```bash
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm \
+  obtainer-orchestrator status --run ./outputs/obtainer_run_<timestamp> --json
+```
+
+Read the machine-readable contract (`schema_version: 1`):
+
+- `state`: `idle | running | completed | completed_with_errors | failed | stopped`
+- `phase`: `bootstrap | acquiring | gating | dataflow | exporting | finalizing`
+- `progress` (0..1), `message`, `updated_at` (heartbeat), `stale`
+- `next_action`: `poll` -> keep polling; `report` -> read final_report.json and
+  report; `blocked` -> surface error + gates to the user
+- `subtasks[]`: each managed sub-agent (state / progress / message / run_dir)
+- `gates[]`: e.g. `lake_volume`, `dataflow_l4` with `ok` + `detail`
+- `lake`: warehouse, dataset / record counts, quality_levels
+
+Never judge progress from `message` alone; use the structured fields.
+
+### 4. Terminal handling
+
+- `completed` / `next_action=report`: read `final_report.json` in the run dir
+  and report warehouse, datasets, record counts, recipe / export artifacts,
+  lineage, manifests and snapshots.
+- `failed` / `next_action=blocked`: read `error` + failing `gates`, tell the
+  user, and offer `resume` once the blocker is addressed:
+  `${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm \
+  obtainer-orchestrator resume --run <dir> --message "<why / resume from where>"`
+- `stale=true` while `state=running`: warn that the orchestrator may be hung and
+  offer `stop` or `resume`.
+
+### Hard constraints for the main agent
+
+- Never run `dm lake ...`, `dataset-acquisition-agent`, `sft-export-agent`,
+  `dataflow agent-run`, `searchagent`, `webagent` or `download manifest`
+  yourself for a normal obtain task - the orchestrator owns those.
+- Never claim obtainer completion without a `final_report.json` reported by the
+  orchestrator.
 
 ## Hard Constraints
 
