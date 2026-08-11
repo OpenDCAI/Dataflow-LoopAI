@@ -882,6 +882,7 @@ class CodexStarterService:
         api_key = system_config.get("codex_api_key")
         timeout_ms = system_config.get("codex_run_timeout_ms", 300000)
         use_project_config = _to_bool(system_config.get("codex_use_project_config"), False)
+        enable_hooks = _to_bool(system_config.get("codex_enable_hooks"), False)
         codex_home = str(_resolved_codex_home(system_config))
         sandbox_mode = _resolved_codex_sandbox_mode(system_config)
 
@@ -901,6 +902,10 @@ class CodexStarterService:
             env["CODEX_USE_PROJECT_CONFIG"] = "1"
         else:
             env.pop("CODEX_USE_PROJECT_CONFIG", None)
+        if enable_hooks:
+            env["CODEX_ENABLE_HOOKS"] = "1"
+        else:
+            env.pop("CODEX_ENABLE_HOOKS", None)
 
         for key, value in (env_overrides or {}).items():
             key = str(key)

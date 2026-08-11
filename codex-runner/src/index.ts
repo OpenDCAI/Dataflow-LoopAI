@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { Codex, type ThreadEvent, type ThreadItem } from "@openai/codex-sdk";
 
 type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
@@ -13,6 +15,7 @@ const codexHome = process.env.CODEX_HOME;
 const sandboxMode = resolveSandboxMode(process.env.CODEX_SANDBOX_MODE);
 const threadId = process.env.CODEX_THREAD_ID?.trim() || "";
 const useProjectConfig = process.env.CODEX_USE_PROJECT_CONFIG === "1";
+const enableHooks = process.env.CODEX_ENABLE_HOOKS === "1";
 if (!prompt) {
     console.error("Usage: yarn dev \"your prompt\"");
     process.exit(1);
@@ -80,6 +83,30 @@ function sanitizeEvent(event: ThreadEvent): ThreadEvent {
     return event;
 }
 
+/**
+ * Hooks declared in `$CODEX_HOME/hooks.json` are skipped until they are trusted,
+ * and the SDK cannot pass the CLI flag that waives that check. Overriding the
+ * binary path with a wrapper that injects the flag is the only way to run hooks
+ * on the SDK path without a machine-specific trust record.
+ */
+function resolveCodexPathOverride(): string | undefined {
+    if (!enableHooks) {
+        return undefined;
+    }
+    const wrapper = fileURLToPath(new URL("../scripts/codex-hook-trust-wrapper.mjs", import.meta.url));
+    if (!existsSync(wrapper)) {
+        throw new Error(`CODEX_ENABLE_HOOKS=1 but the hook-trust wrapper is missing: ${wrapper}`);
+    }
+    try {
+        // The SDK execs this path directly, so a lost executable bit surfaces as
+        // a bare EACCES from deep inside child_process.
+        accessSync(wrapper, fsConstants.X_OK);
+    } catch {
+        throw new Error(`hook-trust wrapper is not executable, run: chmod +x ${wrapper}`);
+    }
+    return wrapper;
+}
+
 function resolveSandboxMode(value: string | undefined): SandboxMode {
     switch (value) {
         case "read-only":
@@ -92,6 +119,8 @@ function resolveSandboxMode(value: string | undefined): SandboxMode {
 }
 
 async function main() {
+    const codexPathOverride = resolveCodexPathOverride();
+
     writeStderr({
         type: "runner.started",
         cwd: process.cwd(),
@@ -104,13 +133,16 @@ async function main() {
         codexHome,
         sandboxMode,
         threadId: threadId || null,
-        useProjectConfig
+        useProjectConfig,
+        enableHooks,
+        codexPathOverride: codexPathOverride ?? null
     });
 
     const codexOptions: {
         apiKey?: string;
         baseUrl?: string;
         env: Record<string, string>;
+        codexPathOverride?: string;
     } = {
         env: getProcessEnv()
     };
@@ -120,6 +152,9 @@ async function main() {
     }
     if (baseUrl && !useProjectConfig) {
         codexOptions.baseUrl = baseUrl;
+    }
+    if (codexPathOverride) {
+        codexOptions.codexPathOverride = codexPathOverride;
     }
 
     const codex = new Codex(codexOptions);
