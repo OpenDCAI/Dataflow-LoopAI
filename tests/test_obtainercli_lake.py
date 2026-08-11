@@ -21,7 +21,7 @@ from loopai.skills.ObtainerCLI.lake_manager import (
     load_lake_pointer,
     update_lake_obtainer_context,
 )
-from loopai.skills.ObtainerCLI.monitor_state import monitor_state_path
+from loopai.skills.ObtainerCLI.monitor_state import monitor_state_path, read_monitor_state
 from loopai.agents.Obtainer.datamixer.clusters import update_dataset_clusters
 from loopai.agents.Obtainer.datamixer.store import DataStore
 
@@ -502,6 +502,91 @@ def test_obtainercli_dm_init_ingest_query_index_and_recipe_export(tmp_path: Path
     assert {tuple(sorted(row)) for row in rows} == {
         ("_dm", "input", "instruction", "output", "source_uri")
     }
+
+    # The final 出湖 artifact path must land in the shared lake monitor state
+    # and the exports audit, so the Obtainer task card can surface it.
+    monitor = read_monitor_state(warehouse)
+    assert monitor["summary"]["exports"] >= 1
+    assert monitor["latest"]["exports"]
+    latest_export = monitor["latest"]["exports"][0]
+    assert latest_export["output_uri"] == str(export_dir.resolve())
+    assert latest_export["strategy"] == "recipe_export"
+    assert latest_export["export_id"] == exported["export_id"]
+    assert Path(latest_export["manifest_path"]).exists()
+    audit_rows = [
+        json.loads(line)
+        for line in (warehouse / "obtainercli_audit" / "exports.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert audit_rows and audit_rows[-1]["output_uri"] == str(export_dir.resolve())
+
+def test_obtainercli_dm_export_jsonl_records_latest_export(tmp_path: Path, capsys) -> None:
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "records.jsonl"
+    out_jsonl = tmp_path / "exports" / "flat.jsonl"
+    _write_jsonl(
+        records,
+        [
+            {"content": {"text": "hello world"}, "source_uri": "fixture://export-jsonl"},
+        ],
+    )
+
+    init = _dm(warehouse, ["init"], capsys)
+    assert Path(init["initialized"]) == warehouse
+    _dm(
+        warehouse,
+        [
+            "ingest",
+            "flat_mix",
+            "--file",
+            str(records),
+            "--quality-level",
+            "L3",
+            "--stage",
+            "sft",
+            "--domain",
+            "general",
+            "--lang",
+            "zh",
+            "--source",
+            "fixture",
+            "--license",
+            "unknown",
+            "--task-type",
+            "SFT",
+            "--processing-level",
+            "normalized",
+            "--source-kind",
+            "fixture",
+            "--loop-uuid",
+            "loop-export-jsonl",
+            "--version-id",
+            "v1",
+        ],
+        capsys,
+    )
+
+    out_jsonl.parent.mkdir(parents=True, exist_ok=True)
+    exported = _dm(
+        warehouse,
+        ["export-jsonl", "--dataset", "flat_mix", "--out", str(out_jsonl), "--field", "text"],
+        capsys,
+    )
+    assert exported["exported"] == 1
+    assert Path(exported["out"]).exists()
+
+    monitor = read_monitor_state(warehouse)
+    assert monitor["summary"]["exports"] >= 1
+    assert monitor["latest"]["exports"]
+    latest_export = monitor["latest"]["exports"][0]
+    assert latest_export["output_uri"] == str(out_jsonl.resolve())
+    assert latest_export["strategy"] == "export_jsonl"
+    assert latest_export["actual_size"] == 1
+    audit_rows = [
+        json.loads(line)
+        for line in (warehouse / "obtainercli_audit" / "exports.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert audit_rows and audit_rows[-1]["output_uri"] == str(out_jsonl.resolve())
+
 
 def test_datamixer_ingest_skips_registered_benchmark_contamination(tmp_path: Path, capsys) -> None:
     warehouse = tmp_path / "warehouse"

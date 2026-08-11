@@ -37,6 +37,22 @@
                 <div class="inline-metric"><span>Benchmark 数据</span><strong>{{ exactNumber(summary.benchmark_rows) }}</strong></div>
             </div>
 
+            <div class="subsection recent-exports" v-if="latestExports.length">
+                <div class="subsection-title"><span>最近出湖</span><span>{{ latestExports.length }}</span></div>
+                <div
+                    v-for="item in latestExports"
+                    :key="item.export_id || item.output_uri"
+                    class="export-row"
+                    :class="{ copied: copiedExport === item.output_uri }"
+                    :title="`${exportLabel(item)}：${item.output_uri}（点击复制）`"
+                    @click="copyText(item.output_uri)"
+                >
+                    <span class="export-name">{{ exportLabel(item) }}</span>
+                    <span class="export-path">{{ item.output_uri }}</span>
+                </div>
+            </div>
+            <p v-else class="empty-line">暂无出湖产出</p>
+
             <p class="feedback-line" :title="warehouseText">{{ warehouseText }}</p>
         </section>
 
@@ -213,6 +229,42 @@ const acquisitionFeedback = computed(() => acquisition.value?.phase_detail || (
 ))
 
 const dataflow = computed(() => overview.value?.dataflow_agent || {})
+const latestExports = computed(() => {
+    const rows = monitor.value.latest?.exports
+    return Array.isArray(rows) ? rows.slice(0, 3) : []
+})
+const exportLabel = (item) => {
+    const strategy = normalizeText(item?.strategy).toLowerCase()
+    if (['recipe_export', 'recipe'].includes(strategy)) return 'Recipe 出湖'
+    if (['export_jsonl', 'export-jsonl'].includes(strategy)) return 'JSONL 出湖'
+    if (['stratified', 'random', 'sample'].includes(strategy)) return '抽样出湖'
+    return '出湖'
+}
+const copiedExport = ref('')
+let copyTimer = null
+const copyText = async (text) => {
+    const value = normalizeText(text)
+    if (!value) return
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(value)
+        } else {
+            const area = document.createElement('textarea')
+            area.value = value
+            area.style.position = 'fixed'
+            area.style.opacity = '0'
+            document.body.appendChild(area)
+            area.select()
+            document.execCommand('copy')
+            document.body.removeChild(area)
+        }
+        copiedExport.value = value
+        if (copyTimer) window.clearTimeout(copyTimer)
+        copyTimer = window.setTimeout(() => { copiedExport.value = '' }, 1600)
+    } catch (error) {
+        // ignore clipboard failures
+    }
+}
 const operationalActive = computed(() => {
     const campaignStatus = normalizeText(campaign.value?.status).toLowerCase()
     const pipelineStatus = normalizeText(pipeline.value?.status).toLowerCase()
@@ -388,6 +440,13 @@ onBeforeUnmount(() => {
 
 .feedback-line, .empty-line, .error-line { margin: 10px 0 0; font-size: 10px; color: rgba(65, 65, 65, 0.62); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .error-line { color: #b4232a; }
+
+.recent-exports { display: grid; gap: 4px; }
+.export-row { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 6px; align-items: center; min-height: 24px; padding: 3px 6px; border-radius: 4px; background: rgba(90, 45, 133, 0.04); cursor: pointer; transition: background 0.15s ease; }
+.export-row:hover { background: rgba(90, 45, 133, 0.1); }
+.export-row.copied { background: rgba(33, 163, 102, 0.12); }
+.export-name { font-size: 10px; font-weight: 700; color: rgba(90, 45, 133, 0.82); white-space: nowrap; }
+.export-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: rgba(65, 65, 65, 0.72); }
 
 .agent-feedback { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 7px; align-items: start; min-height: 42px; }
 .agent-feedback strong { display: block; font-size: 11px; line-height: 14px; }

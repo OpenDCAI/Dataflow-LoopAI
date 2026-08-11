@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from .datamixer_adapter import (
+    append_audit_rows,
     datamixer_argv_from_lake,
     init_datamixer_lake,
     start_background_auto_embed,
@@ -26,6 +27,7 @@ from .lake_manager import (
     unbind_lake_obtainer_context,
     update_lake_obtainer_context,
 )
+from .models import sha256_text, utc_now
 from .monitor_state import start_background_rebuild, update_monitor_delta
 from .searchagent import run_searchagent
 from .sft_export_agent import run_agent as run_sft_export_agent
@@ -123,7 +125,7 @@ def _datamixer_command_key(args: list[str]) -> tuple[str, ...]:
 
 
 def _is_monitor_mutating_datamixer_command(key: tuple[str, ...]) -> bool:
-    return key[:1] in {("ingest",), ("agent-ingest",)} or key[:2] in {
+    return key[:1] in {("ingest",), ("agent-ingest",), ("export-jsonl",)} or key[:2] in {
         ("op", "run"),
         ("pipeline", "run"),
         ("dataflow", "agent-run"),
@@ -135,6 +137,55 @@ def _is_monitor_mutating_datamixer_command(key: tuple[str, ...]) -> bool:
     }
 
 
+def _export_record_from_datamixer_result(key: tuple[str, ...], result: dict) -> dict | None:
+    """Build a monitor/audit export row from a datamixer export result.
+
+    Keeps the final "出湖" artifact path (``output_uri``) in the shared lake
+    state so the Obtainer task card can surface it without knowing which agent
+    produced the export (recipe export vs flat JSONL dump).
+    """
+    if not isinstance(result, dict):
+        return None
+    if key[:2] == ("recipe", "export"):
+        out_uri = str(result.get("out_dir") or "").strip()
+        if not out_uri:
+            return None
+        return {
+            "export_id": str(result.get("export_id") or ""),
+            "strategy": "recipe_export",
+            "requested_size": 0,
+            "actual_size": int(result.get("selected_samples") or 0),
+            "output_uri": out_uri,
+            "format": str(result.get("format") or "jsonl"),
+            "manifest_path": str(result.get("manifest_path") or ""),
+            "snapshot_id": str(result.get("snapshot_id") or ""),
+            "dataset_digest": str(result.get("dataset_digest") or ""),
+            "files": int(result.get("files") or 0),
+            "created_at": utc_now(),
+        }
+    if key[:1] == ("export-jsonl",):
+        out_uri = str(result.get("out") or "").strip()
+        if not out_uri:
+            return None
+        export_id = str(result.get("export_id") or "").strip() or (
+            "export_" + sha256_text(f"{Path(out_uri).expanduser().resolve()}:{utc_now()}")[:24]
+        )
+        return {
+            "export_id": export_id,
+            "strategy": "export_jsonl",
+            "requested_size": 0,
+            "actual_size": int(result.get("exported") or 0),
+            "output_uri": out_uri,
+            "format": "jsonl",
+            "manifest_path": "",
+            "snapshot_id": "",
+            "dataset_digest": "",
+            "files": 0,
+            "created_at": utc_now(),
+        }
+    return None
+
+
 def _update_monitor_after_datamixer_command(args: list[str], result: dict, *, lake: str = "", root: str = "") -> None:
     key = _datamixer_command_key(args)
     if not _is_monitor_mutating_datamixer_command(key):
@@ -144,7 +195,8 @@ def _update_monitor_after_datamixer_command(args: list[str], result: dict, *, la
         return
     written = int(result.get("written") or result.get("rows_written") or 0)
     indexed = int(result.get("indexed") or result.get("rows_indexed") or 0)
-    exports = 1 if key[:2] == ("recipe", "export") else 0
+    is_export = key[:2] == ("recipe", "export") or key[:1] == ("export-jsonl",)
+    exports = 1 if is_export else 0
     delta = {
         "summary_delta": {
             "records": written,
@@ -152,6 +204,14 @@ def _update_monitor_after_datamixer_command(args: list[str], result: dict, *, la
             "exports": exports,
         }
     }
+    export_row = _export_record_from_datamixer_result(key, result) if is_export else None
+    if export_row:
+        delta["latest"] = {"exports": [export_row]}
+    if export_row:
+        try:
+            append_audit_rows(warehouse, "exports", [export_row])
+        except Exception:
+            pass
     try:
         update_monitor_delta(
             warehouse,
