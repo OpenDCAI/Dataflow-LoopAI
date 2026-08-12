@@ -109,7 +109,6 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         loading: false,
         status: 'stale'
     })
-    const processSteps = ref([])
     const looperTakeover = ref({
         timer: null,
         seconds: 15,
@@ -171,56 +170,12 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                     taskMessages.value = (res.data?.conversation || []).map((item) =>
                         normalizeConversationMessage(item)
                     )
-                    // Polling-based execution process: derive readable steps from
-                    // the session events the frontend already fetches, so the
-                    // starter's actions stay visible even if the SSE stream is
-                    // unavailable.
-                    const steps = []
-                    for (const entry of res.data?.events || []) {
-                        const payload = entry?.payload || {}
-                        if (payload.type !== 'event') continue
-                        const event = payload.event || {}
-                        if (event.type !== 'item.completed') continue
-                        const item = event.item || {}
-                        if (item.type === 'agent_message' && item.text) {
-                            steps.push({ type: 'assistant', text: item.text })
-                        } else if (item.type === 'command_execution' && item.command) {
-                            steps.push({ type: 'tool', text: item.command })
-                        } else if (item.type === 'todo_list') {
-                            steps.push({ type: 'todo', items: item.items || [] })
-                        }
-                    }
-                    processSteps.value = steps.slice(-400)
                     const streamStatus = res?.data?.status || 'stale'
                     const shouldStream = ['submitted', 'running', 'finishing'].includes(streamStatus)
                     msgStreamModel.value.status = streamStatus
                     msgStreamModel.value.loading = shouldStream
                     if (shouldStream && !msgEventSource.value) {
                         getMsgStream()
-                    } else if (!shouldStream && msgStreamModel.value.msgs.length > 0) {
-                        // Session finished: fold the streamed execution process
-                        // into the conversation so the starter's steps stay visible.
-                        // Only fold process steps (commands / todo) - assistant text
-                        // is already in the conversation and would duplicate.
-                        const folded = msgStreamModel.value.msgs
-                            .filter((m) => m && m.type === 'event' && m.event && m.event.item)
-                            .map((m) => {
-                                const item = m.event.item
-                                if (item.type === 'todo_list') {
-                                    const lines = (item.items || []).map((i) => `- [${i.completed ? 'x' : ' '}] ${i.text}`)
-                                    return { type: 'assistant', data: { content: lines.join('\n'), process: true } }
-                                }
-                                if (item.type === 'command_execution' && m.event.type === 'item.completed') {
-                                    return { type: 'tool', data: { content: item.command || '', process: true } }
-                                }
-                                return null
-                            })
-                            .filter(Boolean)
-                        if (folded.length) {
-                            taskMessages.value = [...taskMessages.value, ...folded]
-                        }
-                        msgStreamModel.value.msgs = []
-                        msgEventKeys.value = new Set()
                     }
                 }
             })
@@ -295,7 +250,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
     const getMsgStream = async () => {
         if (!currentTask.value?.task_id) return
         closeMsgStream()
-        let baseURL = (getBaseURL() || '').replace(/\/+$/, '')
+        let baseURL = getBaseURL()
         msgStreamModel.value.loading = true
         msgEventSource.value = new EventSource(
             `${baseURL}/starter/codex/session/${currentTask.value.task_id}/stream`
@@ -368,7 +323,6 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         getStatus,
         taskMessages,
         msgStreamModel,
-        processSteps,
         looperTakeover,
         currentMsg,
         getMessages,

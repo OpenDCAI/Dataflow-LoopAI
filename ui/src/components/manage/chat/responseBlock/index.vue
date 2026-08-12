@@ -1,26 +1,9 @@
 <template>
     <transition name="response-block-expand">
-        <div v-if="currentMsg.length > 0 || processSteps.length > 0" class="response-block">
+        <div v-if="currentMsg.length > 0" class="response-block">
             <p class="elapsed-time-block">
                 {{ local('Processed') }}: {{ computedElapsedTimeSecond.toFixed(0) }}s
             </p>
-            <div v-if="processSteps.length > 0" class="process-steps">
-                <div class="process-title">执行过程（{{ processSteps.length }}）</div>
-                <div v-for="(step, index) in processSteps" :key="index" class="process-step" :class="step.type">
-                    <template v-if="step.type === 'assistant'">
-                        <span class="step-role">Agent</span>
-                        <pre class="step-text">{{ step.text }}</pre>
-                    </template>
-                    <template v-else-if="step.type === 'tool'">
-                        <span class="step-role">Cmd</span>
-                        <pre class="step-text step-cmd">{{ step.text }}</pre>
-                    </template>
-                    <template v-else-if="step.type === 'todo'">
-                        <span class="step-role">Todo</span>
-                        <pre class="step-text">{{ (step.items || []).map(i => `- [${i.completed ? 'x' : ' '}] ${i.text}`).join('\n') }}</pre>
-                    </template>
-                </div>
-            </div>
             <div v-for="(msg, index) in currentMsg" :key="index">
                 <component
                     v-if="!msgMapper(msg).default"
@@ -72,7 +55,7 @@ export default {
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
-        ...mapState(useLoopAI, ['msgStreamModel', 'currentMsg', 'processSteps'])
+        ...mapState(useLoopAI, ['msgStreamModel', 'currentMsg'])
     },
     methods: {
         timerInit() {
@@ -241,43 +224,6 @@ export default {
     .msg-block:last-child {
         margin-bottom: 0px;
     }
-
-    .process-steps {
-        display: grid;
-        gap: 6px;
-        max-height: 40vh;
-        overflow: auto;
-    }
-    .process-title {
-        font-size: 11px;
-        font-weight: 700;
-        color: rgba(90, 45, 133, 0.82);
-    }
-    .process-step {
-        display: grid;
-        grid-template-columns: 34px minmax(0, 1fr);
-        gap: 6px;
-        align-items: start;
-        padding: 5px 8px;
-        border-radius: 6px;
-        background: rgba(255, 255, 255, 0.6);
-        font-size: 11px;
-    }
-    .process-step .step-role {
-        font-size: 10px;
-        font-weight: 700;
-        color: rgba(90, 45, 133, 0.85);
-        line-height: 16px;
-    }
-    .process-step .step-text {
-        margin: 0;
-        white-space: pre-wrap;
-        word-break: break-word;
-        color: rgba(60, 60, 60, 0.85);
-        font-family: inherit;
-    }
-    .process-step.tool .step-role { color: rgba(64, 99, 170, 0.9); }
-    .process-step .step-cmd { color: rgba(64, 99, 170, 0.8); font-family: ui-monospace, monospace; font-size: 10px; }
 }
 
 .response-block-expand-enter-active,
