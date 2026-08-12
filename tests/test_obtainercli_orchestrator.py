@@ -267,6 +267,29 @@ def _run_worker_with_mock(
     return result, calls
 
 
+def test_obtainer_orchestrator_progress_uses_download_progress_json(tmp_path: Path, capsys, monkeypatch) -> None:
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    run_dir = tmp_path / "orch_run"
+    _dm(tmp_path, ["obtainer-orchestrator", "start", "--run", str(run_dir), "--objective", "x", "--dry-run"], capsys)
+    acq = tmp_path / "acq"
+    (acq / "downloads").mkdir(parents=True, exist_ok=True)
+    (acq / "downloads" / "download_progress.json").write_text(
+        json.dumps({"completed": 4, "total": 9, "state": "running",
+                    "updated_at": "2026-08-12T13:22:33.126251+00:00"}),
+        encoding="utf-8",
+    )
+    _dm(tmp_path, ["obtainer-orchestrator", "phase", "--run", str(run_dir), "--state", "running", "--phase", "acquiring",
+                   "--subtask", "acquisition", "--subtask-run-dir", str(acq), "--subtask-state", "running"], capsys)
+    status = _dm(tmp_path, ["obtainer-orchestrator", "status", "--run", str(run_dir)], capsys)
+    subtask = status["subtasks"][0]
+    assert subtask["name"] == "acquisition"
+    # real counters: 4/9 downloads (status.json has no download fields)
+    assert abs(subtask["progress"] - round(4 / 9, 3)) < 1e-6
+    assert "4/9" in subtask["message"]
+    # overall = acquiring base 0.10 + 0.30 * (4/9)
+    assert abs(status["progress"] - round(0.10 + 0.30 * 4 / 9, 3)) < 1e-6
+
+
 def test_obtainer_orchestrator_acceptance_loop_retries_narrative_then_completes(tmp_path: Path, monkeypatch) -> None:
     # 1st turn: narrative without JSON -> retried; 2nd turn: ok=true + report -> completed
     result, calls = _run_worker_with_mock(

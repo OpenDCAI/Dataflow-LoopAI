@@ -353,9 +353,15 @@ def _cmd_phase(args: argparse.Namespace) -> dict[str, Any]:
 # status aggregation
 # ---------------------------------------------------------------------------
 
-def _subtask_progress(name: str, status: dict[str, Any]) -> float | None:
+def _subtask_progress(name: str, status: dict[str, Any], sub_run: Path) -> float | None:
+    """Derive a sub-agent's progress from authoritative, real counters.
+
+    ``downloads/download_progress.json`` carries the live completed/total counts
+    the acquisition worker updates during the long download phase, which its
+    status.json does not surface - progress must not rely on LLM narration.
+    """
     if not isinstance(status, dict):
-        return None
+        status = {}
     if isinstance(status.get("progress"), (int, float)):
         return float(status["progress"])
     download = status.get("download")
@@ -364,6 +370,13 @@ def _subtask_progress(name: str, status: dict[str, Any]) -> float | None:
         processed = int(download.get("processed") or 0)
         if total > 0:
             return min(processed / total, 1.0)
+    if sub_run.is_dir():
+        dl = _json_read(sub_run / "downloads" / "download_progress.json")
+        if isinstance(dl, dict):
+            total = int(dl.get("total") or 0)
+            completed = int(dl.get("completed") or 0)
+            if total > 0:
+                return min(completed / total, 1.0)
     if name == "dataflow" or "dataflow" in name:
         total = int(status.get("input_rows") or status.get("full_input_rows") or 0)
         done = int(status.get("output_rows") or status.get("full_output_rows") or 0)
@@ -395,9 +408,31 @@ def _enrich_subtasks(subtasks: dict[str, Any], run_dir: Path) -> list[dict[str, 
                 or item["message"]
             )
             item["updated_at"] = float(status.get("updated_at") or item["updated_at"])
-            derived = _subtask_progress(name, status)
-            if derived is not None:
-                item["progress"] = round(derived, 3)
+        # Derive progress from authoritative counters (status.json and/or the
+        # acquisition worker's live download_progress.json) regardless of whether
+        # status.json exists yet.
+        derived = _subtask_progress(name, status, sub_run)
+        if derived is not None:
+            item["progress"] = round(derived, 3)
+        # The acquisition worker reports download counters outside status.json;
+        # surface them as the subtask's live message / heartbeat when available.
+        if sub_run.is_dir():
+            dl = _json_read(sub_run / "downloads" / "download_progress.json")
+            if isinstance(dl, dict) and int(dl.get("total") or 0) > 0:
+                if not item["message"]:
+                    item["message"] = "下载 {}/{} 个候选数据集".format(
+                        int(dl.get("completed") or 0), int(dl.get("total") or 0)
+                    )
+                dl_updated = dl.get("updated_at")
+                if dl_updated:
+                    try:
+                        import datetime
+                        ts = datetime.datetime.fromisoformat(
+                            str(dl_updated).replace("Z", "+00:00")
+                        ).timestamp()
+                        item["updated_at"] = max(item["updated_at"], ts)
+                    except (ValueError, TypeError):
+                        pass
         rows.append(item)
     return rows
 
