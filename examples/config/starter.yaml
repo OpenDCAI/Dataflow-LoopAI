@@ -58,13 +58,15 @@ default_states:
 
   judger:
     eval_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
-    eval_base_url: "http://127.0.0.1:8911/v1"
     eval_temperature: 0
     eval_top_p: 0.95
-    eval_test_case_path: "./outputs/test.json"
-    eval_problem_path: "./data/human-eval-v2-20210705-format.jsonl"
-    eval_result_path: "./outputs/result.json"
     eval_batch_size: 20
+    eval_case_num: 10
+    eval_vllm_tensor_parallel_size: 1
+    eval_vllm_gpu_memory_utilization: 0.9
+    cuda_visible_devices: "0"
+    benchlist: []
+    extra_benchlist: []
 
   analyzer:
     analyze_temperature: 0
@@ -114,10 +116,20 @@ default_states:
     verl_algorithm: "grpo"
     verl_rollout_backend: "vllm" # vllm 或 sglang
     verl_model_backend: "fsdp"
-    train_input_eval_dataset_path: "" # 验证集 Parquet 路径
-    verl_reward_mode: "auto" # auto、preset 或 custom
+    # 可直接填原生 Verl Parquet；多轮闭环也可留空，由 Trainer 优先读取本轮 Constructor JSON/JSONL 输出。
+    verl_source_dataset_path: ""
+    verl_source_eval_dataset_path: ""
+    verl_data_adapter: "auto" # auto、native、messages、alpaca 或 qa
+    verl_validation_ratio: 0.05 # 没有验证集时确定性切分
+    verl_split_seed: 42
+    verl_reuse_previous_validation: true
+    train_input_eval_dataset_path: "" # 可选；上一轮验证 Parquet 默认复用
+    verl_reward_mode: "auto" # 明确指定 preset/custom 时优先，否则 Trainer 对生成数据给出保守建议
     verl_reward_preset: "auto"
     verl_reward_kwargs: {}
     verl_selection_metric: "val-core/*/acc/mean@*"
     verl_selection_mode: "max"
     verl_max_actor_ckpt_to_keep: 10
+    verl_inherit_previous_config: true
+    verl_use_previous_best_model: true
+    verl_multi_round_enabled: true

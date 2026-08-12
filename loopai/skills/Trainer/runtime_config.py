@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import os
@@ -50,8 +51,8 @@ _TRAINER_FIELD_HINTS: Dict[str, Dict[str, Any]] = {
     },
     "train_input_dataset_path": {
         "required": True,
-        "source": "user",
-        "description": "Absolute path to the training dataset file, usually json/jsonl for SFT.",
+        "source": "user_or_upstream",
+        "description": "SFT dataset or native Verl Parquet; Verl may instead use the latest generated source.",
         "example": "/path/to/data/alpaca_en_demo.json",
     },
     "train_input_model_name": {
@@ -100,8 +101,26 @@ _TRAINER_FIELD_HINTS: Dict[str, Dict[str, Any]] = {
     "train_input_eval_dataset_path": {
         "required": False,
         "source": "user",
-        "description": "Validation parquet required by the initial verl GRPO adapter.",
+        "description": "Optional validation data. Trainer can deterministically split generated Verl data when omitted.",
         "example": "/path/to/validation.parquet",
+    },
+    "verl_source_dataset_path": {
+        "required": False,
+        "source": "user_or_upstream",
+        "description": "Generated JSON/JSONL/Parquet source; defaults to the latest Constructor output.",
+        "example": "/path/to/generated.jsonl",
+    },
+    "verl_source_eval_dataset_path": {
+        "required": False,
+        "source": "user",
+        "description": "Optional generated validation source before Trainer converts it to Verl Parquet.",
+        "example": "/path/to/generated-validation.jsonl",
+    },
+    "verl_data_adapter": {
+        "required": False,
+        "source": "auto",
+        "default": "auto",
+        "description": "Generated-data adapter: auto, native, messages, alpaca, or qa.",
     },
     "verl_reward_function_path": {
         "required": False,
@@ -120,6 +139,12 @@ _TRAINER_FIELD_HINTS: Dict[str, Dict[str, Any]] = {
         "source": "auto",
         "default": "auto",
         "description": "Reward source: auto, preset, or custom.",
+    },
+    "verl_reward_origin": {
+        "required": False,
+        "source": "auto",
+        "default": "",
+        "description": "Whether the reward contract is automatically inferred or user-selected.",
     },
     "verl_reward_preset": {
         "required": False,
@@ -144,6 +169,18 @@ _TRAINER_FIELD_HINTS: Dict[str, Dict[str, Any]] = {
         "source": "auto",
         "default": True,
         "description": "Keep training, progress persistence, and finalization alive after the caller disconnects.",
+    },
+    "verl_inherit_previous_config": {
+        "required": False,
+        "source": "auto",
+        "default": True,
+        "description": "Use the previous approved Verl YAML as the next round's hyperparameter baseline.",
+    },
+    "verl_use_previous_best_model": {
+        "required": False,
+        "source": "auto",
+        "default": True,
+        "description": "Use the previous successful exported Hugging Face checkpoint as the next round model.",
     },
 }
 
@@ -174,6 +211,23 @@ def _as_int(value: Any, default: int) -> int:
         return default
 
 
+def _as_float(value: Any, default: float) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _has_merge_value(value: Any) -> bool:
+    if value is None or value == "":
+        return False
+    if isinstance(value, (dict, list, tuple, set)) and not value:
+        return False
+    return True
+
+
 def _as_dict(value: Any, field_name: str) -> Dict[str, Any]:
     if value is None or value == "":
         return {}
@@ -189,6 +243,46 @@ def _as_dict(value: Any, field_name: str) -> Dict[str, Any]:
     raise ValueError(f"{field_name} must be a mapping")
 
 
+def _normalize_mapping_results(value: Any, section_name: str) -> Dict[str, Any]:
+    """Return one upstream mapping payload, including legacy serialized values.
+
+    Older Configer calls could persist a mapping as Python ``repr`` text.  Read
+    those snapshots safely so an existing task can continue, while rejecting
+    malformed values instead of silently falling back to a previous dataset.
+    """
+    if value in (None, ""):
+        return {}
+    if isinstance(value, dict):
+        return copy.deepcopy(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        parsed: Any
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            try:
+                parsed = ast.literal_eval(raw)
+            except (SyntaxError, ValueError) as exc:
+                raise ValueError(
+                    f"{section_name}.mapping_results must be a mapping"
+                ) from exc
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError(f"{section_name}.mapping_results must be a mapping")
+
+
+def _upstream_mapping_results(state: Dict[str, Any], section_name: str) -> Dict[str, Any]:
+    section = state.get(section_name)
+    if section is None:
+        return {}
+    if not isinstance(section, dict):
+        raise ValueError(f"{section_name} state must be a mapping")
+    mapping = _normalize_mapping_results(section.get("mapping_results"), section_name)
+    if mapping:
+        section["mapping_results"] = mapping
+    return mapping
+
+
 def _unwrap_config_value(value: Any) -> Any:
     if isinstance(value, dict) and "value" in value:
         return _unwrap_config_value(value.get("value"))
@@ -199,22 +293,59 @@ def _unwrap_config_value(value: Any) -> Any:
     return value
 
 
-def _load_task_trainer_config(task_id: str, db_path: str | None) -> Dict[str, Any]:
+def _load_task_section_config(
+    section_name: str,
+    task_id: str,
+    db_path: str | None,
+) -> Dict[str, Any]:
     if not task_id:
-        raise ValueError("task_id is required for task-scoped Trainer config")
+        raise ValueError(f"task_id is required for task-scoped {section_name} config")
     if not db_path:
         raise ValueError("DB_PATH is required when TASK_ID is provided")
 
     from loopai.skills.Configer import get_configer_task_state_config
 
     os.environ["DB_PATH"] = str(db_path)
-    result = get_configer_task_state_config(section_name="trainer", task_id=task_id)
+    result = get_configer_task_state_config(section_name=section_name, task_id=task_id)
     if not result.get("ok"):
         detail = (result.get("error") or {}).get("detail") or result.get("message")
-        raise RuntimeError(detail or "failed to load Trainer task state config")
+        raise RuntimeError(detail or f"failed to load {section_name} task state config")
 
     raw_config = result.get("data", {}).get("config", {})
     return _unwrap_config_value(raw_config) if isinstance(raw_config, dict) else {}
+
+
+def _load_task_trainer_config(task_id: str, db_path: str | None) -> Dict[str, Any]:
+    return _load_task_section_config("trainer", task_id, db_path)
+
+
+def _merge_optional_task_section(
+    state: Dict[str, Any],
+    section_name: str,
+    task_id: str,
+    db_path: str | None,
+) -> None:
+    """Load only upstream mapping results; never pull unrelated section secrets."""
+    try:
+        persisted = _load_task_section_config(section_name, task_id, db_path)
+    except Exception:
+        return
+    caller_section = state.get(section_name)
+    caller_mapping = (
+        caller_section.get("mapping_results")
+        if isinstance(caller_section, dict)
+        else None
+    )
+    persisted_mapping = (
+        persisted.get("mapping_results")
+        if isinstance(persisted, dict)
+        else None
+    )
+    mapping_results = caller_mapping if _has_merge_value(caller_mapping) else persisted_mapping
+    if _has_merge_value(mapping_results):
+        merged = copy.deepcopy(caller_section) if isinstance(caller_section, dict) else {}
+        merged["mapping_results"] = copy.deepcopy(mapping_results)
+        state[section_name] = merged
 
 
 def _load_config_state(config_path: str) -> Dict[str, Any]:
@@ -385,6 +516,7 @@ def resolve_trainer_runtime_config(
     state = strip_retired_tracking_fields(state)
 
     trainer = _trainer(state)
+    caller_trainer_config = copy.deepcopy(trainer)
     system = _system(state)
 
     explicit_task_id = _first_non_empty(
@@ -401,11 +533,36 @@ def resolve_trainer_runtime_config(
     task_state_loaded = False
     if explicit_task_id and explicit_task_id != _DEFAULT_THREAD_ID and (os.getenv("TASK_ID") or db_path):
         db_trainer_config = _load_task_trainer_config(str(explicit_task_id), str(db_path) if db_path else None)
-        trainer.update({
+        merged_trainer = {
             key: value
             for key, value in db_trainer_config.items()
             if value is not None and value != "" and not is_retired_tracking_key(key)
-        })
+        }
+        # Task state is the persistent baseline. Values supplied by the current
+        # caller are newer and therefore win, matching the documented
+        # kwargs > env > state > system > defaults contract.
+        caller_overrides = {
+            key: value
+            for key, value in caller_trainer_config.items()
+            if _has_merge_value(value) and not is_retired_tracking_key(key)
+        }
+        merged_trainer.update(caller_overrides)
+        state["trainer"] = merged_trainer
+        trainer = _trainer(state)
+        # A Trainer-only skill invocation still needs the current round's
+        # generated artifact. Read upstream task sections without mutating them.
+        _merge_optional_task_section(
+            state,
+            "constructor",
+            str(explicit_task_id),
+            str(db_path) if db_path else None,
+        )
+        _merge_optional_task_section(
+            state,
+            "obtainer",
+            str(explicit_task_id),
+            str(db_path) if db_path else None,
+        )
         if db_path:
             state["DB_PATH"] = str(db_path)
         task_state_loaded = True
@@ -458,6 +615,64 @@ def resolve_trainer_runtime_config(
         os.getenv("TRAIN_DATASET_PATH"),
         trainer.get("train_input_dataset_path"),
     )
+    constructor_mapping = _upstream_mapping_results(state, "constructor")
+    obtainer_mapping = _upstream_mapping_results(state, "obtainer")
+    generated_dataset_path = _first_non_empty(
+        constructor_mapping.get("output_file"),
+        obtainer_mapping.get("output_file"),
+    )
+    generated_dataset_origin = (
+        "constructor"
+        if constructor_mapping.get("output_file")
+        else "obtainer" if obtainer_mapping.get("output_file") else ""
+    )
+    requested_verl_source = _first_non_empty(
+        kwargs.get("verl_source_dataset_path"),
+        os.getenv("VERL_SOURCE_DATASET_PATH"),
+    )
+    persisted_verl_source = trainer.get("verl_source_dataset_path")
+    persisted_source_origin = str(trainer.get("verl_source_dataset_origin") or "").strip().lower()
+    # Only kwargs/environment values are explicit for *this* invocation.  A
+    # task-state path marked ``user`` may simply be the previous round's seed
+    # dataset and must not permanently mask the current Constructor output.
+    explicit_verl_source = requested_verl_source
+    selected_verl_source = _first_non_empty(
+        explicit_verl_source,
+        generated_dataset_path,
+        persisted_verl_source,
+        (
+            trainer.get("train_input_dataset_path")
+            if str(trainer.get("train_input_dataset_path") or "").lower().endswith(
+                (".json", ".jsonl")
+            )
+            else None
+        ),
+    )
+    trainer["_verl_source_dataset_explicit"] = bool(explicit_verl_source)
+    trainer["verl_source_dataset_path"] = selected_verl_source
+    if explicit_verl_source:
+        trainer["verl_source_dataset_origin"] = "user"
+    elif generated_dataset_path:
+        trainer["verl_source_dataset_origin"] = generated_dataset_origin
+    elif persisted_verl_source:
+        trainer["verl_source_dataset_origin"] = persisted_source_origin or "user"
+    source_replaced_by_upstream = bool(
+        trainer.get("train_framework") == "verl"
+        and generated_dataset_path
+        and not explicit_verl_source
+        and str(generated_dataset_path) != str(persisted_verl_source or "")
+    )
+    trainer["_verl_source_dataset_replaced"] = source_replaced_by_upstream
+    if source_replaced_by_upstream:
+        # These fields describe Parquet derived from the previous source.  The
+        # data builder will repopulate them from the new upstream artifact.
+        trainer["train_input_dataset_path"] = ""
+        trainer.pop("verl_data_manifest_path", None)
+        trainer.pop("verl_data_prepare_result", None)
+    if trainer.get("train_framework") == "verl" and not trainer.get("train_input_dataset_path"):
+        # The graph's generic required-field gate still expects this alias.
+        # data_check_node replaces it with the version-scoped prepared Parquet.
+        trainer["train_input_dataset_path"] = trainer.get("verl_source_dataset_path")
     trainer["train_input_model_name"] = _first_non_empty(
         kwargs.get("train_input_model_name"),
         kwargs.get("model_path"),
@@ -475,6 +690,52 @@ def resolve_trainer_runtime_config(
         kwargs.get("eval_dataset_path"),
         os.getenv("TRAIN_EVAL_DATASET_PATH"),
         trainer.get("train_input_eval_dataset_path"),
+    )
+    trainer["verl_source_eval_dataset_path"] = _first_non_empty(
+        kwargs.get("verl_source_eval_dataset_path"),
+        os.getenv("VERL_SOURCE_EVAL_DATASET_PATH"),
+        caller_trainer_config.get("verl_source_eval_dataset_path"),
+        trainer.get("verl_source_eval_dataset_path"),
+    )
+    trainer["verl_data_adapter"] = str(_first_non_empty(
+        kwargs.get("verl_data_adapter"),
+        os.getenv("VERL_DATA_ADAPTER"),
+        trainer.get("verl_data_adapter"),
+        "auto",
+    )).strip().lower()
+    if trainer["verl_data_adapter"] not in {"auto", "native", "messages", "alpaca", "qa"}:
+        raise ValueError("verl_data_adapter must be auto, native, messages, alpaca, or qa")
+    trainer["verl_data_source"] = str(_first_non_empty(
+        kwargs.get("verl_data_source"),
+        os.getenv("VERL_DATA_SOURCE"),
+        trainer.get("verl_data_source"),
+        "",
+    ) or "").strip()
+    trainer["verl_validation_ratio"] = _as_float(
+        _first_non_empty(
+            kwargs.get("verl_validation_ratio"),
+            os.getenv("VERL_VALIDATION_RATIO"),
+            trainer.get("verl_validation_ratio"),
+        ),
+        default=0.05,
+    )
+    if not 0.0 < trainer["verl_validation_ratio"] < 1.0:
+        raise ValueError("verl_validation_ratio must be between 0 and 1")
+    trainer["verl_split_seed"] = _as_int(
+        _first_non_empty(
+            kwargs.get("verl_split_seed"),
+            os.getenv("VERL_SPLIT_SEED"),
+            trainer.get("verl_split_seed"),
+        ),
+        default=42,
+    )
+    trainer["verl_reuse_previous_validation"] = _as_bool(
+        _first_non_empty(
+            kwargs.get("verl_reuse_previous_validation"),
+            os.getenv("VERL_REUSE_PREVIOUS_VALIDATION"),
+            trainer.get("verl_reuse_previous_validation"),
+        ),
+        default=True,
     )
     trainer["train_input_config_template_path"] = _first_non_empty(
         kwargs.get("train_input_config_template_path"),
@@ -551,24 +812,60 @@ def resolve_trainer_runtime_config(
         trainer.get("verl_reward_function_name"),
         "compute_score",
     ))
-    raw_reward_mode = _first_non_empty(
+    requested_reward_mode = _first_non_empty(
         kwargs.get("verl_reward_mode"),
         os.getenv("VERL_REWARD_MODE"),
+    )
+    requested_reward_preset = _first_non_empty(
+        kwargs.get("verl_reward_preset"),
+        os.getenv("VERL_REWARD_PRESET"),
+    )
+    explicit_reward_override = any(
+        _has_merge_value(value)
+        for value in (
+            requested_reward_mode,
+            requested_reward_preset,
+            kwargs.get("verl_reward_function_path"),
+            os.getenv("VERL_REWARD_FUNCTION_PATH"),
+        )
+    )
+    raw_reward_mode = _first_non_empty(
+        requested_reward_mode,
         trainer.get("verl_reward_mode"),
     )
     # A path without the new mode field is the legacy custom-reward contract.
     if not raw_reward_mode:
         raw_reward_mode = "custom" if trainer.get("verl_reward_function_path") else "auto"
+    persisted_reward_origin = str(trainer.get("verl_reward_origin") or "").strip().lower()
+    previous_recommendation = trainer.get("verl_reward_recommendation") or {}
+    if explicit_reward_override:
+        reward_origin = "auto" if str(raw_reward_mode).strip().lower() == "auto" else "user"
+    elif persisted_reward_origin in {"auto", "user"}:
+        reward_origin = persisted_reward_origin
+    elif (
+        isinstance(previous_recommendation, dict)
+        and previous_recommendation.get("source") == "trainer_generated_data_inference"
+    ):
+        reward_origin = "auto"
+    else:
+        reward_origin = "auto" if str(raw_reward_mode).strip().lower() == "auto" else "user"
+
+    # An automatically selected preset belongs to the previous source.  Reset
+    # it before adapting a newly generated dataset so reward inference runs
+    # again.  User-selected preset/custom rewards remain untouched.
+    if source_replaced_by_upstream and reward_origin == "auto" and not explicit_reward_override:
+        raw_reward_mode = "auto"
+        trainer["verl_reward_preset"] = "auto"
     trainer["verl_reward_mode"] = str(raw_reward_mode).strip().lower()
     if trainer["verl_reward_mode"] not in {"auto", "preset", "custom"}:
         raise ValueError("verl_reward_mode must be auto, preset, or custom")
+    trainer["verl_reward_origin"] = reward_origin
 
     if trainer["verl_reward_mode"] == "auto":
         trainer["verl_reward_preset"] = "auto"
     elif trainer["verl_reward_mode"] == "preset":
         trainer["verl_reward_preset"] = normalize_reward_preset(_first_non_empty(
-            kwargs.get("verl_reward_preset"),
-            os.getenv("VERL_REWARD_PRESET"),
+            requested_reward_preset,
             trainer.get("verl_reward_preset"),
             "auto",
         ))
@@ -623,6 +920,30 @@ def resolve_trainer_runtime_config(
         ),
         default=True,
     )
+    trainer["verl_inherit_previous_config"] = _as_bool(
+        _first_non_empty(
+            kwargs.get("verl_inherit_previous_config"),
+            os.getenv("VERL_INHERIT_PREVIOUS_CONFIG"),
+            trainer.get("verl_inherit_previous_config"),
+        ),
+        default=True,
+    )
+    trainer["verl_use_previous_best_model"] = _as_bool(
+        _first_non_empty(
+            kwargs.get("verl_use_previous_best_model"),
+            os.getenv("VERL_USE_PREVIOUS_BEST_MODEL"),
+            trainer.get("verl_use_previous_best_model"),
+        ),
+        default=True,
+    )
+    trainer["verl_multi_round_enabled"] = _as_bool(
+        _first_non_empty(
+            kwargs.get("verl_multi_round_enabled"),
+            os.getenv("VERL_MULTI_ROUND_ENABLED"),
+            trainer.get("verl_multi_round_enabled"),
+        ),
+        default=True,
+    )
     prefill_guide = build_trainer_prefill_guide(
         state,
         task_type=trainer["train_stage"],
@@ -642,13 +963,20 @@ def resolve_trainer_runtime_config(
 
 def get_missing_trainer_fields(state: Dict[str, Any]) -> list[str]:
     trainer = state.get("trainer") or {}
-    missing = [field for field in _REQUIRED_TRAINER_FIELDS if not trainer.get(field)]
+    missing = [
+        field
+        for field in _REQUIRED_TRAINER_FIELDS
+        if field != "train_input_dataset_path" and not trainer.get(field)
+    ]
+    if not (
+        trainer.get("train_input_dataset_path")
+        or trainer.get("verl_source_dataset_path")
+    ):
+        missing.append("train_input_dataset_path")
     if trainer.get("train_framework") == "llamafactory" and not trainer.get("llamafactory_dir"):
         missing.append("llamafactory_dir")
     if trainer.get("train_framework") == "verl" and not trainer.get("verl_dir"):
         missing.append("verl_dir")
-    if trainer.get("train_framework") == "verl" and not trainer.get("train_input_eval_dataset_path"):
-        missing.append("train_input_eval_dataset_path")
     if (
         trainer.get("train_framework") == "verl"
         and trainer.get("verl_reward_mode") == "custom"

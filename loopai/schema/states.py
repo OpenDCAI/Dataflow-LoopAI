@@ -1363,8 +1363,59 @@ class TrainerState(BaseModel):
     train_input_eval_dataset_path: str = Field(
         default="",
         title="验证数据集路径",
-        description="Verl GRPO 使用的验证 Parquet 路径",
+        description="Verl GRPO 使用的验证 Parquet 路径；生成数据可由 Trainer 自动切分",
         json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"}
+    )
+    verl_source_dataset_path: str = Field(
+        default="",
+        title="Verl 原始训练数据",
+        description="JSON/JSONL/Parquet 原始数据；留空时优先使用本轮 Constructor 输出",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"},
+    )
+    verl_source_dataset_origin: str = Field(
+        default="",
+        title="Verl 原始数据来源",
+        description="Trainer 记录 user/constructor/obtainer，用于下一轮区分显式覆盖与旧路径",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "训练模型"},
+    )
+    verl_source_eval_dataset_path: str = Field(
+        default="",
+        title="Verl 原始验证数据",
+        description="可选的 JSON/JSONL/Parquet 验证数据；留空时自动切分或复用上一轮验证集",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "训练模型"},
+    )
+    verl_data_adapter: str = Field(
+        default="auto",
+        title="Verl 数据适配器",
+        description="Trainer 将生成数据转换为 Verl Parquet 时使用的字段适配器",
+        json_schema_extra={"ui_type": "list", "ui_group": "训练模型",
+                           "allowed_values": ["auto", "native", "messages", "alpaca", "qa"]},
+    )
+    verl_data_source: str = Field(
+        default="",
+        title="Verl data_source 覆盖值",
+        description="通常留空由 Trainer/reward 决定；仅在数据协议明确时手动填写",
+        json_schema_extra={"ui_type": "text", "ui_group": "训练模型"},
+    )
+    verl_validation_ratio: float = Field(
+        default=0.05,
+        gt=0.0,
+        lt=1.0,
+        title="Verl 验证集比例",
+        description="未提供验证数据时 Trainer 的确定性切分比例",
+        json_schema_extra={"ui_type": "number", "ui_group": "训练模型"},
+    )
+    verl_split_seed: int = Field(
+        default=42,
+        title="Verl 数据切分种子",
+        description="控制生成数据去重后的确定性训练/验证切分",
+        json_schema_extra={"ui_type": "number", "ui_group": "训练模型"},
+    )
+    verl_reuse_previous_validation: bool = Field(
+        default=True,
+        title="复用上一轮验证集",
+        description="多轮训练时保持验证集稳定；显式提供本轮验证源时以本轮为准",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"},
     )
     verl_reward_function_path: str = Field(
         default="",
@@ -1384,6 +1435,12 @@ class TrainerState(BaseModel):
         description="auto 自动按 data_source 路由，preset 使用 LoopAI 预设，custom 使用自定义文件",
         json_schema_extra={"ui_type": "list", "ui_group": "训练模型",
                            "allowed_values": ["auto", "preset", "custom"]},
+    )
+    verl_reward_origin: str = Field(
+        default="",
+        title="Verl Reward 选择来源",
+        description="记录 reward 是自动匹配还是用户指定，用于新一轮按新数据重新匹配",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "训练模型"},
     )
     verl_reward_preset: str = Field(
         default="auto",
@@ -1420,6 +1477,24 @@ class TrainerState(BaseModel):
         title="Verl Actor Checkpoint 保留数量",
         description="最多保留的 actor checkpoint 数量",
         json_schema_extra={"ui_type": "number", "ui_group": "训练模型"}
+    )
+    verl_inherit_previous_config: bool = Field(
+        default=True,
+        title="继承上一轮 Verl 配置",
+        description="下一轮以此前已确认 YAML 为基线，仅刷新数据、模型、reward 和运行字段",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"},
+    )
+    verl_use_previous_best_model: bool = Field(
+        default=True,
+        title="使用上一轮最佳模型",
+        description="上一轮成功导出 Hugging Face 模型后，自动作为下一轮 GRPO 初始模型",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"},
+    )
+    verl_multi_round_enabled: bool = Field(
+        default=True,
+        title="启用 Verl 多轮衔接",
+        description="确保保存 checkpoint 并导出下一轮可直接加载的 Hugging Face 模型",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"},
     )
     CUDA_VISIBLE_DEVICES: str = Field(
         default="",
@@ -1602,6 +1677,42 @@ class TrainerState(BaseModel):
         title="Trainer 运行版本 ID",
         description="每次启动 Trainer 子节点时生成的 version_id，用于 TaskRuntimeItem 和版本化输出目录",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
+    )
+    trainer_parent_version_id: str = Field(
+        default="",
+        title="上一轮 Trainer 版本 ID",
+        description="当前训练轮继承的数据、配置和模型所来自的 Trainer 版本",
+        json_schema_extra={"ui_type": "text", "readOnly": True, "ui_group": "训练模型"},
+    )
+    trainer_round_index: int = Field(
+        default=0,
+        title="Trainer 轮次",
+        description="同一 task 下从 1 开始递增的训练轮次",
+        json_schema_extra={"ui_type": "number", "readOnly": True, "ui_group": "训练模型"},
+    )
+    trainer_model_inheritance: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Trainer 模型继承结果",
+        description="是否采用上一轮最佳模型及其校验原因",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "训练模型"},
+    )
+    verl_data_manifest_path: str = Field(
+        default="",
+        title="Verl 数据清单路径",
+        description="Trainer 数据转换、切分、去重和 reward 决策的版本化清单",
+        json_schema_extra={"ui_type": "file_path", "readOnly": True, "ui_group": "训练模型"},
+    )
+    verl_data_prepare_result: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Verl 数据准备结果",
+        description="本轮生成数据适配为 Verl Parquet 的统计结果",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "训练模型"},
+    )
+    verl_reward_recommendation: Dict[str, Any] = Field(
+        default_factory=dict,
+        title="Verl Reward 建议",
+        description="Trainer 自动选择或确认 reward 的依据；不明确时不会猜测",
+        json_schema_extra={"ui_type": "json_viewer", "readOnly": True, "ui_group": "训练模型"},
     )
     trainer_output_dir: str = Field(
         default="",

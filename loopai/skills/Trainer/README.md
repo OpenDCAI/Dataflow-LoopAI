@@ -7,6 +7,38 @@ Trainer Skill 是 Dataflow-LoopAI 中负责模型训练的技能实现，支持�
 
 Trainer 不依赖 MCP。对调用方仍保持同步返回语义，但训练、进度持久化和结果收尾由独立本地 Worker 持有；Codex/API 会话提前结束不会中断 Worker。两条路径都先生成完整 YAML，用户确认后才启动训练。
 
+## 命令行入口
+
+安装项目后可以通过 `loopai-trainer` 直接调用同一套 Trainer Skill。CLI
+不会创建另一套训练实现，也不会改变 API、前端或独立 Worker 的行为。
+
+```bash
+pip install -e .
+
+# 1. 生成最终 YAML；从 JSON 结果的 data 中读取 config_yaml、
+#    config_path、config_sha256 和 trainer_version_id。
+loopai-trainer prepare \
+  --config ./starter.yaml \
+  --task-id my-task
+
+# 2. 用户确认 YAML 后，使用 prepare 返回的同一个 version ID 启动训练。
+loopai-trainer run-prepared \
+  --config ./starter.yaml \
+  --task-id my-task \
+  --version-id <trainer_version_id> \
+  --prepared-config <config_path> \
+  --sha256 <config_sha256>
+
+# 查看状态、事件和分析结果。
+loopai-trainer status --task-id my-task --version-id <trainer_version_id>
+loopai-trainer events --task-id my-task --version-id <trainer_version_id>
+loopai-trainer analyze --task-id my-task
+```
+
+如果任务配置保存在数据库中，可同时传入 `--db-path`。`prepare` 与
+`run-prepared` 必须使用相同的任务配置来源；CLI 不提供绕过 YAML 确认的直接
+`run` 子命令。
+
 ## Verl GRPO 最小配置
 
 ```python
@@ -44,6 +76,38 @@ result = run_prepared(
 ```
 
 GRPO 训练/验证 Parquet 至少需要 `prompt`、`data_source`、`reward_model` 三列。训练通过 `conda run --no-capture-output -n verl python -m verl.trainer.main_ppo ...` 启动；指标写入 Trainer 的 `metrics` 目录，checkpoint 按 `global_step_N` 识别，根据 YAML 中的验证指标选择最佳项，再把选中的 FSDP actor 合并为 Hugging Face 模型。
+
+## 生成数据与多轮 GRPO
+
+Constructor 仍负责生成和清洗数据；当 `train_framework=verl` 时，Trainer 在每轮 `prepare()` 中负责最后一段训练协议适配：
+
+1. 优先读取本轮 `constructor.mapping_results.output_file`，也可用 `verl_source_dataset_path` 显式覆盖。
+2. 自动识别原生 Verl、messages/ShareGPT、Alpaca 或普通 QA，转换为本轮目录下的 `prepared_data/train.parquet`。
+3. 若未提供验证数据，按 `verl_validation_ratio` 和 `verl_split_seed` 确定性切分；多轮仅在 reward 协议兼容时复用上一轮验证 Parquet。
+4. 生成 `dataset_manifest.json` 和 `rejected_rows.jsonl`，记录来源、去重、拒绝、切分、哈希和 reward 决策。
+5. 以上一轮已确认的 Verl YAML 为超参基线，只刷新本轮数据、最佳模型、reward、GPU、输出目录和 version；然后仍向用户展示整份新 YAML，等待本轮确认。
+
+生成数据的最小增量配置如下；通常不需要用户手写 Verl Parquet：
+
+```yaml
+trainer:
+  train_framework: verl
+  train_stage: grpo
+  verl_dir: /path/to/verl
+  verl_env_path: verl
+  train_input_model_name: /path/to/base-model
+  train_input_task_description: Mathematics reasoning with GRPO
+  verl_source_dataset_path: ""       # 留空时使用本轮 Constructor 输出
+  verl_data_adapter: auto
+  verl_validation_ratio: 0.05
+  verl_reuse_previous_validation: true
+  verl_inherit_previous_config: true
+  verl_use_previous_best_model: true
+  verl_multi_round_enabled: true
+  verl_reward_mode: auto
+```
+
+`auto` 会针对每轮新的上游数据重新判断，只在任务/数据来源或答案标记能可靠对应已有 preset 时采用建议；无法判断时 `prepare()` 会停止并要求设置 `verl_reward_mode=preset`/`verl_reward_preset` 或 custom reward，不会猜测 ground truth 或 reward 语义。上一轮模型只有在训练成功、导出无错误且目录包含可加载的 Hugging Face 配置和权重时才会自动传给下一轮；若要改用指定模型，可在本轮调用显式传 `train_input_model_name`，或关闭 `verl_use_previous_best_model`。
 
 ## Verl Reward 预设
 
@@ -89,10 +153,11 @@ Verl 实时进度优先读取 `metrics/verl_metrics.jsonl` 的 `training/global_
 
 ### 1. 数据检查节点 (Data Check Node)
 
-**功能：** 验证数据集格式是否符合 LlamaFactory 要求
+**功能：** 验证 SFT 数据；对 Verl 则先适配生成数据，再验证训练/验证 Parquet 与 reward 协议
 
 **输入：**
-- `train_input_dataset_path`: 数据集文件路径（支持 JSON/JSONL 格式）
+- `train_input_dataset_path`: SFT 数据或原生 Verl Parquet
+- `verl_source_dataset_path`: 可选的生成数据路径；未配置时读取 Constructor 输出
 
 **输出：**
 - 数据格式验证报告
