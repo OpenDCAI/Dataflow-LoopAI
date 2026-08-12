@@ -19,6 +19,10 @@ from .dataset_acquisition_agent import run_agent as run_dataset_acquisition_agen
 from .download import MAX_BYTES_PER_DATASET, MAX_ROWS_PER_DATASET, download_manifest
 from .errors import ObtainerCliError
 from .events import emit_obtainer_event, get_obtainer_event_writer
+from .lake_bundle import consolidate as lake_consolidate
+from .lake_bundle import export_bundle as lake_export_bundle
+from .lake_bundle import import_bundle as lake_import_bundle
+from .lake_bundle import import_data as lake_import_data
 from .lake_manager import (
     current_lake_pointer,
     delete_lake_pointer,
@@ -413,6 +417,20 @@ def _run_dm_lake_command(argv: list[str], *, lake: str = "") -> dict:
     monitor_rebuild = monitor_sub.add_parser("rebuild")
     monitor_rebuild.add_argument("--link", default=lake or ".loopai/lake.yaml")
     monitor_rebuild.add_argument("--warehouse", default="")
+    consolidate = sub.add_parser("consolidate", help="move scattered lake/obtainer assets into .datamixer/ + outputs/obtainer/")
+    consolidate.add_argument("--project-root", default=".")
+    export_bundle = sub.add_parser("export-bundle", help="export the lake + obtainer digital assets as a tar.gz bundle")
+    export_bundle.add_argument("--out", required=True)
+    export_bundle.add_argument("--project-root", default=".")
+    export_bundle.add_argument("--link", default="")
+    export_bundle.add_argument("--include-runtime", action="store_true")
+    import_bundle = sub.add_parser("import-bundle", help="import a bundle tar.gz into a target project root")
+    import_bundle.add_argument("--file", required=True)
+    import_bundle.add_argument("--target", required=True)
+    import_data = sub.add_parser("import-data", help="import a data package into the active lake (incremental/batch)")
+    import_data.add_argument("--package", required=True)
+    import_data.add_argument("--project-root", default=".")
+    import_data.add_argument("--link", default="")
     parsed = parser.parse_args(argv)
     if parsed.lake_action == "current":
         return current_lake_pointer(link_path=parsed.link)
@@ -466,6 +484,19 @@ def _run_dm_lake_command(argv: list[str], *, lake: str = "") -> dict:
                 exit_code=2,
             )
         return start_background_rebuild(warehouse, lake=parsed.link)
+    if parsed.lake_action == "consolidate":
+        return lake_consolidate(parsed.project_root)
+    if parsed.lake_action == "export-bundle":
+        return lake_export_bundle(
+            parsed.project_root,
+            parsed.out,
+            link=parsed.link or None,
+            include_runtime=parsed.include_runtime,
+        )
+    if parsed.lake_action == "import-bundle":
+        return lake_import_bundle(parsed.file, parsed.target)
+    if parsed.lake_action == "import-data":
+        return lake_import_data(parsed.project_root, parsed.package, link=parsed.link or None)
     raise ObtainerCliError("UNSUPPORTED_DM_LAKE_COMMAND", f"Unsupported dm lake command: {parsed.lake_action}")
 
 

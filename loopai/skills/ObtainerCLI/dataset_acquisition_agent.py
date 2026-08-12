@@ -213,7 +213,8 @@ Hard rules:
 
 
 def _worker_codex_home() -> Path:
-    return _workspace() / "codex_home_worker"
+    # Canonical location under outputs/obtainer/.codex/worker (obtainer-only).
+    return _workspace() / "outputs" / "obtainer" / ".codex" / "worker"
 
 
 def _apply_runtime_env(*, python_executable: str = "", node_bin_dir: str = "") -> None:

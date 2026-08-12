@@ -122,7 +122,8 @@ def _project_root() -> Path | None:
 def dataflow_codex_home() -> Path:
     """Dedicated Codex home for the DataFlow agent (its own AGENTS.md)."""
     root = _project_root() or Path.cwd()
-    return Path(root) / "codex_home_dataflow"
+    # Canonical location under outputs/obtainer/.codex/dataflow (obtainer-only).
+    return Path(root) / "outputs" / "obtainer" / ".codex" / "dataflow"
 
 
 DATAFLOW_AGENTS_MD = """# LoopAI DataMixer DataFlow Agent
