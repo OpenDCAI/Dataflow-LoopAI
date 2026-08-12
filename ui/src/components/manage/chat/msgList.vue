@@ -12,7 +12,7 @@
             </transition>
         </template>
         <transition name="msg-collapse" appear>
-            <response-block v-show="msgStreamModel.loading"></response-block>
+            <response-block v-show="msgStreamModel.loading || processSteps.length > 0"></response-block>
         </transition>
         <transition name="msg-collapse" appear>
             <msg-block
@@ -66,7 +66,7 @@ export default {
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
-        ...mapState(useLoopAI, ['taskMessages', 'msgStreamModel', 'currentMsg'])
+        ...mapState(useLoopAI, ['taskMessages', 'msgStreamModel', 'currentMsg', 'processSteps'])
     },
     methods: {
         showMe(msg) {
