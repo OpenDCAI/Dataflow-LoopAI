@@ -124,6 +124,12 @@ Never judge progress from `message` alone; use the structured fields.
 - Never run `dm lake ...`, `dataset-acquisition-agent`, `sft-export-agent`,
   `dataflow agent-run`, `searchagent`, `webagent` or `download manifest`
   yourself for a normal obtain task - the orchestrator owns those.
+- **Never `kill` / `pkill` the orchestrator's worker processes.** The
+  orchestrator worker is managed by the CLI (`start` / `resume` / `stop`); raw
+  process kills leave it in a stuck `running` state and break the run. If the
+  status looks stuck, first check `updated_at` / `stale`; only then use
+  `dm obtainer-orchestrator stop --run <dir>` followed by `resume` (never raw
+  `kill`), and keep polling otherwise.
 - Never claim obtainer completion without a `final_report.json` reported by the
   orchestrator.
 
