@@ -8,7 +8,7 @@ from loopai.common.i18n.i18n_loader import I18NLoader
 
 
 def _default_embedding_config() -> dict[str, Any]:
-    """Embedding 服务配置（与 .loopai/lake.yaml 的 embedding_* 字段对应）。"""
+    """Embedding 服务配置（与 .datamixer/lake.yaml 的 embedding_* 字段对应）。"""
     return {
         "provider": "openai-compatible",
         "base_url": "http://127.0.0.1:8000/v1",

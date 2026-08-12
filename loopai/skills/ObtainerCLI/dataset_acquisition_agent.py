@@ -1256,7 +1256,7 @@ def run_agent(argv: list[str], *, root: str, task_id: str = "") -> dict:
             raise ObtainerCliError(
                 "DATASET_ACQUISITION_AGENT_WAREHOUSE_INVALID",
                 f"dataset-acquisition-agent requires a DataMixer warehouse directory, not a file: {warehouse}",
-                hint="Use `dm --lake .loopai/lake.yaml dataset-acquisition-agent start ...` or pass the directory containing datamixer.toml.",
+                hint="Use `dm --lake .datamixer/lake.yaml dataset-acquisition-agent start ...` or pass the directory containing datamixer.toml.",
                 exit_code=2,
             )
         if not args.dry_run and not (warehouse / "datamixer.toml").is_file():

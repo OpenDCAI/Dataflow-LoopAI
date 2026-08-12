@@ -444,7 +444,7 @@ const refresh = async () => {
     try {
         const params = requestedWarehouse.value
             ? { root: requestedWarehouse.value }
-            : { lake: normalize(props.lake) || '.loopai/lake.yaml' }
+            : { lake: normalize(props.lake) || '.datamixer/lake.yaml' }
         if (requestedCampaignId.value) params.run_id = requestedCampaignId.value
         const result = await getWebAgentOverview(params)
         if (result?.code !== 200) throw new Error(result?.message || '无法读取 WebAgent 状态')

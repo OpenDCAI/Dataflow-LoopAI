@@ -136,7 +136,7 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     start.add_argument("--target-datasets", type=int, default=1)
     start.add_argument("--message", default="", help="free-form intent/message for the worker")
     start.add_argument("--analysis-report", action="append", default=[])
-    start.add_argument("--lake", default=".loopai/lake.yaml")
+    start.add_argument("--lake", default=".datamixer/lake.yaml")
     start.add_argument("--event-output-dir", default="", help="event output dir (default: run_dir parent)")
     start.add_argument("--model", default="")
     start.add_argument("--timeout", type=int, default=3600)
@@ -1071,7 +1071,7 @@ def run_agent(argv: list[str], *, root: str = "", lake: str = "", task_id: str =
                 exit_code=2,
             )
         run_dir.mkdir(parents=True, exist_ok=True)
-        lake_link = lake or args.lake or ".loopai/lake.yaml"
+        lake_link = lake or args.lake or ".datamixer/lake.yaml"
         output_dir = args.event_output_dir or str(run_dir.parent)
         python_executable = args.python_executable or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
         node_bin_dir = args.node_bin_dir or os.environ.get("LOOPAI_NODE_BIN_DIR", "")

@@ -20,10 +20,8 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import os
 import shutil
 import tarfile
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -61,8 +59,7 @@ def resolve_active_lake(
 ) -> tuple[Path, Path]:
     """Resolve (pointer_path, warehouse_path) for the active lake.
 
-    Prefers the canonical ``.datamixer/lake.yaml``; falls back to the legacy
-    ``.loopai/lake.yaml`` so old projects keep working.
+    The canonical pointer is ``<project>/.datamixer/lake.yaml``.
     """
     project = Path(project_root).expanduser().resolve()
     if link:
@@ -71,13 +68,12 @@ def resolve_active_lake(
             pointer = project / pointer
         pointer = pointer.resolve()
     else:
-        canonical = canonical_lake_dir(project) / "lake.yaml"
-        pointer = canonical if canonical.is_file() else project / ".loopai" / "lake.yaml"
+        pointer = canonical_lake_dir(project) / "lake.yaml"
     if not pointer.is_file():
         raise ObtainerCliError(
             "DATAMIXER_LAKE_POINTER_NOT_FOUND",
             f"No lake pointer found: {pointer}",
-            hint=f"Initialize or consolidate the lake first (`dm lake init` / `dm lake consolidate`).",
+            hint="Initialize or consolidate the lake first (`dm lake init` / `dm lake consolidate`).",
             exit_code=2,
         )
     from .config import read_lake_config

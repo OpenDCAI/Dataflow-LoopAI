@@ -25,7 +25,7 @@
                         border-radius="6"
                         :reveal-border="true"
                         :is-box-shadow="true"
-                        placeholder=".loopai/lake.yaml"
+                        placeholder=".datamixer/lake.yaml"
                         :title="local('Path to the lake config file')"
                         @keyup.enter="refresh"
                     ></fv-text-box>
@@ -540,7 +540,7 @@ export default {
     },
     data() {
         return {
-            lakePath: '.loopai/lake.yaml',
+            lakePath: '.datamixer/lake.yaml',
             monitor: null,
             lakeState: {},
             lakeScan: null,

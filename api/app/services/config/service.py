@@ -75,7 +75,7 @@ def _apply_states_config(
 
 
 def _sync_model_pool_services_to_lake(config_obj: dict[str, Any]) -> None:
-    """Sync model-pool embedding/MinerU-HTML service config into .loopai/lake.yaml.
+    """Sync model-pool embedding/MinerU-HTML service config into .datamixer/lake.yaml.
 
     The lake pointer is the shared source of truth consumed by ObtainerCLI,
     the embedding indexer and the WebAgent pipeline, so saving the model pool

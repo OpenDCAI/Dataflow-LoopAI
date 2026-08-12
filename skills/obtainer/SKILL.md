@@ -154,7 +154,7 @@ Never judge progress from `message` alone; use the structured fields.
   `loopai-obtainercli dm ...` for initialization, schema inspection, dataset
   registry, ingest, query, processing operators, indexing, recall, recipes,
   snapshots, lineage, and export.
-- **Reuse the active DataMixer warehouse.** Treat `.loopai/lake.yaml` as a
+- **Reuse the active DataMixer warehouse.** Treat `.datamixer/lake.yaml` as a
   project pointer to a reusable DataMixer warehouse. Do not create a new lake per
   task unless the user explicitly asks for a new warehouse. Use `dm lake load`
   to point the project at an existing warehouse and `dm lake delete` to unload
@@ -163,7 +163,7 @@ Never judge progress from `message` alone; use the structured fields.
   warehouse, so the agent sees project and cache candidates instead of guessing
   paths.
 - **Use lake context, not repeated boilerplate.** After a lake is loaded or
-  initialized, use `dm --lake .loopai/lake.yaml ...` for agents. The pointer
+  initialized, use `dm --lake .datamixer/lake.yaml ...` for agents. The pointer
   persists the warehouse, selected WebAgent, model name, worker/subquery
   defaults, current acquisition run, and current campaign id. Do not pass a
   FastAPI/Configer SQLite file as `--root`; `--root` must be a DataMixer
@@ -173,7 +173,7 @@ Never judge progress from `message` alone; use the structured fields.
   warehouse already contains `datamixer.toml`. When a previous task ended, clear
   its stale bindings first with `dm lake unbind` so the pointer never confuses
   the new run with an old task_id; then start the worker with
-  `dm --lake .loopai/lake.yaml ...`.
+  `dm --lake .datamixer/lake.yaml ...`.
 - **Prepare worker intent before acquiring from a report.** First recognize the
   dataset-acquisition intent: target sample shape, task types, domains, source
   hints, proportions, quality gates, and concrete search objectives. Pass that
@@ -297,7 +297,7 @@ Obtainer has one production data-lake command surface:
 
 ```bash
 loopai-obtainercli dm --root /path/to/datamixer-warehouse <datamixer-command> --json
-loopai-obtainercli dm --lake .loopai/lake.yaml <datamixer-command> --json
+loopai-obtainercli dm --lake .datamixer/lake.yaml <datamixer-command> --json
 ```
 
 Use `--root` when operating directly on a DataMixer warehouse. Use `--lake` only
@@ -307,12 +307,12 @@ DataMixer warehouse. All `dm` commands emit machine-readable JSON.
 Manage the project pointer to a reusable DataMixer warehouse:
 
 ```bash
-loopai-obtainercli dm lake scan --link .loopai/lake.yaml --project-root .
-loopai-obtainercli dm lake current --link .loopai/lake.yaml
-loopai-obtainercli dm lake load --warehouse /path/to/warehouse --link .loopai/lake.yaml
-loopai-obtainercli dm lake delete --link .loopai/lake.yaml
-loopai-obtainercli dm lake context --link .loopai/lake.yaml
-loopai-obtainercli dm lake unbind --link .loopai/lake.yaml
+loopai-obtainercli dm lake scan --link .datamixer/lake.yaml --project-root .
+loopai-obtainercli dm lake current --link .datamixer/lake.yaml
+loopai-obtainercli dm lake load --warehouse /path/to/warehouse --link .datamixer/lake.yaml
+loopai-obtainercli dm lake delete --link .datamixer/lake.yaml
+loopai-obtainercli dm lake context --link .datamixer/lake.yaml
+loopai-obtainercli dm lake unbind --link .datamixer/lake.yaml
 ```
 
 `dm lake delete` unloads only the pointer by default. Use
@@ -335,7 +335,7 @@ generic spawned Codex worker.
 Start a new worker:
 
 ```bash
-${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --lake .loopai/lake.yaml dataset-acquisition-agent start \
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --lake .datamixer/lake.yaml dataset-acquisition-agent start \
   --run ./outputs/acquisition_run \
   --analysis-report ./outputs/analyzer_report.md \
   --objective "collect general-domain instruction and QA datasets" \
@@ -355,14 +355,14 @@ to block. If `loopai-obtainercli` is not installed as a console script, use the
 Poll status:
 
 ```bash
-${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --lake .loopai/lake.yaml dataset-acquisition-agent status \
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --lake .datamixer/lake.yaml dataset-acquisition-agent status \
   --run ./outputs/acquisition_run
 ```
 
 Resume the same worker:
 
 ```bash
-${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --lake .loopai/lake.yaml dataset-acquisition-agent resume \
+${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm --lake .datamixer/lake.yaml dataset-acquisition-agent resume \
   --run ./outputs/acquisition_run \
   --message "Remove unrelated datasets from the filtered manifest, then continue ingest."
 ```

@@ -59,7 +59,7 @@ def _resolve_repo_path(raw: str | None, default: str) -> Path:
 
 
 def _resolve_lake_path(lake: str | None) -> Path:
-    path = _resolve_repo_path(lake, ".loopai/lake.yaml")
+    path = _resolve_repo_path(lake, ".datamixer/lake.yaml")
     if path.suffix in {".yaml", ".yml"} and not path.exists():
         raise FileNotFoundError(f"Lake config not found: {path}")
     return path
@@ -76,7 +76,7 @@ def _resolve_datamixer_root(*, lake: str | None = None, root: str | None = None)
 
 def _datamixer_command_payload() -> dict[str, Any]:
     return {
-        "entrypoint": "loopai-obtainercli dm --lake .loopai/lake.yaml",
+        "entrypoint": "loopai-obtainercli dm --lake .datamixer/lake.yaml",
         "backend": "datamixer",
         "groups": [
             {
@@ -202,7 +202,7 @@ def _run_obtainercli_dm_for_webui(request: DataMixerCliRequest) -> dict[str, Any
             Path(path).write_text(files[item], encoding="utf-8")
             tmp_paths.append(path)
             args[index] = path
-    lake = request.lake or ".loopai/lake.yaml"
+    lake = request.lake or ".datamixer/lake.yaml"
     cli_argv = ["dm", "--lake", lake]
     if request.root:
         cli_argv.extend(["--root", request.root])
@@ -385,7 +385,7 @@ async def get_embedding_health(lake: str | None = None, timeout_seconds: float =
 )
 async def get_datamixer_lake_current(lake: str | None = None):
     try:
-        data = current_lake_pointer(link_path=_resolve_repo_path(lake, ".loopai/lake.yaml"))
+        data = current_lake_pointer(link_path=_resolve_repo_path(lake, ".datamixer/lake.yaml"))
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=data)()
@@ -400,7 +400,7 @@ async def scan_datamixer_lakes(lake: str | None = None, max_depth: int = 6):
     try:
         data = scan_lake_candidates(
             project_root=REPO_ROOT,
-            active_link=_resolve_repo_path(lake, ".loopai/lake.yaml"),
+            active_link=_resolve_repo_path(lake, ".datamixer/lake.yaml"),
             max_depth=max_depth,
         )
     except Exception as exc:
@@ -416,7 +416,7 @@ async def scan_datamixer_lakes(lake: str | None = None, max_depth: int = 6):
 async def load_datamixer_lake(request: DataMixerLakeLoadRequest):
     try:
         warehouse = _resolve_repo_path(request.warehouse, request.warehouse)
-        link = _resolve_repo_path(request.link, ".loopai/lake.yaml")
+        link = _resolve_repo_path(request.link, ".datamixer/lake.yaml")
         lake_root = _resolve_repo_path(request.lake_root, request.lake_root) if request.lake_root else None
         data = load_lake_pointer(warehouse=warehouse, link_path=link, lake_root=lake_root)
     except Exception as exc:
@@ -431,7 +431,7 @@ async def load_datamixer_lake(request: DataMixerLakeLoadRequest):
 )
 async def delete_datamixer_lake(request: DataMixerLakeDeleteRequest):
     try:
-        link = _resolve_repo_path(request.link, ".loopai/lake.yaml")
+        link = _resolve_repo_path(request.link, ".datamixer/lake.yaml")
         data = delete_lake_pointer(
             link_path=link,
             delete_warehouse=request.delete_warehouse,

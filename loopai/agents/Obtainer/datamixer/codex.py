@@ -156,7 +156,7 @@ ENV_MANIFEST_MARKER = "<!-- runtime_environment_manifest -->"
 
 def _lake_pointer_summary() -> dict[str, str]:
     root = _project_root()
-    link = Path(root) / ".loopai" / "lake.yaml" if root else Path(".loopai") / "lake.yaml"
+    link = Path(root) / ".datamixer" / "lake.yaml" if root else Path(".datamixer") / "lake.yaml"
     values: dict[str, str] = {}
     if link.is_file():
         for line in link.read_text(encoding="utf-8").splitlines():

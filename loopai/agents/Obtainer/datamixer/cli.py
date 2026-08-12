@@ -1185,7 +1185,7 @@ def cmd_agent_ingest(args) -> int:
             engine = "builtin"
             if args.model and not codex.sdk_available():
                 note = ("LoopAI Codex runner not available — used the offline heuristic. "
-                        "Run `loopai-obtainercli dm --lake .loopai/lake.yaml codex-check`; install with "
+                        "Run `loopai-obtainercli dm --lake .datamixer/lake.yaml codex-check`; install with "
                         "`corepack yarn install` in codex-runner.")
                 builtin_model = None
     try:

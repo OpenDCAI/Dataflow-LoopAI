@@ -334,7 +334,7 @@ const loadOverview = async () => {
     }
     try {
         const response = await getWebAgentOverview({
-            lake: '.loopai/lake.yaml',
+            lake: '.datamixer/lake.yaml',
             task_id: requestedTaskId,
             root: requestedWarehouse.value || undefined,
             run_id: requestedCampaignId.value || undefined

@@ -279,7 +279,7 @@ export default {
     props: {
         lakePath: {
             type: String,
-            default: '.loopai/lake.yaml'
+            default: '.datamixer/lake.yaml'
         },
         warehouse: {
             type: String,
