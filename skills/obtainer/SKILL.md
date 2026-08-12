@@ -77,9 +77,10 @@ block.
 ### 3. Poll the orchestrator (fine-grained status contract)
 
 A full obtainer orchestration runs for roughly **3-4 hours** (acquisition +
-DataFlow L4 + export), so poll **every 5-10 minutes**, not faster - the status
-is a durable file, and `updated_at` / `stale` tell you whether the orchestrator
-is alive better than polling frequency does:
+DataFlow L4 + export). **You MUST NOT poll more often than every 5 minutes.**
+Between polls run `sleep 300 && ... status ...`; polling faster wastes tokens and
+does not speed up the run. `updated_at` / `stale` in the status tell you whether
+the orchestrator is alive far better than polling frequency does:
 
 ```bash
 ${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm \
