@@ -218,6 +218,125 @@ def test_obtainer_orchestrator_phase_and_status_contract(tmp_path: Path, capsys,
     assert status["final_report"].endswith("final_report.json")
 
 
+def _run_worker_with_mock(
+    tmp_path: Path,
+    monkeypatch,
+    side_effects,
+    *,
+    running_subtask: bool = False,
+) -> tuple[dict, list]:
+    import loopai.skills.ObtainerCLI.orchestrator_agent as orch
+
+    run_dir = tmp_path / "orch_run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    if running_subtask:
+        orch._write_phase(
+            run_dir,
+            state="running",
+            phase="acquiring",
+            message="acquisition running",
+            subtask={
+                "name": "acquisition",
+                "run_dir": str(tmp_path / "acq"),
+                "state": "running",
+                "progress": 0.5,
+            },
+            emit=False,
+        )
+
+    calls = []
+    def fake_run(prompt, prov, cwd, timeout, thread_id=None):
+        calls.append(prompt)
+        effect = side_effects[min(len(calls) - 1, len(side_effects) - 1)]
+        if effect.get("write_report"):
+            (run_dir / "final_report.json").write_text(
+                json.dumps({"ok": True, "summary": "done"}), encoding="utf-8"
+            )
+        if effect.get("thread_id"):
+            return {**effect.get("result", {}), "thread_id": effect["thread_id"]}
+        return effect.get("result", {})
+
+    monkeypatch.setattr(orch.codex, "run_via_sdk", fake_run)
+    result = orch._run_worker(
+        run_dir=run_dir,
+        prompt="initial prompt",
+        prov={"api_key": "k", "base_url": "http://x/v1", "model": "m"},
+        provider_meta={},
+        timeout=60,
+    )
+    return result, calls
+
+
+def test_obtainer_orchestrator_acceptance_loop_retries_narrative_then_completes(tmp_path: Path, monkeypatch) -> None:
+    # 1st turn: narrative without JSON -> retried; 2nd turn: ok=true + report -> completed
+    result, calls = _run_worker_with_mock(
+        tmp_path,
+        monkeypatch,
+        [
+            {"result": {"summary": "Phase updated. Let me continue polling..."}},
+            {"result": {"ok": True, "summary": "done"}, "write_report": True, "thread_id": "th-1"},
+        ],
+    )
+    assert len(calls) == 2
+    assert "Acceptance issues" in calls[1]
+    assert result["status"] == "completed"
+    assert result["ok"] is True
+    assert (tmp_path / "orch_run" / "final_report.json").exists()
+
+
+def test_obtainer_orchestrator_acceptance_loop_interrupts_when_subagent_running(tmp_path: Path, monkeypatch) -> None:
+    result, calls = _run_worker_with_mock(
+        tmp_path,
+        monkeypatch,
+        [{"result": {"ok": True, "summary": "done"}, "write_report": True}],
+        running_subtask=True,
+    )
+    assert result["status"] == "interrupted"
+    assert result["ok"] is False
+    assert result["attempt"] == 4  # initial + MAX_ACCEPTANCE_REVISIONS retries
+    assert len(calls) == 4
+
+
+def test_obtainer_orchestrator_acceptance_loop_interrupts_when_report_missing(tmp_path: Path, monkeypatch) -> None:
+    result, calls = _run_worker_with_mock(
+        tmp_path,
+        monkeypatch,
+        [{"result": {"ok": True, "summary": "done"}}],
+    )
+    assert result["status"] == "interrupted"
+    assert result["ok"] is False
+    assert result["attempt"] == 4
+
+
+def test_obtainer_orchestrator_acceptance_loop_accepts_blocker_json(tmp_path: Path, monkeypatch) -> None:
+    result, calls = _run_worker_with_mock(
+        tmp_path,
+        monkeypatch,
+        [{"result": {"ok": False, "summary": "blocked by download failure", "blockers": ["x"]}}],
+    )
+    assert len(calls) == 1
+    assert result["status"] == "completed_with_errors"
+    assert result["ok"] is False
+    assert "blocked by download failure" in str(result.get("result", {}).get("summary"))
+
+
+def test_obtainer_orchestrator_progress_aggregates_aliased_subtask_name(tmp_path: Path, capsys, monkeypatch) -> None:
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    run_dir = tmp_path / "orch_run"
+    _dm(tmp_path, ["obtainer-orchestrator", "start", "--run", str(run_dir), "--objective", "x", "--dry-run"], capsys)
+    acq = tmp_path / "acq"
+    acq.mkdir()
+    (acq / STATUS_FILE).write_text(json.dumps({"state": "running", "download": {"processed": 5, "total": 10}}), encoding="utf-8")
+    # worker reports the subtask under the short alias "acquisition"
+    _dm(tmp_path, ["obtainer-orchestrator", "phase", "--run", str(run_dir), "--state", "running", "--phase", "acquiring",
+                   "--subtask", "acquisition", "--subtask-run-dir", str(acq), "--subtask-state", "running"], capsys)
+    status = _dm(tmp_path, ["obtainer-orchestrator", "status", "--run", str(run_dir)], capsys)
+    # acquiring base 0.10 + 0.30 * (download 5/10) = 0.25
+    assert status["subtasks"][0]["name"] == "acquisition"
+    assert status["subtasks"][0]["progress"] == 0.5
+    assert status["progress"] == 0.25
+
+
 def test_obtainer_orchestrator_stale_detection_and_stop(tmp_path: Path, capsys, monkeypatch) -> None:
     _set_starter_model_pool(tmp_path, monkeypatch)
     run_dir = tmp_path / "orch_run"

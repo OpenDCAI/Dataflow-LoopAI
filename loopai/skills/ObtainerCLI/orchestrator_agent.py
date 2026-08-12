@@ -51,6 +51,7 @@ STATE_FILE = "thread.json"
 FINAL_REPORT_FILE = "final_report.json"
 STATUS_SCHEMA_VERSION = 1
 STALE_AFTER_SECONDS = 600
+MAX_ACCEPTANCE_REVISIONS = 3
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OBTAINER_SKILL_PATH = REPO_ROOT / "skills" / "obtainer" / "SKILL.md"
 
@@ -418,25 +419,31 @@ def _compute_progress(
     phase = str(phase or "").lower()
     if state == "completed":
         return 1.0
-    if state in {"failed", "stopped"}:
+    if state in {"failed", "stopped", "interrupted"}:
         return PHASE_BASE_PROGRESS.get(phase, 0.0)
 
-    def sub_progress(name: str) -> float:
+    def sub_progress(*names: str) -> float:
+        """Match subtask progress by exact or normalized name so worker-reported
+        aliases (e.g. ``acquisition`` vs ``dataset-acquisition-agent``) still
+        feed the deterministic progress rollup."""
         for item in subtasks:
-            if item.get("name") == name:
-                return float(item.get("progress") or 0.0)
+            item_name = str(item.get("name") or "").lower()
+            for name in names:
+                key = str(name or "").lower()
+                if key and (item_name == key or key in item_name or item_name in key):
+                    return float(item.get("progress") or 0.0)
         return 0.0
 
     if phase == "bootstrap":
         return PHASE_BASE_PROGRESS["bootstrap"]
     if phase == "acquiring":
-        return PHASE_BASE_PROGRESS["acquiring"] + 0.30 * sub_progress("dataset-acquisition-agent")
+        return PHASE_BASE_PROGRESS["acquiring"] + 0.30 * sub_progress("dataset-acquisition-agent", "acquisition")
     if phase == "gating":
         return PHASE_BASE_PROGRESS["gating"] + 0.10 * _gates_fraction(gates)
     if phase == "dataflow":
         return PHASE_BASE_PROGRESS["dataflow"] + 0.15 * sub_progress("dataflow")
     if phase == "exporting":
-        return PHASE_BASE_PROGRESS["exporting"] + 0.20 * sub_progress("sft-export-agent")
+        return PHASE_BASE_PROGRESS["exporting"] + 0.20 * sub_progress("sft-export-agent", "export")
     if phase == "finalizing":
         return PHASE_BASE_PROGRESS["finalizing"]
     return min(PHASE_BASE_PROGRESS.get(phase, 0.0), 1.0)
@@ -516,6 +523,8 @@ def _status_payload(run_dir: Path) -> dict[str, Any]:
     next_action = str(phase.get("next_action") or "poll")
     if state == "completed":
         next_action = "report"
+    elif state == "interrupted":
+        next_action = "resume"
     elif state in {"failed", "stopped"}:
         next_action = "blocked"
     return {
@@ -788,6 +797,61 @@ def _spawn_background(
     }
 
 
+def _final_report_ok(run_dir: Path) -> bool:
+    """True when the worker has actually written an ok=true final report."""
+    try:
+        report = _json_read(run_dir / FINAL_REPORT_FILE)
+    except Exception:
+        return False
+    return bool(isinstance(report, dict) and report.get("ok") is True)
+
+
+def _has_running_subtask(run_dir: Path) -> bool:
+    """True when any managed sub-agent is still mid-flight."""
+    phase = _json_read(run_dir / PHASE_FILE)
+    for info in (phase.get("subtasks") or {}).values():
+        state = str(info.get("state") or "").lower()
+        if state in {"running", "background_started", "prepared"}:
+            return True
+    return False
+
+
+def _result_ok(result: dict[str, Any] | None) -> bool:
+    return bool(isinstance(result, dict) and result.get("ok") is True)
+
+
+def _result_is_valid_json(result: dict[str, Any] | None) -> bool:
+    """True when the agent's final response was the required JSON (has `ok`)."""
+    return bool(isinstance(result, dict) and "ok" in result)
+
+
+def _continuation_prompt(issues: str, *, run_dir: Path) -> str:
+    phase = _json_read(run_dir / PHASE_FILE)
+    skill = _obtainer_skill_text()
+    return f"""Your previous turn ended before returning a valid final result.
+
+Acceptance issues:
+{issues}
+
+Current orchestration state:
+{json.dumps(phase, ensure_ascii=False, indent=2)}
+
+## Policy (obtainer skill)
+{skill}
+
+## Orchestration shell
+{_policy_text().format(run_dir=run_dir, python_executable=codex.loopai_python_executable())}
+
+Continue from the recorded phase. If sub-agents are still running, keep polling
+them and do NOT conclude - never report completion while a sub-agent is active.
+When the workflow is truly finished, write final_report.json (ok=true, warehouse,
+datasets, record counts, recipe/export artifacts, lineage, manifests, snapshots)
+and finish with `phase --state completed --next-action report`. If the workflow
+is genuinely blocked, return the JSON {{"ok": false, "summary": "...", "blockers": [...]}}
+instead of a narrative.
+"""
+
+
 def _run_worker(
     *,
     run_dir: Path,
@@ -827,51 +891,120 @@ def _run_worker(
         "prompt_path": str(prompt_path),
         "thread_id": thread_id or None,
     })
-    try:
-        result = codex.run_via_sdk(
-            prompt,
-            prov,
-            cwd=str(_workspace()),
-            timeout=timeout,
-            thread_id=thread_id or None,
+
+    # Acceptance loop: validate the agent's final result and re-prompt it to
+    # continue when it concludes too early (narrative instead of JSON, sub-agents
+    # still running, or missing final_report.json) - mirroring the acquisition /
+    # sft-export workers.
+    current_prompt = prompt
+    current_thread_id = thread_id or None
+    last_result: dict[str, Any] = {}
+    attempts = 0
+    while True:
+        try:
+            result = codex.run_via_sdk(
+                current_prompt,
+                prov,
+                cwd=str(_workspace()),
+                timeout=timeout,
+                thread_id=current_thread_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - surface runner failures in status
+            _write_phase(
+                run_dir,
+                state="failed",
+                phase=str(_json_read(run_dir / PHASE_FILE).get("phase") or "idle"),
+                message="orchestrator worker failed",
+                next_action="blocked",
+                error=str(exc),
+                emit=False,
+            )
+            return {
+                "ok": False,
+                "status": "failed",
+                "run_dir": str(run_dir),
+                "error": str(exc),
+                "attempt": attempts,
+            }
+        last_result = result or {}
+        current_thread_id = current_thread_id or str(last_result.get("thread_id") or "")
+        attempts += 1
+
+        running = _has_running_subtask(run_dir)
+        if not _result_is_valid_json(last_result):
+            issues = "final response is not the required JSON {ok, summary, final_report}"
+        elif not _result_ok(last_result):
+            # Agent deliberately concluded with ok=false (blocker report).
+            issues = (
+                "sub-agents are still running (not terminal); keep polling instead of concluding"
+                if running
+                else ""
+            )
+        elif running:
+            issues = "sub-agents are still running (not terminal); keep polling instead of concluding"
+        elif not _final_report_ok(run_dir):
+            issues = "final_report.json with ok=true is missing; write it before concluding"
+        else:
+            issues = ""
+
+        if not issues:
+            break
+        if attempts > MAX_ACCEPTANCE_REVISIONS:
+            break
+        current_prompt = _continuation_prompt(issues, run_dir=run_dir)
+
+    running = _has_running_subtask(run_dir)
+    report_ok = _final_report_ok(run_dir)
+    if running:
+        state = "interrupted"
+        next_action = "resume"
+        message = (
+            "orchestrator concluded while sub-agents are still running; "
+            "resume to keep polling and finish the workflow"
         )
-    except Exception as exc:  # noqa: BLE001 - surface runner failures in status
-        _write_phase(
-            run_dir,
-            state="failed",
-            phase=str(_json_read(run_dir / PHASE_FILE).get("phase") or "idle"),
-            message="orchestrator worker failed",
-            next_action="blocked",
-            error=str(exc),
-            emit=False,
+        ok = False
+    elif report_ok:
+        state = "completed"
+        next_action = "report"
+        message = str(last_result.get("summary") or "obtainer orchestration finished")
+        ok = True
+    elif _result_is_valid_json(last_result) and not _result_ok(last_result):
+        state = "completed_with_errors"
+        next_action = "blocked"
+        message = str(last_result.get("summary") or "obtainer orchestration finished with blockers")
+        ok = False
+    else:
+        # valid ok=true JSON but missing final_report, or a non-JSON narrative:
+        # the workflow is not actually finished - resume to continue.
+        state = "interrupted"
+        next_action = "resume"
+        message = (
+            "orchestrator did not finish the workflow (missing final report or "
+            "invalid final result); resume to continue"
         )
-        return {
-            "ok": False,
-            "status": "failed",
-            "run_dir": str(run_dir),
-            "error": str(exc),
-        }
-    ok = bool((result or {}).get("ok"))
-    state = "completed" if ok else "completed_with_errors"
+        ok = False
+
+    final_report_path = str(run_dir / FINAL_REPORT_FILE) if (run_dir / FINAL_REPORT_FILE).exists() else ""
     _write_phase(
         run_dir,
         state=state,
         phase="finalizing",
-        message=str((result or {}).get("summary") or "obtainer orchestration finished"),
-        next_action="report",
-        final_report=str(run_dir / FINAL_REPORT_FILE),
+        message=message,
+        next_action=next_action,
+        final_report=final_report_path,
         emit=False,
     )
     _json_write(run_dir / STATUS_FILE, {
         "state": state,
         "updated_at": time.time(),
-        "thread_id": thread_id or None,
+        "thread_id": current_thread_id,
     })
     return {
         "ok": ok,
         "status": state,
         "run_dir": str(run_dir),
-        "result": result,
+        "result": last_result,
+        "attempt": attempts,
     }
 
 

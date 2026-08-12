@@ -85,11 +85,13 @@ ${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm \
 
 Read the machine-readable contract (`schema_version: 1`):
 
-- `state`: `idle | running | completed | completed_with_errors | failed | stopped`
+- `state`: `idle | running | completed | completed_with_errors | failed | interrupted | stopped`
 - `phase`: `bootstrap | acquiring | gating | dataflow | exporting | finalizing`
 - `progress` (0..1), `message`, `updated_at` (heartbeat), `stale`
 - `next_action`: `poll` -> keep polling; `report` -> read final_report.json and
-  report; `blocked` -> surface error + gates to the user
+  report; `resume` -> the orchestrator concluded while sub-agents were still
+  running or returned no valid result, run `resume` to continue; `blocked` ->
+  surface error + gates to the user
 - `subtasks[]`: each managed sub-agent (state / progress / message / run_dir)
 - `gates[]`: e.g. `lake_volume`, `dataflow_l4` with `ok` + `detail`
 - `lake`: warehouse, dataset / record counts, quality_levels
@@ -101,6 +103,11 @@ Never judge progress from `message` alone; use the structured fields.
 - `completed` / `next_action=report`: read `final_report.json` in the run dir
   and report warehouse, datasets, record counts, recipe / export artifacts,
   lineage, manifests and snapshots.
+- `interrupted` / `next_action=resume`: the orchestrator concluded while a
+  sub-agent was still running or returned no valid result - run
+  `${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm \
+  obtainer-orchestrator resume --run <dir> --message "<why / resume from where>"`,
+  do NOT take over its sub-agents.
 - `failed` / `next_action=blocked`: read `error` + failing `gates`, tell the
   user, and offer `resume` once the blocker is addressed:
   `${LOOPAI_PYTHON_EXECUTABLE:-python} -m loopai.skills.ObtainerCLI.cli dm \
