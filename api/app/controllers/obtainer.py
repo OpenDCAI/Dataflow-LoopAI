@@ -354,6 +354,13 @@ async def get_webagent_overview(
             )
             if data.get("initialized") else None
         )
+        # Keep the dashboard's headline counts consistent with what the agents
+        # read: monitor_state is a cache and can lag behind the live catalog.
+        live_summary = data.get("summary") or {}
+        monitor = data.get("monitor")
+        if isinstance(monitor, dict) and live_summary.get("datasets") is not None:
+            monitor.setdefault("summary", {})["datasets"] = int(live_summary["datasets"])
+            monitor["summary"]["records"] = int(live_summary.get("records") or 0)
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=data)()

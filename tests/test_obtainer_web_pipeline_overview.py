@@ -315,3 +315,29 @@ def test_web_pipeline_overview_dataflow_snapshot_prefers_workdir(tmp_path) -> No
     assert snap["input_rows"] == 132958
     assert snap["full_input_rows"] == 132958
     assert snap["status_path"] == str(tmp_path.resolve() / "outputs" / "code_dataflow_live" / "status.json")
+
+
+def test_web_pipeline_overview_summary_is_live_catalog_counts(tmp_path) -> None:
+    """The dashboard summary must reflect the live catalog, not the cached
+    monitor_state summary, so the UI and the agents read the same counts."""
+    root = tmp_path / "warehouse"
+    store = DataStore.init(root)
+    try:
+        dataset_id = store.catalog.add_dataset("live_ds")
+        store.ingest_records(
+            dataset_id,
+            [{"content": {"text": "x"}, "domain": "code"}],
+            defaults={"quality_level": "L3"},
+            decontaminate=False,
+        )
+        store.ingest_records(
+            dataset_id,
+            [{"content": {"text": "y"}, "domain": "math"}],
+            defaults={"quality_level": "L3"},
+            decontaminate=False,
+        )
+    finally:
+        store.close()
+
+    data = build_web_pipeline_overview(root, project_root=tmp_path)
+    assert data["summary"] == {"datasets": 1, "records": 2}

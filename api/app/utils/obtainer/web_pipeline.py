@@ -444,6 +444,24 @@ def _campaign_snapshot(root: Path, run_id: str | None = None) -> dict[str, Any] 
     }
 
 
+
+
+def _lake_live_summary(root: Path) -> dict[str, Any]:
+    """Live catalog counts - the same source the obtainer agents read.
+
+    The dashboard's monitor_state summary is a cache and can be stale; these
+    headline numbers (datasets / records) always reflect the current catalog so
+    the UI and the agents never disagree.
+    """
+    store = DataStore.open(root)
+    try:
+        return {
+            "datasets": len(store.catalog.list_datasets()),
+            "records": store.catalog.count(),
+        }
+    finally:
+        store.close()
+
 def _layer_snapshot(root: Path, campaign: dict[str, Any] | None) -> list[dict[str, Any]]:
     store = DataStore.open(root)
     try:
@@ -658,6 +676,7 @@ def build_web_pipeline_overview(
         "pipeline": _pipeline_status_snapshot(campaign),
         "layers": layers,
         "stages": stages,
+        "summary": _lake_live_summary(root),
         "domain_classes": _domain_class_count(root),
         "dataflow_agent": _dataflow_agent_snapshot(root, project_root),
     }
