@@ -92,10 +92,12 @@ Read the machine-readable contract (`schema_version: 1`):
 - `state`: `idle | running | completed | completed_with_errors | failed | interrupted | stopped`
 - `phase`: `bootstrap | acquiring | gating | dataflow | exporting | finalizing`
 - `progress` (0..1), `message`, `updated_at` (heartbeat), `stale`
-- `next_action`: `poll` -> keep polling; `report` -> read final_report.json and
-  report; `resume` -> the orchestrator concluded while sub-agents were still
-  running or returned no valid result, run `resume` to continue; `blocked` ->
-  surface error + gates to the user
+- `next_action`: `poll` -> keep polling; `start_dataflow` -> the lake volume
+  gate already passed while acquisition is still running - the orchestrator
+  should dispatch DataFlow L4 in parallel, keep polling; `report` -> read
+  final_report.json and report; `resume` -> the orchestrator concluded while
+  sub-agents were still running or returned no valid result, run `resume` to
+  continue; `blocked` -> surface error + gates to the user
 - `subtasks[]`: each managed sub-agent (state / progress / message / run_dir)
 - `gates[]`: e.g. `lake_volume`, `dataflow_l4` with `ok` + `detail`
 - `lake`: warehouse, dataset / record counts, quality_levels

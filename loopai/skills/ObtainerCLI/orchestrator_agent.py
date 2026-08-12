@@ -117,6 +117,13 @@ Hard rules:
    the lake metrics; when the volume/mix/quality gates pass, run
    `dataflow agent-run`; when the L4 gate passes, start `sft-export-agent`.
    Poll each worker by run_dir and resume it when it reports a resumable state.
+5. **Parallel advancement is a HARD RULE - never wait serially.** Once the
+   `lake_volume` gate passes (the lake meets the plan's volume/mix/quality
+   target), IMMEDIATELY run `dataflow agent-run` in parallel - do NOT wait for
+   `dataset-acquisition-agent` to finish. The acquisition worker keeps running
+   in the background and its extra candidates only help. Record BOTH subtasks
+   (`acquisition` + `dataflow`) in phase. Only the DataFlow L4 output gates
+   `sft-export-agent`; that export worker also starts as soon as L4 is ready.
 5. On completion write final_report.json with warehouse, datasets, record
    counts, recipe/export artifacts, lineage, manifests and snapshots, then
    set `--state completed --phase finalizing --next-action report`.
@@ -562,6 +569,15 @@ def _status_payload(run_dir: Path) -> dict[str, Any]:
         next_action = "resume"
     elif state in {"failed", "stopped"}:
         next_action = "blocked"
+    elif (
+        state == "running"
+        and phase_name == "acquiring"
+        and any(g.get("name") == "lake_volume" and g.get("ok") for g in gates)
+        and not any("dataflow" in str(s.get("name") or "").lower() for s in subtasks)
+    ):
+        # Volume gate already passed - the orchestrator should start the
+        # DataFlow L4 stage in parallel instead of waiting for acquisition.
+        next_action = "start_dataflow"
     return {
         "schema_version": STATUS_SCHEMA_VERSION,
         "ok": True,

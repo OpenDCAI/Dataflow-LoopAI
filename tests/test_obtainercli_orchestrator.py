@@ -459,3 +459,51 @@ def test_obtainer_orchestrator_phase_emits_obtainercli_events(tmp_path: Path, ca
     assert event_root.exists()
     pkls = list(event_root.rglob("*.pkl"))
     assert pkls, "expected at least one obtainercli event pkl"
+
+
+def test_obtainer_orchestrator_policy_requires_parallel_dataflow(tmp_path: Path) -> None:
+    """The worker policy must instruct starting DataFlow L4 in parallel once the
+    volume gate passes, never waiting for the acquisition worker to finish."""
+    import loopai.skills.ObtainerCLI.orchestrator_agent as orch
+
+    policy = orch._policy_text()
+    assert "Parallel advancement is a HARD RULE" in policy
+    assert "IMMEDIATELY run `dataflow agent-run` in parallel" in policy
+    assert "Only the DataFlow L4 output gates" in policy
+
+    prompt = orch._build_start_prompt(
+        run_dir=tmp_path / "run",
+        objective="code sft",
+        keywords=[],
+        target_datasets=1,
+        message="",
+        analysis_reports=[],
+        lake=".datamixer/lake.yaml",
+    )
+    assert "Parallel advancement is a HARD RULE" in prompt
+
+
+def test_obtainer_orchestrator_status_signals_start_dataflow_when_gate_passed(tmp_path: Path, capsys, monkeypatch) -> None:
+    _set_starter_model_pool(tmp_path, monkeypatch)
+    run_dir = tmp_path / "orch_run"
+    _dm(tmp_path, ["obtainer-orchestrator", "start", "--run", str(run_dir), "--objective", "x", "--dry-run"], capsys)
+    # acquisition running + lake_volume gate ok + no dataflow subtask yet
+    acq = tmp_path / "acq"
+    acq.mkdir()
+    (acq / STATUS_FILE).write_text(json.dumps({"state": "running"}), encoding="utf-8")
+    _dm(tmp_path, ["obtainer-orchestrator", "phase", "--run", str(run_dir), "--state", "running", "--phase", "acquiring",
+                   "--subtask", "acquisition", "--subtask-run-dir", str(acq), "--subtask-state", "running",
+                   "--gate", "lake_volume", "--gate-ok", "true", "--gate-detail", "50k rows >= target"], capsys)
+    status = _dm(tmp_path, ["obtainer-orchestrator", "status", "--run", str(run_dir)], capsys)
+    assert status["state"] == "running"
+    assert status["phase"] == "acquiring"
+    assert status["next_action"] == "start_dataflow"
+    assert any(g["name"] == "lake_volume" and g["ok"] for g in status["gates"])
+
+    # once a dataflow subtask appears, it falls back to poll
+    (tmp_path / "df").mkdir()
+    (tmp_path / "df" / STATUS_FILE).write_text(json.dumps({"state": "running"}), encoding="utf-8")
+    _dm(tmp_path, ["obtainer-orchestrator", "phase", "--run", str(run_dir),
+                   "--subtask", "dataflow", "--subtask-run-dir", str(tmp_path / "df"), "--subtask-state", "running"], capsys)
+    status2 = _dm(tmp_path, ["obtainer-orchestrator", "status", "--run", str(run_dir)], capsys)
+    assert status2["next_action"] == "poll"
