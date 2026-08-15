@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import pickle
-import uuid
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _new_version_id() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
 
 
 def _sanitize_path_component(value: str, fallback: str) -> str:
@@ -239,7 +242,7 @@ class PickleEventWriter:
         return self.version_id
 
     def new_version_id(self) -> str:
-        return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        return _new_version_id()
 
     def _sync_runtime(self, *, status: str) -> None:
         try:
@@ -296,7 +299,7 @@ def get_event_writer(
 ) -> PickleEventWriter:
     agent_name = _sanitize_path_component(name, "agent")
     context_value = _sanitize_path_component(context_id, "default")
-    version_value = _sanitize_path_component(version_id or str(uuid.uuid4()), "version")
+    version_value = _sanitize_path_component(version_id or _new_version_id(), "version")
     base_path = Path(log_file_path)
     if event_dir is not None:
         event_path = Path(event_dir) / f"{agent_name}.pkl"
