@@ -59,7 +59,7 @@ def _resolve_repo_path(raw: str | None, default: str) -> Path:
 
 
 def _resolve_lake_path(lake: str | None) -> Path:
-    path = _resolve_repo_path(lake, ".loopai/lake.yaml")
+    path = _resolve_repo_path(lake, ".datamixer/lake.yaml")
     if path.suffix in {".yaml", ".yml"} and not path.exists():
         raise FileNotFoundError(f"Lake config not found: {path}")
     return path
@@ -76,7 +76,7 @@ def _resolve_datamixer_root(*, lake: str | None = None, root: str | None = None)
 
 def _datamixer_command_payload() -> dict[str, Any]:
     return {
-        "entrypoint": "loopai-obtainercli dm --lake .loopai/lake.yaml",
+        "entrypoint": "loopai-obtainercli dm --lake .datamixer/lake.yaml",
         "backend": "datamixer",
         "groups": [
             {
@@ -88,6 +88,7 @@ def _datamixer_command_payload() -> dict[str, Any]:
                     "lake current",
                     "lake load --warehouse /path/to/warehouse",
                     "lake context",
+                    "lake unbind",
                     "lake delete",
                     "lake monitor rebuild",
                 ],
@@ -103,6 +104,16 @@ def _datamixer_command_payload() -> dict[str, Any]:
                     "index stats",
                     "status",
                     "stats",
+                ],
+            },
+            {
+                "key": "orchestrator",
+                "label": "Obtainer Orchestrator",
+                "commands": [
+                    "obtainer-orchestrator start --run outputs/obtainer_run --objective DATA_SHAPE --keywords KW --target-datasets N --message INTENT",
+                    "obtainer-orchestrator status --run outputs/obtainer_run",
+                    "obtainer-orchestrator resume --run outputs/obtainer_run --message WHY",
+                    "obtainer-orchestrator stop --run outputs/obtainer_run",
                 ],
             },
             {
@@ -191,7 +202,7 @@ def _run_obtainercli_dm_for_webui(request: DataMixerCliRequest) -> dict[str, Any
             Path(path).write_text(files[item], encoding="utf-8")
             tmp_paths.append(path)
             args[index] = path
-    lake = request.lake or ".loopai/lake.yaml"
+    lake = request.lake or ".datamixer/lake.yaml"
     cli_argv = ["dm", "--lake", lake]
     if request.root:
         cli_argv.extend(["--root", request.root])
@@ -296,6 +307,7 @@ async def get_webagent_overview(
     lake: str | None = None,
     root: str | None = None,
     run_id: str | None = None,
+    task_id: str | None = None,
 ):
     """Read current queue/pipeline state for the active-task dashboard."""
     try:
@@ -309,13 +321,46 @@ async def get_webagent_overview(
             acquisition_run=str(context.get("obtainer_active_acquisition_run") or "") or None,
             lake_context=context,
             project_root=REPO_ROOT,
+            task_id=task_id,
+            explicit_binding=bool(root or run_id),
+        )
+        initialized = bool(data.get("initialized"))
+        bound_warehouse = str(data.get("warehouse") or "")
+        pointer_warehouse = str(lake_pointer.get("warehouse") or "")
+        pointer_matches = bool(
+            initialized
+            and bound_warehouse
+            and pointer_warehouse
+            and Path(bound_warehouse).expanduser().resolve()
+            == Path(pointer_warehouse).expanduser().resolve()
         )
         data["lake"] = {
-            "lake_config": lake_pointer.get("lake_config"),
-            "lake_root": lake_pointer.get("lake_root"),
-            "warehouse": lake_pointer.get("warehouse"),
-            "loaded": lake_pointer.get("status") == "loaded",
+            "lake_config": lake_pointer.get("lake_config") if pointer_matches else None,
+            "lake_root": (
+                lake_pointer.get("lake_root") if pointer_matches
+                else str(Path(bound_warehouse).parent) if initialized and bound_warehouse
+                else None
+            ),
+            "warehouse": bound_warehouse if initialized else None,
+            "loaded": bool(
+                initialized and bound_warehouse
+                and (Path(bound_warehouse) / "datamixer.toml").is_file()
+            ),
         }
+        data["monitor"] = (
+            read_monitor_state(
+                bound_warehouse,
+                lake=lake_path if pointer_matches else None,
+            )
+            if data.get("initialized") else None
+        )
+        # Keep the dashboard's headline counts consistent with what the agents
+        # read: monitor_state is a cache and can lag behind the live catalog.
+        live_summary = data.get("summary") or {}
+        monitor = data.get("monitor")
+        if isinstance(monitor, dict) and live_summary.get("datasets") is not None:
+            monitor.setdefault("summary", {})["datasets"] = int(live_summary["datasets"])
+            monitor["summary"]["records"] = int(live_summary.get("records") or 0)
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=data)()
@@ -347,7 +392,7 @@ async def get_embedding_health(lake: str | None = None, timeout_seconds: float =
 )
 async def get_datamixer_lake_current(lake: str | None = None):
     try:
-        data = current_lake_pointer(link_path=_resolve_repo_path(lake, ".loopai/lake.yaml"))
+        data = current_lake_pointer(link_path=_resolve_repo_path(lake, ".datamixer/lake.yaml"))
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=data)()
@@ -362,7 +407,7 @@ async def scan_datamixer_lakes(lake: str | None = None, max_depth: int = 6):
     try:
         data = scan_lake_candidates(
             project_root=REPO_ROOT,
-            active_link=_resolve_repo_path(lake, ".loopai/lake.yaml"),
+            active_link=_resolve_repo_path(lake, ".datamixer/lake.yaml"),
             max_depth=max_depth,
         )
     except Exception as exc:
@@ -378,7 +423,7 @@ async def scan_datamixer_lakes(lake: str | None = None, max_depth: int = 6):
 async def load_datamixer_lake(request: DataMixerLakeLoadRequest):
     try:
         warehouse = _resolve_repo_path(request.warehouse, request.warehouse)
-        link = _resolve_repo_path(request.link, ".loopai/lake.yaml")
+        link = _resolve_repo_path(request.link, ".datamixer/lake.yaml")
         lake_root = _resolve_repo_path(request.lake_root, request.lake_root) if request.lake_root else None
         data = load_lake_pointer(warehouse=warehouse, link_path=link, lake_root=lake_root)
     except Exception as exc:
@@ -393,7 +438,7 @@ async def load_datamixer_lake(request: DataMixerLakeLoadRequest):
 )
 async def delete_datamixer_lake(request: DataMixerLakeDeleteRequest):
     try:
-        link = _resolve_repo_path(request.link, ".loopai/lake.yaml")
+        link = _resolve_repo_path(request.link, ".datamixer/lake.yaml")
         data = delete_lake_pointer(
             link_path=link,
             delete_warehouse=request.delete_warehouse,

@@ -52,9 +52,8 @@ def test_state_schema_excludes_runtime_and_retired_credentials():
     assert "tavily_api_key" not in schema["obtainer"]
     assert "rag_api_key" not in schema["obtainer"]
     assert "kaggle_key" not in schema["obtainer"]
-    assert "api_key" not in schema["constructor"]
-    assert "deepseek_api_key" not in schema["webcrawler"]
-    assert "tavily_api_key" not in schema["webcrawler"]
+    assert "constructor" not in schema
+    assert "webcrawler" not in schema
     assert "swanlab_api_key" not in schema["trainer"]
 
 

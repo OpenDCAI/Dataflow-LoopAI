@@ -106,7 +106,10 @@ def _resolve_model_pool_config(system_config: dict[str, Any], model_name: str | 
 
 
 def _build_state_config(states_data: dict[str, Any], language: str | None = None) -> dict[str, Any]:
-    from loopai.schema.states import get_state_config_schema  # 懒加载，避免 MCP 级联导入
+    from loopai.schema.states import (  # 懒加载，避免 MCP 级联导入
+        RETIRED_DATA_AGENT_STATE_SECTIONS,
+        get_state_config_schema,
+    )
 
     states_data = strip_retired_tracking_fields(states_data)
     language = language or states_data.get("language", "zh")
@@ -117,6 +120,8 @@ def _build_state_config(states_data: dict[str, Any], language: str | None = None
 
     result: dict[str, Any] = {}
     for series_key in dict.fromkeys(list(states_data.keys()) + list(default_schema.keys())):
+        if series_key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+            continue
         if series_key in nested_keys:
             continue
         schema_val = default_schema.get(series_key, {})

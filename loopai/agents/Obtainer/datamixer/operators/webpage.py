@@ -7,6 +7,8 @@ import os
 import select
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 import uuid
 from html.parser import HTMLParser
 from pathlib import Path
@@ -115,6 +117,8 @@ class WebpageToPT(Operator):
                  max_chars: int = 120000, engine: str = "auto",
                  mineru_python: str | None = None,
                  mineru_model: str | None = None, mineru_gpu: str = "0",
+                 mineru_url: str | None = None,
+                 mineru_transport: str | None = None,
                  mineru_backend: str = "transformers",
                  mineru_gpu_memory_utilization: float = 0.25,
                  mineru_max_context_window: int = 70000,
@@ -127,14 +131,26 @@ class WebpageToPT(Operator):
         if engine not in ("auto", "mineru", "legacy"):
             raise ValueError("webpage_to_pt engine must be auto, mineru, or legacy")
         self.engine = engine
+        repo_root = Path(__file__).resolve().parents[5]
         self.mineru_python = mineru_python or os.environ.get(
-            "MINERU_HTML_PYTHON", "/data/xuebinrui/miniconda3/envs/mineruhtml/bin/python"
+            "MINERU_HTML_PYTHON", str(repo_root / "envs" / ".mineruhtml" / "bin" / "python")
         )
         self.mineru_model = mineru_model or os.environ.get(
             "MINERU_HTML_MODEL",
-            "/data/xuebinrui/model/MinerU-HTML-v1.1-hunyuan0.5B-compact",
+            str(repo_root / "model" / "mineru-html"),
         )
         self.mineru_gpu = str(mineru_gpu)
+        self.mineru_url = (
+            mineru_url
+            if mineru_url is not None
+            else os.environ.get("MINERU_HTML_URL", "http://127.0.0.1:7986")
+        ).rstrip("/")
+        self.mineru_transport = (
+            mineru_transport
+            or os.environ.get("MINERU_HTML_TRANSPORT", "auto")
+        ).strip().lower()
+        if self.mineru_transport not in ("auto", "http", "worker"):
+            raise ValueError("mineru_transport must be auto, http, or worker")
         if mineru_backend not in ("vllm", "transformers"):
             raise ValueError("mineru_backend must be vllm or transformers")
         self.mineru_backend = mineru_backend
@@ -151,39 +167,62 @@ class WebpageToPT(Operator):
     def setup(self, ctx: OperatorContext) -> None:  # noqa: ARG002
         if self.engine == "legacy":
             return
-        python_ok = Path(self.mineru_python).exists()
-        model_ok = Path(self.mineru_model).exists()
-        if self.engine == "auto" and not (python_ok and model_ok):
+        errors = []
+        if self.mineru_transport in ("auto", "http") and self.mineru_url:
+            self._mineru = _MinerUHTMLHTTPClient(
+                base_url=self.mineru_url,
+                timeout=self.mineru_timeout,
+            )
+            try:
+                self._mineru.start()
+                self.mineru_transport = "http"
+                return
+            except Exception as exc:
+                errors.append(f"HTTP service unavailable at {self.mineru_url}: {exc}")
+                self._mineru.close()
+                self._mineru = None
+                if self.mineru_transport == "http":
+                    return self._handle_setup_failure(errors)
+
+        if self.mineru_transport in ("auto", "worker"):
+            python_ok = Path(self.mineru_python).exists()
+            model_ok = Path(self.mineru_model).exists()
+            if not python_ok:
+                errors.append(f"MinerU-HTML Python not found: {self.mineru_python}")
+            if not model_ok:
+                errors.append(f"MinerU-HTML model not found: {self.mineru_model}")
+            if python_ok and model_ok:
+                worker = Path(__file__).with_name("mineru_html_worker.py")
+                env = os.environ.copy()
+                env["CUDA_VISIBLE_DEVICES"] = self.mineru_gpu
+                env.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+                env.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
+                self._mineru = _MinerUHTMLClient(
+                    python=self.mineru_python,
+                    worker=worker,
+                    model=self.mineru_model,
+                    backend=self.mineru_backend,
+                    gpu_memory_utilization=self.mineru_gpu_memory_utilization,
+                    max_context_window=self.mineru_max_context_window,
+                    max_tokens=self.mineru_max_tokens,
+                    timeout=self.mineru_timeout,
+                    env=env,
+                )
+                try:
+                    self._mineru.start()
+                    self.mineru_transport = "worker"
+                    return
+                except Exception as exc:
+                    errors.append(f"isolated MinerU-HTML worker failed: {exc}")
+                    self._mineru.close()
+                    self._mineru = None
+        self._handle_setup_failure(errors)
+
+    def _handle_setup_failure(self, errors: list[str]) -> None:
+        if self.engine == "auto" and self.fallback == "legacy":
             self.engine = "legacy"
             return
-        if not python_ok:
-            raise RuntimeError(f"MinerU-HTML Python not found: {self.mineru_python}")
-        if not model_ok:
-            raise RuntimeError(f"MinerU-HTML model not found: {self.mineru_model}")
-        worker = Path(__file__).with_name("mineru_html_worker.py")
-        env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = self.mineru_gpu
-        env.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
-        self._mineru = _MinerUHTMLClient(
-            python=self.mineru_python,
-            worker=worker,
-            model=self.mineru_model,
-            backend=self.mineru_backend,
-            gpu_memory_utilization=self.mineru_gpu_memory_utilization,
-            max_context_window=self.mineru_max_context_window,
-            max_tokens=self.mineru_max_tokens,
-            timeout=self.mineru_timeout,
-            env=env,
-        )
-        try:
-            self._mineru.start()
-        except Exception:
-            self._mineru.close()
-            self._mineru = None
-            if self.engine == "auto" and self.fallback == "legacy":
-                self.engine = "legacy"
-            else:
-                raise
+        raise RuntimeError("; ".join(errors) or "MinerU-HTML is unavailable")
 
     def teardown(self, ctx: OperatorContext) -> None:  # noqa: ARG002
         if self._mineru is not None:
@@ -319,13 +358,20 @@ class _MinerUHTMLClient:
         assert self.proc.stdout is not None
         self.proc.stdin.write(request + "\n")
         self.proc.stdin.flush()
-        ready, _, _ = select.select([self.proc.stdout], [], [], self.timeout)
-        if not ready:
-            raise TimeoutError(f"MinerU-HTML worker timed out after {self.timeout}s")
-        line = self.proc.stdout.readline()
-        if not line:
-            raise RuntimeError("MinerU-HTML worker closed its output")
-        response = json.loads(line)
+        line = ""
+        while True:
+            ready, _, _ = select.select([self.proc.stdout], [], [], self.timeout)
+            if not ready:
+                raise TimeoutError(f"MinerU-HTML worker timed out after {self.timeout}s")
+            line = self.proc.stdout.readline()
+            if not line:
+                raise RuntimeError("MinerU-HTML worker closed its output")
+            try:
+                response = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                # Model frameworks may emit a stray log line to stdout; skip it.
+                continue
         if response.get("id") != request_id:
             raise RuntimeError("MinerU-HTML worker response id mismatch")
         if response.get("error"):
@@ -352,6 +398,67 @@ class _MinerUHTMLClient:
             self.proc = None
 
 
+class _MinerUHTMLHTTPClient:
+    """Small client for the persistent MinerU-HTML REST service."""
+
+    def __init__(self, *, base_url: str, timeout: int):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def _request(self, path: str, payload: dict | None = None) -> dict:
+        data = None
+        headers = {"Accept": "application/json"}
+        method = "GET"
+        if payload is not None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+            method = "POST"
+        request = urllib.request.Request(
+            f"{self.base_url}{path}", data=data, headers=headers, method=method
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                status = int(getattr(response, "status", 200))
+                body = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(str(exc.reason)) from exc
+        if not 200 <= status < 300:
+            raise RuntimeError(f"HTTP {status}: {body[:500]}")
+        try:
+            result = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("MinerU-HTML service returned invalid JSON") from exc
+        if not isinstance(result, dict):
+            raise RuntimeError("MinerU-HTML service returned a non-object response")
+        return result
+
+    def start(self) -> None:
+        result = self._request("/health")
+        if result.get("status") != "ok":
+            raise RuntimeError(f"unhealthy response: {result}")
+
+    def process(self, htmls: list[str]) -> list[dict]:
+        results = []
+        for html in htmls:
+            response = self._request("/extract", {"html": html})
+            main_html = response.get("main_html")
+            if not isinstance(main_html, str) or not main_html.strip():
+                raise RuntimeError("MinerU-HTML service returned empty main_html")
+            main_content = response.get("main_content")
+            results.append({
+                "main_html": main_html,
+                "main_content": main_content if isinstance(main_content, str) else None,
+                "error": response.get("error") or None,
+            })
+        return results
+
+    def close(self) -> None:
+        return None
+
+
 @register("pt_to_sft_qa")
 class PTToSFTQA(LLMOperator):
     """Generate one grounded instruction/answer pair per L2 PT document."""
@@ -365,6 +472,7 @@ class PTToSFTQA(LLMOperator):
                  max_concurrency=DEFAULT_CONCURRENCY,
                  max_input_chars: int = 12000,
                  max_tokens: int | None = None, **kw):
+        kw.setdefault("strict_output", True)
         super().__init__(
             model=model,
             chunk_size=chunk_size,
@@ -434,8 +542,17 @@ class PTToSFTQA(LLMOperator):
             }
             row["qa_generated"] = True
             row["qa_model"] = self.model_name
+            row.pop("qa_error", None)
             seen.add(index)
         for index, row in enumerate(chunk):
             if index not in seen:
                 row["qa_generated"] = False
                 row["qa_error"] = "model returned no valid QA pair"
+
+    def validate_output(self, chunk: Batch, data: dict) -> None:  # noqa: ARG002
+        missing = [
+            index for index, row in enumerate(chunk)
+            if not row.get("qa_generated")
+        ]
+        if missing:
+            raise ValueError(f"missing valid QA pair for indexes {missing}")

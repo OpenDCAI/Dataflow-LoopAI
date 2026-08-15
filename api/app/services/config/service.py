@@ -9,7 +9,9 @@ from ...models.body import ConfigModel
 from ...models.db_models import StarterConfig
 from ...utils.config.config import format_value, get_state_config, get_system_config
 from loopai.common.tracking import strip_retired_tracking_fields
+from loopai.schema.states import RETIRED_DATA_AGENT_STATE_SECTIONS
 from loopai.schema.system_runtime import migrate_legacy_credentials
+from loopai.skills.ObtainerCLI.config import update_lake_service_config
 
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -56,8 +58,12 @@ def _apply_states_config(
 ) -> None:
     default_states = original_config.setdefault("default_states", {})
     for series_key, series_value in states_config.items():
+        if series_key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+            continue
         if series_key == "default":
             for key, value in series_value.items():
+                if key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+                    continue
                 format_item = format_value(value)
                 default_states[key] = format_item["value"]
             continue
@@ -66,6 +72,35 @@ def _apply_states_config(
         for key, value in series_value.items():
             format_item = format_value(value)
             nested_state[key] = format_item["value"]
+
+
+def _sync_model_pool_services_to_lake(config_obj: dict[str, Any]) -> None:
+    """Sync model-pool embedding/MinerU-HTML service config into .datamixer/lake.yaml.
+
+    The lake pointer is the shared source of truth consumed by ObtainerCLI,
+    the embedding indexer and the WebAgent pipeline, so saving the model pool
+    must keep it in sync. Missing pointer / malformed values are non-fatal.
+    """
+    try:
+        system_config = config_obj.get("system") or {}
+        model_value = system_config.get("model") or {}
+        if not isinstance(model_value, dict):
+            return
+        embedding = model_value.get("embedding") or {}
+        mineru = model_value.get("mineru") or {}
+        if not isinstance(embedding, dict) and not isinstance(mineru, dict):
+            return
+        link = LOOPAI_DIR / ".loopai" / "lake.yaml"
+        if not link.is_file():
+            return
+        update_lake_service_config(
+            link,
+            embedding=embedding if isinstance(embedding, dict) else None,
+            mineru=mineru if isinstance(mineru, dict) else None,
+        )
+    except Exception:
+        # Never block the config update because of lake sync.
+        pass
 
 
 async def update_starter_config(config: ConfigModel) -> dict[str, Any]:
@@ -82,6 +117,8 @@ async def update_starter_config(config: ConfigModel) -> dict[str, Any]:
 
     original_config.config = json.dumps(original_config_obj)
     await original_config.save()
+
+    _sync_model_pool_services_to_lake(original_config_obj)
 
     return {
         "id": original_config.id,

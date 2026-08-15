@@ -6,10 +6,10 @@ import io
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from .datamixer_adapter import (
+    append_audit_rows,
     datamixer_argv_from_lake,
     init_datamixer_lake,
     start_background_auto_embed,
@@ -19,14 +19,21 @@ from .dataset_acquisition_agent import run_agent as run_dataset_acquisition_agen
 from .download import MAX_BYTES_PER_DATASET, MAX_ROWS_PER_DATASET, download_manifest
 from .errors import ObtainerCliError
 from .events import emit_obtainer_event, get_obtainer_event_writer
+from .lake_bundle import consolidate as lake_consolidate
+from .lake_bundle import export_bundle as lake_export_bundle
+from .lake_bundle import import_bundle as lake_import_bundle
+from .lake_bundle import import_data as lake_import_data
 from .lake_manager import (
     current_lake_pointer,
     delete_lake_pointer,
     load_lake_pointer,
     scan_lake_candidates,
+    unbind_lake_obtainer_context,
     update_lake_obtainer_context,
 )
+from .models import sha256_text, utc_now
 from .monitor_state import start_background_rebuild, update_monitor_delta
+from .orchestrator_agent import run_agent as run_orchestrator_agent
 from .searchagent import run_searchagent
 from .sft_export_agent import run_agent as run_sft_export_agent
 
@@ -123,7 +130,7 @@ def _datamixer_command_key(args: list[str]) -> tuple[str, ...]:
 
 
 def _is_monitor_mutating_datamixer_command(key: tuple[str, ...]) -> bool:
-    return key[:1] in {("ingest",), ("agent-ingest",)} or key[:2] in {
+    return key[:1] in {("ingest",), ("agent-ingest",), ("export-jsonl",)} or key[:2] in {
         ("op", "run"),
         ("pipeline", "run"),
         ("dataflow", "agent-run"),
@@ -135,6 +142,55 @@ def _is_monitor_mutating_datamixer_command(key: tuple[str, ...]) -> bool:
     }
 
 
+def _export_record_from_datamixer_result(key: tuple[str, ...], result: dict) -> dict | None:
+    """Build a monitor/audit export row from a datamixer export result.
+
+    Keeps the final "出湖" artifact path (``output_uri``) in the shared lake
+    state so the Obtainer task card can surface it without knowing which agent
+    produced the export (recipe export vs flat JSONL dump).
+    """
+    if not isinstance(result, dict):
+        return None
+    if key[:2] == ("recipe", "export"):
+        out_uri = str(result.get("out_dir") or "").strip()
+        if not out_uri:
+            return None
+        return {
+            "export_id": str(result.get("export_id") or ""),
+            "strategy": "recipe_export",
+            "requested_size": 0,
+            "actual_size": int(result.get("selected_samples") or 0),
+            "output_uri": out_uri,
+            "format": str(result.get("format") or "jsonl"),
+            "manifest_path": str(result.get("manifest_path") or ""),
+            "snapshot_id": str(result.get("snapshot_id") or ""),
+            "dataset_digest": str(result.get("dataset_digest") or ""),
+            "files": int(result.get("files") or 0),
+            "created_at": utc_now(),
+        }
+    if key[:1] == ("export-jsonl",):
+        out_uri = str(result.get("out") or "").strip()
+        if not out_uri:
+            return None
+        export_id = str(result.get("export_id") or "").strip() or (
+            "export_" + sha256_text(f"{Path(out_uri).expanduser().resolve()}:{utc_now()}")[:24]
+        )
+        return {
+            "export_id": export_id,
+            "strategy": "export_jsonl",
+            "requested_size": 0,
+            "actual_size": int(result.get("exported") or 0),
+            "output_uri": out_uri,
+            "format": "jsonl",
+            "manifest_path": "",
+            "snapshot_id": "",
+            "dataset_digest": "",
+            "files": 0,
+            "created_at": utc_now(),
+        }
+    return None
+
+
 def _update_monitor_after_datamixer_command(args: list[str], result: dict, *, lake: str = "", root: str = "") -> None:
     key = _datamixer_command_key(args)
     if not _is_monitor_mutating_datamixer_command(key):
@@ -144,7 +200,8 @@ def _update_monitor_after_datamixer_command(args: list[str], result: dict, *, la
         return
     written = int(result.get("written") or result.get("rows_written") or 0)
     indexed = int(result.get("indexed") or result.get("rows_indexed") or 0)
-    exports = 1 if key[:2] == ("recipe", "export") else 0
+    is_export = key[:2] == ("recipe", "export") or key[:1] == ("export-jsonl",)
+    exports = 1 if is_export else 0
     delta = {
         "summary_delta": {
             "records": written,
@@ -152,6 +209,14 @@ def _update_monitor_after_datamixer_command(args: list[str], result: dict, *, la
             "exports": exports,
         }
     }
+    export_row = _export_record_from_datamixer_result(key, result) if is_export else None
+    if export_row:
+        delta["latest"] = {"exports": [export_row]}
+    if export_row:
+        try:
+            append_audit_rows(warehouse, "exports", [export_row])
+        except Exception:
+            pass
     try:
         update_monitor_delta(
             warehouse,
@@ -193,17 +258,15 @@ def _lake_warehouse_for_agent(*, lake: str, root: str) -> str:
         return ""
     if not warehouse.is_dir() or not (warehouse / "datamixer.toml").is_file():
         raise ObtainerCliError(
-            "DATAMIXER_WAREHOUSE_NOT_FOUND",
-            f"DataMixer warehouse is not initialized: {warehouse}",
-            hint="Load or initialize a lake, then use `dm --lake .loopai/lake.yaml dataset-acquisition-agent start ...`.",
+            "LAKE_NOT_LOADED",
+            f"DataMixer lake is not loaded: no initialized warehouse at {warehouse}",
+            hint=(
+                "Load or initialize the lake first with `dm lake init --root <lake-root>` "
+                "or `dm lake load --warehouse <warehouse>`, then retry the worker."
+            ),
             exit_code=2,
         )
     return str(warehouse)
-
-
-def _default_acquisition_run(warehouse: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    return str(Path(warehouse) / "obtainer_runs" / f"acquisition_{stamp}")
 
 
 def _inject_lake_runtime_defaults(args: list[str], *, lake: str, root: str) -> tuple[list[str], str]:
@@ -216,14 +279,6 @@ def _inject_lake_runtime_defaults(args: list[str], *, lake: str, root: str) -> t
     effective_root = root
     if command in {"dataset-acquisition-agent", "sft-export-agent"}:
         effective_root = _lake_warehouse_for_agent(lake=lake, root=root)
-    if command == "dataset-acquisition-agent":
-        action = args[1] if len(args) > 1 else ""
-        if action in {"start", "status", "resume"} and not _has_option(args, "--run"):
-            run_dir = str(context.get("obtainer_active_acquisition_run") or "")
-            if not run_dir and action == "start":
-                run_dir = _default_acquisition_run(effective_root)
-            if run_dir:
-                args = [*args, "--run", run_dir]
     if args[:3] == ["webagent", "campaign", "start"]:
         if len(args) == 3 or args[3].startswith("-"):
             args = [*args[:3], str(context.get("obtainer_webagent") or "domain_data_acquisition"), *args[3:]]
@@ -235,15 +290,38 @@ def _inject_lake_runtime_defaults(args: list[str], *, lake: str, root: str) -> t
             args.extend(["--subquery-count", str(context["obtainer_webagent_subquery_count"])])
         if str(context.get("obtainer_webagent_auto_process") or "").lower() in {"1", "true", "yes", "on"} and not _has_option(args, "--auto-process"):
             args.append("--auto-process")
+        # Inject MinerU-HTML service settings persisted in the lake pointer so
+        # the campaign pipeline uses the configured document-parsing service.
+        lake_config = pointer.get("config") or {}
+        for flag, key in (
+            ("--pipeline-mineru-url", "mineru_url"),
+            ("--pipeline-mineru-python", "mineru_python"),
+            ("--pipeline-mineru-model", "mineru_model"),
+            ("--pipeline-mineru-gpu", "mineru_gpu"),
+            ("--pipeline-mineru-transport", "mineru_transport"),
+        ):
+            value = str(lake_config.get(key) or "").strip()
+            if value and not _has_option(args, flag):
+                args.extend([flag, value])
     return args, effective_root
 
 
-def _persist_lake_runtime_context(*, lake: str, args: list[str], result: dict) -> None:
+def _persist_lake_runtime_context(
+    *, lake: str, args: list[str], result: dict, task_id: str = ""
+) -> None:
     if not lake or not args:
         return
     updates: dict[str, str] = {}
     if args[0] == "dataset-acquisition-agent" and result.get("run_dir"):
         updates["obtainer_active_acquisition_run"] = str(result["run_dir"])
+        if task_id:
+            updates["obtainer_active_task_id"] = task_id
+        if result.get("webagent_model"):
+            updates["obtainer_webagent_model"] = str(result["webagent_model"])
+        if result.get("resolved_model"):
+            updates["obtainer_resolved_model"] = str(result["resolved_model"])
+        if result.get("model_source"):
+            updates["obtainer_model_source"] = str(result["model_source"])
     if args[:3] == ["webagent", "campaign", "start"]:
         payload = result.get("result") if isinstance(result.get("result"), dict) else result
         if isinstance(payload, dict):
@@ -258,13 +336,31 @@ def _persist_lake_runtime_context(*, lake: str, args: list[str], result: dict) -
         update_lake_obtainer_context(link_path=lake, updates=updates)
 
 
-def _run_dm_command(argv: list[str], *, lake: str = "", root: str = "") -> dict:
+def _run_dm_command(
+    argv: list[str], *, lake: str = "", root: str = "", task_id: str = ""
+) -> dict:
     args = list(argv or [])
     if args and args[0] == "--":
         args = args[1:]
     if args and args[0] == "lake":
         return _run_dm_lake_command(args[1:], lake=lake)
     args, root = _inject_lake_runtime_defaults(args, lake=lake, root=root)
+    if args[:1] == ["dataset-acquisition-agent"]:
+        action = args[1] if len(args) > 1 else ""
+        if action in {"start", "status", "resume"} and not _has_option(args, "--run"):
+            raise ObtainerCliError(
+                "DATASET_ACQUISITION_AGENT_RUN_REQUIRED",
+                f"dataset-acquisition-agent {action} requires --run <run_dir>",
+                hint="Pass the same explicit --run directory to start, status, and resume.",
+                exit_code=2,
+            )
+    if args and args[0] == "obtainer-orchestrator":
+        result = run_orchestrator_agent(args[1:], root=root, lake=lake, task_id=task_id)
+        result.setdefault("ok", True)
+        result.setdefault("command", "dm.obtainer-orchestrator")
+        result.setdefault("status", "success")
+        result.setdefault("warnings", [])
+        return result
     if args and args[0] == "sft-export-agent":
         result = run_sft_export_agent(args[1:], root=root)
         result.setdefault("ok", True)
@@ -273,15 +369,15 @@ def _run_dm_command(argv: list[str], *, lake: str = "", root: str = "") -> dict:
         result.setdefault("warnings", [])
         return result
     if args and args[0] == "dataset-acquisition-agent":
-        result = run_dataset_acquisition_agent(args[1:], root=root)
+        result = run_dataset_acquisition_agent(args[1:], root=root, task_id=task_id)
         result.setdefault("ok", True)
         result.setdefault("command", "dm.dataset-acquisition-agent")
         result.setdefault("status", "success")
         result.setdefault("warnings", [])
-        _persist_lake_runtime_context(lake=lake, args=args, result=result)
+        _persist_lake_runtime_context(lake=lake, args=args, result=result, task_id=task_id)
         return result
     result = _run_datamixer_command(args, lake=lake, root=root)
-    _persist_lake_runtime_context(lake=lake, args=args, result=result)
+    _persist_lake_runtime_context(lake=lake, args=args, result=result, task_id=task_id)
     return result
 
 
@@ -293,32 +389,48 @@ def _run_dm_lake_command(argv: list[str], *, lake: str = "") -> dict:
     parser = argparse.ArgumentParser(prog="loopai-obtainercli dm lake")
     sub = parser.add_subparsers(dest="lake_action", required=True)
     current = sub.add_parser("current")
-    current.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    current.add_argument("--link", default=lake or ".datamixer/lake.yaml")
     init = sub.add_parser("init", help="create a DataMixer lake and make it active")
     init.add_argument("--root", required=True, help="new lake root; warehouse is created below it")
-    init.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    init.add_argument("--link", default=lake or ".datamixer/lake.yaml")
     init.add_argument("--if-not-exists", action="store_true")
     scan = sub.add_parser("scan")
-    scan.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    scan.add_argument("--link", default=lake or ".datamixer/lake.yaml")
     scan.add_argument("--project-root", default=".")
     scan.add_argument("--root", action="append", default=[])
     scan.add_argument("--max-depth", type=int, default=6)
     load = sub.add_parser("load")
     load.add_argument("--warehouse", required=True)
-    load.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    load.add_argument("--link", default=lake or ".datamixer/lake.yaml")
     load.add_argument("--lake-root", default="")
     delete = sub.add_parser("delete")
-    delete.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    delete.add_argument("--link", default=lake or ".datamixer/lake.yaml")
     delete.add_argument("--delete-warehouse", action="store_true")
     delete.add_argument("--yes", action="store_true")
     context = sub.add_parser("context", help="show or update persistent Obtainer defaults for this lake")
-    context.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    context.add_argument("--link", default=lake or ".datamixer/lake.yaml")
     context.add_argument("--set", dest="context_updates", action="append", default=[], metavar="KEY=VALUE")
+    unbind = sub.add_parser("unbind", help="clear active task/run bindings (task_id, acquisition run, campaign)")
+    unbind.add_argument("--link", default=lake or ".datamixer/lake.yaml")
     monitor = sub.add_parser("monitor")
     monitor_sub = monitor.add_subparsers(dest="monitor_action", required=True)
     monitor_rebuild = monitor_sub.add_parser("rebuild")
-    monitor_rebuild.add_argument("--link", default=lake or ".loopai/lake.yaml")
+    monitor_rebuild.add_argument("--link", default=lake or ".datamixer/lake.yaml")
     monitor_rebuild.add_argument("--warehouse", default="")
+    consolidate = sub.add_parser("consolidate", help="move scattered lake/obtainer assets into .datamixer/ + outputs/obtainer/")
+    consolidate.add_argument("--project-root", default=".")
+    export_bundle = sub.add_parser("export-bundle", help="export the lake + obtainer digital assets as a tar.gz bundle")
+    export_bundle.add_argument("--out", required=True)
+    export_bundle.add_argument("--project-root", default=".")
+    export_bundle.add_argument("--link", default="")
+    export_bundle.add_argument("--include-runtime", action="store_true")
+    import_bundle = sub.add_parser("import-bundle", help="import a bundle tar.gz into a target project root")
+    import_bundle.add_argument("--file", required=True)
+    import_bundle.add_argument("--target", required=True)
+    import_data = sub.add_parser("import-data", help="import a data package into the active lake (incremental/batch)")
+    import_data.add_argument("--package", required=True)
+    import_data.add_argument("--project-root", default=".")
+    import_data.add_argument("--link", default="")
     parsed = parser.parse_args(argv)
     if parsed.lake_action == "current":
         return current_lake_pointer(link_path=parsed.link)
@@ -357,6 +469,8 @@ def _run_dm_lake_command(argv: list[str], *, lake: str = "") -> dict:
             key, value = item.split("=", 1)
             updates[key.strip()] = value.strip()
         return update_lake_obtainer_context(link_path=parsed.link, updates=updates)
+    if parsed.lake_action == "unbind":
+        return unbind_lake_obtainer_context(link_path=parsed.link)
     if parsed.lake_action == "monitor" and parsed.monitor_action == "rebuild":
         warehouse = parsed.warehouse
         if not warehouse:
@@ -370,6 +484,19 @@ def _run_dm_lake_command(argv: list[str], *, lake: str = "") -> dict:
                 exit_code=2,
             )
         return start_background_rebuild(warehouse, lake=parsed.link)
+    if parsed.lake_action == "consolidate":
+        return lake_consolidate(parsed.project_root)
+    if parsed.lake_action == "export-bundle":
+        return lake_export_bundle(
+            parsed.project_root,
+            parsed.out,
+            link=parsed.link or None,
+            include_runtime=parsed.include_runtime,
+        )
+    if parsed.lake_action == "import-bundle":
+        return lake_import_bundle(parsed.file, parsed.target)
+    if parsed.lake_action == "import-data":
+        return lake_import_data(parsed.project_root, parsed.package, link=parsed.link or None)
     raise ObtainerCliError("UNSUPPORTED_DM_LAKE_COMMAND", f"Unsupported dm lake command: {parsed.lake_action}")
 
 
@@ -650,7 +777,12 @@ def run(argv: list[str] | None = None) -> int:
                 streaming=args.streaming,
             )
         elif args.command == "dm":
-            result = _run_dm_command(args.dm_args, lake=args.dm_lake, root=args.dm_root)
+            result = _run_dm_command(
+                args.dm_args,
+                lake=args.dm_lake,
+                root=args.dm_root,
+                task_id=args.task_id,
+            )
         else:
             parser.error("Unsupported command")
             return 2

@@ -50,7 +50,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--warehouse", required=True)
     parser.add_argument("--model-source-warehouse", required=True)
-    parser.add_argument("--model", default="deepseek-proxy")
+    parser.add_argument("--model", default="qwen3-14b-fp8")
     parser.add_argument(
         "--manifest", default=str(HERE / "source_pages" / "manifest.jsonl")
     )

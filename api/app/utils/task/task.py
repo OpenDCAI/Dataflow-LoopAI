@@ -2,7 +2,7 @@ import json
 from ...models.db_models import TaskModel
 from ...utils.config.config import format_value, wrap_attr
 from langchain_core.messages import BaseMessage
-from loopai.schema.states import get_state_config_schema
+from loopai.schema.states import RETIRED_DATA_AGENT_STATE_SECTIONS, get_state_config_schema
 from copy import deepcopy
 
 def config_format(config: dict, task_id: str):
@@ -17,8 +17,12 @@ def config_format(config: dict, task_id: str):
         format_item = format_value(system_config[key])
         result.setdefault('system', {})[key] = format_item["value"]
     for series_key in states_config:
+        if series_key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+            continue
         if series_key == 'default':
             for key in states_config[series_key]:
+                if key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+                    continue
                 format_item = format_value(states_config[series_key][key])
                 result.setdefault('default_states', {})[key] = format_item["value"]
         else:
@@ -76,6 +80,8 @@ def build_task_state_config(state_data: dict, language: str | None = None):
 
     result = {}
     for series_key in dict.fromkeys(list(state_data.keys()) + list(default_schema.keys())):
+        if series_key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+            continue
         if series_key in nested_keys:
             continue
         schema_val = default_schema.get(series_key, {})
@@ -120,10 +126,14 @@ def build_task_state_config(state_data: dict, language: str | None = None):
 
 def apply_state_config_updates(state: dict, states_config: dict):
     for series_key, series_value in states_config.items():
+        if series_key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+            continue
         if not isinstance(series_value, dict):
             continue
         if series_key == "default":
             for key, value in series_value.items():
+                if key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+                    continue
                 format_item = format_value(dict(value) if isinstance(value, dict) else {"value": value})
                 state[key] = format_item["value"]
             continue

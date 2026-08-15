@@ -127,17 +127,23 @@ def emit_obtainer_event(
     except Exception:
         StreamEvent = _LocalStreamEvent
     try:
-        writer(
-            StreamEvent(
-                current="obtainercli",
-                node=node,
-                status=status,
-                progress=progress,
-                message=message,
-                data=data,
-                error=error,
-            )
+        event = StreamEvent(
+            current="obtainercli",
+            node=node,
+            status=status,
+            progress=progress,
+            message=message,
+            data=data,
+            error=error,
         )
+        normalized_status = str(status or "").lower()
+        method_name = (
+            "set_completed" if normalized_status in {"completed", "succeeded", "success"}
+            else "set_failed" if normalized_status in {"failed", "error", "interrupted"}
+            else "set_running"
+        )
+        method = getattr(writer, method_name, None)
+        method(event) if callable(method) else writer(event)
     except Exception:
         return
 

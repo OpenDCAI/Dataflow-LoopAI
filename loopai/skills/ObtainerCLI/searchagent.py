@@ -11,12 +11,12 @@ from loopai.schema.system_runtime import (
     resolve_integration_value,
     resolve_runtime_model_config,
 )
+from loopai.schema.model_pool import StarterModelPool
 from .errors import ObtainerCliError
 from .models import utc_now
 
 
 PROVIDER_METHODS = ("huggingface", "kaggle")
-TRUTHY = {"1", "true", "yes", "on"}
 
 
 def _first_non_empty(*values: Any) -> Any:
@@ -24,17 +24,6 @@ def _first_non_empty(*values: Any) -> Any:
         if value is not None and value != "":
             return value
     return None
-
-
-def _env_truthy(name: str) -> bool:
-    return str(os.getenv(name) or "").strip().lower() in TRUTHY
-
-
-def _should_skip_web_deepsearch(*, search_engine: str, tavily_api_key: str) -> bool:
-    engine = str(search_engine or "").strip().lower()
-    if engine == "duckduckgo" and not tavily_api_key and not _env_truthy("OBTAINER_SEARCHAGENT_ALLOW_DUCKDUCKGO_DEEPSEARCH"):
-        return True
-    return False
 
 
 def _starter_config_candidates(starter_config: str | Path | None = None) -> list[Path]:
@@ -134,21 +123,57 @@ def _resolve_runtime_defaults(starter_config: str | Path | None = None) -> dict[
     system = cfg.get("system", {}) if isinstance(cfg.get("system"), dict) else {}
     default_states = cfg.get("default_states", {}) if isinstance(cfg.get("default_states"), dict) else {}
     obtainer = default_states.get("obtainer", {}) if isinstance(default_states.get("obtainer"), dict) else {}
-    runtime_model = resolve_runtime_model_config(
-        system,
-        requested=_first_non_empty(
-            obtainer.get("model_path"),
-            system.get("starter_model_path"),
-            system.get("starter_model_name"),
-        ),
-        legacy_model=obtainer.get("model_path"),
-        legacy_base_url=obtainer.get("base_url"),
-        legacy_api_key=obtainer.get("api_key"),
+    # SearchAgent is an LLM operator: its implicit model follows Codex, never
+    # a legacy Obtainer/starter/local-vLLM field.
+    pool = StarterModelPool(system)
+    requested_codex = _first_non_empty(
+        pool.codex_model,
+        system.get("codex_model_pool_name"),
+        system.get("codex_model_name"),
+        system.get("codex_model"),
     )
+    codex_entry = None
+    if pool.entries:
+        if not requested_codex:
+            raise ObtainerCliError(
+                "MISSING_MODEL_CONFIG",
+                "Starter model pool has no configured Codex default",
+                hint="Set system.model.codex_model to an enabled model-pool entry.",
+            )
+        codex_entry = pool.get_entry_by_name(str(requested_codex))
+        if codex_entry is None:
+            raise ObtainerCliError(
+                "MODEL_NOT_FOUND",
+                f"Codex model {requested_codex!r} is not registered in Starter model pool",
+                hint="Fix system.model.codex_model or pass an explicit SearchAgent model.",
+            )
+        provider = pool.resolve_proxy_provider(str(requested_codex), tier=codex_entry.tier)
+        if provider is None:
+            raise ObtainerCliError(
+                "MISSING_MODEL_CONFIG",
+                "Starter Codex model could not be resolved through the model-pool proxy",
+            )
+        runtime_model = resolve_runtime_model_config(
+            {},
+            requested=provider.model,
+            legacy_model=provider.model,
+            legacy_base_url=provider.base_url,
+            legacy_api_key=provider.api_key,
+        )
+    else:
+        runtime_model = resolve_runtime_model_config(
+            system,
+            requested=requested_codex,
+            legacy_model=system.get("codex_model"),
+            legacy_base_url=system.get("codex_base_url"),
+            legacy_api_key=system.get("codex_api_key"),
+        )
     return {
         "model_name": runtime_model.model,
         "base_url": runtime_model.base_url,
         "api_key": runtime_model.api_key,
+        "resolved_model": (codex_entry.model_name if codex_entry else runtime_model.model),
+        "model_source": "codex_default",
         "temperature": obtainer.get("temperature"),
         "prompt_template_dir": default_states.get("prompt_template_dir"),
         "search_engine": obtainer.get("search_engine"),
@@ -467,6 +492,37 @@ def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
     return deduped
 
 
+def _relax_hf_keywords(keywords: list[str], *, limit: int = 12) -> list[str]:
+    """Turn search-engine-style phrases into Hub-compatible lexical queries."""
+    originals = {str(keyword).strip().lower() for keyword in keywords if str(keyword).strip()}
+    generic_terms = {"qa", "q&a", "sft", "data", "dataset", "datasets"}
+    relaxed: list[str] = []
+    seen = set(originals)
+
+    def add(value: str) -> None:
+        value = value.strip()
+        key = value.lower()
+        if not value or key in seen or len(relaxed) >= limit:
+            return
+        seen.add(key)
+        relaxed.append(value)
+
+    tokenized: list[list[str]] = []
+    for keyword in keywords:
+        tokens = re.findall(r"[A-Za-z0-9][A-Za-z0-9._+-]*|[\u4e00-\u9fff]{2,}", str(keyword))
+        if tokens:
+            tokenized.append(tokens)
+        if len(tokens) >= 3:
+            for index in range(len(tokens) - 1):
+                add(" ".join(tokens[index:index + 2]))
+
+    for tokens in tokenized:
+        for token in tokens:
+            if token.lower() not in generic_terms:
+                add(token)
+    return relaxed
+
+
 async def _search_provider_methods(
     *,
     methods: list[str],
@@ -485,9 +541,19 @@ async def _search_provider_methods(
                 hf_manager = _make_hf_manager()
                 hf_results = await hf_manager.search_datasets(hf_keywords, max_results=max_results_per_source)
                 rows = _flatten_hf_candidates(hf_results)
+                if not rows:
+                    relaxed_keywords = _relax_hf_keywords(hf_keywords)
+                    if relaxed_keywords:
+                        relaxed_results = await hf_manager.search_datasets(
+                            relaxed_keywords,
+                            max_results=min(max_results_per_source, 100),
+                        )
+                        rows = _flatten_hf_candidates(relaxed_results)
+                        for row in rows:
+                            row["fallback_reason"] = "huggingface_zero_results_relaxed_keywords"
                 if fallback_reason:
                     for row in rows:
-                        row["fallback_reason"] = fallback_reason
+                        row.setdefault("fallback_reason", fallback_reason)
                 candidates.extend(rows)
             except Exception as exc:
                 errors.append({"method": method, "error": str(exc), "fallback_reason": fallback_reason or None})
@@ -514,18 +580,40 @@ async def _search_web_for_deepsearch(
     search_engine: str,
     tavily_api_key: str,
     max_urls: int,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], dict[str, Any]]:
     from loopai.agents.Obtainer.utils.web_tools import WebTools
 
-    search_results = await WebTools.search_web(
-        query,
-        search_engine=search_engine,
-        tavily_api_key=tavily_api_key,
-    )
+    if str(search_engine or "").strip().lower() == "jina":
+        search_results = await WebTools.search_web(
+            query,
+            search_engine=search_engine,
+            tavily_api_key=tavily_api_key,
+            max_results=max_urls,
+        )
+        diagnostics = {
+            "requested_provider": "jina",
+            "provider": "jina",
+            "provider_attempts": [],
+        }
+    else:
+        details = await WebTools.search_web_detailed(
+            query,
+            search_engine=search_engine,
+            tavily_api_key=tavily_api_key,
+            max_results=max_urls,
+        )
+        search_results = WebTools._format_search_results(
+            details.get("results", [])
+        )
+        diagnostics = {
+            "requested_provider": str(search_engine or "auto"),
+            "provider": details.get("provider"),
+            "provider_attempts": details.get("provider_attempts", []),
+        }
     urls = WebTools.extract_urls_from_search_results(search_results)
     if not urls:
         urls = _extract_urls_from_text(search_results, limit=max_urls)
-    return search_results, urls[:max_urls]
+    return search_results, urls[:max_urls], diagnostics
 
 
 async def _run_deepsearch(
@@ -548,6 +636,7 @@ async def _run_deepsearch(
     queries: list[str] = []
     urls: list[str] = []
     pages: list[dict[str, Any]] = []
+    search_diagnostics: list[dict[str, Any]] = []
     context_parts: list[str] = []
 
     try:
@@ -571,12 +660,13 @@ async def _run_deepsearch(
 
     for research_query in queries:
         try:
-            search_results, found_urls = await _search_web_for_deepsearch(
+            search_results, found_urls, diagnostics = await _search_web_for_deepsearch(
                 query=research_query,
                 search_engine=search_engine,
                 max_urls=max_urls,
                 tavily_api_key=tavily_api_key,
             )
+            search_diagnostics.append({"query": research_query, **diagnostics})
             urls.extend(found_urls)
             context_parts.append(f"Search query: {research_query}\n{search_results[:4000]}")
         except Exception as exc:
@@ -631,6 +721,7 @@ async def _run_deepsearch(
     return {
         "queries": queries,
         "urls": unique_urls,
+        "search_diagnostics": search_diagnostics,
         "pages": pages,
         "summary": summary,
         "derived_tasks": derived_tasks,
@@ -670,18 +761,14 @@ async def _search_single_task(
         "skip_reason": "",
         "queries": [],
         "urls": [],
+        "search_diagnostics": [],
         "pages": [],
         "summary": "",
         "derived_tasks": [],
         "derived_keywords": [],
         "errors": [],
     }
-    if deepsearch and _should_skip_web_deepsearch(search_engine=search_engine, tavily_api_key=tavily_api_key):
-        deepsearch_result.update({
-            "skipped": True,
-            "skip_reason": "duckduckgo_deepsearch_disabled_without_tavily",
-        })
-    elif deepsearch:
+    if deepsearch:
         deepsearch_result = await _run_deepsearch(
             objective=objective,
             query_text=query_text,
@@ -698,6 +785,8 @@ async def _search_single_task(
             tavily_api_key=tavily_api_key,
         )
         deepsearch_result["enabled"] = True
+        deepsearch_result.setdefault("skipped", False)
+        deepsearch_result.setdefault("skip_reason", "")
     enriched_keywords = _merge_keywords(
         deepsearch_result.get("derived_keywords", []),
         keyword_list,
@@ -881,9 +970,10 @@ def run_searchagent(
 ) -> dict[str, Any]:
     needs_starter = bool(starter_config) or not (model_name and base_url and api_key)
     starter_defaults = _resolve_runtime_defaults(starter_config) if needs_starter else {}
-    model_name = model_name or starter_defaults.get("model_name") or os.getenv("OBTAINER_MODEL", "")
-    base_url = base_url or starter_defaults.get("base_url") or os.getenv("OBTAINER_BASE_URL", "")
-    api_key = api_key or starter_defaults.get("api_key") or os.getenv("OBTAINER_API_KEY", "")
+    explicit_model = bool(model_name or base_url or api_key)
+    model_name = model_name or starter_defaults.get("model_name")
+    base_url = base_url or starter_defaults.get("base_url")
+    api_key = api_key or starter_defaults.get("api_key")
     temperature = float(_first_non_empty(temperature, starter_defaults.get("temperature"), 0.7))
     prompt_template_dir = prompt_template_dir or starter_defaults.get("prompt_template_dir") or ""
     search_engine = search_engine or starter_defaults.get("search_engine") or "tavily"
@@ -944,6 +1034,10 @@ def run_searchagent(
         "candidates": candidates,
         "download_list": candidates,
         "errors": errors,
+        "resolved_model": (
+            model_name if explicit_model else starter_defaults.get("resolved_model") or model_name
+        ),
+        "model_source": "operator_override" if explicit_model else "codex_default",
     }
     manifest_path = output_path / "searchagent_manifest.json"
     _write_manifest(manifest_path, manifest)

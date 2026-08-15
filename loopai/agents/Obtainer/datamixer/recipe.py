@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -80,6 +81,14 @@ class ExportSchemaError(ValueError):
         super().__init__(str(diagnostic.get("message") or diagnostic.get("code") or "export schema error"))
 
 
+class ExportQualityError(ValueError):
+    """Structured source-quality diagnostic that blocks materialization."""
+
+    def __init__(self, diagnostic: dict):
+        self.diagnostic = diagnostic
+        super().__init__(str(diagnostic.get("message") or diagnostic.get("code") or "export quality error"))
+
+
 @dataclass
 class Recipe:
     name: str
@@ -101,6 +110,7 @@ class Recipe:
     export_fields: dict[str, ExportField] = field(default_factory=dict)
     export_keep: list[str] = field(default_factory=list)
     export_include_dm: bool = True
+    finance_quality_gate: dict[str, Any] | None = None
     raw: dict = field(default_factory=dict)
 
     @property
@@ -120,6 +130,10 @@ def parse_recipe(doc: dict) -> Recipe:
     raw_recipe = raw.setdefault("recipe", raw) if "recipe" in doc else raw
     sampling = r.get("sampling", {}) or {}
     export = r.get("export", {}) or {}
+    quality_gates = r.get("quality_gates", {}) or {}
+    finance_quality_gate = quality_gates.get("finance") or export.get("finance_quality_gate")
+    if finance_quality_gate is not None and not isinstance(finance_quality_gate, dict):
+        raise ValueError("quality_gates.finance must be a mapping")
     export_fields, export_keep, export_include_dm = _parse_export_schema(export)
     strategy = sampling.get("strategy", "weighted_token")
     if strategy not in VALID_STRATEGIES:
@@ -184,6 +198,7 @@ def parse_recipe(doc: dict) -> Recipe:
         export_fields=export_fields,
         export_keep=export_keep,
         export_include_dm=export_include_dm,
+        finance_quality_gate=copy.deepcopy(finance_quality_gate),
         raw=raw,
     )
 
@@ -843,6 +858,233 @@ def _record(store: DataStore, sel: Selected) -> dict:
     return rec
 
 
+_DEFAULT_FINANCE_FIELD_GROUPS = [
+    ["instruction", "question", "problem", "prompt", "messages"],
+    ["output", "answer", "response", "solution", "result", "messages"],
+]
+
+
+def _non_empty_field(content: Any, path: str) -> bool:
+    current = content
+    for part in str(path).split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    if current is None or current == "" or current == [] or current == {}:
+        return False
+    if path == "messages" and isinstance(current, list):
+        roles = {
+            str(item.get("role") or "").lower()
+            for item in current if isinstance(item, dict) and item.get("content")
+        }
+        return bool(roles & {"user", "human"}) and bool(roles & {"assistant", "bot"})
+    return True
+
+
+def _source_evidence(store: DataStore, sample: dict) -> dict[str, str]:
+    tags = sample.get("tags") if isinstance(sample.get("tags"), dict) else {}
+    dataset = store.catalog.get_dataset(str(sample.get("dataset_id") or "")) or {}
+    source_uri = str(tags.get("source_uri") or "").strip()
+    parsed = urlparse(source_uri)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    source_dataset_id = str(tags.get("source_dataset_id") or "").strip()
+    source_name = str(sample.get("source") or dataset.get("source") or "").strip()
+    dataset_name = str(dataset.get("name") or sample.get("dataset_id") or "").strip()
+    source_id = source_dataset_id or host or source_name or dataset_name or "unknown"
+    return {
+        "source_id": source_id,
+        "source_uri": source_uri,
+        "source_host": host,
+        "source_dataset_id": source_dataset_id,
+        "source": source_name,
+        "dataset": dataset_name,
+    }
+
+
+def _manual_review_status(config: dict, source_id: str) -> tuple[str, dict]:
+    review = config.get("manual_review") or {}
+    if not isinstance(review, dict):
+        return "missing", {}
+    sources = review.get("sources") or {}
+    decision = sources.get(source_id) if isinstance(sources, dict) else None
+    if isinstance(decision, str):
+        return decision.strip().lower(), {"status": decision}
+    if isinstance(decision, dict):
+        return str(decision.get("status") or "missing").strip().lower(), decision
+    return "missing", {}
+
+
+def _finance_quality_report(
+    store: DataStore,
+    selected: list[Selected],
+    recipe: Recipe,
+) -> dict | None:
+    finance_rows: list[dict] = []
+    for sel in selected:
+        sample = store.catalog.get_sample(sel.sample_id) or {}
+        if str(sample.get("domain") or "").lower() != "finance":
+            continue
+        content = store.get_content(sel.cid)
+        evidence = _source_evidence(store, sample)
+        tags = sample.get("tags") if isinstance(sample.get("tags"), dict) else {}
+        try:
+            confidence = float(tags.get("domain_confidence"))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        labels = tags.get("domain_labels") or tags.get("labels") or []
+        if not isinstance(labels, list):
+            labels = []
+        from .finance_validation import validated_finance_signals
+
+        semantic_signals, rejected_semantic_signals = validated_finance_signals(
+            tags.get("finance_semantic_signals"),
+            content,
+        )
+        finance_rows.append({
+            "sample_id": sel.sample_id,
+            "content": content,
+            "evidence": evidence,
+            "confidence": max(0.0, min(1.0, confidence)),
+            "classifier": str(tags.get("domain_classifier") or ""),
+            "classifier_model": str(tags.get("domain_classifier_model") or ""),
+            "labels": [str(label) for label in labels],
+            "semantic_signals": semantic_signals,
+            "rejected_semantic_signals": rejected_semantic_signals,
+        })
+    if not finance_rows:
+        return None
+
+    config = recipe.finance_quality_gate
+    if not config:
+        return {
+            "ok": False,
+            "code": "finance_quality_policy_missing",
+            "message": "finance samples require recipe.quality_gates.finance before export",
+            "finance_samples": len(finance_rows),
+            "sources": [],
+            "required_config": {
+                "min_field_valid_rate": 0.95,
+                "min_classifier_confidence": 0.8,
+                "min_classifier_pass_rate": 0.95,
+                "min_semantic_signals": 2,
+                "min_semantic_signal_pass_rate": 1.0,
+                "sample_size": 5,
+                "manual_review": {
+                    "required": False,
+                },
+            },
+        }
+
+    field_groups = config.get("required_field_groups") or _DEFAULT_FINANCE_FIELD_GROUPS
+    if not isinstance(field_groups, list) or not all(isinstance(group, list) and group for group in field_groups):
+        raise ValueError("quality_gates.finance.required_field_groups must be a non-empty list of field lists")
+    min_field_rate = float(config.get("min_field_valid_rate", 0.95))
+    min_confidence = float(config.get("min_classifier_confidence", 0.8))
+    min_classifier_rate = float(config.get("min_classifier_pass_rate", 0.95))
+    min_semantic_signals = max(2, int(config.get("min_semantic_signals", 2)))
+    min_semantic_signal_rate = float(config.get("min_semantic_signal_pass_rate", 1.0))
+    sample_size = max(1, int(config.get("sample_size", 5)))
+    require_source_uri = bool(config.get("require_source_uri", False))
+    review = config.get("manual_review") or {}
+    require_manual_review = bool(review.get("required", False)) if isinstance(review, dict) else False
+
+    grouped: dict[str, list[dict]] = {}
+    for row in finance_rows:
+        grouped.setdefault(row["evidence"]["source_id"], []).append(row)
+
+    source_reports = []
+    for source_id in sorted(grouped):
+        rows = grouped[source_id]
+        evidence = rows[0]["evidence"]
+        field_pass = sum(
+            all(any(_non_empty_field(row["content"], field) for field in group) for group in field_groups)
+            for row in rows
+        )
+        classifier_pass = sum(
+            bool(row["classifier"])
+            and "finance" in row["labels"]
+            and row["confidence"] >= min_confidence
+            for row in rows
+        )
+        semantic_pass = sum(
+            len(row["semantic_signals"]) >= min_semantic_signals
+            for row in rows
+        )
+        field_rate = field_pass / len(rows)
+        classifier_rate = classifier_pass / len(rows)
+        semantic_rate = semantic_pass / len(rows)
+        average_confidence = sum(row["confidence"] for row in rows) / len(rows)
+        source_uri_rate = sum(bool(row["evidence"]["source_uri"]) for row in rows) / len(rows)
+        review_status, review_detail = _manual_review_status(config, source_id)
+        rejection_reasons = []
+        if require_source_uri and source_uri_rate < 1.0:
+            rejection_reasons.append("source_uri_missing")
+        if field_rate < min_field_rate:
+            rejection_reasons.append("field_valid_rate_below_threshold")
+        if classifier_rate < min_classifier_rate:
+            rejection_reasons.append("classifier_pass_rate_below_threshold")
+        if semantic_rate < min_semantic_signal_rate:
+            rejection_reasons.append("semantic_signal_pass_rate_below_threshold")
+        if require_manual_review and review_status not in {"passed", "pass", "approved"}:
+            rejection_reasons.append("manual_review_not_passed")
+
+        rng = random.Random(f"{recipe.seed}:{source_id}")
+        sampled = rng.sample(rows, min(sample_size, len(rows)))
+        manual_review_sample = [{
+            "sample_id": row["sample_id"],
+            "source_uri": row["evidence"]["source_uri"],
+            "classifier": row["classifier"],
+            "classifier_model": row["classifier_model"],
+            "finance_confidence": row["confidence"],
+            "domain_labels": row["labels"],
+            "finance_semantic_signals": row["semantic_signals"],
+            "rejected_finance_semantic_signals": row["rejected_semantic_signals"],
+            "preview": utils.extract_text(row["content"])[:500],
+        } for row in sampled]
+        source_reports.append({
+            "source_id": source_id,
+            "source_evidence": evidence,
+            "samples": len(rows),
+            "source_uri_rate": round(source_uri_rate, 6),
+            "field_valid": field_pass,
+            "field_valid_rate": round(field_rate, 6),
+            "classifier_pass": classifier_pass,
+            "classifier_pass_rate": round(classifier_rate, 6),
+            "semantic_signal_pass": semantic_pass,
+            "semantic_signal_pass_rate": round(semantic_rate, 6),
+            "average_finance_confidence": round(average_confidence, 6),
+            "manual_review": {"status": review_status, **review_detail},
+            "manual_review_sample": manual_review_sample,
+            "accepted": not rejection_reasons,
+            "rejection_reasons": rejection_reasons,
+        })
+
+    rejected = [item for item in source_reports if not item["accepted"]]
+    return {
+        "ok": not rejected,
+        "code": "finance_quality_passed" if not rejected else "finance_quality_rejected",
+        "message": (
+            "all finance samples passed the export quality gate"
+            if not rejected else
+            f"{len(rejected)} finance source group(s) failed the export quality gate"
+        ),
+        "thresholds": {
+            "min_field_valid_rate": min_field_rate,
+            "min_classifier_confidence": min_confidence,
+            "min_classifier_pass_rate": min_classifier_rate,
+            "min_semantic_signals": min_semantic_signals,
+            "min_semantic_signal_pass_rate": min_semantic_signal_rate,
+            "require_source_uri": require_source_uri,
+            "require_manual_review": require_manual_review,
+        },
+        "required_field_groups": field_groups,
+        "finance_samples": len(finance_rows),
+        "source_count": len(source_reports),
+        "rejected_source_count": len(rejected),
+        "sources": source_reports,
+    }
+
+
 _SFT_SCHEMA_SUGGESTION = {
     "export": {
         "format": "jsonl",
@@ -1206,6 +1448,16 @@ def export(store: DataStore, recipe: Recipe, out_dir: str | None = None,
     )
     out = Path(out_dir) if out_dir else (store.exports_dir / export_id)
     out.mkdir(parents=True, exist_ok=True)
+    finance_quality = _finance_quality_report(store, selected, recipe)
+    finance_quality_path = None
+    if finance_quality is not None:
+        finance_quality_path = out / "finance_quality_report.json"
+        finance_quality_path.write_text(
+            utils.canonical_json(finance_quality).decode(), encoding="utf-8"
+        )
+        finance_quality["report_path"] = str(finance_quality_path)
+        if not finance_quality.get("ok"):
+            raise ExportQualityError(finance_quality)
     shard_bytes = parse_size(recipe.shard_size)
 
     # train/val/test split: deterministically partition the selection, each split
@@ -1256,6 +1508,7 @@ def export(store: DataStore, recipe: Recipe, out_dir: str | None = None,
         "snapshot_id": snapshot_id,
         "format": recipe.export_format,
         "export_schema": export_schema_report,
+        "finance_quality": finance_quality,
         "summary": summary,
         "splits": splits,
         "files": files,
@@ -1272,6 +1525,7 @@ def export(store: DataStore, recipe: Recipe, out_dir: str | None = None,
         "dataset_digest": dataset_digest,
         "snapshot_id": snapshot_id,
         "manifest_path": str(manifest_path),
+        "finance_quality_report": str(finance_quality_path) if finance_quality_path else None,
         "splits": {k: v["count"] for k, v in splits.items()} if splits else None,
         "files": len(files),
         **summary,

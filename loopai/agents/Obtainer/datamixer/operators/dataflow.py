@@ -36,7 +36,13 @@ registry stay import-free.
 """
 from __future__ import annotations
 
+import copy
+import importlib.util
+import inspect
 import math
+from importlib import metadata
+from pathlib import Path
+import threading
 from typing import Any
 
 from .. import utils
@@ -48,7 +54,21 @@ _IDX = "__dm_idx"
 
 # Keys the bridge consumes itself; everything else in ``--arg`` is forwarded to
 # the wrapped DataFlow operator's ``__init__``.
-_META_KEYS = {"op", "input_key", "output_key", "kind", "version", "run_kwargs"}
+_META_KEYS = {
+    "op", "input_key", "input_arg", "output_key", "kind", "version",
+    "run_kwargs", "field_map", "runtime",
+}
+
+# DataFlow 1.0.x lazy-loads operator modules through a shared registry and is
+# not safe when a streaming pipeline sets up several native stages at once.
+_DATAFLOW_LOAD_LOCK = threading.RLock()
+
+
+def _installed_dataflow_version() -> str:
+    try:
+        return metadata.version("open-dataflow")
+    except metadata.PackageNotFoundError:
+        return "unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +127,23 @@ def _from_frame(frame: Any) -> list[dict]:
     return list(frame)                          # list-of-dicts fallback
 
 
-def _rows_to_records(batch: Batch, input_key: str) -> list[dict]:
+def _path_value(row: dict[str, Any], path: str) -> Any:
+    """Read a dotted row/content/tags path used by declarative field maps."""
+    if path == "@text":
+        return utils.extract_text(row.get("content", row))
+    value: Any = row
+    for part in str(path).split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _rows_to_records(
+    batch: Batch,
+    input_key: str,
+    field_map: dict[str, str] | None = None,
+) -> list[dict]:
     """Project DataMixer rows into flat records for the operator.
 
     Each record carries the extracted text under ``input_key`` and a hidden
@@ -119,7 +155,13 @@ def _rows_to_records(batch: Batch, input_key: str) -> list[dict]:
     for i, row in enumerate(batch):
         rec = {k: v for k, v in row.items()
                if k not in ("content",) and not k.startswith("__")}
-        rec[input_key] = utils.extract_text(row.get("content", row))
+        tags = row.get("tags")
+        if isinstance(tags, dict):
+            for key, value in tags.items():
+                rec.setdefault(key, value)
+        for target, source in (field_map or {}).items():
+            rec[str(target)] = _path_value(row, str(source))
+        rec.setdefault(input_key, utils.extract_text(row.get("content", row)))
         rec[_IDX] = i
         records.append(rec)
     return records
@@ -187,6 +229,32 @@ def _operator_registry():
         f"(last import error: {last})")
 
 
+def _normalize_dataflow_lazy_paths(reg: Any) -> None:
+    """Repair relative package paths emitted by open-dataflow 1.0.x."""
+    loader_map = getattr(reg, "loader_map", None)
+    initialize = getattr(reg, "_init_loaders", None)
+    if isinstance(loader_map, dict) and callable(initialize):
+        if any(loader is None for loader in loader_map.values()):
+            initialize()
+    if not isinstance(loader_map, dict):
+        return
+    spec = importlib.util.find_spec("dataflow")
+    if spec is None or not spec.origin:
+        return
+    site_root = Path(spec.origin).resolve().parent.parent
+    for loader in loader_map.values():
+        paths = getattr(loader, "__path__", None)
+        if paths is None:
+            continue
+        normalized = []
+        for raw_path in paths:
+            path = Path(str(raw_path))
+            if not path.is_absolute():
+                path = site_root / path
+            normalized.append(str(path.resolve()))
+        loader.__path__ = normalized
+
+
 def load_dataflow_operator(name: str, **kwargs) -> Any:
     """Instantiate a DataFlow operator by its registered class name.
 
@@ -195,32 +263,34 @@ def load_dataflow_operator(name: str, **kwargs) -> Any:
     ``kwargs``. Raises a clear, actionable error when DataFlow is not installed
     or the operator name is unknown.
     """
-    if not dataflow_available():
-        raise RuntimeError(
-            "the DataFlow operator framework is not installed. Install it with "
-            "`pip install open-dataflow` to use `op run dataflow` "
-            "(see docs/DATAFLOW.md).")
-    reg = _operator_registry()
-    cls = None
-    try:
-        cls = reg.get(name)
-    except (KeyError, AttributeError):
-        pass
-    if cls is None:
+    with _DATAFLOW_LOAD_LOCK:
+        if not dataflow_available():
+            raise RuntimeError(
+                "the DataFlow operator framework is not installed. Install it with "
+                "`pip install open-dataflow` to use `op run dataflow` "
+                "(see docs/DATAFLOW.md).")
+        reg = _operator_registry()
+        _normalize_dataflow_lazy_paths(reg)
+        cls = None
         try:
-            cls = reg[name]
-        except (KeyError, TypeError):
+            cls = reg.get(name)
+        except (KeyError, AttributeError):
             pass
-    if cls is None:
-        try:
-            cls = getattr(reg, name)
-        except AttributeError:
-            pass
-    if cls is None:
-        raise KeyError(
-            f"unknown DataFlow operator {name!r}; check the operator catalog at "
-            "https://opendcai.github.io/DataFlow-Doc/")
-    return cls(**kwargs)
+        if cls is None:
+            try:
+                cls = reg[name]
+            except (KeyError, TypeError):
+                pass
+        if cls is None:
+            try:
+                cls = getattr(reg, name)
+            except AttributeError:
+                pass
+        if cls is None:
+            raise KeyError(
+                f"unknown DataFlow operator {name!r}; check the operator catalog at "
+                "https://opendcai.github.io/DataFlow-Doc/")
+        return cls(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -245,42 +315,112 @@ class DataFlowBridge(Operator):
     """
 
     def __init__(self, op: str | None = None, input_key: str = "raw_content",
+                 input_arg: str | None = None,
                  output_key: str | None = None, kind: str = "map",
                  version: str | None = None, run_kwargs: dict | None = None,
+                 field_map: dict[str, str] | None = None,
+                 runtime: dict[str, Any] | None = None,
                  **op_kwargs: Any):
         self.op_name = op
         self.input_key = input_key
+        self.input_arg = input_arg
         self.output_key = output_key
         self.run_kwargs = run_kwargs or {}
+        self.field_map = field_map or {}
+        self.runtime = runtime or {}
         self.op_kwargs = op_kwargs
         valid = {"map", "filter", "score", "dedup", "embed", "agg"}
         kind = kind if kind in valid else "map"
         self.spec = OperatorSpec(
-            "dataflow", version or "1.0", kind,
+            f"dataflow.{op}" if op else "dataflow",
+            version or (_installed_dataflow_version() if op else "1.0"), kind,
             description=(f"Bridge to DataFlow operator {op!r}." if op else
                         "Bridge to an installed DataFlow operator "
                         "(set --arg op=<ClassName>)."))
         self._op: Any = None
+
+    @staticmethod
+    def _database_manager(value: dict[str, Any], ctx: OperatorContext) -> Any:
+        """Build DataFlow's native DatabaseManager from serializable YAML args."""
+        from dataflow.utils.text2sql.database_manager import DatabaseManager
+
+        spec = copy.deepcopy(value)
+        config = spec.setdefault("config", {})
+        root_path = config.get("root_path")
+        if root_path:
+            roots = root_path if isinstance(root_path, list) else [root_path]
+            resolved = []
+            for item in roots:
+                path = Path(str(item))
+                if not path.is_absolute():
+                    path = Path(ctx.root) / path
+                path.mkdir(parents=True, exist_ok=True)
+                resolved.append(str(path))
+            config["root_path"] = resolved if isinstance(root_path, list) else resolved[0]
+        return DatabaseManager(**spec)
+
+    def _resolved_op_kwargs(self, ctx: OperatorContext) -> dict[str, Any]:
+        kwargs = copy.deepcopy(self.op_kwargs)
+        manager = kwargs.get("database_manager")
+        if isinstance(manager, dict):
+            kwargs["database_manager"] = self._database_manager(manager, ctx)
+        return kwargs
 
     def setup(self, ctx: OperatorContext) -> None:
         if not self.op_name:
             raise ValueError(
                 "the `dataflow` operator needs an operator name: "
                 "`--arg op=<DataFlowClassName>` (e.g. op=WordNumberFilter)")
-        self._op = load_dataflow_operator(self.op_name, **self.op_kwargs)
+        with _DATAFLOW_LOAD_LOCK:
+            self._op = load_dataflow_operator(
+                self.op_name, **self._resolved_op_kwargs(ctx)
+            )
+
+    def _refresh_runtime_dependencies(self) -> None:
+        if not self.runtime.get("refresh_database_manager"):
+            return
+        manager = getattr(self._op, "database_manager", None)
+        refresh = getattr(manager, "_discover_databases", None)
+        if callable(refresh):
+            refresh()
+
+    def _native_run_kwargs(self) -> dict[str, Any]:
+        kwargs = dict(self.run_kwargs)
+        parameters = inspect.signature(self._op.run).parameters
+        input_arg = self.input_arg
+        if input_arg:
+            kwargs.setdefault(input_arg, self.input_key)
+        elif "input_key" in parameters:
+            kwargs.setdefault("input_key", self.input_key)
+        if self.output_key is not None and "output_key" in parameters:
+            kwargs.setdefault("output_key", self.output_key)
+        return kwargs
 
     def process(self, batch: Batch, ctx: OperatorContext) -> Batch:
         if not batch:
             return batch
         if self._op is None:                     # tolerate direct process() use
             self.setup(ctx)
-        records = _rows_to_records(batch, self.input_key)
+        records = _rows_to_records(batch, self.input_key, self.field_map)
         storage = DataFlowStorage(_to_frame(records))
-        run_kwargs = dict(self.run_kwargs)
-        if self.output_key is not None:
-            run_kwargs.setdefault("output_key", self.output_key)
-        self._op.run(storage, self.input_key, **run_kwargs)
+        self._refresh_runtime_dependencies()
+        self._op.run(storage, **self._native_run_kwargs())
         out_frame = storage.result if storage.written else storage.read()
         out_records = _from_frame(out_frame)
-        return _merge_records(batch, out_records, self.input_key,
-                              is_filter=self.spec.kind == "filter")
+        out = _merge_records(
+            batch, out_records, self.input_key,
+            is_filter=self.spec.kind == "filter",
+        )
+        audit = {
+            "package": "open-dataflow",
+            "version": self.spec.version,
+            "operator": self.op_name,
+            "kind": self.spec.kind,
+        }
+        for row in out:
+            history = row.get("native_dataflow_operators")
+            history = list(history) if isinstance(history, list) else []
+            if audit not in history:
+                history.append(dict(audit))
+            row["native_dataflow_operators"] = history
+        return out

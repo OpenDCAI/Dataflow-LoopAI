@@ -60,6 +60,55 @@ def test_searchagent_returns_download_candidates(tmp_path, monkeypatch):
     assert manifest["download_list"] == manifest["candidates"]
 
 
+def test_searchagent_relaxes_zero_result_huggingface_phrases(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import searchagent
+
+    class FakeMethodDecisionAgent:
+        async def decide_method_order(self, **kwargs):
+            return {
+                "method_order": ["huggingface"],
+                "keywords_for_hf": ["finance QA Chinese"],
+                "reasoning": "test",
+            }
+
+    class FakeHfManager:
+        calls = []
+
+        async def search_datasets(self, keywords, max_results=5):
+            self.calls.append((list(keywords), max_results))
+            if "finance QA" not in keywords:
+                return {keyword: [] for keyword in keywords}
+            return {
+                "finance QA": [
+                    {
+                        "id": "example/finance-qa",
+                        "title": "Finance QA",
+                        "description": "finance questions and answers",
+                    }
+                ]
+            }
+
+    manager = FakeHfManager()
+    monkeypatch.setattr(searchagent, "_make_method_decision_agent", lambda **kwargs: FakeMethodDecisionAgent())
+    monkeypatch.setattr(searchagent, "_make_hf_manager", lambda: manager)
+
+    result = searchagent.run_searchagent(
+        query="collect Chinese finance QA",
+        objective="collect Chinese finance QA",
+        output_root=tmp_path,
+        model_name="test-model",
+        base_url="http://127.0.0.1:8000/v1",
+        api_key="test-key",
+        deepsearch=False,
+    )
+
+    assert result["ok"] is True
+    assert len(manager.calls) == 2
+    assert manager.calls[1][1] == 5
+    assert result["candidates"][0]["dataset_id"] == "example/finance-qa"
+    assert result["candidates"][0]["fallback_reason"] == "huggingface_zero_results_relaxed_keywords"
+
+
 def test_searchagent_uses_starter_model_defaults(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import searchagent
 
@@ -70,9 +119,9 @@ def test_searchagent_uses_starter_model_defaults(tmp_path, monkeypatch):
     starter.write_text(
         """
 system:
-  starter_model_path: starter-model
-  starter_base_url: http://starter.example/v1
-  starter_api_key: starter-key
+  codex_model: codex-model
+  codex_base_url: http://codex.example/v1
+  codex_api_key: codex-key
   tavily_api_key: tavily-key
 default_states:
   prompt_template_dir: ./loopai/common/prompts
@@ -99,9 +148,9 @@ default_states:
         deepsearch=False,
     )
 
-    assert captured["model_name"] == "starter-model"
-    assert captured["base_url"] == "http://starter.example/v1"
-    assert captured["api_key"] == "starter-key"
+    assert captured["model_name"] == "codex-model"
+    assert captured["base_url"] == "http://codex.example/v1"
+    assert captured["api_key"] == "codex-key"
     assert captured["search_engine"] == "duckduckgo"
     assert captured["max_urls"] == 4
 
@@ -113,9 +162,9 @@ def test_searchagent_uses_nested_system_integrations(tmp_path, monkeypatch):
     starter.write_text(
         """
 system:
-  starter_model_path: starter-model
-  starter_base_url: http://starter.example/v1
-  starter_api_key: starter-key
+  codex_model: codex-model
+  codex_base_url: http://codex.example/v1
+  codex_api_key: codex-key
   integrations:
     tavily:
       api_key: nested-tavily-key
@@ -158,9 +207,9 @@ def test_searchagent_starter_model_overrides_env_defaults(tmp_path, monkeypatch)
     starter.write_text(
         """
 system:
-  starter_model_path: starter-model
-  starter_base_url: http://starter.example/v1
-  starter_api_key: starter-key
+  codex_model: codex-model
+  codex_base_url: http://codex.example/v1
+  codex_api_key: codex-key
 """,
         encoding="utf-8",
     )
@@ -182,35 +231,74 @@ system:
         deepsearch=False,
     )
 
-    assert captured["model_name"] == "starter-model"
-    assert captured["base_url"] == "http://starter.example/v1"
-    assert captured["api_key"] == "starter-key"
+    assert captured["model_name"] == "codex-model"
+    assert captured["base_url"] == "http://codex.example/v1"
+    assert captured["api_key"] == "codex-key"
 
 
-def test_searchagent_env_model_is_only_fallback_without_starter(tmp_path, monkeypatch):
+def test_searchagent_uses_nested_codex_default_not_default_tier(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import searchagent
 
-    monkeypatch.chdir(tmp_path)
+    starter = tmp_path / "starter.yaml"
+    starter.write_text(
+        """
+system:
+  model:
+    proxy_base_url: http://127.0.0.1:8855/responseProxy/v1
+    proxy_api_key: proxy-key
+    default_model: local-qwen
+    default_tier: medium
+    codex_model: deepseek-chat
+    pool:
+      - tier: medium
+        name: local-qwen
+        model_name: qwen3-14b-fp8
+        base_url: http://127.0.0.1:8000/v1
+      - tier: high
+        name: deepseek-chat
+        model_name: deepseek-chat
+        base_url: https://api.deepseek.com/v1
+        api_key: deepseek-key
+""",
+        encoding="utf-8",
+    )
     captured = {}
 
     async def fake_run_async(**kwargs):
         captured.update(kwargs)
         return [{"objective": "x", "search_keywords": ["x"], "decision": {}, "candidates": [], "errors": []}]
 
-    monkeypatch.setenv("OBTAINER_MODEL", "deepseek-v4-pro")
-    monkeypatch.setenv("OBTAINER_BASE_URL", "http://proxy.example/v1")
-    monkeypatch.setenv("OBTAINER_API_KEY", "proxy-key")
     monkeypatch.setattr(searchagent, "_run_searchagent_async", fake_run_async)
-
     searchagent.run_searchagent(
-        query="collect reasoning data",
+        query="collect finance data",
         output_root=tmp_path,
+        starter_config=starter,
         deepsearch=False,
     )
 
-    assert captured["model_name"] == "deepseek-v4-pro"
-    assert captured["base_url"] == "http://proxy.example/v1"
+    assert captured["model_name"] == "deepseek-chat"
+    assert captured["base_url"] == "http://127.0.0.1:8855/responseProxy/v1"
     assert captured["api_key"] == "proxy-key"
+
+
+def test_searchagent_rejects_legacy_environment_model_without_codex_config(tmp_path, monkeypatch):
+    from loopai.skills.ObtainerCLI import searchagent
+    from loopai.skills.ObtainerCLI.errors import ObtainerCliError
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OBTAINER_MODEL", "deepseek-v4-pro")
+    monkeypatch.setenv("OBTAINER_BASE_URL", "http://proxy.example/v1")
+    monkeypatch.setenv("OBTAINER_API_KEY", "proxy-key")
+    try:
+        searchagent.run_searchagent(
+            query="collect reasoning data",
+            output_root=tmp_path,
+            deepsearch=False,
+        )
+    except ObtainerCliError as exc:
+        assert exc.error_code == "MISSING_MODEL_CONFIG"
+    else:
+        raise AssertionError("legacy OBTAINER_* variables must not become the default model")
 
 
 def test_searchagent_deepsearch_enriches_provider_keywords(tmp_path, monkeypatch):
@@ -278,7 +366,7 @@ def test_searchagent_deepsearch_enriches_provider_keywords(tmp_path, monkeypatch
     assert result["download_list"][0]["dataset_id"] == "openai/gsm8k"
 
 
-def test_searchagent_skips_duckduckgo_deepsearch_and_uses_provider_fallback(tmp_path, monkeypatch):
+def test_searchagent_runs_duckduckgo_deepsearch_with_structured_fallback(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import searchagent
 
     class FakeMethodDecisionAgent:
@@ -301,13 +389,20 @@ def test_searchagent_skips_duckduckgo_deepsearch_and_uses_provider_fallback(tmp_
                 ]
             }
 
-    async def fail_deepsearch(**kwargs):
-        raise AssertionError("DuckDuckGo deepsearch should be skipped")
+    async def fake_deepsearch(**kwargs):
+        return {
+            "queries": ["agentic tool use datasets"],
+            "urls": ["https://example.test/agentic"],
+            "pages": [],
+            "summary": "Structured HTML search returned a usable result.",
+            "derived_tasks": [],
+            "derived_keywords": ["agentic dataset"],
+            "errors": [],
+        }
 
-    monkeypatch.delenv("OBTAINER_SEARCHAGENT_ALLOW_DUCKDUCKGO_DEEPSEARCH", raising=False)
     monkeypatch.setattr(searchagent, "_make_method_decision_agent", lambda **kwargs: FakeMethodDecisionAgent())
     monkeypatch.setattr(searchagent, "_make_hf_manager", lambda: FakeHfManager())
-    monkeypatch.setattr(searchagent, "_run_deepsearch", fail_deepsearch)
+    monkeypatch.setattr(searchagent, "_run_deepsearch", fake_deepsearch)
 
     result = searchagent.run_searchagent(
         query="need agentic tool use datasets",
@@ -322,8 +417,8 @@ def test_searchagent_skips_duckduckgo_deepsearch_and_uses_provider_fallback(tmp_
     )
 
     task = result["tasks"][0]
-    assert task["deepsearch"]["skipped"] is True
-    assert task["deepsearch"]["skip_reason"] == "duckduckgo_deepsearch_disabled_without_tavily"
+    assert task["deepsearch"]["skipped"] is False
+    assert task["deepsearch"]["summary"].startswith("Structured HTML search")
     assert result["download_list"][0]["dataset_id"] == "nvidia/Nemotron-Agentic-v1"
 
 

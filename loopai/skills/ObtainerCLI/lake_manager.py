@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import obtainer_context, read_lake_config, write_lake_config
+from .config import OBTAINER_ACTIVE_BINDING_KEYS, obtainer_context, read_lake_config, write_lake_config
 from .datamixer_adapter import warehouse_root
 from .errors import ObtainerCliError
 from .monitor_state import read_monitor_state
@@ -93,7 +93,7 @@ def _scan_roots(project_root: str | Path | None, extra_roots: list[str | Path] |
     roots: list[Path] = []
     if project_root:
         project = Path(project_root).expanduser().resolve()
-        roots.extend([project / ".loopai", project / "outputs"])
+        roots.extend([project / ".datamixer", project / "outputs"])
     for env_name in ("LOOPAI_CACHE_DIR", "OBTAINER_CACHE_DIR", "DATAMIXER_CACHE_DIR"):
         value = os.getenv(env_name)
         if value:
@@ -194,7 +194,7 @@ def _candidate_from_warehouse_marker(path: Path) -> dict[str, Any] | None:
 def scan_lake_candidates(
     *,
     project_root: str | Path | None = None,
-    active_link: str | Path = ".loopai/lake.yaml",
+    active_link: str | Path = ".datamixer/lake.yaml",
     extra_roots: list[str | Path] | None = None,
     max_depth: int = 6,
 ) -> dict[str, Any]:
@@ -250,7 +250,7 @@ def scan_lake_candidates(
     }
 
 
-def current_lake_pointer(*, link_path: str | Path = ".loopai/lake.yaml") -> dict[str, Any]:
+def current_lake_pointer(*, link_path: str | Path = ".datamixer/lake.yaml") -> dict[str, Any]:
     link = Path(link_path).expanduser()
     if not link.is_absolute():
         link = Path.cwd() / link
@@ -292,7 +292,7 @@ def current_lake_pointer(*, link_path: str | Path = ".loopai/lake.yaml") -> dict
 def load_lake_pointer(
     *,
     warehouse: str | Path,
-    link_path: str | Path = ".loopai/lake.yaml",
+    link_path: str | Path = ".datamixer/lake.yaml",
     lake_root: str | Path | None = None,
 ) -> dict[str, Any]:
     warehouse_path = _resolve_path(warehouse)
@@ -349,7 +349,7 @@ def load_lake_pointer(
 
 def update_lake_obtainer_context(
     *,
-    link_path: str | Path = ".loopai/lake.yaml",
+    link_path: str | Path = ".datamixer/lake.yaml",
     updates: dict[str, Any],
 ) -> dict[str, Any]:
     """Persist operational defaults/current runs on the active lake pointer."""
@@ -412,9 +412,21 @@ def update_lake_obtainer_context(
     }
 
 
+def unbind_lake_obtainer_context(
+    *,
+    link_path: str | Path = ".datamixer/lake.yaml",
+) -> dict[str, Any]:
+    """Clear active task/run bindings so a stale task_id never leaks into a
+    new task. WebAgent defaults (model, workers, ...) are intentionally kept."""
+    return update_lake_obtainer_context(
+        link_path=link_path,
+        updates={key: "" for key in OBTAINER_ACTIVE_BINDING_KEYS},
+    )
+
+
 def delete_lake_pointer(
     *,
-    link_path: str | Path = ".loopai/lake.yaml",
+    link_path: str | Path = ".datamixer/lake.yaml",
     delete_warehouse: bool = False,
     yes: bool = False,
 ) -> dict[str, Any]:

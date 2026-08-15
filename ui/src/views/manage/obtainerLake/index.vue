@@ -25,7 +25,7 @@
                         border-radius="6"
                         :reveal-border="true"
                         :is-box-shadow="true"
-                        placeholder=".loopai/lake.yaml"
+                        placeholder=".datamixer/lake.yaml"
                         :title="local('Path to the lake config file')"
                         @keyup.enter="refresh"
                     ></fv-text-box>
@@ -188,6 +188,12 @@
                         </div>
                     </section>
                 </section>
+
+                <dataset-manager
+                    v-else-if="activeView === 'datasets'"
+                    :lake-path="lakePath"
+                    :warehouse="activeWarehouse"
+                />
 
                 <template v-else>
                 <section class="lake-runtime-panel" :class="runtimeLevel">
@@ -514,6 +520,7 @@ import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
 import baseChart from '@/components/manage/obtainerLake/baseChart.vue'
 import webPipelineStatus from '@/components/manage/obtainerLake/webPipelineStatus.vue'
+import datasetManager from '@/components/manage/obtainerLake/datasetManager.vue'
 import {
     deleteDataMixerLake,
     getDataMixerCommands,
@@ -528,11 +535,12 @@ import {
 export default {
     components: {
         baseChart,
-        webPipelineStatus
+        webPipelineStatus,
+        datasetManager
     },
     data() {
         return {
-            lakePath: '.loopai/lake.yaml',
+            lakePath: '.datamixer/lake.yaml',
             monitor: null,
             lakeState: {},
             lakeScan: null,
@@ -580,6 +588,7 @@ export default {
         views() {
             return [
                 { key: 'workbench', label: this.local('Workbench') },
+                { key: 'datasets', label: this.local('Datasets') },
                 { key: 'lakes', label: this.local('Lake Management') }
             ]
         },
@@ -1110,11 +1119,18 @@ export default {
             } catch (error) {}
         },
         routeView() {
-            return String(this.$route?.path || '').includes('/datamixer/lakes') ? 'lakes' : 'workbench'
+            const path = String(this.$route?.path || '')
+            if (path.includes('/datamixer/datasets')) return 'datasets'
+            if (path.includes('/datamixer/lakes')) return 'lakes'
+            return 'workbench'
         },
         setActiveView(view) {
             this.activeView = view
-            const target = view === 'lakes' ? '/m/datamixer/lakes' : '/m/datamixer'
+            const target = view === 'lakes'
+                ? '/m/datamixer/lakes'
+                : view === 'datasets'
+                    ? '/m/datamixer/datasets'
+                    : '/m/datamixer'
             if (this.$route?.path !== target) {
                 this.$router?.push(target).catch(() => {})
             }

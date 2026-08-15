@@ -249,3 +249,84 @@ def test_cli_download_manifest_emits_json(tmp_path, monkeypatch, capsys):
     assert exit_code == 0
     assert payload["ok"] is True
     assert payload["schema_version"] == "obtainercli.download.v1"
+
+
+def test_hf_endpoint_chain_order_dedup_and_extras(monkeypatch):
+    from loopai.skills.ObtainerCLI import download
+
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    monkeypatch.delenv("HF_HUB_ENDPOINT", raising=False)
+    monkeypatch.delenv("HF_ENDPOINT_FALLBACKS", raising=False)
+
+    chain = download._hf_endpoint_chain()
+    assert chain[0] == "https://huggingface.co"
+    assert "https://hf-mirror.com" in chain
+    assert len(chain) == len(set(chain))
+
+    monkeypatch.setenv("HF_ENDPOINT", "https://my-mirror.example")
+    monkeypatch.setenv("HF_ENDPOINT_FALLBACKS", " https://hf-mirror.ai , https://huggingface.co ")
+    chain = download._hf_endpoint_chain()
+    assert chain[0] == "https://my-mirror.example"
+    assert "https://hf-mirror.ai" in chain
+    assert chain.count("https://huggingface.co") == 1
+
+
+def test_apply_hf_endpoint_switches_runtime_endpoint(monkeypatch):
+    from loopai.skills.ObtainerCLI import download
+
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    monkeypatch.delenv("HF_HUB_ENDPOINT", raising=False)
+    download._apply_hf_endpoint("https://hf-mirror.com")
+
+    import datasets.config as datasets_config
+    import huggingface_hub.constants as hub_constants
+
+    assert download.os.environ["HF_ENDPOINT"] == "https://hf-mirror.com"
+    assert download.os.environ["HF_HUB_ENDPOINT"] == "https://hf-mirror.com"
+    assert datasets_config.HF_ENDPOINT == "https://hf-mirror.com"
+    assert hub_constants.ENDPOINT == "https://hf-mirror.com"
+
+
+def test_load_hf_dataset_falls_back_across_endpoints(monkeypatch):
+    from loopai.skills.ObtainerCLI import download
+
+    attempts: list[str] = []
+
+    def fake_load_once(dataset_id, *, split, streaming):
+        attempts.append(download.os.environ["HF_ENDPOINT"])
+        if len(attempts) == 1:
+            raise ConnectionError("first endpoint dead")
+        return object()
+
+    monkeypatch.setattr(download, "_load_hf_dataset_once", fake_load_once)
+    monkeypatch.setattr(download, "_endpoint_reachable", lambda endpoint, timeout=3.0: True)
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    monkeypatch.delenv("HF_HUB_ENDPOINT", raising=False)
+    monkeypatch.delenv("HF_ENDPOINT_FALLBACKS", raising=False)
+
+    result = download._load_hf_dataset("some/dataset", split="train", streaming=True)
+    assert result is not None
+    assert len(attempts) == 2
+    assert attempts[0] == "https://huggingface.co"
+    assert attempts[1] == "https://hf-mirror.com"
+
+
+def test_load_hf_dataset_raises_combined_error_when_all_endpoints_fail(monkeypatch):
+    from loopai.skills.ObtainerCLI import download
+
+    def always_fail(dataset_id, *, split, streaming):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(download, "_load_hf_dataset_once", always_fail)
+    monkeypatch.setattr(download, "_endpoint_reachable", lambda endpoint, timeout=3.0: True)
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    monkeypatch.delenv("HF_HUB_ENDPOINT", raising=False)
+    monkeypatch.delenv("HF_ENDPOINT_FALLBACKS", raising=False)
+
+    try:
+        download._load_hf_dataset("some/dataset", split="train", streaming=True)
+        raise AssertionError("expected ObtainerCliError")
+    except download.ObtainerCliError as exc:
+        assert exc.error_code == "HF_DOWNLOAD_ALL_ENDPOINTS_FAILED"
+        assert "https://huggingface.co" in exc.hint
+        assert "https://hf-mirror.com" in exc.hint

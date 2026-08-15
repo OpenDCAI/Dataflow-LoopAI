@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -188,6 +189,60 @@ def cmd_dataset_add(args) -> int:
     return 0
 
 
+def cmd_dataset_update(args) -> int:
+    s = _open(args)
+    ds_id = s.catalog.resolve_dataset(args.dataset)
+    if not ds_id:
+        s.close()
+        return _fail(args, f"dataset not found: {args.dataset}")
+    fields = {
+        key: getattr(args, key)
+        for key in ("name", "source", "license", "owner", "description")
+        if getattr(args, key) is not None
+    }
+    updated = s.catalog.update_dataset(ds_id, **fields)
+    s.close()
+    if updated is None:
+        return _fail(args, f"dataset not found: {args.dataset}")
+    _emit(args, updated, lambda d: print(json.dumps(d, ensure_ascii=False, indent=2)))
+    return 0
+
+
+def cmd_dataset_delete(args) -> int:
+    if not args.yes:
+        s = _open(args)
+        ds_id = s.catalog.resolve_dataset(args.dataset)
+        ds = s.catalog.get_dataset(ds_id) if ds_id else None
+        s.close()
+        if ds is None:
+            return _fail(args, f"dataset not found: {args.dataset}")
+        _emit(
+            args,
+            {
+                "confirm_required": True,
+                "dataset": ds,
+                "message": f"delete dataset {ds_id} and its samples?",
+            },
+            lambda d: print(d["message"]),
+        )
+        return 0
+    s = _open(args)
+    ds_id = s.catalog.resolve_dataset(args.dataset)
+    if not ds_id:
+        s.close()
+        return _fail(args, f"dataset not found: {args.dataset}")
+    try:
+        result = s.delete_dataset(ds_id, reason=args.reason or "webui delete")
+    except (KeyError, ValueError) as exc:
+        s.close()
+        return _fail(args, str(exc))
+    s.close()
+    _emit(args, result, lambda d: print(
+        f"deleted dataset {d['dataset_id']} ({d['dataset_name']}): "
+        f"{d['erased']} samples, {d['blobs_deleted']} blobs"))
+    return 0
+
+
 def cmd_dataset_list(args) -> int:
     s = _open(args)
     rows = s.catalog.list_datasets()
@@ -269,6 +324,26 @@ def cmd_ingest(args) -> int:
         for row_number, record in enumerate(records, 1):
             if not isinstance(record, dict):
                 raise ValueError(f"ingest record {row_number} must be an object")
+            row_domain = str(record.get("domain") or "").strip().casefold()
+            batch_domain = str(defaults.get("domain") or "").strip().casefold()
+            if row_domain == "finance" and batch_domain != "finance":
+                raise ValueError(
+                    f"ingest record {row_number} declares domain=finance; rerun the batch "
+                    "with --domain finance so the batch-level domain metadata matches"
+                )
+            if batch_domain == "finance" and row_domain and row_domain != "finance":
+                raise ValueError(
+                    f"ingest record {row_number} domain {row_domain!r} conflicts with "
+                    "--domain finance"
+                )
+            if (
+                args.domain
+                and record.get("domain") not in (None, "", args.domain)
+            ):
+                raise ValueError(
+                    f"ingest record {row_number} domain {record['domain']!r} "
+                    f"conflicts with --domain {args.domain!r}"
+                )
             if (
                 "quality_level" in record
                 and record["quality_level"] != args.quality_level
@@ -278,9 +353,6 @@ def cmd_ingest(args) -> int:
                     f"{record['quality_level']!r} conflicts with --quality-level "
                     f"{args.quality_level!r}"
                 )
-        dataset_card = _register_dataset_card(
-            s.root, args.dataset, args.dataset_card
-        )
     except FileNotFoundError:
         s.close()
         return _fail(args, f"file not found: {args.file}")
@@ -290,12 +362,22 @@ def cmd_ingest(args) -> int:
     except (ValueError, OSError) as e:
         s.close()
         return _fail(args, str(e))
+    started = time.time()
+    run_id = "ingest-" + __import__("hashlib").sha256(
+        f"{args.dataset}:{args.file}:{started}".encode("utf-8")
+    ).hexdigest()[:16]
+    try:
+        dataset_card = _register_dataset_card(
+            s.root, args.dataset, args.dataset_card
+        )
+    except (ValueError, OSError) as e:
+        s.close()
+        return _fail(args, str(e))
     ds_id = s.catalog.resolve_dataset(args.dataset)
     if ds_id is None:
         ds_id = s.catalog.add_dataset(
             name=args.dataset, source=args.source, license=args.license
         )
-    started = time.time()
     try:
         res = s.ingest_records(
             ds_id, records, defaults=defaults,
@@ -330,9 +412,6 @@ def cmd_ingest(args) -> int:
     if validation.get("derived_fields"):
         out["derived_fields"] = validation["derived_fields"]
         out["validated_rows"] = validation["rows"]
-    run_id = "ingest-" + __import__("hashlib").sha256(
-        f"{ds_id}:{args.file}:{started}".encode("utf-8")
-    ).hexdigest()[:16]
     lineage_path = _write_lineage(
         root,
         {
@@ -403,7 +482,10 @@ def cmd_export_jsonl(args) -> int:
     field = args.field
     written = 0
     try:
-        with open(args.out, "w", encoding="utf-8") as fh:
+        out_path = Path(args.out)
+        if out_path.parent and not out_path.parent.exists():
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as fh:
             for batch in s.catalog.iter_query(where=args.filter, dataset_id=ds_id,
                                               batch_size=args.batch_size):
                 for r in batch:
@@ -1051,11 +1133,14 @@ def cmd_model_add(args) -> int:
 def cmd_model_list(args) -> int:
     from .models import ModelPool
     s = _open(args)
-    models = ModelPool(s.root).list()
+    pool = ModelPool(s.root)
+    models = pool.list()
+    default_model = pool.default_name()
     s.close()
-    _emit(args, {"models": models}, lambda d: print("\n".join(
+    _emit(args, {"models": models, "default_model": default_model}, lambda d: print("\n".join(
         f"{m['name']:<16} {m['response_format']:<10} {m['model']:<22} "
-        f"{m['api_url']}" for m in d["models"]) or "(no models)"))
+        f"{m['api_url']}{'  [default]' if m['name'] == d['default_model'] else ''}"
+        for m in d["models"]) or "(no models)"))
     return 0
 
 
@@ -1100,7 +1185,7 @@ def cmd_agent_ingest(args) -> int:
             engine = "builtin"
             if args.model and not codex.sdk_available():
                 note = ("LoopAI Codex runner not available — used the offline heuristic. "
-                        "Run `loopai-obtainercli dm --lake .loopai/lake.yaml codex-check`; install with "
+                        "Run `loopai-obtainercli dm --lake .datamixer/lake.yaml codex-check`; install with "
                         "`corepack yarn install` in codex-runner.")
                 builtin_model = None
     try:
@@ -1174,8 +1259,9 @@ def cmd_dataflow_agent_run(args) -> int:
             expected_outputs=args.expected_outputs,
             work_dir=args.work_dir,
             trial_rows=args.trial_rows,
-            timeout=args.timeout,
             apply=args.apply,
+            recipe_path=args.recipe,
+            mix_plan_path=args.mix_plan,
         )
     except (KeyError, ValueError, FileNotFoundError, codex.CodexError) as e:
         s.close()
@@ -1184,16 +1270,28 @@ def cmd_dataflow_agent_run(args) -> int:
 
     def txt(d):
         ar = d.get("agent_result", {})
-        print(f"dataflow agent-run: {ar.get('mode', 'unknown')}")
+        mode = ar.get("mode", "unknown")
+        print(f"dataflow agent-run: {mode}")
         print(f"target    : {d['target']}")
         print(f"trial rows: {d['trial_rows_exported']}")
-        print(f"work dir  : {d['work_dir']}")
-        if ar.get("pipeline_path"):
-            print(f"pipeline  : {ar['pipeline_path']}")
-        if ar.get("processed_jsonl"):
-            print(f"processed : {ar['processed_jsonl']}")
-        if d.get("merge"):
-            print(f"merged    : {d['merge']}")
+        upstream = d.get("upstream") or {}
+        if upstream.get("delivered_pipeline"):
+            print(f"delivered : pipeline {ar.get('pipeline_path', '')} "
+                  f"(full run is executed upstream via chunked runner)")
+            print(f"full input: {upstream.get('full_input_jsonl', '')} "
+                  f"({d.get('full_rows_exported', 0)} rows exported)")
+            print(f"upstream  : {upstream.get('chunked_run_command', '')}")
+            print(f"apply     : {upstream.get('apply_command', '')}")
+        else:
+            print(f"full rows : {d.get('full_rows_exported', 0)} in -> "
+                  f"{d.get('full_rows_out', 0)} out")
+            print(f"work dir  : {d['work_dir']}")
+            if ar.get("pipeline_path"):
+                print(f"pipeline  : {ar['pipeline_path']}")
+            if ar.get("processed_jsonl"):
+                print(f"processed : {ar['processed_jsonl']}")
+            if d.get("merge"):
+                print(f"merged    : {d['merge']}")
     _emit(args, rep, txt)
     return 0
 
@@ -1257,6 +1355,9 @@ def _webcrawler_config_from_args(args):
         github_token_env=args.github_token_env,
         search_timeout=args.search_timeout,
         tavily_api_key=tavily_key,
+        search_llm_summary=not getattr(args, "no_search_llm_summary", False),
+        search_summary_results=getattr(args, "search_summary_results", 5),
+        search_summary_chars=getattr(args, "search_summary_chars", 4000),
         proxy=getattr(args, "proxy", "") or "",
         use_env_proxy=not getattr(args, "no_env_proxy", False),
         browser_backend=args.browser_backend,
@@ -1268,15 +1369,23 @@ def _webcrawler_config_from_args(args):
         timeout=args.timeout,
         max_retries=args.max_retries,
         max_html_bytes=args.max_html_bytes,
+        page_cache_entries=getattr(args, "page_cache_entries", 64),
         license=args.license,
     )
 
 
 def cmd_webagent_run(args) -> int:
     from .webagents import create
+    from .models import ModelPool
 
     s = _open(args)
     try:
+        if not args.model:
+            args.model = ModelPool(s.root).default_name()
+        if not args.model:
+            raise ValueError(
+                "webagent has no resolved default model; start managed acquisition or pass --model"
+            )
         queries = _read_webagent_queries(args)
         config = _webcrawler_config_from_args(args)
         agent = create(args.name, config=config)
@@ -1294,10 +1403,14 @@ def cmd_webagent_run(args) -> int:
             f"({data['elapsed_s']}s)"
         )
         for index, result in enumerate(data["results"], 1):
+            urls = result.get("selected_urls") or [result.get("selected_url")]
+            urls = [url for url in urls if url]
             print(
                 f"  {index:>2}. steps={result['agent_steps']:<2} "
-                f"pages={result['pages_fetched']:<2} {result['selected_url']}"
+                f"pages={result['pages_fetched']:<2} roots={len(urls)}"
             )
+            for url in urls:
+                print(f"      -> {url}")
         for error in data["errors"]:
             print(f"  ! {error['query']}: {error['error']}")
 
@@ -1307,11 +1420,19 @@ def cmd_webagent_run(args) -> int:
 
 def cmd_webagent_campaign_start(args) -> int:
     from dataclasses import asdict
+    from .models import ModelPool
     from .webagents import CampaignConfig, WebAgentCampaignRunner
 
     s = _open(args)
     root = s.root
     s.close()
+    if not args.model:
+        args.model = ModelPool(root).default_name()
+    if not args.model:
+        return _fail(
+            args,
+            "webagent campaign has no resolved default model; start managed acquisition or pass --model",
+        )
     web_config = _webcrawler_config_from_args(args)
     persisted_web_config = asdict(web_config)
     persisted_web_config["tavily_api_key"] = ""
@@ -1330,20 +1451,62 @@ def cmd_webagent_campaign_start(args) -> int:
             str(Path(args.pipeline).expanduser().resolve())
             if args.auto_process else ""
         ),
+        focus_keywords=list(args.focus_keywords),
         pipeline_model=args.pipeline_model or args.model,
         l2_dataset=args.l2_dataset or f"{args.dataset}_l2_pt",
         l3_dataset=args.l3_dataset or f"{args.dataset}_l3_sft",
         pipeline_batch_size=args.pipeline_batch_size,
         pipeline_extractor=args.pipeline_extractor,
         pipeline_mineru_gpu=args.pipeline_mineru_gpu,
+        pipeline_mineru_url=args.pipeline_mineru_url or "",
+        pipeline_mineru_python=args.pipeline_mineru_python or "",
+        pipeline_mineru_model=args.pipeline_mineru_model or "",
+        pipeline_mineru_transport=args.pipeline_mineru_transport or "",
     )
+    if args.detach and args.enqueue_only:
+        return _fail(args, "--detach and --enqueue-only cannot be used together")
+
     runner = WebAgentCampaignRunner(root)
     try:
         report = runner.start(
             args.query,
             config,
-            enqueue_only=args.enqueue_only,
+            enqueue_only=args.enqueue_only or args.detach,
         )
+        if args.detach:
+            log_dir = Path(root) / ".loopai" / "campaign_logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            stdout_path = log_dir / f"{report['run_id']}.stdout.log"
+            stderr_path = log_dir / f"{report['run_id']}.stderr.log"
+            cmd = [
+                sys.executable,
+                "-m",
+                "loopai.agents.Obtainer.datamixer",
+                "--root",
+                str(root),
+                "--json",
+                "webagent",
+                "campaign",
+                "resume",
+                str(report["run_id"]),
+            ]
+            with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(Path.cwd()),
+                    env=os.environ.copy(),
+                    stdout=stdout,
+                    stderr=stderr,
+                    start_new_session=True,
+                )
+            runner.queue.set_executor(str(report["run_id"]), proc.pid)
+            report.update({
+                "status": "queued",
+                "detached": True,
+                "executor_pid": proc.pid,
+                "stdout": str(stdout_path),
+                "stderr": str(stderr_path),
+            })
     except (KeyError, ValueError, FileNotFoundError, RuntimeError) as exc:
         runner.close()
         return _fail(args, str(exc))
@@ -1359,8 +1522,14 @@ def cmd_webagent_campaign_start(args) -> int:
         print(f"queue: {data['queue_path']}")
         for task in data.get("tasks", []):
             result = task.get("result") or {}
-            suffix = f" -> {result.get('selected_url')}" if result.get("selected_url") else ""
-            print(f"  [{task['status']:<9}] {task['position']:>2} {task['query']}{suffix}")
+            urls = result.get("selected_urls") or [result.get("selected_url")]
+            urls = [url for url in urls if url]
+            print(
+                f"  [{task['status']:<9}] {task['position']:>2} "
+                f"{task['query']} roots={len(urls)}"
+            )
+            for url in urls:
+                print(f"      -> {url}")
 
     _emit(args, report, txt)
     return 0 if report["status"] not in {"failed", "completed_with_errors"} else 1
@@ -1536,6 +1705,22 @@ def cmd_recipe_export(args) -> int:
             "error_code": e.diagnostic.get("code", "export_schema_error"),
             "export_schema": e.diagnostic,
             "next_action": e.diagnostic.get("action_required", ""),
+        }
+        _emit(args, out, lambda d: print(
+            f"export blocked: {d['error_code']}\n{d['error']}\n{d['next_action']}"))
+        return 1
+    except R.ExportQualityError as e:
+        s.close()
+        out = {
+            "ok": False,
+            "blocked": True,
+            "error": e.diagnostic.get("message") or str(e),
+            "error_code": e.diagnostic.get("code", "export_quality_error"),
+            "finance_quality": e.diagnostic,
+            "next_action": (
+                "Fix rejected sources, run domain_classify with the resolved Codex model, "
+                "complete source-level manual review, then export again."
+            ),
         }
         _emit(args, out, lambda d: print(
             f"export blocked: {d['error_code']}\n{d['error']}\n{d['next_action']}"))
@@ -1764,6 +1949,17 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--source"); a.add_argument("--license")
     a.add_argument("--owner"); a.add_argument("--description")
     a.set_defaults(func=cmd_dataset_add)
+    a = ds.add_parser("update", help="update dataset registry metadata")
+    a.add_argument("dataset")
+    a.add_argument("--name"); a.add_argument("--source")
+    a.add_argument("--license"); a.add_argument("--owner")
+    a.add_argument("--description")
+    a.set_defaults(func=cmd_dataset_update)
+    a = ds.add_parser("delete", help="delete a dataset and all its samples")
+    a.add_argument("dataset")
+    a.add_argument("--reason", default=None)
+    a.add_argument("--yes", action="store_true", help="confirm deletion")
+    a.set_defaults(func=cmd_dataset_delete)
     a = ds.add_parser("list", help="list datasets")
     a.set_defaults(func=cmd_dataset_list)
     a = ds.add_parser("show", help="show one dataset")
@@ -1883,10 +2079,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="directory for trial input, generated pipeline, and outputs")
     a.add_argument("--trial-rows", type=int, default=20,
                    help="rows exported for the agent's trial run")
-    a.add_argument("--timeout", type=int, default=600,
-                   help="Codex SDK runner timeout in seconds")
+    a.add_argument("--recipe", default=None,
+                   help="export recipe.yaml: full input is sampled per bucket to "
+                        "ceil(bucket_target * 1.5) rows instead of a whole-lake export")
+    a.add_argument("--mix-plan", default=None,
+                   help="sft-export mix_plan.json: same 1.5x per-bucket sampling, "
+                        "using the plan's target_records/dataset entries")
     a.add_argument("--apply", action="store_true",
-                   help="merge processed_jsonl back into DataMixer after a successful trial")
+                   help="deprecated: the DataFlow agent now only delivers the "
+                        "trial-verified pipeline; the upper layer runs the chunked "
+                        "scaffold over full_input.jsonl and merges with apply-jsonl")
     a.set_defaults(func=cmd_dataflow_agent_run)
 
     wa = sub.add_parser(
@@ -1903,25 +2105,31 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--dataset", default="domain_data_acquisition_l1",
                    help="target DataMixer L1 dataset")
     a.add_argument("--model", default=None,
-                   help="DataMixer model-pool name; omitted uses deterministic fallback")
+                   help="DataMixer model-pool name; omitted uses the resolved Codex default")
     a.add_argument("--max-steps", type=int, default=30,
                    help="maximum model tool steps per query")
     a.add_argument("--soft-step-limit", type=int, default=16,
-                   help="submit the best verified candidate after this many steps")
+                   help="signal the LLM to submit all verified relevant roots after this many steps")
     a.add_argument("--max-search-calls", type=int, default=4,
-                   help="submit a verified candidate after this many searches")
+                   help="maximum LLM search calls before it must inspect or submit existing roots")
     a.add_argument("--max-pages", type=int, default=1000,
                    help="maximum raw pages materialized per query")
     a.add_argument("--max-depth", type=int, default=2,
                    help="related-link traversal depth after URL submission")
     a.add_argument("--max-links-per-page", type=int, default=1000)
     a.add_argument("--search-provider", default="auto",
-                   choices=["auto", "bing", "github", "tavily", "duckduckgo_html"])
+                   choices=["auto", "baidu", "bing", "github", "tavily", "duckduckgo_html"])
     a.add_argument("--search-results", type=int, default=8)
     a.add_argument("--github-token-env", default="GITHUB_TOKEN")
     a.add_argument("--search-timeout", type=float, default=15.0)
     a.add_argument("--tavily-api-key-env", default="TAVILY_API_KEY",
                    help="environment variable containing the Tavily key")
+    a.add_argument("--no-search-llm-summary", action="store_true",
+                   help="disable per-result LLM summaries and URL rubrics")
+    a.add_argument("--search-summary-results", type=int, default=5,
+                   help="maximum results per provider graded by the LLM rubric")
+    a.add_argument("--search-summary-chars", type=int, default=4000,
+                   help="maximum fetched webpage characters supplied per result")
     a.add_argument("--browser-backend", default="auto",
                    choices=["auto", "httpx", "playwright"])
     a.add_argument("--proxy", default="",
@@ -1941,6 +2149,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--timeout", type=float, default=25.0)
     a.add_argument("--max-retries", type=int, default=2)
     a.add_argument("--max-html-bytes", type=int, default=4_000_000)
+    a.add_argument("--page-cache-entries", type=int, default=64,
+                   help="bounded recent-page cache entries (default: 64)")
     a.add_argument("--license", default="unknown",
                    help="license/provenance label for collected pages")
     a.set_defaults(func=cmd_webagent_run)
@@ -1958,8 +2168,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--query", required=True,
                    help="one broad query that the expansion LLM will decompose")
     a.add_argument("--dataset", default="domain_data_acquisition_l1")
-    a.add_argument("--model", required=True,
-                   help="DataMixer model-pool name for webagent + expansion")
+    a.add_argument("--model", default=None,
+                   help="DataMixer model-pool name; omitted uses the resolved Codex default")
     a.add_argument("--expand-model", default=None,
                    help="optional separate model-pool name for query expansion")
     a.add_argument("--subquery-count", type=int, default=24,
@@ -1972,15 +2182,30 @@ def build_parser() -> argparse.ArgumentParser:
                    help="requeue a failed task this many times")
     a.add_argument("--enqueue-only", action="store_true",
                    help="expand and persist tasks without starting workers")
+    a.add_argument(
+        "--detach",
+        action="store_true",
+        help="return after enqueueing and drain the WebAgent/pipeline queues in a background process",
+    )
     a.add_argument("--auto-process", action="store_true",
-                   help="run the L1->L2->L3 DataMixer pipeline when the queue finishes")
+                   help="stream each new L1 row through persistent L2/L3 stage queues")
     a.add_argument(
         "--pipeline",
         default="examples/datamixer_l1_l3_pipeline/pipeline.yaml",
         help="pipeline YAML used by --auto-process",
     )
+    a.add_argument(
+        "--focus-keywords",
+        action="append",
+        default=[],
+        help=(
+            "WebAgent exploration keyword passed into domain_classify's LLM "
+            "judgement; items unrelated to these keywords are filtered out by "
+            "topic_quality_filter (repeatable)"
+        ),
+    )
     a.add_argument("--pipeline-model", default=None,
-                   help="model-pool name for L2->L3 QA; defaults to --model")
+                   help="model-pool name for classification and QA; defaults to --model")
     a.add_argument("--l2-dataset", default=None)
     a.add_argument("--l3-dataset", default=None)
     a.add_argument("--pipeline-batch-size", type=int, default=8)
@@ -1991,6 +2216,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="override webpage_to_pt engine or keep the YAML setting",
     )
     a.add_argument("--pipeline-mineru-gpu", default="0")
+    a.add_argument("--pipeline-mineru-url", default="",
+                   help="MinerU-HTML HTTP service URL (default: http://127.0.0.1:7986)")
+    a.add_argument("--pipeline-mineru-python", default="",
+                   help="MinerU-HTML python executable for the embedded worker; empty uses the project default")
+    a.add_argument("--pipeline-mineru-model", default="",
+                   help="MinerU-HTML model path; empty uses the project default")
+    a.add_argument("--pipeline-mineru-transport", default="",
+                   help="MinerU-HTML transport: auto/http/worker; empty keeps the pipeline YAML setting")
     a.add_argument("--max-steps", type=int, default=30)
     a.add_argument("--soft-step-limit", type=int, default=12,
                    help="campaign long-tail guard before the hard 30-step limit")
@@ -2000,11 +2233,14 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--max-depth", type=int, default=2)
     a.add_argument("--max-links-per-page", type=int, default=1000)
     a.add_argument("--search-provider", default="auto",
-                   choices=["auto", "bing", "github", "tavily", "duckduckgo_html"])
+                   choices=["auto", "baidu", "bing", "github", "tavily", "duckduckgo_html"])
     a.add_argument("--search-results", type=int, default=8)
     a.add_argument("--github-token-env", default="GITHUB_TOKEN")
     a.add_argument("--search-timeout", type=float, default=12.0)
     a.add_argument("--tavily-api-key-env", default="TAVILY_API_KEY")
+    a.add_argument("--no-search-llm-summary", action="store_true")
+    a.add_argument("--search-summary-results", type=int, default=5)
+    a.add_argument("--search-summary-chars", type=int, default=4000)
     a.add_argument("--browser-backend", default="auto",
                    choices=["auto", "httpx", "playwright"])
     a.add_argument("--proxy", default="",
@@ -2018,6 +2254,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--timeout", type=float, default=25.0)
     a.add_argument("--max-retries", type=int, default=2)
     a.add_argument("--max-html-bytes", type=int, default=4_000_000)
+    a.add_argument("--page-cache-entries", type=int, default=64)
     a.add_argument("--license", default="unknown")
     a.set_defaults(func=cmd_webagent_campaign_start)
 

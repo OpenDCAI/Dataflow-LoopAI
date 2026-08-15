@@ -150,14 +150,32 @@ def _provider_from_starter_model_pool(model: str | None) -> tuple[dict, dict] | 
         if not _has_explicit_starter_pool(system):
             continue
         pool = StarterModelPool(system)
+        # ``system.model.codex_model`` is the canonical Starter selector.  The
+        # flat keys are compatibility aliases used by older saved configs.
+        # Never fall through to ``default_tier`` here: that is how a Codex
+        # default of DeepSeek was previously replaced by the local Qwen entry.
         requested_model = model or _first_non_empty(
+            pool.codex_model,
             system.get("codex_model_pool_name"),
             system.get("codex_model_name"),
             system.get("codex_model"),
         )
+        if not requested_model:
+            continue
+        entry = pool.get_entry_by_name(str(requested_model))
+        if entry is None:
+            raise ObtainerCliError(
+                "OBTAINERCLI_MODEL_NOT_FOUND",
+                f"Codex model {requested_model!r} is not registered in Starter model pool",
+                hint=(
+                    "Fix system.model.codex_model (or pass an explicit --model) so it "
+                    "names an enabled system.model.pool entry."
+                ),
+                exit_code=2,
+            )
         provider = pool.resolve_proxy_provider(
-            requested_model,
-            tier=None if requested_model else pool.default_tier,
+            str(requested_model),
+            tier=entry.tier,
         )
         if provider is None:
             continue
@@ -237,10 +255,18 @@ Hard rules:
    is a noisy trace, do not globally prefer `output` over `answer`; define that
    bucket's schema explicitly.
 9. Before export, run status, stats, dataset list, sample/key inspection,
-   recipe validate, recipe plan, and recipe preview.
+   recipe validate, recipe plan, and recipe preview. Persist the exact JSON
+   output of `recipe plan` at `recipe/recipe_plan.json` under the run directory.
+   Also write `recipe/mix_plan.json` with `budget_kind`, `target_records`, and a
+   non-empty `buckets` list. Every bucket must include `name`, normalized
+   `weight`, `target_records`, and a concrete `rationale` derived from the
+   current user goal, Analyzer failure taxonomy, lake inventory, and quality
+   gates. The two artifacts must agree with the recipe.
 10. If no explicit SFT size is provided, target at least 100000 records.
 11. Export with `recipe export --snapshot`.
-12. After export, independently validate all JSONL shards:
+12. Record planned-versus-actual bucket counts in final_report.json from
+    `recipe_plan.json` and the export manifest's `summary.buckets`.
+13. After export, independently validate all JSONL shards:
     - total record count
     - every row has non-empty instruction and output
     - every row has input as a string
@@ -248,9 +274,9 @@ Hard rules:
     - instruction != output for every row
     - output was not sourced from text/raw_content/content fallback
     - manifest has snapshot_id, dataset_digest, recipe_fingerprint, export_schema
-13. If validation fails, do not mark ok=true. Patch the recipe, normalize data,
+14. If validation fails, do not mark ok=true. Patch the recipe, normalize data,
     exclude invalid buckets, or write a blocker final_report with exact reasons.
-14. Do not read or print secret/key files.
+15. Do not read or print secret/key files.
 
 Allowed DataMixer CLI examples:
 
@@ -325,6 +351,8 @@ Export output directory:
 
 Expected artifacts:
 - recipe: {run_dir}/recipe/
+- recipe plan: {run_dir}/recipe/recipe_plan.json
+- justified mix plan: {run_dir}/recipe/mix_plan.json
 - export: {export_out}
 - final report: {run_dir}/final_report.json
 - worker command summaries and validation evidence in final_report.json
@@ -692,6 +720,172 @@ def _validate_manifest_sources(manifest: dict[str, Any]) -> list[dict[str, Any]]
     return issues
 
 
+def _unwrap_command_result(payload: dict[str, Any]) -> dict[str, Any]:
+    current = payload if isinstance(payload, dict) else {}
+    for _ in range(4):
+        nested = current.get("result")
+        if not isinstance(nested, dict):
+            break
+        current = nested
+    return current
+
+
+def _validate_mix_plan_artifacts(
+    run_dir: Path,
+    *,
+    target_records: int | None,
+    manifest: dict[str, Any],
+    final_report: dict[str, Any],
+) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    recipe_plan_path = run_dir / "recipe" / "recipe_plan.json"
+    mix_plan_path = run_dir / "recipe" / "mix_plan.json"
+    recipe_plan_raw = _json_read(recipe_plan_path)
+    recipe_plan = _unwrap_command_result(recipe_plan_raw)
+    mix_plan = _json_read(mix_plan_path)
+
+    if not recipe_plan_raw:
+        issues.append({
+            "code": "RECIPE_PLAN_MISSING",
+            "message": f"recipe plan output is missing at {recipe_plan_path}",
+        })
+        return issues
+    buckets = recipe_plan.get("buckets")
+    if not isinstance(buckets, list) or not buckets:
+        issues.append({
+            "code": "RECIPE_PLAN_BUCKETS_MISSING",
+            "message": "recipe_plan.json must contain non-empty buckets",
+        })
+        return issues
+
+    planned_names: list[str] = []
+    planned_weights = 0.0
+    planned_targets = 0
+    for bucket in buckets:
+        if not isinstance(bucket, dict):
+            continue
+        name = str(bucket.get("name") or "").strip()
+        if name:
+            planned_names.append(name)
+        try:
+            planned_weights += float(bucket.get("weight") or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            planned_targets += int(bucket.get("target_samples") or 0)
+        except (TypeError, ValueError):
+            pass
+    if not planned_names or len(planned_names) != len(set(planned_names)):
+        issues.append({"code": "RECIPE_PLAN_BUCKET_NAMES_INVALID", "names": planned_names})
+    if abs(planned_weights - 1.0) > 0.01:
+        issues.append({
+            "code": "RECIPE_PLAN_WEIGHTS_INVALID",
+            "expected": 1.0,
+            "actual": round(planned_weights, 6),
+        })
+    if recipe_plan.get("budget_kind") != "sample":
+        issues.append({
+            "code": "RECIPE_PLAN_BUDGET_INVALID",
+            "expected": "sample",
+            "actual": recipe_plan.get("budget_kind"),
+        })
+    if target_records:
+        if int(recipe_plan.get("total_samples") or 0) != int(target_records):
+            issues.append({
+                "code": "RECIPE_PLAN_TARGET_MISMATCH",
+                "expected": int(target_records),
+                "actual": recipe_plan.get("total_samples"),
+            })
+        if abs(planned_targets - int(target_records)) > len(buckets):
+            issues.append({
+                "code": "RECIPE_PLAN_BUCKET_TARGETS_MISMATCH",
+                "expected": int(target_records),
+                "actual": planned_targets,
+            })
+
+    if not mix_plan:
+        issues.append({
+            "code": "MIX_PLAN_MISSING",
+            "message": f"justified mix plan is missing at {mix_plan_path}",
+        })
+    else:
+        if mix_plan.get("budget_kind") != "sample":
+            issues.append({
+                "code": "MIX_PLAN_BUDGET_INVALID",
+                "expected": "sample",
+                "actual": mix_plan.get("budget_kind"),
+            })
+        if target_records and int(mix_plan.get("target_records") or 0) != int(target_records):
+            issues.append({
+                "code": "MIX_PLAN_TARGET_MISMATCH",
+                "expected": int(target_records),
+                "actual": mix_plan.get("target_records"),
+            })
+        mix_buckets = mix_plan.get("buckets")
+        if not isinstance(mix_buckets, list) or not mix_buckets:
+            issues.append({"code": "MIX_PLAN_BUCKETS_MISSING"})
+        else:
+            mix_by_name = {
+                str(bucket.get("name") or ""): bucket
+                for bucket in mix_buckets
+                if isinstance(bucket, dict)
+            }
+            if set(mix_by_name) != set(planned_names):
+                issues.append({
+                    "code": "MIX_PLAN_BUCKETS_MISMATCH",
+                    "expected": planned_names,
+                    "actual": sorted(mix_by_name),
+                })
+            plan_by_name = {
+                str(bucket.get("name") or ""): bucket
+                for bucket in buckets
+                if isinstance(bucket, dict)
+            }
+            for name in planned_names:
+                justified = mix_by_name.get(name) or {}
+                planned = plan_by_name.get(name) or {}
+                if not str(justified.get("rationale") or "").strip():
+                    issues.append({"code": "MIX_PLAN_RATIONALE_MISSING", "bucket": name})
+                try:
+                    actual_weight = float(justified.get("weight") or 0)
+                    expected_weight = float(planned.get("weight") or 0)
+                except (TypeError, ValueError):
+                    actual_weight = expected_weight = -1
+                if abs(actual_weight - expected_weight) > 0.01:
+                    issues.append({
+                        "code": "MIX_PLAN_WEIGHT_MISMATCH",
+                        "bucket": name,
+                        "expected": expected_weight,
+                        "actual": actual_weight,
+                    })
+                if int(justified.get("target_records") or 0) != int(planned.get("target_samples") or 0):
+                    issues.append({
+                        "code": "MIX_PLAN_BUCKET_TARGET_MISMATCH",
+                        "bucket": name,
+                        "expected": planned.get("target_samples"),
+                        "actual": justified.get("target_records"),
+                    })
+
+    actual_buckets = ((manifest.get("summary") or {}).get("buckets") or []) if manifest else []
+    actual_names = {
+        str(bucket.get("bucket") or "")
+        for bucket in actual_buckets
+        if isinstance(bucket, dict)
+    }
+    if set(planned_names) != actual_names:
+        issues.append({
+            "code": "EXPORT_ACTUAL_MIX_MISMATCH",
+            "expected": planned_names,
+            "actual": sorted(actual_names),
+        })
+    if not final_report.get("planned_mix") or not final_report.get("actual_mix"):
+        issues.append({
+            "code": "FINAL_REPORT_MIX_EVIDENCE_MISSING",
+            "message": "final_report.json must include planned_mix and actual_mix",
+        })
+    return issues
+
+
 def _acceptance_check(run_dir: Path) -> dict[str, Any]:
     state = _json_read(run_dir / STATE_FILE)
     target_records = state.get("target_records") if isinstance(state.get("target_records"), int) else None
@@ -729,6 +923,12 @@ def _acceptance_check(run_dir: Path) -> dict[str, Any]:
                     "message": f"manifest is missing {required}",
                 })
         issues.extend(_validate_manifest_sources(manifest))
+        issues.extend(_validate_mix_plan_artifacts(
+            run_dir,
+            target_records=target_records,
+            manifest=manifest,
+            final_report=final_report,
+        ))
 
     if export_dir.exists():
         issues.extend(_validate_export_rows(export_dir, target_records))
@@ -954,6 +1154,16 @@ def run_agent(argv: list[str], *, root: str) -> dict:
                 exit_code=2,
             )
         warehouse = Path(root).expanduser().resolve()
+        if not args.dry_run and not (warehouse / "datamixer.toml").is_file():
+            raise ObtainerCliError(
+                "LAKE_NOT_LOADED",
+                f"DataMixer lake is not loaded: no initialized warehouse at {warehouse}",
+                hint=(
+                    "Load or initialize the DataMixer lake before starting the worker: "
+                    "`dm lake init --root <lake-root>` or `dm lake load --warehouse <warehouse>`."
+                ),
+                exit_code=2,
+            )
         export_out = Path(args.out).expanduser().resolve() if args.out else (run_dir / "export")
         python_executable = args.python_executable or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
         node_bin_dir = args.node_bin_dir or os.environ.get("LOOPAI_NODE_BIN_DIR", "")

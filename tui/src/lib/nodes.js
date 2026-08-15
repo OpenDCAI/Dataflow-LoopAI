@@ -5,9 +5,7 @@ export const NODE_SPECS = [
   { key: 'trainer', label: 'Trainer', prefixes: ['trainer'], runtimeNodes: ['trainer'] },
   { key: 'judger', label: 'Judger', prefixes: ['judger'], runtimeNodes: ['judger'] },
   { key: 'analyzer', label: 'Analyzer', prefixes: ['analyzer'], runtimeNodes: ['analyzer'] },
-  { key: 'constructor', label: 'Constructor', prefixes: ['constructor'], runtimeNodes: ['constructor'] },
-  { key: 'obtainer', label: 'Obtainer', prefixes: ['obtainer'], runtimeNodes: ['obtainer'] },
-  { key: 'webcrawler', label: 'Webcrawler', prefixes: ['webcrawler'], runtimeNodes: ['webcrawler'] }
+  { key: 'obtainer', label: 'Obtainer', prefixes: ['obtainer'], runtimeNodes: ['obtainer'] }
 ]
 
 const pickRuntimeStatus = (runtimeList = [], spec) => {

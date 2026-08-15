@@ -4,7 +4,7 @@ from tortoise.expressions import Q
 from ...models.db_models import StarterConfig
 from omegaconf import OmegaConf
 from loopai.common.tracking import strip_retired_tracking_fields
-from loopai.schema.states import get_state_config_schema
+from loopai.schema.states import RETIRED_DATA_AGENT_STATE_SECTIONS, get_state_config_schema
 from loopai.schema.system import get_system_config_schema
 from loopai.schema.system_runtime import migrate_legacy_credentials
 
@@ -98,6 +98,8 @@ async def get_state_config(base_dir):
     nested_keys.remove('default')
     result = {}
     for series_key in dict.fromkeys(list(states_data.keys()) + list(default_schema.keys())):
+        if series_key in RETIRED_DATA_AGENT_STATE_SECTIONS:
+            continue
         if series_key not in nested_keys:
             key = series_key
             schema_val = default_schema.get(key, {})

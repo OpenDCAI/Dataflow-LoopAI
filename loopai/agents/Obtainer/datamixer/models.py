@@ -21,7 +21,7 @@ RESPONSE_FORMATS = ("openaichat", "response")
 # Defaults for the optional knobs ("其他参数要有缺省值").
 DEFAULTS = {
     "temperature": 0.0,
-    "max_tokens": 1024,
+    "max_tokens": 40000,
     "timeout": 60,
     "max_concurrency": 64,
     "top_p": 1.0,
@@ -65,30 +65,104 @@ class ModelSpec:
         return d
 
 
+def _system_model_pool():
+    """Return the Starter (system) model pool, or None when not configured."""
+    from loopai.schema.model_pool import StarterModelPool, load_starter_system_config_sync
+
+    system = load_starter_system_config_sync(prefer_db=True)
+    model_value = system.get("model")
+    if not (isinstance(model_value, dict) and isinstance(model_value.get("pool"), list)):
+        return None
+    return StarterModelPool(system)
+
+
+def system_default_model_name() -> str:
+    """Name of the Starter model-pool default model for pipeline LLM operators."""
+    pool = _system_model_pool()
+    if pool is None:
+        return ""
+    entry = pool.default_entry()
+    return entry.name if entry else ""
+
+
+def resolve_from_system_pool(name: str) -> "ModelSpec | None":
+    """Resolve a Starter (system) model-pool entry into a proxy-routed ModelSpec.
+
+    The DataMixer warehouse ``models.json`` is a thin registry; the
+    authoritative endpoints/keys live in the system model pool and are applied
+    at call time by the LLM client.  This fallback lets any system pool name be
+    used (webagent kernel, expander, pipeline LLM operators) without a separate
+    warehouse registration.
+    """
+    from loopai.schema.model_pool import responses_url
+
+    pool = _system_model_pool()
+    if pool is None:
+        return None
+    entry = pool.get_entry_by_name(name)
+    if entry is None or not entry.enabled:
+        return None
+    provider = pool.resolve_proxy_provider(entry.name, tier=entry.tier)
+    if provider is None:
+        return None
+    return ModelSpec(
+        name=entry.name,
+        api_url=responses_url(str(provider.base_url or "")),
+        api_key=str(provider.api_key or ""),
+        response_format="response",
+        model=str(entry.model_name),
+        max_tokens=DEFAULTS["max_tokens"],
+    )
+
+
 class ModelPool:
     def __init__(self, root):
         self.path = Path(root) / "models.json"
         self._models: dict[str, dict] = {}
+        self._default_model = ""
         if self.path.exists():
-            self._models = json.loads(self.path.read_text()).get("models", {})
+            payload = json.loads(self.path.read_text())
+            self._models = payload.get("models", {})
+            self._default_model = str(payload.get("default_model") or "")
 
     def _save(self):
         self.path.write_text(
-            json.dumps({"models": self._models}, ensure_ascii=False, indent=2))
+            json.dumps(
+                {"default_model": self._default_model, "models": self._models},
+                ensure_ascii=False,
+                indent=2,
+            ))
 
     def add(self, spec: ModelSpec) -> None:
         self._models[spec.name] = asdict(spec)
         self._save()
 
-    def get(self, name: str) -> ModelSpec:
+    def set_default(self, name: str) -> None:
         if name not in self._models:
             raise KeyError(
-                f"model {name!r} not in pool (have: {sorted(self._models)})")
+                f"model {name!r} not in pool (have: {sorted(self._models)})"
+            )
+        self._default_model = name
+        self._save()
+
+    def default_name(self) -> str:
+        return self._default_model if self._default_model in self._models else ""
+
+    def get(self, name: str) -> ModelSpec:
+        if name not in self._models:
+            resolved = resolve_from_system_pool(name)
+            if resolved is not None:
+                return resolved
+            raise KeyError(
+                f"model {name!r} not in warehouse pool (have: "
+                f"{sorted(self._models)}) and not in the Starter model pool")
         return ModelSpec(**self._models[name])
 
     def remove(self, name: str) -> bool:
         if name in self._models:
             del self._models[name]
+            if self._default_model == name:
+                self._default_model = ""
             self._save()
             return True
         return False

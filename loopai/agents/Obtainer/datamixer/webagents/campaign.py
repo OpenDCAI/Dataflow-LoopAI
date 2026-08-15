@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import llm
-from ..models import ModelPool
+from ..models import ModelPool, system_default_model_name
 from ..store import DataStore
 from .base import create
 from .webcrawler_dm import WebCrawlerDMConfig, mask_proxy_url
@@ -46,12 +46,17 @@ class CampaignConfig:
     tavily_api_key_env: str = "TAVILY_API_KEY"
     webagent_config: dict[str, Any] = field(default_factory=dict)
     auto_pipeline: str = ""
+    focus_keywords: list[str] = field(default_factory=list)
     pipeline_model: str = ""
     l2_dataset: str = ""
     l3_dataset: str = ""
     pipeline_batch_size: int = 8
     pipeline_extractor: str = "pipeline"
     pipeline_mineru_gpu: str = "0"
+    pipeline_mineru_url: str = ""
+    pipeline_mineru_python: str = ""
+    pipeline_mineru_model: str = ""
+    pipeline_mineru_transport: str = ""
 
     def __post_init__(self) -> None:
         self.subquery_count = max(1, min(64, int(self.subquery_count)))
@@ -76,7 +81,7 @@ _EXPAND_SYSTEM = """You are a search-campaign planner for a web data collector.
 
 Split one broad user request into diverse, non-overlapping, search-ready small
 goals. Each goal will be handled independently by a web agent whose job is to
-find one authoritative resource URL. Cover distinct aspects, resource types,
+find all authoritative relevant resource URLs. Cover distinct aspects, resource types,
 subtopics, audiences, jurisdictions, methods, and primary-source institutions.
 
 Write each query in the terminology and language used by its target search
@@ -119,9 +124,12 @@ class LLMQueryExpander:
         collected: list[ExpandedQuery] = []
         seen: set[str] = set()
         trace = []
+        # Reasoning models spend part of max_output_tokens on chain-of-thought,
+        # so keep a generous floor to avoid truncating the JSON mid-generation.
+        budget = max(4096, min(8192, 300 + count * 150))
         spec = replace(
             self.model_spec,
-            max_tokens=max(self.model_spec.max_tokens, min(8192, 300 + count * 150)),
+            max_tokens=max(self.model_spec.max_tokens, budget),
         )
         for round_index in range(1, self.max_rounds + 1):
             remaining = count - len(collected)
@@ -234,6 +242,8 @@ class CampaignQueue:
                 expansion_json TEXT,
                 pipeline_json TEXT,
                 error TEXT,
+                executor_pid INTEGER,
+                executor_started_at REAL,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             );
@@ -265,6 +275,10 @@ class CampaignQueue:
         }
         if "pipeline_json" not in existing:
             self.conn.execute("ALTER TABLE campaigns ADD COLUMN pipeline_json TEXT")
+        if "executor_pid" not in existing:
+            self.conn.execute("ALTER TABLE campaigns ADD COLUMN executor_pid INTEGER")
+        if "executor_started_at" not in existing:
+            self.conn.execute("ALTER TABLE campaigns ADD COLUMN executor_started_at REAL")
         self.conn.commit()
 
     def close(self) -> None:
@@ -384,10 +398,52 @@ class CampaignQueue:
     def mark_campaign(self, run_id: str, status: str, error: str = "") -> None:
         with self.lock:
             self.conn.execute(
-                "UPDATE campaigns SET status=?,error=?,updated_at=? WHERE run_id=?",
-                (status, error[:2000], time.time(), run_id),
+                "UPDATE campaigns SET status=?,error=?,updated_at=?,"
+                "executor_pid=CASE WHEN ?='running' THEN executor_pid ELSE NULL END "
+                "WHERE run_id=?",
+                (status, error[:2000], time.time(), status, run_id),
             )
             self.conn.commit()
+
+    def set_executor(self, run_id: str, pid: int) -> None:
+        with self.lock:
+            self.conn.execute(
+                "UPDATE campaigns SET executor_pid=?,executor_started_at=?,updated_at=? "
+                "WHERE run_id=?",
+                (int(pid), time.time(), time.time(), run_id),
+            )
+            self.conn.commit()
+
+    def reconcile_dead_executor(self, run_id: str) -> bool:
+        """Convert orphaned running work into a terminal, queryable failure."""
+        with self.lock:
+            row = self.conn.execute(
+                "SELECT status,executor_pid FROM campaigns WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None or row["status"] != "running" or not row["executor_pid"]:
+                return False
+            try:
+                os.kill(int(row["executor_pid"]), 0)
+                return False
+            except (OSError, TypeError, ValueError):
+                pass
+            now = time.time()
+            error = (
+                f"campaign executor pid {row['executor_pid']} exited while tasks were running"
+            )
+            self.conn.execute(
+                "UPDATE tasks SET status='failed',worker_id=NULL,error=?,finished_at=? "
+                "WHERE run_id=? AND status='running'",
+                (error, now, run_id),
+            )
+            self.conn.execute(
+                "UPDATE campaigns SET status='completed_with_errors',error=?,"
+                "executor_pid=NULL,updated_at=? WHERE run_id=?",
+                (error, now, run_id),
+            )
+            self.conn.commit()
+            return True
 
     def set_pipeline_report(self, run_id: str, report: dict[str, Any]) -> None:
         with self.lock:
@@ -607,6 +663,7 @@ class WebAgentCampaignRunner:
         task_status: str | None = None,
         limit: int = 100,
     ) -> dict[str, Any]:
+        self.queue.reconcile_dead_executor(run_id)
         campaign = self.queue.get_campaign(run_id)
         if campaign is None:
             raise KeyError(f"webagent campaign not found: {run_id}")
@@ -667,61 +724,135 @@ class WebAgentCampaignRunner:
                     budget["remaining"] -= 1
                 return task
 
+        self.queue.set_executor(run_id, os.getpid())
         self.queue.mark_campaign(run_id, "running")
         started = time.time()
-        with ThreadPoolExecutor(
-            max_workers=workers,
-            thread_name_prefix=f"{run_id}-worker",
-        ) as pool:
-            futures = [
-                pool.submit(self._worker_loop, run_id, index, campaign, claim)
-                for index in range(workers)
-            ]
-            worker_errors = [error for error in (future.result() for future in futures) if error]
+        pipeline_path = str(campaign["config"].get("auto_pipeline") or "")
+        pipeline_runner = None
+        pipeline_meta: dict[str, Any] = {}
+        pipeline_error = ""
+
+        # Start every downstream consumer before the web producer.  Each L1
+        # sample is discovered by the persistent feeder and can reach L2/L3
+        # while the crawler is still adding pages.
+        if pipeline_path:
+            try:
+                from ..operators import StreamingPipelineRunner
+
+                pipeline_meta = self._prepare_campaign_pipeline(run_id, campaign)
+
+                def persist_stream_progress(progress: dict[str, Any]) -> None:
+                    report = self._stream_pipeline_report(
+                        pipeline_meta,
+                        progress,
+                        status=str(progress.get("status") or "running"),
+                    )
+                    self.queue.set_pipeline_report(run_id, report)
+
+                pipeline_runner = StreamingPipelineRunner(
+                    self.root,
+                    pipeline_meta["spec"],
+                    run_id=run_id,
+                    batch_size=int(
+                        campaign["config"].get("pipeline_batch_size") or 8
+                    ),
+                    retry_failed=force_pipeline,
+                    progress_callback=persist_stream_progress,
+                )
+                pipeline_runner.start()
+                pipeline_runner.wait_ready()
+                persist_stream_progress(pipeline_runner.report(force=True))
+            except Exception as exc:  # noqa: BLE001 - persist startup failure
+                pipeline_error = f"{type(exc).__name__}: {exc}"[:4000]
+                if pipeline_runner is not None:
+                    pipeline_runner.finish_input(final=False)
+                    try:
+                        pipeline_runner.wait()
+                    except Exception:
+                        pass
+                    pipeline_runner.close()
+                    pipeline_runner = None
+                self.queue.set_pipeline_report(run_id, {
+                    "ok": False,
+                    "status": "failed",
+                    "mode": "streaming",
+                    "pipeline_path": pipeline_path,
+                    "error": pipeline_error,
+                })
+
+        worker_errors: list[str] = []
+        if not pipeline_error:
+            with ThreadPoolExecutor(
+                max_workers=workers,
+                thread_name_prefix=f"{run_id}-worker",
+            ) as pool:
+                futures = [
+                    pool.submit(self._worker_loop, run_id, index, campaign, claim)
+                    for index in range(workers)
+                ]
+                worker_errors = [
+                    error for error in (future.result() for future in futures) if error
+                ]
         summary = self.queue.summary(run_id)
-        if summary["pending"] or summary["running"]:
+        if pipeline_error:
+            status = "completed_with_errors"
+        elif summary["pending"] or summary["running"]:
             status = "paused"
         elif summary["failed"]:
             status = "completed_with_errors"
         else:
             status = "completed"
-        pipeline_error = ""
-        pipeline_path = str(campaign["config"].get("auto_pipeline") or "")
-        pipeline_stale = self._pipeline_has_new_l1(run_id, campaign)
-        if (
-            pipeline_path
-            and not summary["pending"]
-            and not summary["running"]
-            and (
-                campaign.get("pipeline") is None
-                or force_pipeline
-                or pipeline_stale
-                or not (campaign.get("pipeline") or {}).get("ok", False)
-            )
-        ):
+
+        if pipeline_runner is not None:
             try:
-                if not summary["succeeded"]:
-                    raise RuntimeError(
-                        "auto pipeline requires at least one succeeded webagent task"
-                    )
-                pipeline_report = self._run_auto_pipeline(
-                    run_id,
-                    campaign,
-                    replace_existing=(
-                        campaign.get("pipeline") is not None
-                        and (force_pipeline or pipeline_stale)
-                    ),
+                source_final = not summary["pending"] and not summary["running"]
+                pipeline_runner.finish_input(final=source_final)
+                stream_progress = pipeline_runner.wait()
+                pipeline_report = self._stream_pipeline_report(
+                    pipeline_meta,
+                    stream_progress,
+                    status=str(stream_progress.get("status") or "completed"),
                 )
-                if not pipeline_report.get("ok", False):
+                pipeline_report["levels"] = self._pipeline_level_counts(
+                    run_id, campaign
+                )
+                missing_levels = [
+                    level for level, detail in pipeline_report["levels"].items()
+                    if source_final and not detail["count"]
+                ]
+                stage_failures = sum(
+                    int(stage.get("failed") or 0)
+                    for stage in pipeline_report.get("stages", [])
+                )
+                pipeline_report["ok"] = bool(
+                    source_final and not missing_levels and not stage_failures
+                )
+                if missing_levels:
+                    pipeline_report["error"] = (
+                        "no records materialized for levels: "
+                        + ", ".join(missing_levels)
+                    )
+                elif stage_failures:
+                    pipeline_report["error"] = (
+                        f"{stage_failures} pipeline jobs failed"
+                    )
+                if source_final and not pipeline_report.get("ok", False):
                     pipeline_error = str(
                         pipeline_report.get("error")
-                        or "auto pipeline did not materialize every requested level"
+                        or "streaming pipeline did not materialize every requested level"
                     )[:4000]
                     status = "completed_with_errors"
             except Exception as exc:  # noqa: BLE001 - persist pipeline failure
                 pipeline_error = f"{type(exc).__name__}: {exc}"[:4000]
-                pipeline_report = {"ok": False, "error": pipeline_error}
+                pipeline_report = {
+                    "ok": False,
+                    "status": "failed",
+                    "mode": "streaming",
+                    "error": pipeline_error,
+                }
                 status = "completed_with_errors"
+            finally:
+                pipeline_runner.close()
             self.queue.set_pipeline_report(run_id, pipeline_report)
         all_errors = [*worker_errors, *([pipeline_error] if pipeline_error else [])]
         self.queue.mark_campaign(run_id, status, "; ".join(all_errors))
@@ -729,13 +860,168 @@ class WebAgentCampaignRunner:
         report["workers"] = workers
         report["batch_size"] = max_tasks or 0
         report["elapsed_s"] = round(time.time() - started, 3)
-        report["selected_urls"] = [
-            task["result"].get("selected_url")
-            for task in report.get("tasks", [])
-            if task.get("status") == "succeeded" and isinstance(task.get("result"), dict)
-        ]
+        report["selected_urls"] = []
+        for task in report.get("tasks", []):
+            result = task.get("result")
+            if task.get("status") != "succeeded" or not isinstance(result, dict):
+                continue
+            urls = result.get("selected_urls")
+            if not isinstance(urls, list):
+                urls = [result.get("selected_url")]
+            for url in urls:
+                if url and url not in report["selected_urls"]:
+                    report["selected_urls"].append(url)
         self._write_final_report(run_id, report)
         return report
+
+    def _prepare_campaign_pipeline(
+        self, run_id: str, campaign: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Resolve campaign-specific datasets/models before streaming starts."""
+        from ..operators import load_pipeline
+
+        settings = campaign["config"]
+        path = Path(str(settings.get("auto_pipeline") or "")).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f"auto pipeline not found: {path}")
+        spec = load_pipeline(str(path))
+        spec["name"] = f"{spec.get('name', 'web_pipeline')}__{run_id}"
+        source = spec.setdefault("source", {})
+        source["dataset"] = settings["dataset"]
+        campaign_filter = (
+            "json_extract(tags_json, '$.campaign_id') = " f"'{run_id}'"
+        )
+        source["filter"] = f"quality_level = 'L1' AND {campaign_filter}"
+        l2_dataset = str(
+            settings.get("l2_dataset") or f"{settings['dataset']}_l2_pt"
+        )
+        l3_dataset = str(
+            settings.get("l3_dataset") or f"{settings['dataset']}_l3_sft"
+        )
+        model = str(settings.get("pipeline_model") or "")
+        if not model:
+            # LLM operators use the model-pool default; URL discovery keeps the
+            # Codex default (the campaign model).
+            model = system_default_model_name() or str(settings.get("model") or "")
+        extractor = str(settings.get("pipeline_extractor") or "pipeline")
+        mineru_gpu = str(settings.get("pipeline_mineru_gpu") or "0")
+        mineru_url = str(settings.get("pipeline_mineru_url") or "").strip()
+        mineru_python = str(settings.get("pipeline_mineru_python") or "").strip()
+        mineru_model = str(settings.get("pipeline_mineru_model") or "").strip()
+        mineru_transport = str(settings.get("pipeline_mineru_transport") or "").strip()
+        focus_keywords = [
+            str(item).strip()
+            for item in (settings.get("focus_keywords") or [])
+            if str(item).strip()
+        ]
+        for operator in spec.get("operators", []):
+            name = operator.get("name")
+            args = operator.setdefault("args", {})
+            if name == "webpage_to_pt":
+                if extractor != "pipeline":
+                    args["engine"] = extractor
+                args["mineru_gpu"] = mineru_gpu
+                if mineru_url:
+                    args["mineru_url"] = mineru_url
+                if mineru_python:
+                    args["mineru_python"] = mineru_python
+                if mineru_model:
+                    args["mineru_model"] = mineru_model
+                if mineru_transport:
+                    args["mineru_transport"] = mineru_transport
+            elif name in {
+                "domain_classify", "pt_to_sft_qa", "pt_to_sft_code",
+                "pt_to_sft_text2sql",
+            }:
+                if model:
+                    args["model"] = model
+                if name == "domain_classify" and focus_keywords:
+                    args["focus_keywords"] = [
+                        *(args.get("focus_keywords") or []),
+                        *focus_keywords,
+                    ]
+            output = operator.get("output") or operator.get("materialize")
+            if isinstance(output, dict):
+                if output.get("quality_level") == "L2":
+                    output["dataset"] = l2_dataset
+                elif output.get("quality_level") == "L3":
+                    output["dataset"] = l3_dataset
+        return {
+            "spec": spec,
+            "pipeline_path": str(path),
+            "focus_keywords": focus_keywords,
+            "model": model,
+            "extractor": extractor,
+            "l2_dataset": l2_dataset,
+            "l3_dataset": l3_dataset,
+        }
+
+    @staticmethod
+    def _stream_pipeline_report(
+        meta: dict[str, Any], progress: dict[str, Any], *, status: str
+    ) -> dict[str, Any]:
+        stages = []
+        active = []
+        for raw in progress.get("stages", []):
+            item = dict(raw)
+            item["state"] = item.get("status") or "waiting"
+            if item["state"] == "running":
+                active.append(item.get("name") or "")
+            stages.append(item)
+        return {
+            "ok": False,
+            "status": status,
+            "mode": "streaming",
+            "current_stage": ",".join(name for name in active if name),
+            "active_stages": [name for name in active if name],
+            "pipeline_path": meta.get("pipeline_path") or "",
+            "model": meta.get("model") or "",
+            "extractor": meta.get("extractor") or "",
+            "selected": int(progress.get("selected") or 0),
+            "source_done": bool(progress.get("source_done")),
+            "stages": stages,
+            "error": str(progress.get("error") or ""),
+            "lineage_path": str(progress.get("lineage_path") or ""),
+            "quality_report": progress.get("quality_report"),
+            "quality_report_path": str(progress.get("quality_report_path") or ""),
+        }
+
+    def _pipeline_level_counts(
+        self, run_id: str, campaign: dict[str, Any]
+    ) -> dict[str, dict[str, Any]]:
+        settings = campaign["config"]
+        campaign_filter = (
+            "json_extract(tags_json, '$.campaign_id') = " f"'{run_id}'"
+        )
+        datasets = (
+            ("L1", settings["dataset"]),
+            (
+                "L2",
+                str(settings.get("l2_dataset") or f"{settings['dataset']}_l2_pt"),
+            ),
+            (
+                "L3",
+                str(settings.get("l3_dataset") or f"{settings['dataset']}_l3_sft"),
+            ),
+        )
+        store = DataStore.open(self.root)
+        try:
+            counts = {}
+            for level, dataset in datasets:
+                dataset_id = store.catalog.resolve_dataset(dataset)
+                counts[level] = {
+                    "dataset": dataset,
+                    "dataset_id": dataset_id,
+                    "count": (
+                        store.catalog.count(
+                            where=campaign_filter, dataset_id=dataset_id
+                        )
+                        if dataset_id else 0
+                    ),
+                }
+            return counts
+        finally:
+            store.close()
 
     def _pipeline_has_new_l1(
         self,
@@ -789,9 +1075,17 @@ class WebAgentCampaignRunner:
         source["filter"] = f"quality_level = 'L1' AND {campaign_filter}"
         l2_dataset = str(settings.get("l2_dataset") or f"{settings['dataset']}_l2_pt")
         l3_dataset = str(settings.get("l3_dataset") or f"{settings['dataset']}_l3_sft")
-        model = str(settings.get("pipeline_model") or settings.get("model") or "")
+        model = str(settings.get("pipeline_model") or "")
+        if not model:
+            # LLM operators use the model-pool default; URL discovery keeps the
+            # Codex default (the campaign model).
+            model = system_default_model_name() or str(settings.get("model") or "")
         extractor = str(settings.get("pipeline_extractor") or "pipeline")
         mineru_gpu = str(settings.get("pipeline_mineru_gpu") or "0")
+        mineru_url = str(settings.get("pipeline_mineru_url") or "").strip()
+        mineru_python = str(settings.get("pipeline_mineru_python") or "").strip()
+        mineru_model = str(settings.get("pipeline_mineru_model") or "").strip()
+        mineru_transport = str(settings.get("pipeline_mineru_transport") or "").strip()
         for operator in spec.get("operators", []):
             name = operator.get("name")
             args = operator.setdefault("args", {})
@@ -799,7 +1093,15 @@ class WebAgentCampaignRunner:
                 if extractor != "pipeline":
                     args["engine"] = extractor
                 args["mineru_gpu"] = mineru_gpu
-            elif name == "pt_to_sft_qa" and model:
+                if mineru_url:
+                    args["mineru_url"] = mineru_url
+                if mineru_python:
+                    args["mineru_python"] = mineru_python
+                if mineru_model:
+                    args["mineru_model"] = mineru_model
+                if mineru_transport:
+                    args["mineru_transport"] = mineru_transport
+            elif name in {"domain_classify", "pt_to_sft_qa"} and model:
                 args["model"] = model
             output = operator.get("output") or operator.get("materialize")
             if isinstance(output, dict):

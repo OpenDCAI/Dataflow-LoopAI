@@ -141,9 +141,17 @@ class DataStore:
             "processing_level",
             "source_kind",
             "source_uri",
+            "source_dataset_id",
             "source_domain",
             "split",
             "quality_findings",
+            "domain_labels",
+            "labels",
+            "domain_confidence",
+            "domain_classifier",
+            "domain_classifier_model",
+            "finance_semantic_signals",
+            "finance_signal_generator",
             "loop_uuid",
             "version_id",
             "idempotency_key",
@@ -260,7 +268,7 @@ class DataStore:
                 "by_type": dict(totals), "applied": not dry_run}
 
     def erase(self, sample_ids=None, where=None, dataset_id=None,
-              reason=None) -> dict:
+              reason=None, preserve_cids=None) -> dict:
         """Right-to-erasure: tombstone samples from catalog + CAS + indexes,
         with an append-only audit record. After this they are invisible to
         query / recall / export."""
@@ -283,9 +291,15 @@ class DataStore:
             vec_removed = self.index.remove(ids)
         except Exception:  # noqa: BLE001 - index optional
             pass
+        preserved = set(preserve_cids or ())
         blobs = 0
+        blobs_preserved = 0
         for cid in cids:
-            if not self.catalog.cid_referenced(cid) and self.cas.delete(cid):
+            if self.catalog.cid_referenced(cid):
+                continue
+            if cid in preserved:
+                blobs_preserved += 1
+            elif self.cas.delete(cid):
                 blobs += 1
         audit_dir = self.root / "lineage"
         audit_dir.mkdir(exist_ok=True)
@@ -294,7 +308,37 @@ class DataStore:
                                   "count": len(ids), "sample_ids": ids,
                                   "cids": sorted(cids)}) + "\n")
         return {"erased": len(ids), "blobs_deleted": blobs,
+                "blobs_preserved": blobs_preserved,
                 "vectors_removed": vec_removed}
+
+    def delete_dataset(self, dataset_id: str, reason: str | None = None) -> dict:
+        """Delete a dataset: registry row, all samples, blobs and index entries.
+
+        Returns the erase summary plus the removed registry metadata so callers
+        (CLI / UI) can confirm what was removed.
+        """
+        ds = self.catalog.get_dataset(dataset_id)
+        if ds is None:
+            raise KeyError(f"dataset not found: {dataset_id}")
+        erased = self.erase(
+            dataset_id=dataset_id,
+            reason=reason or f"delete dataset {dataset_id}",
+        )
+        self.catalog.delete_dataset_row(dataset_id)
+        # Best-effort cleanup of the optional markdown dataset card.
+        try:
+            card = self.root / "dataset_cards" / f"{dataset_id}.md"
+            if card.is_file():
+                card.unlink()
+        except OSError:
+            pass
+        return {
+            "dataset_id": dataset_id,
+            "dataset_name": ds.get("name") or "",
+            "erased": int(erased.get("erased") or 0),
+            "blobs_deleted": int(erased.get("blobs_deleted") or 0),
+            "vectors_removed": int(erased.get("vectors_removed") or 0),
+        }
 
     # -- storage stats (demonstrates the space savings) --------------------
     def storage_stats(self) -> dict:

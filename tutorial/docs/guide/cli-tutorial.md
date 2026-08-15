@@ -12,14 +12,14 @@ WebUI 更适合第一次完整体验，而终端模式更适合开发、调试�
 如果你想直接启动主流程，可以运行：
 
 ```bash
-python examples/scripts/run_starter.py
+python api/start.py
 ```
 
 这条命令更适合：
 
 - 验证主流程配置
-- 调试 Starter 调度逻辑
-- 在没有 WebUI 的场景下直接体验任务流
+- 启动后端服务（默认端口 8855），供 WebUI / TUI 或 API 调用
+- 在没有 WebUI 的场景下通过 API 体验完整任务流
 
 ## 子 Agent 单独启动
 
@@ -45,7 +45,7 @@ python examples/scripts/run_trainer.py
 | --- | --- |
 | `train_framework` | 固定写 `"llamafactory"` |
 | `llamafactory_dir` | 本地 LLaMA-Factory 仓库根目录，用于注册 dataset_info.json |
-| `train_input_dataset_path` | 训练数据集（`.json` / `.jsonl`）。单独运行时**不要依赖** obtainer/constructor 的 `mapping_results`，必须显式给出 |
+| `train_input_dataset_path` | 训练数据集（`.json` / `.jsonl`）。单独运行时不要依赖上游 state，必须显式给出 |
 | `train_input_task_description` | 任务描述，决定规则模式下学习率 / epoch / LoRA 参数 |
 | `train_input_config_template_path` | YAML 模板路径，可直接用 `loopai/skills/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml` |
 | `train_input_model_name` | 基础模型名或本地权重目录，会写入 `model_name_or_path` |

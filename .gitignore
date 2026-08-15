@@ -37,11 +37,29 @@ codex_home/
 codex-chat-router/target
 .vscode
 codex_home_worker/
+codex_home_dataflow/
 catalog.db
 datamixer.toml
 .yarnrc.yml
 .yarn
+
+
+# 本地运行产物
+/envs/
+/model/
+/pkgs/
+/tools/
+/.cache/
+/.hf_cache/
+/.datamixer/
+
+# DataMixer warehouse 运行目录
 blobs/
 lineage/
 dataset_cards/
 obtainer_runs/
+
+
+# 本地 DataMixer 湖与 DataFlow 运行产物
+/lake/
+/dataflow_work/

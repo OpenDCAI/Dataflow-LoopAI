@@ -183,6 +183,186 @@
                 @remove="removeModelPoolEntry"
             ></model-pool-item>
         </div>
+        <div class="service-config-grid">
+            <section class="service-config-block">
+                <div class="service-config-head">
+                    <i class="ms-Icon ms-Icon--Database"></i>
+                    <p>{{ local('Embedding Model') }}</p>
+                </div>
+                <div class="service-config-fields">
+                    <div class="field-item">
+                        <span>{{ local('Provider') }}</span>
+                        <fv-text-box
+                            v-model="embeddingConfig.provider"
+                            border-radius="3"
+                            :border-width="2"
+                            :reveal-border="true"
+                            :border-color="'rgba(120, 120, 120, 0.1)'"
+                            :focus-border-color="color"
+                            :is-box-shadow="true"
+                            underline
+                            style="width: 100%"
+                        ></fv-text-box>
+                    </div>
+                    <div class="field-item wide">
+                        <span>{{ local('Base URL') }}</span>
+                        <fv-text-box
+                            v-model="embeddingConfig.base_url"
+                            border-radius="3"
+                            :border-width="2"
+                            :reveal-border="true"
+                            :border-color="'rgba(120, 120, 120, 0.1)'"
+                            :focus-border-color="color"
+                            :is-box-shadow="true"
+                            underline
+                            style="width: 100%"
+                        ></fv-text-box>
+                    </div>
+                    <div class="field-item wide">
+                        <span>{{ local('API Key') }}</span>
+                        <fv-text-box
+                            v-model="embeddingConfig.api_key"
+                            border-radius="3"
+                            :border-width="2"
+                            :reveal-border="true"
+                            :border-color="'rgba(120, 120, 120, 0.1)'"
+                            :focus-border-color="color"
+                            :is-box-shadow="true"
+                            underline
+                            style="width: 100%"
+                        ></fv-text-box>
+                    </div>
+                    <div class="field-item">
+                        <span>{{ local('Model') }}</span>
+                        <fv-text-box
+                            v-model="embeddingConfig.model"
+                            border-radius="3"
+                            :border-width="2"
+                            :reveal-border="true"
+                            :border-color="'rgba(120, 120, 120, 0.1)'"
+                            :focus-border-color="color"
+                            :is-box-shadow="true"
+                            underline
+                            style="width: 100%"
+                        ></fv-text-box>
+                    </div>
+                    <div class="field-item">
+                        <span>{{ local('Backend') }}</span>
+                        <fv-text-box
+                            v-model="embeddingConfig.backend"
+                            border-radius="3"
+                            :border-width="2"
+                            :reveal-border="true"
+                            :border-color="'rgba(120, 120, 120, 0.1)'"
+                            :focus-border-color="color"
+                            :is-box-shadow="true"
+                            underline
+                            style="width: 100%"
+                        ></fv-text-box>
+                    </div>
+                    <div class="field-item">
+                        <span>{{ local('Text Field') }}</span>
+                        <fv-text-box
+                            v-model="embeddingConfig.text_field"
+                            border-radius="3"
+                            :border-width="2"
+                            :reveal-border="true"
+                            :border-color="'rgba(120, 120, 120, 0.1)'"
+                            :focus-border-color="color"
+                            :is-box-shadow="true"
+                            underline
+                            style="width: 100%"
+                        ></fv-text-box>
+                    </div>
+                </div>
+            </section>
+            <section class="service-config-block">
+                <div class="service-config-head">
+                    <i class="ms-Icon ms-Icon--DocumentSearch"></i>
+                    <p>{{ local('MinerU-HTML Document Parsing') }}</p>
+                </div>
+                <div class="service-config-fields">
+                    <div class="field-item wide">
+                        <span>{{ local('Service URL') }}</span>
+                        <fv-text-box
+                            v-model="mineruConfig.url"
+                            border-radius="3"
+                            :border-width="2"
+                            :reveal-border="true"
+                            :border-color="'rgba(120, 120, 120, 0.1)'"
+                            :focus-border-color="color"
+                            :is-box-shadow="true"
+                            underline
+                            style="width: 100%"
+                        ></fv-text-box>
+                    </div>
+                    <div class="field-item wide">
+                        <span>{{ local('Python Env Path') }}</span>
+                        <fv-text-box
+                            v-model="mineruConfig.python"
+                            border-radius="3"
+                            :border-width="2"
+                            :reveal-border="true"
+                            :border-color="'rgba(120, 120, 120, 0.1)'"
+                            :focus-border-color="color"
+                            :is-box-shadow="true"
+                            underline
+                            style="width: 100%"
+                        ></fv-text-box>
+                    </div>
+                    <div class="field-item wide">
+                        <span>{{ local('Model Path') }}</span>
+                        <fv-text-box
+                            v-model="mineruConfig.model"
+                            border-radius="3"
+                            :border-width="2"
+                            :reveal-border="true"
+                            :border-color="'rgba(120, 120, 120, 0.1)'"
+                            :focus-border-color="color"
+                            :is-box-shadow="true"
+                            underline
+                            style="width: 100%"
+                        ></fv-text-box>
+                    </div>
+                    <div class="field-item">
+                        <span>{{ local('GPU') }}</span>
+                        <fv-text-box
+                            v-model="mineruConfig.gpu"
+                            border-radius="3"
+                            :border-width="2"
+                            :reveal-border="true"
+                            :border-color="'rgba(120, 120, 120, 0.1)'"
+                            :focus-border-color="color"
+                            :is-box-shadow="true"
+                            underline
+                            style="width: 100%"
+                        ></fv-text-box>
+                    </div>
+                    <div class="field-item">
+                        <span>{{ local('Transport') }}</span>
+                        <fv-combobox
+                            v-model="mineruTransportModel"
+                            :placeholder="local('Select Transport')"
+                            :options="mineruTransportOptions"
+                            :choosen-slider-background="color"
+                            border-radius="6"
+                            style="width: 100%"
+                        ></fv-combobox>
+                    </div>
+                    <div class="field-item">
+                        <span>{{ local('Backend') }}</span>
+                        <fv-combobox
+                            v-model="mineruBackendModel"
+                            :placeholder="local('Select Backend')"
+                            :options="mineruBackendOptions"
+                            :choosen-slider-background="color"
+                            border-radius="6"
+                            style="width: 100%"
+                        ></fv-combobox>
+                    </div>
+                </div>
+            </section>
+        </div>
         <p v-if="probeMessage" class="model-probe-message">{{ probeMessage }}</p>
         <model-pool-detail-panel
             v-model="showDetailPanel"
@@ -229,6 +409,15 @@ export default {
                 { key: '', text: 'auto' },
                 { key: 'responses', text: 'responses' },
                 { key: 'chat', text: 'chat/completions' }
+            ],
+            mineruTransportOptions: [
+                { key: 'http', text: 'http' },
+                { key: 'worker', text: 'worker' },
+                { key: 'auto', text: 'auto' }
+            ],
+            mineruBackendOptions: [
+                { key: 'vllm', text: 'vllm' },
+                { key: 'transformers', text: 'transformers' }
             ]
         }
     },
@@ -266,6 +455,34 @@ export default {
         editableModelPool() {
             if (!Array.isArray(this.modelPoolConfig.pool)) return []
             return this.modelPoolConfig.pool
+        },
+        embeddingConfig() {
+            this.ensureServiceConfig()
+            return this.modelPoolValue?.embedding || {}
+        },
+        mineruConfig() {
+            this.ensureServiceConfig()
+            return this.modelPoolValue?.mineru || {}
+        },
+        mineruTransportModel: {
+            get() {
+                const value = this.mineruConfig.transport
+                let item = this.mineruTransportOptions.find((opt) => opt.key === value)
+                return item || {}
+            },
+            set(value) {
+                if (value?.key) this.mineruConfig.transport = value.key
+            }
+        },
+        mineruBackendModel: {
+            get() {
+                const value = this.mineruConfig.backend
+                let item = this.mineruBackendOptions.find((opt) => opt.key === value)
+                return item || {}
+            },
+            set(value) {
+                if (value?.key) this.mineruConfig.backend = value.key
+            }
         },
         statusModelPool() {
             return this.status.models || []
@@ -557,6 +774,31 @@ export default {
             if (!current.looper_model) {
                 current.looper_model = current.default_model || preferred.looperModel
             }
+        },
+        ensureServiceConfig() {
+            const value = this.modelPoolValue
+            if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+            if (!value.embedding || typeof value.embedding !== 'object' || Array.isArray(value.embedding)) {
+                value.embedding = {
+                    provider: 'openai-compatible',
+                    base_url: 'http://127.0.0.1:8000/v1',
+                    api_key: '',
+                    model: 'BAAI/bge-small-zh-v1.5',
+                    backend: 'local-jsonl',
+                    text_field: 'text'
+                }
+            }
+            if (!value.mineru || typeof value.mineru !== 'object' || Array.isArray(value.mineru)) {
+                value.mineru = {
+                    url: 'http://127.0.0.1:7986',
+                    python: '',
+                    model: '',
+                    gpu: '0',
+                    transport: 'http',
+                    backend: 'vllm'
+                }
+            }
+            return true
         },
         addModelPoolEntry() {
             const index = this.editableModelPool.length + 1
@@ -951,6 +1193,56 @@ export default {
     color: rgba(54, 76, 128, 1);
     font-size: 12px;
 }
+.service-config-grid {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+.service-config-block {
+    min-width: 0;
+    padding: 12px;
+    box-sizing: border-box;
+    border: 1px solid rgba(224, 226, 232, 1);
+    border-radius: 8px;
+    background: rgba(249, 250, 252, 1);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.service-config-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+.service-config-head i {
+    font-size: 15px;
+    color: rgba(64, 99, 170, 1);
+}
+.service-config-head p {
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(44, 48, 60, 1);
+}
+.service-config-fields {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 10px 12px;
+}
+.service-config-fields .field-item {
+    grid-column: span 2;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.service-config-fields .field-item.wide {
+    grid-column: span 3;
+}
+.service-config-fields .field-item span {
+    font-size: 12px;
+    color: rgba(95, 95, 95, 1);
+}
 @media (max-width: 760px) {
     .model-pool-head {
         flex-wrap: wrap;
@@ -963,8 +1255,16 @@ export default {
     .model-pool-dashboard,
     .model-tier-strip,
     .model-node-grid,
-    .model-setting-grid {
+    .model-setting-grid,
+    .service-config-grid {
         grid-template-columns: 1fr;
+    }
+    .service-config-fields {
+        grid-template-columns: 1fr;
+    }
+    .service-config-fields .field-item,
+    .service-config-fields .field-item.wide {
+        grid-column: span 1;
     }
 }
 </style>

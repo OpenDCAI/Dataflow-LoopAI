@@ -93,22 +93,27 @@ def _make_colored_formatter():
     }
 
 
-    return colorlog.ColoredFormatter(
-        fmt=(
-            "%(asctime_log_color)s%(asctime)s.%(msecs)03d%(reset)s"
-            " | %(levelname_log_color)s%(levelname)-8s%(reset)s"
-            " | %(message_log_color)sctx=%(log_context)s%(reset)s"
-            " | %(name_log_color)s%(name)s%(reset)s"
-            ":%(funcName_log_color)s%(filename)s%(reset)s"
-            ":%(funcName_log_color)s%(funcName)s%(reset)s"
-            ":%(lineno_log_color)s%(lineno)d%(reset)s"
-            " - %(message_log_color)s%(message)s%(reset)s"
-        ),
-        datefmt="%Y-%m-%d %H:%M:%S",
-        log_colors=log_colors,
-        secondary_log_colors=secondary,
-        style="%",
-    )
+    try:
+        return colorlog.ColoredFormatter(
+            fmt=(
+                "%(asctime_log_color)s%(asctime)s.%(msecs)03d%(reset)s"
+                " | %(levelname_log_color)s%(levelname)-8s%(reset)s"
+                " | %(message_log_color)sctx=%(log_context)s%(reset)s"
+                " | %(name_log_color)s%(name)s%(reset)s"
+                ":%(funcName_log_color)s%(filename)s%(reset)s"
+                ":%(funcName_log_color)s%(funcName)s%(reset)s"
+                ":%(lineno_log_color)s%(lineno)d%(reset)s"
+                " - %(message_log_color)s%(message)s%(reset)s"
+            ),
+            datefmt="%Y-%m-%d %H:%M:%S",
+            log_colors=log_colors,
+            secondary_log_colors=secondary,
+            style="%",
+        )
+    except TypeError:
+        # Minimal/test installations sometimes provide a logging.Formatter
+        # compatibility shim under colorlog.ColoredFormatter.
+        return _make_plain_formatter()
 
 def _make_plain_formatter():
     """创建不带颜色的格式化器，用于文件输出"""

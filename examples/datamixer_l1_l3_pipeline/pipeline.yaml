@@ -9,12 +9,10 @@ pipeline:
         engine: mineru
         min_chars: 300
         max_chars: 120000
-        mineru_python: /data/xuebinrui/miniconda3/envs/mineruhtml/bin/python
-        mineru_model: /data/xuebinrui/model/MinerU-HTML-v1.1-hunyuan0.5B-compact
-        mineru_backend: transformers
-        mineru_gpu: "0"
-        mineru_max_context_window: 70000
-        mineru_max_tokens: 4096
+        # Reuse the persistent service instead of loading a second model in
+        # every pipeline process. Override with MINERU_HTML_URL when remote.
+        mineru_transport: http
+        mineru_url: http://127.0.0.1:7986
         mineru_batch_size: 1
         mineru_timeout: 900
         fallback: legacy
@@ -28,27 +26,40 @@ pipeline:
         min_words: 40
         max_words: 60000
 
-    # This executes on the cleaned PT document.  The operator uses the
-    # lake-local domain registry (plus persistent broad classes), then this
-    # is the first point at which the record is materialized as L2.
+    # Per-item LLM domain judgement.  The campaign injects its exploration
+    # keywords into focus_keywords (--focus-keywords ...): the model only
+    # admits items directly related to that focus and emits grounded
+    # semantic_signals as evidence, so the chain follows whatever topic the
+    # WebAgent explored instead of a hard-wired vertical (e.g. finance).
+    # Batching records here can let an LLM cite one item's evidence for
+    # another item, so keep chunk_size=1.
     - name: domain_classify
       args:
-        model: deepseek-proxy
-        chunk_size: 2
+        model: qwen3-14b-fp8
+        focus_keywords: []
+        chunk_size: 1
         max_concurrency: 4
         max_input_chars: 12000
-        max_tokens: 512
+        max_tokens: 2048
+
+    # Deterministic admission on the LLM evidence: focus relevance, classifier
+    # confidence and grounded semantic signals.  No finance-specific types.
+    - name: topic_quality_filter
+      args:
+        min_semantic_signals: 2
+        min_classifier_confidence: 0.8
+        min_signal_confidence: 0.7
       output:
         dataset: webpage_demo_l2_pt
         quality_level: L2
         stage: pretrain
         modality: text
         processing_level: webpage_preprocessed
-        description: Clean webpage text with lake-synchronised LLM domain labels.
+        description: PT text with per-record grounded LLM quality proof matching the campaign focus.
 
     - name: pt_to_sft_qa
       args:
-        model: deepseek-proxy
+        model: qwen3-14b-fp8
         chunk_size: 2
         max_concurrency: 4
         max_input_chars: 12000

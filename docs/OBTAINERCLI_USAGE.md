@@ -66,12 +66,15 @@ loopai-obtainercli dm --lake .loopai/lake.yaml stats --json
 
 `lake.yaml` 还会持久化不含凭据的 Obtainer 运行上下文：选择的垂域采集
 WebAgent、模型名、并发/子目标默认值、最近 acquisition run 和 campaign id。
-因此正常工作流应使用 `--lake`，无需反复填写 warehouse 或 run 路径：
+因此正常工作流应使用 `--lake`，无需反复填写 warehouse；但 acquisition 的
+`start`、`status` 和 `resume` 必须显式复用同一个 `--run` 路径：
 
 ```bash
 loopai-obtainercli dm --lake .loopai/lake.yaml dataset-acquisition-agent start \
+  --run ./outputs/acquisition_run \
   --objective "collect code training data" --keywords "code dataset" --json
-loopai-obtainercli dm --lake .loopai/lake.yaml dataset-acquisition-agent status --json
+loopai-obtainercli dm --lake .loopai/lake.yaml dataset-acquisition-agent status \
+  --run ./outputs/acquisition_run --json
 loopai-obtainercli dm lake context --link .loopai/lake.yaml
 ```
 
@@ -94,6 +97,15 @@ loopai-obtainercli dm lake load \
 
 ```bash
 loopai-obtainercli dm lake current --link .loopai/lake.yaml
+```
+
+解除数据湖与已结束 task/run 的绑定（清空 `obtainer_active_task_id`、
+`obtainer_active_acquisition_run`、`obtainer_active_campaign_id`、
+`obtainer_active_l1_dataset`，保留 WebAgent 模型/并发等默认值），新任务重跑前应执行一次，
+避免残留的旧 task_id 让 agent 误判数据湖状态：
+
+```bash
+loopai-obtainercli dm lake unbind --link .loopai/lake.yaml
 ```
 
 卸载当前项目指针但保留可复用 warehouse：
@@ -146,11 +158,43 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-
 
 默认不要传 `--model`；worker 会从 Starter 模型池读取配置好的 Codex 默认模型。
 只有用户明确要求本次覆盖模型时才使用 `--model`。
+每次 start/resume 的返回值与 `thread.json` 都会记录 `resolved_model`、
+`webagent_model` 和 `model_source`（`codex_default` 或
+`operator_override`）；CLI 会将该同一模型注册到当前 DataMixer warehouse
+供 WebAgent 使用，不能静默回退到本地 vLLM。
 
 Worker 内部策略会要求：先把报告解析成明确搜集意图，候选列表先与原始需求
 校对并写 rejections，再下载；单数据集最多 100000 行，且本地 JSONL
 输出默认最多 2GiB；下载后规范 JSONL；
 入湖必须走 DataMixer `ingest` 或 `agent-ingest`；最终写 `final_report.json`。
+数据集别名不构成 finance 领域证据；`--domain finance` 只是批次级 metadata，
+不会在入湖时触发逐条 LLM 审批。数据集 agent 的入湖是批量路径：`dm ingest`
+按批次 metadata（含必填 `--quality-level`）把全部规范化行直接写入湖，不逐条
+approve/drop。逐条质量审批属于后处理：WebAgent 的 L2 `domain_classify` 会
+收到 campaign 的探索关键词（`--focus-keywords`），LLM 只接受与该主题直接相关、
+且带有 grounded 语义信号的条目，随后由 `topic_quality_filter` 按置信度与信号
+阈值把关。生产出湖前必须完成 DataFlowAgent 后处理（`dm dataflow
+agent-run`，产出 L4 数据）；湖内每个能力桶可用量至少为出湖目标的 1.5 倍，
+且 L4 最终规模达标后才允许调用 `sft-export-agent`。来源 URI、数据集 ID 和
+source 名称只作为 provenance 与质量报告审计信息，不参与接受或拒绝。
+
+金融入湖示例：
+
+```bash
+loopai-obtainercli dm --root /data/lakes/finance/warehouse ingest sec_finance \
+  --file ./sec_finance.classified.jsonl \
+  --quality-level L3 \
+  --domain finance \
+  --source-uri https://www.sec.gov/Archives/ \
+  --tag source_dataset_id=sec-filings \
+  --json
+```
+
+记录的分域标注（如 `domain_classify` 标签与语义信号）作为 provenance 保留在
+行标签中，不构成出湖接受或拒绝的依据。出湖质量由后处理主线把关：先完成
+DataFlowAgent 后处理（`dm dataflow agent-run`，产出 L4 数据），湖内每个能力桶
+可用量至少为出湖目标的 1.5 倍，且 L4 最终规模达标后才允许调用
+`sft-export-agent`。
 
 底层 SearchAgent 与下载命令仍保留为采集桥，但只供 worker 内部调用或人工调试。
 外层 Codex 在正常工作流中不要创建 task JSON、不要直接调用 `searchagent`，也不要直接调用 `download manifest`。
@@ -239,7 +283,7 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataflow agent-run \
   --dataset math_sft \
   --trial-rows 20 \
   --expected-outputs math_answer_quality \
-  --apply \
+  --recipe /path/to/recipe.yaml \
   --json
 
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse index build --json
@@ -250,7 +294,13 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recall \
   --json
 ```
 
-如果下游任务需要 DataFlow 算子链，不要手工盲选单个 DataFlow operator。`dataflow agent-run` 会让 Codex SDK 先导出试跑样本、按 DataFlow-Skills 规则规划算子链、生成并试跑 pipeline，再按 `sample_id` merge 回 DataMixer。低层 `op run dataflow --arg op=<DataFlowClassName>` 只适合已经明确知道要跑哪个 DataFlow 算子的场景。
+后处理阶段是必须要使用 dataflowagent 的，不要手工盲选单个 DataFlow operator。`dataflow agent-run` 会让 Codex SDK 先导出试跑样本、按 DataFlow-Skills 规则规划算子链、生成并试跑 pipeline；**试跑成功即交付**（`mode=trial_run`，交付物 = `pipeline.py` + 试跑输出 `trial_processed.jsonl`）。**全量执行由上层 Codex 负责**：拿到交付的 pipeline 后，用 chunk 脚手架跑 `full_input.jsonl`，产出 `full_processed.jsonl`（L4），再按 `sample_id` 用 `apply-jsonl` merge 回 DataMixer。不要让 dataflowagent 自己跑全量或 merge。agent-run 返回的 `upstream.chunked_run_command` / `upstream.apply_command` 直接给出上层要执行的命令。
+
+**按桶 1.5x 缓冲导出，不是全量导出。** `agent-run` 尽量带上出湖 `--recipe`（recipe.yaml）或 `--mix-plan`（mix_plan.json）：full input 会按每个桶 `ceil(bucket_target * 1.5)` 行、固定 seed 抽样导出（桶内可用行不足则全取），避免对全湖十几万行做冗余后处理。处理范围就是 `full_input.jsonl` 本身，禁止上层/agent 自行重新全量导出或扩大范围。
+
+**质量评估必须使用 DataFlow 的 LLM 评估算子**（`PromptedEvaluator` / `PromptedFilter` 等），不得因耗时或成本而退化成纯启发式规则打分；只有任务本身没有 LLM 打分语义、或 LLM serving 不可用时才允许规则算子兜底并说明具体原因。禁止 LLM 逐条重写或改写文本内容，LLM 只做打分与筛选。
+
+全量执行必须流式分 chunk，禁止一次性把整个导出读进内存：上层 Codex 通过外层脚手架 `loopai.agents.Obtainer.datamixer.dataflow_chunked_runner` 按 **1 万行一个 chunk** 切片输入、逐 chunk 启动同一 pipeline 并保序合并（`--chunk-size 10000`，输出 `full_processed.jsonl`）。交付的 pipeline 必须遵循 `DATAFLOW_INPUT` / `DATAFLOW_CACHE_DIR` / `DATAFLOW_PREFIX` 环境变量约定。
 
 `domain_classify` 将主类写入可索引的 `domain`，完整多标签写入
 `domain_labels`（位于样本 tags）；`domain list` 同时会发现已有样本的非空
