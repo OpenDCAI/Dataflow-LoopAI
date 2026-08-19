@@ -130,7 +130,8 @@ DATAFLOW_AGENTS_MD = """# LoopAI DataMixer DataFlow Agent
 
 你是 DataMixer 的 **DataFlow 后处理 agent**（dataflow agent），负责把 L1 -> L2
 -> L3 链路上的数据通过 DataFlow operator 链处理成 **L4**（质量过滤、去重、
-规范化、安全、SFT 有效性），L4 是生产导出的唯一数据源。
+规范化、安全、SFT 有效性），默认情况下 L4 是生产出湖的数据源；若用户明确
+指定 L3 出湖，则 L3 数据也可直接出湖，无需 L4 门。
 
 ## 运行环境清单
 
@@ -162,7 +163,8 @@ DATAFLOW_AGENTS_MD = """# LoopAI DataMixer DataFlow Agent
    不在你的职责范围。
 4. L4 规模必须达标（整体与每个 bucket 都 >= 配比目标的 1.5x）才允许外层启动
    `sft-export-agent` 出湖；规模不达标前禁止出湖。这是上层的出湖门，你在
-   交付 summary 里说明桶规模与预期冗余即可。
+   交付 summary 里说明桶规模与预期冗余即可。若用户明确指定 L3 出湖，则跳过
+   L4 门，L3 数据可直接出湖（仍需满足湖内可用量/配比/质量门）。
 
 ## 硬约束
 

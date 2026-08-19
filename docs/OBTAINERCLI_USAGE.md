@@ -175,7 +175,8 @@ approve/drop。逐条质量审批属于后处理：WebAgent 的 L2 `domain_class
 且带有 grounded 语义信号的条目，随后由 `topic_quality_filter` 按置信度与信号
 阈值把关。生产出湖前必须完成 DataFlowAgent 后处理（`dm dataflow
 agent-run`，产出 L4 数据）；湖内每个能力桶可用量至少为出湖目标的 1.5 倍，
-且 L4 最终规模达标后才允许调用 `sft-export-agent`。来源 URI、数据集 ID 和
+且 L4 最终规模达标后才允许调用 `sft-export-agent`。若用户明确指定 L3 出湖，
+则跳过 L4 门，L3 数据可直接出湖。来源 URI、数据集 ID 和
 source 名称只作为 provenance 与质量报告审计信息，不参与接受或拒绝。
 
 金融入湖示例：
@@ -194,7 +195,7 @@ loopai-obtainercli dm --root /data/lakes/finance/warehouse ingest sec_finance \
 行标签中，不构成出湖接受或拒绝的依据。出湖质量由后处理主线把关：先完成
 DataFlowAgent 后处理（`dm dataflow agent-run`，产出 L4 数据），湖内每个能力桶
 可用量至少为出湖目标的 1.5 倍，且 L4 最终规模达标后才允许调用
-`sft-export-agent`。
+`sft-export-agent`。若用户明确指定 L3 出湖，则跳过 L4 门，L3 数据可直接出湖。
 
 底层 SearchAgent 与下载命令仍保留为采集桥，但只供 worker 内部调用或人工调试。
 外层 Codex 在正常工作流中不要创建 task JSON、不要直接调用 `searchagent`，也不要直接调用 `download manifest`。
