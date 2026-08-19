@@ -105,6 +105,9 @@
             <span>已导出：</span>
             <code @click="copyText(exportNotice)">{{ exportNotice }}</code>
             <span class="dm-copy-hint">（点击复制）</span>
+            <button type="button" class="dm-btn" @click="downloadExport" :disabled="downloading">
+                {{ downloading ? '下载中…' : '下载到浏览器' }}
+            </button>
         </section>
 
         <!-- Detail drawer -->
@@ -309,6 +312,7 @@ export default {
             saving: false,
             busy: false,
             exportNotice: '',
+            downloading: false,
             showIngest: false,
             ingesting: false,
             ingestError: '',
@@ -461,6 +465,16 @@ export default {
                 this.error = err?.message || '导出失败'
             } finally {
                 this.busy = false
+            }
+        },
+        async downloadExport() {
+            const uri = this.exportNotice
+            if (!uri) return
+            this.downloading = true
+            try {
+                window.open(`/api/obtainer/export/download?uri=${encodeURIComponent(uri)}`, '_blank')
+            } finally {
+                this.downloading = false
             }
         },
         async clearSamples(ds) {

@@ -20,6 +20,7 @@ import selectors
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -380,8 +381,22 @@ def _run_loopai_codex_runner(
         raise CodexError("LoopAI codex-runner not found")
     if not corepack:
         raise CodexError("corepack not found; install Node.js with Corepack to use the Codex engine")
-    cmd = [corepack, "yarn", "dev", prompt]
+    # Prompt is delivered via a temp file (runner reads CODEX_PROMPT_FILE) to
+    # avoid execve ARG_MAX limits when the prompt is large; stdin is unreliable
+    # through corepack/yarn's nested process spawns.
+    fd, prompt_path = tempfile.mkstemp(prefix="codex_prompt_", suffix=".txt", text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(prompt)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+    cmd = [corepack, "yarn", "dev", "-"]
     merged_env = {**os.environ, **env}
+    merged_env["CODEX_PROMPT_FILE"] = prompt_path
     python_executable = loopai_python_executable()
     merged_env["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
     merged_env["PATH"] = runner_process_path(python_executable, merged_env.get("PATH"))
@@ -438,7 +453,13 @@ def _run_loopai_codex_runner(
     finally:
         selector.close()
 
-    return proc.wait(), "".join(stdout_lines), "".join(stderr_lines)
+    try:
+        return proc.wait(), "".join(stdout_lines), "".join(stderr_lines)
+    finally:
+        try:
+            os.unlink(prompt_path)
+        except OSError:
+            pass
 
 
 def _parse_json_object(text: str) -> dict | None:

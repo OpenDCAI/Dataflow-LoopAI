@@ -64,10 +64,15 @@ def parse_llm_scalar_score(value: Any, *, minimum: int = 1, maximum: int = 5) ->
     text = str(value).strip()
     answer_blocks = re.findall(r"<answer>(.*?)</answer>", text, flags=re.DOTALL | re.IGNORECASE)
     if answer_blocks:
-        if len(answer_blocks) != 1:
-            raise ValueError("LLM score response has multiple <answer> blocks")
-        text = answer_blocks[0].strip()
+        # Use the LAST <answer> block (innermost), which is the model's actual answer.
+        # The API helper may wrap thinking/reasoning + answer tags around the model output
+        # where content already has <answer> tags, creating nested wrapping.
+        # Strip all <answer></answer> tags from the extracted text to get the raw score.
+        text = re.sub(r'</?answer\s*>', '', answer_blocks[-1], flags=re.IGNORECASE).strip()
     else:
+        # Strip any remaining <answer>/</answer> tags before parsing
+        text = re.sub(r'</?answer\s*>', '', text, flags=re.IGNORECASE).strip()
+        text = re.sub(r'answer\s*>', '', text, flags=re.IGNORECASE).strip()
         text = re.sub(
             r"<think>.*?</think>", "", text,
             flags=re.DOTALL | re.IGNORECASE,

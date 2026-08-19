@@ -44,11 +44,16 @@
                     :key="item.export_id || item.output_uri"
                     class="export-row"
                     :class="{ copied: copiedExport === item.output_uri }"
-                    :title="`${exportLabel(item)}：${item.output_uri}（点击复制）`"
-                    @click="copyText(item.output_uri)"
                 >
-                    <span class="export-name">{{ exportLabel(item) }}</span>
-                    <span class="export-path">{{ item.output_uri }}</span>
+                    <div class="export-main" :title="`${exportLabel(item)}：${item.output_uri}（点击复制）`" @click="copyText(item.output_uri)">
+                        <span class="export-name">{{ exportLabel(item) }}</span>
+                        <span class="export-path">{{ item.output_uri }}</span>
+                        <span v-if="exportDesc(item)" class="export-desc">{{ exportDesc(item) }}</span>
+                    </div>
+                    <div class="export-actions" @click.stop>
+                        <button type="button" class="export-btn" @click="previewExport(item)">预览</button>
+                        <button type="button" class="export-btn" @click="downloadExport(item)">下载</button>
+                    </div>
                 </div>
             </div>
             <p v-else class="empty-line">暂无出湖产出</p>
@@ -154,6 +159,36 @@
 
             <p v-if="dataflow.error" class="error-line" :title="dataflow.error">{{ dataflow.error }}</p>
         </section>
+
+        <div v-if="previewState" class="export-preview-mask" @click.self="closePreview">
+            <div class="export-preview-panel">
+                <header class="export-preview-head">
+                    <strong>出湖预览{{ previewState.file ? `：${previewState.file}` : '' }}</strong>
+                    <button type="button" class="export-btn" @click="closePreview">关闭</button>
+                </header>
+                <div v-if="previewState.loading" class="export-preview-loading">加载中…</div>
+                <div v-else-if="previewState.error" class="export-preview-error">{{ previewState.error }}</div>
+                <div v-else>
+                    <div v-if="previewState.description" class="export-preview-desc">
+                        <p v-if="previewState.description.recipe_name">Recipe：{{ previewState.description.recipe_name }}</p>
+                        <p v-if="previewState.description.records">记录数：{{ exactNumber(previewState.description.records) }}</p>
+                        <p v-if="previewState.description.total_samples">目标样本：{{ exactNumber(previewState.description.total_samples) }}</p>
+                        <p v-if="previewState.description.strategy">策略：{{ previewState.description.strategy }}</p>
+                        <p v-if="previewState.description.buckets?.length">分桶：{{ previewState.description.buckets.join(' / ') }}</p>
+                        <p v-if="previewState.description.snapshot_id">快照：{{ previewState.description.snapshot_id }}</p>
+                    </div>
+                    <table v-if="previewState.rows.length" class="export-preview-table">
+                        <thead><tr><th v-for="c in previewState.columns" :key="c">{{ c }}</th></tr></thead>
+                        <tbody>
+                            <tr v-for="(row, i) in previewState.rows" :key="i">
+                                <td v-for="c in previewState.columns" :key="c" :title="cellText(row[c])">{{ cellText(row[c]) }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p v-else class="empty-line">无数据</p>
+                </div>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -241,6 +276,45 @@ const exportLabel = (item) => {
     return '出湖'
 }
 const copiedExport = ref('')
+const previewState = ref(null)
+const exportDesc = (item) => {
+    const d = item.description || {}
+    const parts = []
+    if (d.records) parts.push(`${exactNumber(d.records)} 条`)
+    if (d.total_samples) parts.push(`目标 ${exactNumber(d.total_samples)}`)
+    if (d.recipe_name) parts.push(d.recipe_name)
+    if (Array.isArray(d.buckets) && d.buckets.length) parts.push(d.buckets.join(' / '))
+    return parts.join(' · ')
+}
+const cellText = (v) => {
+    const s = v === null || v === undefined ? '' : String(v)
+    return s.length > 80 ? `${s.slice(0, 80)}…` : s
+}
+const previewExport = async (item) => {
+    previewState.value = { loading: true, description: item.description || null, columns: [], rows: [], error: '', file: '' }
+    try {
+        const url = `/api/obtainer/export/preview?uri=${encodeURIComponent(item.output_uri || '')}&limit=20`
+        const res = await fetch(url)
+        const data = await res.json()
+        const payload = data?.data || {}
+        previewState.value = {
+            loading: false,
+            description: payload.description || item.description || null,
+            columns: payload.columns || [],
+            rows: payload.rows || [],
+            error: data?.message || '',
+            file: payload.file || ''
+        }
+    } catch (err) {
+        previewState.value = { loading: false, description: null, columns: [], rows: [], error: err?.message || '预览失败', file: '' }
+    }
+}
+const closePreview = () => { previewState.value = null }
+const downloadExport = (item) => {
+    const uri = item.output_uri || ''
+    if (!uri) return
+    window.open(`/api/obtainer/export/download?uri=${encodeURIComponent(uri)}`, '_blank')
+}
 let copyTimer = null
 const copyText = async (text) => {
     const value = normalizeText(text)
@@ -481,6 +555,25 @@ onBeforeUnmount(() => {
 .dataflow-context .inline-metric { grid-template-columns: 105px minmax(0, 1fr); }
 .task-feedback { max-height: 108px; overflow: hidden; }
 
+
+.export-row { display: flex; flex-direction: column; gap: 4px; padding: 6px 2px; border-bottom: 1px solid rgba(90, 45, 133, 0.09); }
+.export-main { cursor: pointer; display: grid; gap: 2px; }
+.export-desc { font-size: 10px; color: rgba(65, 65, 65, 0.55); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.export-actions { display: flex; gap: 6px; }
+.export-btn { font-size: 10px; padding: 2px 8px; border: 1px solid rgba(90, 45, 133, 0.35); border-radius: 4px; background: rgba(90, 45, 133, 0.06); color: rgba(90, 45, 133, 0.85); cursor: pointer; }
+.export-btn:hover { background: rgba(90, 45, 133, 0.14); }
+.export-preview-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 9999; display: flex; align-items: center; justify-content: center; }
+.export-preview-panel { background: #fff; border-radius: 8px; width: min(860px, 90vw); max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25); }
+.export-preview-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid rgba(90, 45, 133, 0.15); }
+.export-preview-head strong { font-size: 13px; color: rgba(90, 45, 133, 0.95); }
+.export-preview-loading, .export-preview-error { padding: 18px; font-size: 12px; color: rgba(65, 65, 65, 0.75); }
+.export-preview-error { color: #c0392b; }
+.export-preview-desc { padding: 10px 14px; background: rgba(90, 45, 133, 0.04); border-bottom: 1px solid rgba(90, 45, 133, 0.1); font-size: 11px; color: rgba(65, 65, 65, 0.8); display: grid; gap: 3px; }
+.export-preview-desc p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.export-preview-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.export-preview-table th, .export-preview-table td { border: 1px solid rgba(90, 45, 133, 0.12); padding: 4px 6px; text-align: left; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.export-preview-table th { background: rgba(90, 45, 133, 0.08); position: sticky; top: 0; }
+.export-preview-panel > div:last-child { overflow: auto; }
 @media (max-width: 1050px) {
     .obtainer-status-panel { width: 860px; grid-template-columns: 0.9fr 1.25fr 0.9fr; }
     .status-column { padding-left: 10px; padding-right: 10px; }
