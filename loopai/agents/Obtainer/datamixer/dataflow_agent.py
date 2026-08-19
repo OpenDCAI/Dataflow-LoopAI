@@ -64,10 +64,15 @@ def parse_llm_scalar_score(value: Any, *, minimum: int = 1, maximum: int = 5) ->
     text = str(value).strip()
     answer_blocks = re.findall(r"<answer>(.*?)</answer>", text, flags=re.DOTALL | re.IGNORECASE)
     if answer_blocks:
-        if len(answer_blocks) != 1:
-            raise ValueError("LLM score response has multiple <answer> blocks")
-        text = answer_blocks[0].strip()
+        # Use the LAST <answer> block (innermost), which is the model's actual answer.
+        # The API helper may wrap thinking/reasoning + answer tags around the model output
+        # where content already has <answer> tags, creating nested wrapping.
+        # Strip all <answer></answer> tags from the extracted text to get the raw score.
+        text = re.sub(r'</?answer\s*>', '', answer_blocks[-1], flags=re.IGNORECASE).strip()
     else:
+        # Strip any remaining <answer>/</answer> tags before parsing
+        text = re.sub(r'</?answer\s*>', '', text, flags=re.IGNORECASE).strip()
+        text = re.sub(r'answer\s*>', '', text, flags=re.IGNORECASE).strip()
         text = re.sub(
             r"<think>.*?</think>", "", text,
             flags=re.DOTALL | re.IGNORECASE,
@@ -130,7 +135,8 @@ DATAFLOW_AGENTS_MD = """# LoopAI DataMixer DataFlow Agent
 
 你是 DataMixer 的 **DataFlow 后处理 agent**（dataflow agent），负责把 L1 -> L2
 -> L3 链路上的数据通过 DataFlow operator 链处理成 **L4**（质量过滤、去重、
-规范化、安全、SFT 有效性），L4 是生产导出的唯一数据源。
+规范化、安全、SFT 有效性），默认情况下 L4 是生产出湖的数据源；若用户明确
+指定 L3 出湖，则 L3 数据也可直接出湖，无需 L4 门。
 
 ## 运行环境清单
 
@@ -162,7 +168,8 @@ DATAFLOW_AGENTS_MD = """# LoopAI DataMixer DataFlow Agent
    不在你的职责范围。
 4. L4 规模必须达标（整体与每个 bucket 都 >= 配比目标的 1.5x）才允许外层启动
    `sft-export-agent` 出湖；规模不达标前禁止出湖。这是上层的出湖门，你在
-   交付 summary 里说明桶规模与预期冗余即可。
+   交付 summary 里说明桶规模与预期冗余即可。若用户明确指定 L3 出湖，则跳过
+   L4 门，L3 数据可直接出湖（仍需满足湖内可用量/配比/质量门）。
 
 ## 硬约束
 

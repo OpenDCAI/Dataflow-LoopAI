@@ -1,9 +1,16 @@
+import fs from "node:fs";
 import { Codex, type ThreadEvent, type ThreadItem } from "@openai/codex-sdk";
 
 type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 const MAX_COMMAND_OUTPUT_CHARS = Number(process.env.CODEX_EVENT_MAX_OUTPUT_CHARS ?? "12000");
 
-const prompt = process.argv.slice(2).join(" ");
+let prompt = process.argv.slice(2).join(" ").trim();
+if (process.env.CODEX_PROMPT_FILE) {
+    // Prompt delivered via a temp file to avoid ARG_MAX / execve argument limits.
+    prompt = fs.readFileSync(process.env.CODEX_PROMPT_FILE, "utf8").trim();
+} else if ((!prompt || prompt === "-") && !process.stdin.isTTY) {
+    prompt = fs.readFileSync(0, "utf8").trim();
+}
 const timeoutMs = Number(process.env.CODEX_RUN_TIMEOUT_MS ?? "300000");
 const workspace = process.env.CODEX_WORKSPACE;
 const model = process.env.CODEX_MODEL ?? process.env.DEEPSEEK_MODEL;

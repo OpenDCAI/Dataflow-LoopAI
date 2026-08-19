@@ -108,7 +108,7 @@ def _quality_preview(row: dict) -> dict:
 
 
 def _export_preview(row: dict) -> dict:
-    return {
+    preview = {
         "export_id": row.get("export_id", ""),
         "strategy": row.get("strategy", ""),
         "requested_size": row.get("requested_size", 0),
@@ -117,6 +117,29 @@ def _export_preview(row: dict) -> dict:
         "format": row.get("format", ""),
         "created_at": row.get("created_at", ""),
     }
+    uri = row.get("output_uri") or ""
+    if uri:
+        uri_path = Path(str(uri)).expanduser()
+        manifest = uri_path / "manifest.json" if uri_path.is_dir() else uri_path.parent / "manifest.json"
+        if manifest.is_file():
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                recipe = data.get("recipe") or {}
+                if isinstance(recipe, dict) and isinstance(recipe.get("recipe"), dict):
+                    recipe = recipe["recipe"]
+                files = data.get("files") or []
+                preview["description"] = {
+                    "recipe_name": data.get("recipe_name", ""),
+                    "records": int(sum(int(f.get("records") or 0) for f in files)),
+                    "total_samples": int(recipe.get("total_samples") or 0) if isinstance(recipe, dict) else 0,
+                    "strategy": recipe.get("strategy", "") if isinstance(recipe, dict) else "",
+                    "snapshot_id": data.get("snapshot_id", ""),
+                    "buckets": [b.get("name", "") for b in (recipe.get("buckets") or []) if isinstance(b, dict)]
+                    if isinstance(recipe, dict) else [],
+                }
+            except Exception:
+                pass
+    return preview
 
 
 def _count_by(rows: list[dict], field: str) -> dict[str, int]:

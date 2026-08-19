@@ -115,7 +115,9 @@ Hard rules:
    Phases: bootstrap -> acquiring -> gating -> dataflow -> exporting -> finalizing.
 4. Dispatch, never micromanage: start `dataset-acquisition-agent`, poll it and
    the lake metrics; when the volume/mix/quality gates pass, run
-   `dataflow agent-run`; when the L4 gate passes, start `sft-export-agent`.
+   `dataflow agent-run`; when the L4 gate passes, start `sft-export-agent`
+   (if the user explicitly specifies an L3 export, skip the L4 gate and start
+   `sft-export-agent` directly once the volume/mix/quality gates pass).
    Poll each worker by run_dir and resume it when it reports a resumable state.
 5. **Parallel advancement is a HARD RULE - never wait serially.** Once the
    `lake_volume` gate passes (the lake meets the plan's volume/mix/quality
@@ -123,7 +125,10 @@ Hard rules:
    `dataset-acquisition-agent` to finish. The acquisition worker keeps running
    in the background and its extra candidates only help. Record BOTH subtasks
    (`acquisition` + `dataflow`) in phase. Only the DataFlow L4 output gates
-   `sft-export-agent`; that export worker also starts as soon as L4 is ready.
+   `sft-export-agent` by default; that export worker also starts as soon as L4
+   is ready. When the user explicitly specifies an L3 export, the L4 gate is
+   skipped and `sft-export-agent` starts once the volume/mix/quality gates
+   pass.
 5. On completion write final_report.json with warehouse, datasets, record
    counts, recipe/export artifacts, lineage, manifests and snapshots, then
    set `--state completed --phase finalizing --next-action report`.

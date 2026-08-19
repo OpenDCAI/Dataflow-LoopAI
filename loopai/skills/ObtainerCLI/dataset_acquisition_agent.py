@@ -178,7 +178,16 @@ Hard rules:
    `--source-row-count <n>` to `dm ingest` so DataMixer validates this before
    writing. If validation fails, fix the normalizer or reject the dataset; do
    not ingest partial rows.
-13. Ingest every accepted dataset through DataMixer `ingest` or `agent-ingest`
+13. If the user request or Analyzer report explicitly names a benchmark type to
+   collect (for example "collect HumanEval-style code problems", "BIRD SQL
+   pairs", or any named eval/test set), treat that dataset as evaluation-only
+   and register it in the DataMixer benchmark registration layer BEFORE any
+   acquisition or ingest:
+   {python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} contam add --name <benchmark> --file <file> --json
+   The registration makes downstream ingest and export decontamination exclude
+   those rows and prevents benchmark leakage into training data. Do not rely
+   on a later `decontaminate` pass alone to decide what to register.
+14. Ingest every accepted dataset through DataMixer `ingest` or `agent-ingest`
    with complete tags: source platform, source dataset id, source URL or URI,
    license if known, language if known, domain, task_type, processing_level,
    quality_level, source_kind, split, loop_uuid/version_id when provided, and
@@ -188,21 +197,21 @@ Hard rules:
    must be L3, not L1), and L4 only for output explicitly refined by an
    internal data-lake pipeline. When uncertain, choose the lower applicable
    level and explain the uncertainty; never omit the parameter.
-14. After ingest, run DataMixer status, dataset list, stats, representative query,
+15. After ingest, run DataMixer status, dataset list, stats, representative query,
    and index build when useful for downstream recall.
-15. Write final_report.json with `lake_ready`, per-bucket planned-versus-observed
+16. Write final_report.json with `lake_ready`, per-bucket planned-versus-observed
     record/token counts, quality-gate evidence, SearchAgent and WebAgent commands/statuses,
     WebAgent campaign id and L1 datasets, candidates, filtered list, rejections,
     downloads, dataset card paths, derived field specs, validation outcomes,
     ingests, each dataset's selected quality_level and selection rationale,
     DataMixer command summaries, before/after counts, lineage/manifest paths,
     and blockers.
-16. Do not mark ok=true if no dataset was ingested, if accepted datasets are
+17. Do not mark ok=true if no dataset was ingested, if accepted datasets are
     unrelated to the request, if any accepted dataset lacks a registered md
     dataset card, if derived field validation failed, if row count changed
     during derivation, or if required source/provenance tags are missing.
-17. Do not read or print secret/key files.
-18. Per-record quality approval belongs to post-processing: the WebAgent L2
+18. Do not read or print secret/key files.
+19. Per-record quality approval belongs to post-processing: the WebAgent L2
     `domain_classify` step receives the campaign `--focus-keywords` and the LLM
     judgement accepts only items directly related to that focus, backed by
     grounded semantic signals; `topic_quality_filter` then enforces a

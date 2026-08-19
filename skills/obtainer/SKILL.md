@@ -34,7 +34,9 @@ not a generic coding task:
    deduplication, normalization, safety, and post-training validity).
 5. Only after the DataFlowAgent run completes and the final L4 dataset scale
    meets the recipe target, start the managed `sft-export-agent` worker for
-   production SFT outflow.
+   production SFT outflow. If the user explicitly specifies an L3 export, the
+   L4 gate is waived and L3 data may be exported directly once the lake
+   volume/mix/quality gates pass.
 6. Report warehouse path, datasets, record counts, recipe/export artifacts,
    lineage, manifests, and snapshots.
 
@@ -201,27 +203,33 @@ Never judge progress from `message` alone; use the structured fields.
   per-bucket record/token counts and the planned quality gates. As soon as the
   lake satisfies the required volume, mix, and quality, immediately start the
   DataFlowAgent post-processing stage and required indexing and recipe planning;
-  start production export only after the L4 gate below passes. Never use
+  start production export only after the L4 gate below passes (or directly,
+  when the user explicitly specifies an L3 export). Never use
   WebAgent completion, acquisition-worker completion, or empty producer queues
   as prerequisites; keep those producers running concurrently.
-- **DataFlowAgent is a mandatory pre-export gate.** Every production export
-  must first complete the DataFlowAgent post-processing stage
+- **DataFlowAgent is a mandatory pre-export gate by default.** Every
+  production export must first complete the DataFlowAgent post-processing stage
   (`dm dataflow agent-run`), which delivers a trial-verified L4 pipeline; the
   outer Codex then executes it over the exported 1.5x bucket-buffer input with
   the chunked runner to produce the L4 dataset. L4 is the DataFlow-processed
   level on top of the L1 -> L2 -> L3 chain (raw webpages -> normalized PT ->
-  SFT QA -> post-processed) and is the only sample source for production
+  SFT QA -> post-processed) and is the default sample source for production
   export. Skipping, deferring, or folding this stage into the export worker is
-  not allowed; an export without a completed L4 source is a blocker.
+  not allowed; an export without a completed L4 source is a blocker. If the
+  user explicitly specifies an L3 export, the L4 gate is waived and L3 data
+  may be exported directly instead.
 - **1.5x in-lake redundancy is a hard requirement.** To guarantee that the
   export mix can be met, the lake must hold at least 1.5x the recipe target
   volume both overall and per bucket (`available_samples >= 1.5 x
   target_samples` for every bucket). If any bucket falls below this floor,
   continue acquisition and DataFlow post-processing until the redundancy is
   satisfied; never export a mix from a non-redundant lake.
-- **L4 scale gates export.** The DataFlowAgent stage is considered complete only
-  when the final L4 dataset scale meets the recipe target (overall and per
-  bucket, after the 1.5x redundancy floor). Only then call `sft-export-agent`.
+- **L4 scale gates export by default.** The DataFlowAgent stage is considered
+  complete only when the final L4 dataset scale meets the recipe target
+  (overall and per bucket, after the 1.5x redundancy floor). Only then call
+  `sft-export-agent`. If the user explicitly specifies an L3 export, this L4
+  scale gate is waived and L3 data may be exported once the lake
+  volume/mix/quality gates pass.
 - **WebAgent model prerequisite:** the wrapper resolves the Codex default model,
   registers that same provider in the DataMixer model pool, and records
   `resolved_model`, `webagent_model`, and `model_source` in `thread.json`.
@@ -292,6 +300,15 @@ Never judge progress from `message` alone; use the structured fields.
   before ingest succeeds.
 - **Never overwrite or hide provenance.** Keep dataset lineage, loop/version
   tags, recipe fingerprints, export manifests, and snapshots.
+- **Register user-named benchmarks before acquisition/ingest.** If the user
+  query or Analyzer report explicitly names the benchmark type to collect (for
+  example "collect HumanEval-style code problems", "BIRD SQL pairs", or any
+  named eval/test set), treat that dataset as evaluation-only and register it
+  in the DataMixer benchmark registration layer (`dm contam add --name
+  <benchmark> --file <file>`) before any acquisition or ingest, so downstream
+  ingest and export decontamination exclude it and benchmark data cannot leak
+  into training data. Do not rely on a later `decontaminate` pass alone to
+  decide what to register.
 
 ## Command Surface
 
@@ -450,6 +467,12 @@ loopai-obtainercli dm --root /path/to/warehouse grade \
 
 Processing, quality, safety, and deletion:
 
+When the user query or Analyzer report explicitly names a benchmark/eval
+dataset type to collect, register it in the benchmark registration layer
+first with `contam add` before any acquisition or ingest; the subsequent
+`decontaminate` pass then excludes those rows from downstream training export
+and prevents benchmark leakage.
+
 ```bash
 loopai-obtainercli dm --root /path/to/warehouse op list --json
 loopai-obtainercli dm --root /path/to/warehouse op run quality_score --dataset code_repair_mix --json
@@ -544,7 +567,8 @@ DataFlowAgent agent-run rules:
   quality-evaluation operators score every row - let it finish.
 - The agent runs with its own Codex home (`codex_home_dataflow/AGENTS.md`),
   whose rules require it to deliver the trial-verified pipeline (never launch
-  the full run itself) and to gate export on the 1.5x L4 redundancy floor.
+  the full run itself) and to gate export on the 1.5x L4 redundancy floor
+  (skipped when the user explicitly specifies an L3 export).
 
 Index and recall:
 
@@ -705,7 +729,8 @@ explicitly instead of letting a global mapping choose the wrong source.
    post-training validity; it delivers a trial-verified pipeline, then the
    outer Codex runs it over `full_input.jsonl` with the chunked runner
    (`dataflow_chunked_runner --chunk-size 10000`) and merges the L4 output
-   with `apply-jsonl`. L4 must be produced before any export.
+   with `apply-jsonl`. L4 must be produced before any export (unless the user
+   explicitly requests an L3 export).
 5. Build indexes when semantic recall or semantic deduplication is needed.
 6. Start `sft-export-agent` for production recipe planning and export only after
    the DataFlowAgent stage completed and the L4 dataset scale meets the recipe

@@ -14,7 +14,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..models.body import response_body
-from ..utils.obtainer.monitor import probe_embedding_health
+from ..utils.obtainer.monitor import _export_preview, probe_embedding_health
 from ..utils.obtainer.web_pipeline import build_web_pipeline_overview
 from loopai.skills.ObtainerCLI.monitor_state import read_monitor_state, start_background_rebuild
 from loopai.skills.ObtainerCLI.datamixer_adapter import warehouse_root
@@ -361,6 +361,22 @@ async def get_webagent_overview(
         if isinstance(monitor, dict) and live_summary.get("datasets") is not None:
             monitor.setdefault("summary", {})["datasets"] = int(live_summary["datasets"])
             monitor["summary"]["records"] = int(live_summary.get("records") or 0)
+        # Live-enrich cached export rows with manifest-backed descriptions so the
+        # task card can show recipe/records/buckets without waiting on a cache rebuild.
+        if isinstance(monitor, dict):
+            latest = monitor.setdefault("latest", {})
+            cached_exports = latest.get("exports")
+            if isinstance(cached_exports, list):
+                enriched = []
+                for row in cached_exports:
+                    if isinstance(row, dict):
+                        row = dict(row)
+                        if not row.get("description"):
+                            row["description"] = _export_preview(row).get("description")
+                        enriched.append(row)
+                    else:
+                        enriched.append(row)
+                latest["exports"] = enriched
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=data)()
@@ -469,3 +485,132 @@ async def run_datamixer_cli(request: DataMixerCliRequest):
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=result)()
+
+
+# ---------------------------------------------------------------------------
+# Export file serving: browser-side download + preview/description
+# ---------------------------------------------------------------------------
+from fastapi.responses import FileResponse
+
+
+def _resolve_export_file(uri: str | None) -> tuple[Path, Path | None]:
+    """Resolve an export output_uri to (target_file, manifest_file).
+
+    output_uri may point at a file (export-jsonl) or a directory containing
+    part-*.jsonl plus manifest.json (recipe_export). Only paths inside the
+    project repo are allowed.
+    """
+    if not uri:
+        raise ValueError("缺少导出路径 uri")
+    raw = Path(str(uri)).expanduser()
+    path = raw if raw.is_absolute() else (REPO_ROOT / raw)
+    path = path.resolve()
+    try:
+        common = Path(os.path.commonpath([str(path), str(REPO_ROOT.resolve())]))
+        if common != REPO_ROOT.resolve():
+            raise ValueError("导出路径超出允许范围")
+    except ValueError as exc:
+        raise ValueError("导出路径超出允许范围") from exc
+
+    if path.is_dir():
+        parts = sorted(path.glob("part-*.jsonl"))
+        if not parts:
+            parts = sorted(path.glob("*.jsonl"))
+        if not parts:
+            raise FileNotFoundError(f"目录中未找到导出文件: {path}")
+        manifest = path / "manifest.json"
+        return parts[0], manifest if manifest.exists() else None
+    if not path.exists():
+        raise FileNotFoundError(f"导出文件不存在: {path}")
+    manifest = path.parent / "manifest.json"
+    return path, manifest if manifest.exists() else None
+
+
+def _export_description(manifest: Path | None, *, file_path: Path, strategy: str = "") -> dict:
+    """Build a human-readable description from the export manifest / recipe."""
+    desc: dict[str, Any] = {
+        "file": file_path.name,
+        "size_bytes": file_path.stat().st_size if file_path.exists() else 0,
+        "strategy": strategy,
+    }
+    if not manifest or not manifest.exists():
+        return desc
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception:
+        return desc
+    desc["export_id"] = data.get("export_id", "")
+    desc["recipe_name"] = data.get("recipe_name", "")
+    desc["snapshot_id"] = data.get("snapshot_id", "")
+    desc["format"] = data.get("format", "")
+    files = data.get("files") or []
+    desc["files"] = files
+    desc["records"] = sum(int(f.get("records") or 0) for f in files)
+    recipe = data.get("recipe") or {}
+    if isinstance(recipe, dict) and recipe.get("recipe"):
+        recipe = recipe["recipe"]
+    desc["total_samples"] = recipe.get("total_samples", 0)
+    desc["strategy"] = recipe.get("strategy", desc.get("strategy"))
+    buckets = recipe.get("buckets") or []
+    desc["buckets"] = [b.get("name", "") for b in buckets if isinstance(b, dict)]
+    return desc
+
+
+@router.get(
+    "/export/download",
+    operation_id="downloadObtainerExportFile",
+    summary="下载出湖/导出文件到浏览器",
+)
+async def download_export_file(uri: str, root: str | None = None):
+    try:
+        target, _ = _resolve_export_file(uri)
+    except Exception as exc:
+        return response_body(code=400, status="error", message=str(exc))()
+    return FileResponse(
+        str(target),
+        media_type="application/octet-stream",
+        filename=target.name,
+        headers={"Content-Disposition": f'attachment; filename="{target.name}"'},
+    )
+
+
+@router.get(
+    "/export/preview",
+    operation_id="previewObtainerExportFile",
+    summary="预览出湖/导出文件内容并返回描述",
+)
+async def preview_export_file(uri: str, limit: int = 20, root: str | None = None):
+    try:
+        limit = max(1, min(int(limit), 200))
+        target, manifest = _resolve_export_file(uri)
+        description = _export_description(manifest, file_path=target)
+        rows: list[dict[str, Any]] = []
+        with target.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+                if len(rows) >= limit:
+                    break
+        columns: list[str] = []
+        if rows:
+            seen: set[str] = set()
+            for row in rows:
+                for key in row.keys():
+                    if key not in seen:
+                        seen.add(key)
+                        columns.append(key)
+        return response_body(data={
+            "uri": uri,
+            "file": target.name,
+            "description": description,
+            "columns": columns,
+            "rows": rows,
+            "row_count": len(rows),
+        })()
+    except Exception as exc:
+        return response_body(code=400, status="error", message=str(exc))()

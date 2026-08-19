@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from api.app.services.starter.stream_events import build_custom_info
 from loopai.common.event_tool import get_event_writer
@@ -158,3 +159,14 @@ def test_status_reader_supports_legacy_versioned_event_path(tmp_path: Path) -> N
     )
 
     assert custom_info["trainer.trainer.run"]["version_id"] == "legacy-version"
+
+def test_get_event_writer_defaults_to_timestamp_version_id(tmp_path: Path) -> None:
+    writer = get_event_writer(
+        name="analyzer",
+        context_id="task-1",
+        log_file_path=str(tmp_path),
+    )
+
+    version_id = str(writer.version_id)
+    assert re.fullmatch(r"\d{8}_\d{6}_\d{6}", version_id)
+    assert writer.event_path == tmp_path / "task-1" / "analyzer" / version_id / "analyzer.pkl"
