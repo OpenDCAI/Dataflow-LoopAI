@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Tuple
 from loopai.common.event_tool import StreamEvent
 from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
 from loopai.common.prompts.prompt_loader import PromptLoader
-from langchain_openai import ChatOpenAI
+from loopai.skills.Analyzer.utils.openai_compat_llm import OpenAICompatChat
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
@@ -62,16 +62,17 @@ def _runtime_api_key(cfg: dict) -> str:
     )
 
 
-def init_model(state: LoopAIState) -> ChatOpenAI:
+def init_model(state: LoopAIState) -> OpenAICompatChat:
     """
     初始化分析用模型。
     使用 OpenAI-compatible / vLLM 风格接口。
     """
     cfg = _analyzer(state)
-    model = ChatOpenAI(
+    model = OpenAICompatChat(
         model=cfg["analyze_model_path"],
-        api_key=_runtime_api_key(cfg),
         base_url=cfg.get("analyze_base_url"),
+        api_key=_runtime_api_key(cfg),
+        max_tokens=int(cfg.get("analyze_max_tokens", 512) or 512),
         temperature=cfg.get("analyze_temperature", 0.0),
         top_p=cfg.get("analyze_top_p", 0.95),
     )
