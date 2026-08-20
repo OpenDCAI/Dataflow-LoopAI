@@ -145,27 +145,50 @@ def _batch_one_with_heartbeat(
     end_progress: float,
     data: Dict[str, Any] | None = None,
 ) -> str:
-    """Run one conclusion request while keeping UI progress alive."""
-    stop_event = threading.Event()
+    """Run normally, then retry once with a compact prompt after timeout."""
+    def _is_timeout(exc: Exception) -> bool:
+        text = f"{type(exc).__name__}: {exc}".lower()
+        return isinstance(exc, TimeoutError) or any(
+            marker in text for marker in ("timeout", "timed out", "read timed out", "524")
+        )
 
-    def heartbeat() -> None:
-        tick = 0
-        while not stop_event.wait(1.0):
-            tick += 1
-            progress = start_progress + (end_progress - start_progress) * min(0.85, tick / 20)
-            emit(
-                message,
-                progress=round(progress, 3),
-                data={**(data or {}), "waiting_seconds": tick, "heartbeat": True},
-            )
+    def _compact_prompt(value: str) -> str:
+        max_chars = 12000
+        if len(value) <= max_chars:
+            return value + "\n\nPlease answer concisely and keep the required output format."
+        head = max_chars * 2 // 3
+        tail = max_chars - head
+        return value[:head] + "\n...[Analyzer compact retry: middle evidence omitted]...\n" + value[-tail:]
 
-    thread = threading.Thread(target=heartbeat, daemon=True)
-    thread.start()
+    def _run_once(request_prompt: str) -> str:
+        stop_event = threading.Event()
+
+        def heartbeat() -> None:
+            tick = 0
+            while not stop_event.wait(1.0):
+                tick += 1
+                progress = start_progress + (end_progress - start_progress) * min(0.85, tick / 20)
+                emit(message, progress=round(progress, 3), data={
+                    **(data or {}), "waiting_seconds": tick, "heartbeat": True,
+                })
+
+        thread = threading.Thread(target=heartbeat, daemon=True)
+        thread.start()
+        try:
+            return llm.batch([request_prompt])[0].content
+        finally:
+            stop_event.set()
+            thread.join(timeout=0.2)
+
     try:
-        return llm.batch([prompt])[0].content
-    finally:
-        stop_event.set()
-        thread.join(timeout=0.2)
+        return _run_once(prompt)
+    except Exception as exc:
+        if not _is_timeout(exc):
+            raise
+        emit("模型请求超时，压缩输入后重试", progress=start_progress, data={
+            **(data or {}), "retry": True, "input_compacted": True,
+        })
+        return _run_once(_compact_prompt(prompt))
 
 
 def try_read_oj_records(path_from_summary: str):
@@ -741,6 +764,7 @@ def draw_conclusion_node(state: LoopAIState):
         logger.error(f"生成背景介绍时出错：{e}")
         background_text = ""
     final_json["background"] = background_text
+    _emit("背景介绍生成完成", progress=0.38)
 
     obtainer_stats = build_obtainer_stats(summary, oj_records, final_json)
     final_json["obtainer_stats"] = obtainer_stats
@@ -831,6 +855,8 @@ def draw_conclusion_node(state: LoopAIState):
         logger.info("Obtainer 报告生成完成：")
         logger.info(f"→ {obtainer_json_path}")
         logger.info(f"→ {obtainer_txt_path}")
+
+        _emit("Obtainer 报告生成完成", progress=0.95)
 
     _emit("最终报告生成完成", progress=1.0)
     return state

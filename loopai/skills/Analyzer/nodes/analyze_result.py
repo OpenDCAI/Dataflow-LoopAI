@@ -72,34 +72,53 @@ def _batch_one_with_heartbeat(
     end_progress: float,
     data: Dict[str, Any] | None = None,
 ) -> str:
-    resume_progress = get_analyzer_resume_progress()
-    if resume_progress:
-        start_progress = max(start_progress, min(resume_progress, end_progress))
-    stop_event = threading.Event()
+    def _is_timeout(exc: Exception) -> bool:
+        text = f"{type(exc).__name__}: {exc}".lower()
+        return isinstance(exc, TimeoutError) or any(
+            marker in text
+            for marker in ("timeout", "timed out", "read timed out", "524")
+        )
 
-    def _heartbeat() -> None:
-        tick = 0
-        while not stop_event.wait(1.0):
-            tick += 1
-            wait_fraction = min(0.85, tick / 20)
-            progress = start_progress + (end_progress - start_progress) * wait_fraction
-            emit(
-                message,
-                progress=round(progress, 3),
-                data={
-                    **(data or {}),
-                    "waiting_seconds": tick,
-                    "heartbeat": True,
-                },
-            )
+    def _compact_prompt(value: str) -> str:
+        max_chars = 12000
+        if len(value) <= max_chars:
+            return value + "\n\nPlease answer concisely and keep the required output format."
+        head = max_chars * 2 // 3
+        tail = max_chars - head
+        return value[:head] + "\n...[Analyzer compact retry: middle evidence omitted]...\n" + value[-tail:]
 
-    heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
-    heartbeat_thread.start()
+    def _run_once(request_prompt: str) -> str:
+        stop_event = threading.Event()
+        resume_progress = get_analyzer_resume_progress()
+        request_start = max(start_progress, min(resume_progress, end_progress)) if resume_progress else start_progress
+
+        def _heartbeat() -> None:
+            tick = 0
+            while not stop_event.wait(1.0):
+                tick += 1
+                wait_fraction = min(0.85, tick / 20)
+                progress = request_start + (end_progress - request_start) * wait_fraction
+                emit(message, progress=round(progress, 3), data={
+                    **(data or {}), "waiting_seconds": tick, "heartbeat": True,
+                })
+
+        heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+        heartbeat_thread.start()
+        try:
+            return llm.batch([request_prompt])[0].content
+        finally:
+            stop_event.set()
+            heartbeat_thread.join(timeout=0.2)
+
     try:
-        return llm.batch([prompt])[0].content
-    finally:
-        stop_event.set()
-        heartbeat_thread.join(timeout=0.2)
+        return _run_once(prompt)
+    except Exception as exc:
+        if not _is_timeout(exc):
+            raise
+        emit("模型请求超时，压缩输入后重试", progress=start_progress, data={
+            **(data or {}), "retry": True, "input_compacted": True,
+        })
+        return _run_once(_compact_prompt(prompt))
 
 
 def pick_failure_examples(oj_records: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
