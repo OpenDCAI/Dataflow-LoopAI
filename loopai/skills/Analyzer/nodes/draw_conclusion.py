@@ -7,7 +7,7 @@ from pathlib import Path
 from collections import Counter
 from typing import List, Dict, Any
 
-from loopai.skills.Analyzer.utils.openai_compat_llm import OpenAICompatChat
+from langchain_openai import ChatOpenAI
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
 
@@ -111,7 +111,7 @@ def _runtime_api_key(cfg: dict) -> str:
         or "EMPTY"
     )
 
-def init_model(state: LoopAIState) -> OpenAICompatChat:
+def init_model(state: LoopAIState) -> ChatOpenAI:
     """
     初始化模型
     Args:
@@ -125,11 +125,10 @@ def init_model(state: LoopAIState) -> OpenAICompatChat:
     """
 
     cfg = _analyzer(state)
-    model = OpenAICompatChat(
+    model = ChatOpenAI(
         model=cfg['analyze_model_path'],
-        base_url=cfg['analyze_base_url'],
         api_key=_runtime_api_key(cfg),
-        max_tokens=int(cfg.get("analyze_max_tokens", 512) or 512),
+        base_url=cfg['analyze_base_url'],
         temperature=cfg.get('analyze_temperature', 0.0),
         top_p=cfg.get('analyze_top_p', 0.95),
     )
@@ -137,7 +136,7 @@ def init_model(state: LoopAIState) -> OpenAICompatChat:
 
 
 def _batch_one_with_heartbeat(
-    llm: OpenAICompatChat,
+    llm: ChatOpenAI,
     prompt: str,
     *,
     emit,
