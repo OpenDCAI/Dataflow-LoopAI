@@ -1,288 +1,216 @@
 <template>
-    <div class="editor-margin-wrapper" :class="[{ 'running-shadow': runningLLM }]">
-        <div class="bg-wrapper">
-            <p class="top-title">{{ local('Chat with LoopAI') }}</p>
-            <power-editor
-                :placeholder="placeholder"
-                :language="language == 'zh' ? 'cn' : 'en'"
-                :theme="theme"
-                class="power-editor-block"
-                ref="editor"
-                :showToolBar="thisFullScreenEditor"
-                :editorBackground="theme === 'dark' ? 'rgba(52, 64, 84, 1)' : 'white'"
-                :editorOutSideBackground="theme === 'dark' ? 'rgba(52, 64, 84, 1)' : 'white'"
-                :editablePaddingBottom="thisFullScreenEditor ? 315 : 0"
-                :imgInterceptor="imgInterceptor"
-                style="height: 100%; flex: 1"
-            ></power-editor>
-        </div>
+    <div class="lp-composer" :class="{ 'is-focused': focused }">
+        <textarea
+            ref="input"
+            v-model="draft"
+            class="lp-composer__input"
+            rows="1"
+            spellcheck="false"
+            :placeholder="placeholder"
+            :disabled="looperActive"
+            @focus="focused = true"
+            @blur="focused = false"
+            @input="autoGrow"
+            @keydown="handleKeydown"
+        ></textarea>
 
-        <fv-button
-            :border-radius="50"
-            :is-box-shadow="true"
-            style="position: absolute; width: 30px; height: 30px; bottom: 12px; right: 100px"
-            @click="thisFullScreenEditor = !thisFullScreenEditor"
-        >
-            <i
-                class="ms-Icon"
-                :class="[`ms-Icon--${thisFullScreenEditor ? 'BackToWindow' : 'FullScreen'}`]"
-            ></i>
-        </fv-button>
-        <fv-button
-            theme="dark"
-            class="editor-submit-button"
-            background="linear-gradient(120deg, rgba(149, 161, 219, 1), rgba(137, 120, 200, 1))"
-            border-radius="8"
-            :reveal-border-gradient-list="[
-                'rgba(129, 208, 246, 1)',
-                'rgba(146, 156, 218, 1)',
-                'rgba(226, 121, 162, 0.8)',
-                'rgba(255, 255, 255, 0.1)'
-            ]"
-            :disabled="holdon"
-            style="margin-left: 5px"
-            @click="submitQuery"
-            >{{ local('Submit') }}
-            <i class="ms-Icon ms-Icon--ReturnKeySm" style="margin-left: 5px"></i>
-        </fv-button>
+        <div class="lp-composer__foot">
+            <looper-takeover-warning></looper-takeover-warning>
+            <p v-if="!looperActive && !currentTask" class="lp-composer__hint">
+                {{ local('Creates a task on send') }}
+            </p>
+            <div class="lp-composer__spacer"></div>
+            <div class="lp-composer__keys">
+                <span class="lp-kbd">{{ modKeyLabel }}</span>
+                <span class="lp-kbd">&#8629;</span>
+            </div>
+            <button
+                type="button"
+                class="lp-btn lp-btn--primary"
+                :disabled="holdon || !draft.trim()"
+                @click="submitQuery"
+            >
+                {{ local('Send') }}
+            </button>
+        </div>
     </div>
 </template>
 
 <script>
 import { mapActions, mapState } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
-import { useTheme } from '@/stores/theme'
 import { useLoopAI } from '@/stores/loopAI'
 
+import looperTakeoverWarning from '@/components/manage/loopaiFlow/looperTakeoverWarning.vue'
+
+const MAX_ROWS_HEIGHT = 220
+
 export default {
-    props: {
-        fullScreenEditor: {
-            type: Boolean,
-            default: false
-        },
-        theme: {
-            type: String,
-            default: 'light'
-        }
+    name: 'QueryBlock',
+    components: {
+        looperTakeoverWarning
     },
     data() {
         return {
-            thisFullScreenEditor: this.fullScreenEditor,
+            draft: '',
+            focused: false,
             lock: {
                 submit: true
             }
         }
     },
-    watch: {
-        fullScreenEditor(newVal) {
-            this.thisFullScreenEditor = newVal
-        },
-        thisFullScreenEditor(newVal) {
-            this.$emit('update:fullScreenEditor', newVal)
-        }
-    },
     computed: {
         ...mapState(useAppConfig, ['local', 'language']),
-        ...mapState(useTheme, ['color', 'gradient']),
         ...mapState(useLoopAI, ['msgStreamModel', 'currentTask', 'looperTakeover']),
         placeholder() {
-            return this.local(`Ask me anything (Press Ctrl + Enter)`)
+            return this.currentTask
+                ? this.local('Tell the loop what to do next...')
+                : this.local('Describe the model you want. Sending starts the first task.')
         },
         holdon() {
             return !this.lock.submit || this.looperActive
         },
-        runningLLM() {
-            return this.msgStreamModel.loading
-        },
         looperActive() {
             return this.looperTakeover.active
+        },
+        modKeyLabel() {
+            const isApple =
+                typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '')
+            return isApple ? '⌘' : 'Ctrl'
         }
     },
     mounted() {
-        this.eventInit()
+        this.$refs.input?.focus()
     },
     methods: {
         ...mapActions(useLoopAI, [
             'getStatus',
-            'getMsgStream',
+            'createTask',
             'clearLooperTakeoverCountdown',
             'setLooperTakeoverCountdown'
         ]),
-        imgInterceptor({ deleteNode }) {
-            this.$nextTick(() => {
-                deleteNode()
-            })
-            this.$barWarning(this.local('Sorry, image is not supported in this chat.'), {
-                status: 'warning'
-            })
+        autoGrow() {
+            const el = this.$refs.input
+            if (!el) return
+            el.style.height = 'auto'
+            el.style.height = `${Math.min(el.scrollHeight, MAX_ROWS_HEIGHT)}px`
         },
-        eventInit() {
-            this.$refs.editor.$el.removeEventListener('keydown', this.handleSubmitEnterEvent)
-            this.$refs.editor.$el.addEventListener('keydown', this.handleSubmitEnterEvent)
-        },
-        handleSubmitEnterEvent(event) {
-            if (event.ctrlKey && event.key === 'Enter') {
+        handleKeydown(event) {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                event.preventDefault()
                 this.submitQuery()
             }
         },
-        submitQuery() {
-            if (!this.lock.submit || this.looperActive) return
+        async submitQuery() {
+            if (this.holdon) return
+            const msg = this.draft.trim()
+            if (!msg) return
+
             this.clearLooperTakeoverCountdown()
-            let msg = this.$refs.editor.saveMarkdown()
-            msg = msg.trim()
-            if (msg === '') return
-            let session_id = this.currentTask?.task_id
-            if (!session_id) {
-                this.$barWarning(this.local('Please select a task first.'), {
-                    status: 'warning'
-                })
-                return
+            this.lock.submit = false
+
+            // No task yet? The first thing you send is what creates one.
+            let task = this.currentTask
+            if (!task?.task_id) {
+                task = await this.createTask(msg.slice(0, 48))
+                if (!task?.task_id) {
+                    this.lock.submit = true
+                    return
+                }
             }
+
+            const session_id = task.task_id
             this.setLooperTakeoverCountdown({
                 seconds: 10,
                 duration: 10,
                 active: true
             })
-            this.lock.submit = false
-            this.$api.starter
-                .starterCodexStream({ prompt: msg, session_id })
-                .then(async (res) => {
-                    if (res.code === 200) {
-                        this.$refs.editor.editor().commands.setContent('')
-                        await this.getStatus(session_id)
-                        this.lock.submit = true
-                    } else {
-                        this.clearLooperTakeoverCountdown()
-                        this.lock.submit = true
-                        this.$barWarning(res.message, {
-                            status: 'warning'
-                        })
-                    }
-                })
-                .catch((error) => {
+
+            try {
+                const res = await this.$api.starter.starterCodexStream({ prompt: msg, session_id })
+                if (res.code === 200) {
+                    this.draft = ''
+                    this.$nextTick(this.autoGrow)
+                    await this.getStatus(session_id)
+                } else {
                     this.clearLooperTakeoverCountdown()
-                    this.lock.submit = true
-                    this.$barWarning(error.message, {
-                        status: 'error'
-                    })
-                })
+                    this.$barWarning(res.message, { status: 'warning' })
+                }
+            } catch (error) {
+                this.clearLooperTakeoverCountdown()
+                this.$barWarning(error.message, { status: 'error' })
+            } finally {
+                this.lock.submit = true
+            }
         }
     }
 }
 </script>
 
 <style lang="scss">
-.editor-margin-wrapper {
+.lp-composer {
     position: relative;
-    width: min(900px, 90%);
-    max-width: 900px;
-    height: 30px;
-    flex: 1;
-    margin-top: 15px;
+    width: 100%;
+    padding: 10px 12px;
+    gap: 10px;
+    background: var(--lp-surface);
+    border: 1px solid var(--lp-line-hi);
+    border-radius: var(--lp-r-3);
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    box-sizing: border-box;
+    flex-direction: column;
+    transition:
+        border-color var(--lp-fast) var(--lp-ease),
+        box-shadow var(--lp-fast) var(--lp-ease);
 
-    &.running-shadow {
-        &:before,
-        &:after {
-            content: '';
-            position: absolute;
-            top: 0px;
-            left: 0px;
-            width: calc(100%);
-            height: calc(100%);
-            background: linear-gradient(
-                45deg,
-                rgba(226, 121, 162, 1),
-                rgba(146, 156, 218, 1),
-                rgba(129, 208, 246, 1),
-                rgba(239, 192, 48, 1),
-                rgba(246, 100, 100, 1),
-                rgba(226, 121, 162, 1),
-                rgba(146, 156, 218, 1),
-                rgba(129, 208, 246, 1),
-                rgba(239, 192, 48, 1),
-                rgba(246, 100, 100, 1)
-            );
-            background-size: 400%;
-            border-radius: 20px;
-            z-index: -1;
-            animation: shadow 20s linear infinite;
-        }
-
-        &:after {
-            top: -8px;
-            left: -8px;
-            width: calc(100% + 16px);
-            height: calc(100% + 16px);
-            filter: blur(24px);
-            opacity: 0.9;
-        }
+    &.is-focused {
+        border-color: var(--lp-accent);
+        box-shadow: 0 0 0 3px var(--lp-accent-wash);
     }
 
-    @keyframes shadow {
-        0% {
-            background-position: 0 0;
-        }
-        50.01% {
-            background-position: 200% 0;
-        }
-        100% {
-            background-position: 0 0;
-        }
-    }
-
-    .power-editor-block {
+    .lp-composer__input {
         width: 100%;
-        border: rgba(200, 200, 200, 0.1) solid thin;
-        border-radius: 20px;
-        overflow: hidden;
+        min-height: 20px;
+        max-height: 220px;
+        background: transparent;
+        border: none;
+        color: var(--lp-text);
+        font-size: var(--lp-t-body);
+        line-height: 1.55;
+        resize: none;
+        overflow-y: auto;
+
+        &::placeholder {
+            color: var(--lp-text-faint);
+        }
+
+        &:disabled {
+            cursor: not-allowed;
+        }
     }
 
-    .editor-submit-button {
-        position: absolute;
-        right: 12px;
-        bottom: 12px;
-    }
-
-    .bg-wrapper {
-        position: relative;
-        left: 0px;
-        top: 0px;
-        width: 100%;
-        height: 100%;
-        padding: 5px;
-        gap: 5px;
-        background: linear-gradient(
-            90deg,
-            rgba(129, 208, 246, 1),
-            rgba(146, 156, 218, 1),
-            rgba(226, 121, 162, 1)
-        );
-        border-radius: 20px;
+    .lp-composer__foot {
+        gap: 10px;
         display: flex;
-        flex-direction: column;
-        box-shadow:
-            0px -13px 20px rgba(129, 208, 246, 0.1),
-            16px 0px 20px rgba(129, 208, 246, 0.1),
-            0px 13px 20px rgba(146, 156, 218, 0.1),
-            -16px 0px 20px rgba(226, 121, 162, 0.1);
+        align-items: center;
+        min-width: 0;
+    }
 
-        .top-title {
-            @include Vcenter;
+    .lp-composer__hint {
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-sm);
+        color: var(--lp-text-mute);
+        white-space: nowrap;
+    }
 
-            position: relative;
-            width: 100%;
-            height: 35px;
-            padding: 0px 10px;
-            font-size: 15px;
-            font-weight: lighter;
-            color: rgba(255, 255, 255, 0.9);
-            line-height: 50px;
-            user-select: none;
-        }
+    .lp-composer__spacer {
+        flex: 1;
+    }
+
+    .lp-composer__keys {
+        gap: 4px;
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
     }
 }
 </style>

@@ -1,29 +1,25 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
-import tool from "./tools";
-
 import Manage from "./Manage";
-
-const AsyncLoad = tool.AsyncLoad;
 
 const router = createRouter({
     history: createWebHashHistory(import.meta.env.BASE_URL),
     routes: [
+        // the console is the product; there is no marketing page to land on
         {
             path: '/',
-            name: 'home',
-            component: AsyncLoad(() => import("@/views/client/home/index.vue")),
-            meta: {
-                title: "LoopAI"
-            }
+            redirect: '/m'
         },
-        Manage
+        Manage,
+        {
+            path: '/:pathMatch(.*)*',
+            redirect: '/m'
+        }
     ]
 })
 
 router.beforeEach((to, from, next) => {
-    if (to.meta.title)
-        document.title = to.meta.title
+    if (to.meta.title) document.title = to.meta.title
     next()
 })
 

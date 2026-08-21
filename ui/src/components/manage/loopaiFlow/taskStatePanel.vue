@@ -9,7 +9,7 @@
                     :items="pivotItems"
                     :tab="true"
                     :fontSize="12"
-                    background="rgba(255, 255, 255, 1)"
+                    background="var(--lp-chrome)"
                     :sliderBackground="gradient"
                     :borderRadius="8"
                     padding="0px 5px"
@@ -341,13 +341,10 @@ export default {
     .state-group-card {
         position: relative;
         width: 100%;
-        padding: 18px 20px;
-        background: rgba(255, 255, 255, 0.72);
-        border: rgba(120, 120, 120, 0.08) solid thin;
-        border-radius: 16px;
-        box-sizing: border-box;
-        box-shadow: 0px 8px 30px rgba(18, 26, 64, 0.06);
-        backdrop-filter: blur(10px);
+        padding: 16px;
+        background: var(--lp-surface);
+        border: 1px solid var(--lp-line);
+        border-radius: var(--lp-r-3);
     }
 
     .state-group-header {
@@ -357,7 +354,7 @@ export default {
     }
 
     .state-group-title {
-        font-size: 16px;
+        font-size: var(--lp-t-md);
         font-weight: 600;
         color: rgba(35, 41, 70, 1);
     }

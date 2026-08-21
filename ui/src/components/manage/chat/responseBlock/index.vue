@@ -1,9 +1,11 @@
 <template>
     <transition name="response-block-expand">
         <div v-if="currentMsg.length > 0" class="response-block">
-            <p class="elapsed-time-block">
-                {{ local('Processed') }}: {{ computedElapsedTimeSecond.toFixed(0) }}s
-            </p>
+            <div class="response-block__head">
+                <span class="lp-dot is-running"></span>
+                <span class="lp-label">{{ local('Running') }}</span>
+                <span class="response-block__elapsed">{{ computedElapsedTimeSecond.toFixed(0) }}s</span>
+            </div>
             <div v-for="(msg, index) in currentMsg" :key="index">
                 <component
                     v-if="!msgMapper(msg).default"
@@ -203,26 +205,27 @@ export default {
     position: relative;
     width: 100%;
     height: auto;
-    padding: 15px;
+    padding: 12px;
     flex-shrink: 0;
-    background: rgba(245, 236, 243, 0.65);
-    border-radius: 8px;
+    background: var(--lp-surface);
+    border: 1px solid var(--lp-line);
+    border-radius: var(--lp-r-3);
     gap: 10px;
     display: flex;
     flex-direction: column;
-    backdrop-filter: blur(3px);
-    -webkit-backdrop-filter: blur(3px);
     overflow: hidden;
 
-    .elapsed-time-block {
-        font-size: 12px;
-        font-weight: bold;
-        color: rgba(39, 38, 37, 1);
-        user-select: none;
+    .response-block__head {
+        gap: 7px;
+        display: flex;
+        align-items: center;
     }
 
-    .msg-block:last-child {
-        margin-bottom: 0px;
+    .response-block__elapsed {
+        margin-left: auto;
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-sm);
+        color: var(--lp-text-mute);
     }
 }
 

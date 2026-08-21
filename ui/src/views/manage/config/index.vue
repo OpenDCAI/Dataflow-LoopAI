@@ -1,33 +1,34 @@
 <template>
     <div class="lp-serving-container">
         <div class="major-container">
-            <div class="title-block">
-                <p class="main-title">{{ local('Global Config') }}</p>
-                <div class="right-block">
-                    <fv-button
-                        theme="dark"
-                        icon="Go"
-                        :is-box-shadow="true"
-                        :background="gradient"
-                        :disabled="!lock.update"
-                        border-radius="6"
-                        style="width: 90px"
-                        @click="updateConfig"
-                    >
-                        {{ local('Update') }}
-                    </fv-button>
-                    <fv-button
-                        icon="Refresh"
-                        :is-box-shadow="true"
-                        border-radius="6"
-                        :disabled="!lock.update"
-                        style="width: 90px"
-                        @click="reset"
-                    >
-                        {{ local('Reset') }}
-                    </fv-button>
-                </div>
-            </div>
+            <header class="lp-bar">
+                <span class="lp-bar__title">{{ local('Global Config') }}</span>
+                <span class="lp-config__scope">{{ local('applies to every task') }}</span>
+                <div class="lp-bar__spacer"></div>
+                <template v-if="dirty">
+                    <span class="lp-config__dirty">{{ local('unsaved changes') }}</span>
+                    <button type="button" class="lp-btn lp-btn--ghost" @click="discard">
+                        {{ local('Discard') }}
+                    </button>
+                </template>
+                <button
+                    type="button"
+                    class="lp-btn lp-btn--ghost"
+                    :disabled="!lock.update"
+                    :title="local('Restore every value to its default')"
+                    @click="reset"
+                >
+                    {{ local('Defaults') }}
+                </button>
+                <button
+                    type="button"
+                    class="lp-btn lp-btn--primary"
+                    :disabled="!lock.update || !dirty"
+                    @click="updateConfig"
+                >
+                    {{ local('Save') }}
+                </button>
+            </header>
             <div class="content-block">
                 <fv-Collapse
                     :model-value="true"
@@ -149,6 +150,7 @@ export default {
                 Any: (val) => val.toString()
             },
             currentSelectItem: null,
+            baseline: '',
             lock: {
                 update: true
             },
@@ -218,6 +220,11 @@ export default {
         },
         modelPoolAvailable() {
             return Boolean(this.config)
+        },
+        /* The save bar only shows up once there is something to save. */
+        dirty() {
+            if (!this.baseline) return false
+            return JSON.stringify(this.config) !== this.baseline
         },
         modelPoolProxyBaseUrl() {
             return this.modelPoolConfig.proxy_base_url || ''
@@ -521,6 +528,7 @@ export default {
     mounted() {
         this.getConfigs().then(() => {
             this.ensureModelPoolConfig()
+            this.snapshot()
             this.loadModelPoolStatus(false).catch(() => {})
         })
     },
@@ -735,6 +743,7 @@ export default {
             this.lock.update = false
             const res = await this.persistConfig()
             if (res?.code === 200) {
+                this.snapshot()
                 this.$barWarning(this.local('Update Config Success.'), {
                     status: 'correct'
                 })
@@ -742,6 +751,12 @@ export default {
                 this.loadModelPoolStatus(false).catch(() => {})
             }
             this.lock.update = true
+        },
+        snapshot() {
+            this.baseline = JSON.stringify(this.config)
+        },
+        discard() {
+            this.getConfigs().then(() => this.snapshot())
         },
         async persistConfig({ silent = false } = {}) {
             this.ensureModelPoolConfig()
@@ -805,60 +820,48 @@ export default {
     position: relative;
     width: 100%;
     height: 100%;
-    background-color: rgba(243, 243, 243, 1);
+    background: var(--lp-bg);
     display: flex;
     justify-content: center;
+
+    .lp-config__scope,
+    .lp-config__dirty {
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-sm);
+        color: var(--lp-text-mute);
+        white-space: nowrap;
+    }
+
+    .lp-config__dirty {
+        color: var(--lp-run);
+    }
 
     .major-container {
         position: relative;
         width: 100%;
-        max-width: 1200px;
         height: 100%;
-        box-sizing: border-box;
         display: flex;
         flex-direction: column;
-
-        .title-block {
-            @include HbetweenVcenter;
-
-            position: absolute;
-            width: 100%;
-            padding: 15px;
-            padding-top: 30px;
-            z-index: 1;
-            backdrop-filter: blur(20px);
-
-            .main-title {
-                font-size: 28px;
-                font-weight: 400;
-                color: rgba(26, 26, 26, 1);
-            }
-
-            .right-block {
-                @include HendVcenter;
-
-                width: 10px;
-                flex: 1;
-                gap: 5px;
-            }
-        }
 
         .content-block {
             position: relative;
             width: 100%;
+            max-width: 900px;
             height: 100%;
-            gap: 5px;
-            padding: 15px;
-            padding-top: 100px;
+            margin: 0 auto;
+            gap: 16px;
+            padding: 24px 28px 48px 28px;
             display: flex;
             flex-direction: column;
-            overflow: overlay;
+            overflow: auto;
 
-            .lp-serving-title {
-                margin: 10px 0px;
-                font-size: 18px;
-                font-weight: 500;
-                color: rgba(50, 49, 47, 1);
+        .lp-serving-title {
+                margin: 12px 0px 2px 0px;
+                font-family: var(--lp-mono);
+                font-size: var(--lp-t-sm);
+                letter-spacing: 0.09em;
+                text-transform: uppercase;
+                color: var(--lp-text-mute);
             }
 
             .serving-item {
@@ -871,32 +874,33 @@ export default {
                 }
 
                 .serving-item-title {
-                    margin: 5px 0px;
-                    font-size: 13.8px;
-                    font-weight: bold;
-                    color: rgba(123, 139, 209, 1);
+                    margin: 4px 0px;
+                    font-size: var(--lp-t-md);
+                    font-weight: 600;
+                    color: var(--lp-text);
                     user-select: none;
                 }
 
                 .serving-item-light-title {
-                    margin: 5px 0px;
-                    font-size: 12px;
-                    color: rgba(95, 95, 95, 1);
+                    margin: 4px 0px;
+                    font-family: var(--lp-mono);
+                    font-size: var(--lp-t-cap);
+                    color: var(--lp-text-dim);
                     user-select: none;
                 }
 
                 .serving-item-info {
-                    margin: 5px 0px;
-                    font-size: 12px;
-                    color: rgba(120, 120, 120, 1);
+                    margin: 4px 0px;
+                    font-size: 11.5px;
+                    color: var(--lp-text-mute);
                     user-select: none;
                 }
 
                 .serving-item-bold-info {
-                    margin: 5px 0px;
-                    font-size: 16px;
-                    font-weight: bold;
-                    color: rgba(27, 27, 27, 1);
+                    margin: 4px 0px;
+                    font-size: var(--lp-t-body);
+                    font-weight: 600;
+                    color: var(--lp-text);
                     user-select: none;
                 }
 
@@ -904,9 +908,8 @@ export default {
                     position: relative;
                     width: 100%;
                     height: auto;
-                    padding: 15px 0px;
-                    box-sizing: border-box;
-                    line-height: 3;
+                    padding: 10px 0px;
+                    line-height: 1.7;
                     display: flex;
                     flex-direction: column;
                 }
@@ -914,7 +917,7 @@ export default {
                 .serving-item-row {
                     position: relative;
                     width: 100%;
-                    padding: 0px 42px;
+                    padding: 6px 14px;
                     flex-wrap: wrap;
                     box-sizing: border-box;
                     display: flex;
@@ -945,7 +948,7 @@ export default {
                 hr {
                     margin: 10px 0px;
                     border: none;
-                    border-top: rgba(120, 120, 120, 0.1) solid thin;
+                    border-top: var(--lp-line) solid thin;
                 }
             }
         }

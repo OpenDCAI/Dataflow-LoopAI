@@ -1,4 +1,136 @@
 export default {
+    "Light theme": {
+        "en": "Light theme",
+        "zh": "浅色主题"
+    },
+    "Dark theme": {
+        "en": "Dark theme",
+        "zh": "深色主题"
+    },
+    "Delete": {
+        "en": "Delete",
+        "zh": "删除"
+    },
+    "Delete this task?": {
+        "en": "Delete this task?",
+        "zh": "删除这个任务？"
+    },
+    "Task name, or leave blank": {
+        "en": "Task name, or leave blank",
+        "zh": "任务名称，可留空"
+    },
+    "No task matches that.": {
+        "en": "No task matches that.",
+        "zh": "没有匹配的任务。"
+    },
+    "No tasks yet. The first thing you send becomes one.": {
+        "en": "No tasks yet. The first thing you send becomes one.",
+        "zh": "还没有任务，你发送的第一条消息会创建一个。"
+    },
+    "No task yet": {
+        "en": "No task yet",
+        "zh": "暂无任务"
+    },
+    "now": {
+        "en": "now",
+        "zh": "刚刚"
+    },
+    "idle": {
+        "en": "idle",
+        "zh": "空闲"
+    },
+    "failed": {
+        "en": "failed",
+        "zh": "失败"
+    },
+    "running": {
+        "en": "running",
+        "zh": "运行中"
+    },
+    "Graph": {
+        "en": "Graph",
+        "zh": "图"
+    },
+    "Split": {
+        "en": "Split",
+        "zh": "分栏"
+    },
+    "Log": {
+        "en": "Log",
+        "zh": "日志"
+    },
+    "Confirm reset": {
+        "en": "Confirm reset",
+        "zh": "确认重置"
+    },
+    "Reset conversation": {
+        "en": "Reset conversation",
+        "zh": "重置会话"
+    },
+    "Transcript": {
+        "en": "Transcript",
+        "zh": "对话记录"
+    },
+    "Run failed. Send again to retry.": {
+        "en": "Run failed. Send again to retry.",
+        "zh": "运行失败，重新发送即可重试。"
+    },
+    "Nothing yet. Whatever you send below starts the loop.": {
+        "en": "Nothing yet. Whatever you send below starts the loop.",
+        "zh": "还没有内容，在下方发送即可启动循环。"
+    },
+    "Send": {
+        "en": "Send",
+        "zh": "发送"
+    },
+    "Creates a task on send": {
+        "en": "Creates a task on send",
+        "zh": "发送后自动创建任务"
+    },
+    "Tell the loop what to do next...": {
+        "en": "Tell the loop what to do next...",
+        "zh": "告诉循环下一步做什么..."
+    },
+    "Describe the model you want. Sending starts the first task.": {
+        "en": "Describe the model you want. Sending starts the first task.",
+        "zh": "描述你想要的模型，发送后开始第一个任务。"
+    },
+    "Looper takes over in": {
+        "en": "Looper takes over in",
+        "zh": "Looper 将在"
+    },
+    "unless you type.": {
+        "en": "unless you type.",
+        "zh": "后接管，除非你继续输入。"
+    },
+    "Hold": {
+        "en": "Hold",
+        "zh": "暂停"
+    },
+    "Looper": {
+        "en": "Looper",
+        "zh": "Looper"
+    },
+    "applies to every task": {
+        "en": "applies to every task",
+        "zh": "对所有任务生效"
+    },
+    "unsaved changes": {
+        "en": "unsaved changes",
+        "zh": "有未保存的修改"
+    },
+    "Discard": {
+        "en": "Discard",
+        "zh": "放弃修改"
+    },
+    "Defaults": {
+        "en": "Defaults",
+        "zh": "恢复默认"
+    },
+    "Restore every value to its default": {
+        "en": "Restore every value to its default",
+        "zh": "把每一项恢复为默认值"
+    },
     "Logout": {
         "en": "Logout",
         "zh": "退出"

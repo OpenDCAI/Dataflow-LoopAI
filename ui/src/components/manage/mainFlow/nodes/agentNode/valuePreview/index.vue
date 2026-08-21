@@ -308,9 +308,9 @@ export default {
         height: auto;
         flex: 1;
         padding: 5px 5px;
-        background: rgba(255, 255, 255, 0.8);
+        background: var(--lp-surface);
         font-size: 12px;
-        color: rgba(120, 120, 120, 1);
+        color: var(--lp-text-mute);
         border-radius: 6px;
         overflow-wrap: anywhere;
         user-select: none;
@@ -319,7 +319,7 @@ export default {
 
     .path-preview {
         height: 30px;
-        background: rgba(255, 255, 255, 0.3);
+        background: var(--lp-surface);
         border: rgba(199, 168, 252, 0) solid 2px;
         box-sizing: border-box;
         transition: all 0.3s;
@@ -327,12 +327,12 @@ export default {
         cursor: pointer;
 
         &:hover {
-            background: rgba(255, 255, 255, 0.9);
+            background: var(--lp-surface);
             border: rgba(199, 168, 252, 0.3) solid 2px;
         }
 
         &:active {
-            background: rgba(239, 239, 239, 0.8);
+            background: var(--lp-raised);
         }
     }
 }

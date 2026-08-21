@@ -189,9 +189,9 @@ export default {
     width: 100%;
     padding: 12px;
     box-sizing: border-box;
-    border: 1px solid rgba(224, 226, 232, 1);
+    border: 1px solid var(--lp-line);
     border-radius: 8px;
-    background: rgba(249, 250, 252, 1);
+    background: var(--lp-surface);
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -206,7 +206,7 @@ export default {
     min-width: 0;
     font-size: 13px;
     font-weight: 600;
-    color: rgba(44, 48, 60, 1);
+    color: var(--lp-text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -225,15 +225,15 @@ export default {
     font-weight: 600;
     line-height: 16px;
     text-transform: uppercase;
-    background: rgba(240, 240, 244, 1);
+    background: var(--lp-surface);
     color: rgba(96, 102, 120, 1);
 }
 .model-tier-badge.high {
-    background: rgba(224, 242, 233, 1);
-    color: rgba(28, 116, 86, 1);
+    background: var(--lp-surface);
+    color: var(--lp-text);
 }
 .model-tier-badge.medium {
-    background: rgba(230, 238, 252, 1);
+    background: var(--lp-surface);
     color: rgba(44, 90, 168, 1);
 }
 .model-register-fields {
@@ -253,7 +253,7 @@ export default {
 }
 .model-register-fields span {
     font-size: 12px;
-    color: rgba(95, 95, 95, 1);
+    color: var(--lp-text);
 }
 @media (max-width: 760px) {
     .model-register-fields {

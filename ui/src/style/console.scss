@@ -1,0 +1,476 @@
+/**
+ * LoopAI Console — the component layer.
+ *
+ * A small, flat vocabulary shared by every screen: one button, one input,
+ * one segmented switch, one status dot, one card. Anything a screen needs
+ * beyond this belongs to that screen, not here.
+ */
+
+/* ---------------------------------------------------------------- text */
+
+.lp-label {
+    font-family: var(--lp-mono);
+    font-size: var(--lp-t-sm);
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--lp-text-mute);
+    user-select: none;
+}
+
+.lp-mono {
+    font-family: var(--lp-mono);
+    font-size: var(--lp-t-cap);
+}
+
+.lp-dim {
+    color: var(--lp-text-dim);
+}
+
+.lp-mute {
+    color: var(--lp-text-mute);
+}
+
+.lp-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* -------------------------------------------------------------- button */
+
+.lp-btn {
+    height: var(--lp-h-md);
+    padding: 0 12px;
+    gap: 6px;
+    background: var(--lp-raised);
+    color: var(--lp-text);
+    border: 1px solid var(--lp-line-hi);
+    border-radius: var(--lp-r-2);
+    font-size: var(--lp-t-cap);
+    font-weight: 500;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+        background var(--lp-fast) var(--lp-ease),
+        border-color var(--lp-fast) var(--lp-ease),
+        color var(--lp-fast) var(--lp-ease);
+
+    &:hover {
+        background: var(--lp-active);
+    }
+
+    &:active {
+        background: var(--lp-raised);
+    }
+
+    &.lp-btn--primary {
+        background: var(--lp-accent);
+        color: var(--lp-on-accent);
+        border-color: transparent;
+        font-weight: 600;
+
+        &:hover {
+            background: var(--lp-accent-hi);
+        }
+    }
+
+    &.lp-btn--ghost {
+        background: transparent;
+        color: var(--lp-text-dim);
+        border-color: transparent;
+
+        &:hover {
+            background: var(--lp-raised);
+            color: var(--lp-text);
+        }
+    }
+
+    &.lp-btn--danger {
+        background: transparent;
+        color: var(--lp-err);
+        border-color: var(--lp-err-line);
+
+        &:hover {
+            background: var(--lp-err-wash);
+        }
+    }
+
+    &.lp-btn--sm {
+        height: var(--lp-h-sm);
+        padding: 0 8px;
+        font-size: var(--lp-t-sm);
+    }
+
+    &.lp-btn--lg {
+        height: var(--lp-h-lg);
+        padding: 0 16px;
+        font-size: var(--lp-t-body);
+    }
+
+    &.lp-btn--icon {
+        width: var(--lp-h-md);
+        padding: 0;
+
+        &.lp-btn--sm {
+            width: var(--lp-h-sm);
+        }
+
+        &.lp-btn--lg {
+            width: var(--lp-h-lg);
+        }
+    }
+
+    &:disabled,
+    &.is-disabled {
+        background: var(--lp-surface);
+        color: var(--lp-text-faint);
+        border-color: var(--lp-line);
+        cursor: not-allowed;
+    }
+
+    .ms-Icon {
+        font-size: 12px;
+    }
+
+    svg {
+        flex-shrink: 0;
+    }
+}
+
+/* --------------------------------------------------------------- input */
+
+.lp-input,
+.lp-textarea {
+    width: 100%;
+    padding: 0 10px;
+    background: var(--lp-bg);
+    color: var(--lp-text);
+    border: 1px solid var(--lp-line-hi);
+    border-radius: var(--lp-r-2);
+    font-size: var(--lp-t-cap);
+    transition:
+        border-color var(--lp-fast) var(--lp-ease),
+        box-shadow var(--lp-fast) var(--lp-ease);
+
+    &::placeholder {
+        color: var(--lp-text-faint);
+    }
+
+    &:focus,
+    &:focus-visible {
+        outline: none;
+        border-color: var(--lp-accent);
+        box-shadow: 0 0 0 3px var(--lp-accent-wash);
+    }
+
+    &:disabled {
+        color: var(--lp-text-faint);
+        cursor: not-allowed;
+    }
+}
+
+.lp-input {
+    height: var(--lp-h-md);
+}
+
+.lp-textarea {
+    padding: 8px 10px;
+    line-height: 1.6;
+    resize: none;
+}
+
+.lp-input--mono,
+.lp-textarea--mono {
+    font-family: var(--lp-mono);
+}
+
+/* ---------------------------------------------------------- segmented */
+
+.lp-seg {
+    height: var(--lp-h);
+    padding: 2px;
+    gap: 2px;
+    background: var(--lp-chrome);
+    border: 1px solid var(--lp-line);
+    border-radius: var(--lp-r-2);
+    display: inline-flex;
+    align-items: center;
+}
+
+.lp-seg__item {
+    height: 100%;
+    padding: 0 10px;
+    background: transparent;
+    color: var(--lp-text-dim);
+    border: none;
+    border-radius: var(--lp-r-1);
+    font-size: var(--lp-t-cap);
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    transition:
+        background var(--lp-fast) var(--lp-ease),
+        color var(--lp-fast) var(--lp-ease);
+
+    &:hover {
+        color: var(--lp-text);
+    }
+
+    &.is-active {
+        background: var(--lp-raised);
+        color: var(--lp-text);
+        font-weight: 500;
+    }
+}
+
+/* ----------------------------------------------------------- state dot */
+
+.lp-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--lp-idle);
+    border-radius: var(--lp-r-full);
+    flex-shrink: 0;
+    transition: background var(--lp-slow) var(--lp-ease);
+
+    &.is-running {
+        background: var(--lp-run);
+        box-shadow: 0 0 0 3px var(--lp-run-wash);
+        animation: lp-pulse 1.6s var(--lp-ease) infinite;
+    }
+
+    &.is-ok {
+        background: var(--lp-ok);
+    }
+
+    &.is-failed {
+        background: var(--lp-err);
+    }
+}
+
+@keyframes lp-pulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 2px var(--lp-run-wash);
+    }
+    50% {
+        box-shadow: 0 0 0 5px var(--lp-run-wash);
+    }
+}
+
+/* ----------------------------------------------------------------- chip */
+
+.lp-chip {
+    height: 20px;
+    padding: 0 8px;
+    gap: 6px;
+    background: var(--lp-raised);
+    color: var(--lp-text-dim);
+    border-radius: var(--lp-r-full);
+    font-family: var(--lp-mono);
+    font-size: var(--lp-t-sm);
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+
+    &.lp-chip--accent {
+        background: var(--lp-accent-wash);
+        color: var(--lp-accent);
+    }
+
+    &.lp-chip--run {
+        background: var(--lp-run-wash);
+        color: var(--lp-run);
+    }
+
+    &.lp-chip--ok {
+        background: var(--lp-ok-wash);
+        color: var(--lp-ok);
+    }
+
+    &.lp-chip--err {
+        background: var(--lp-err-wash);
+        color: var(--lp-err);
+    }
+}
+
+.lp-kbd {
+    height: 19px;
+    min-width: 19px;
+    padding: 0 5px;
+    background: var(--lp-raised);
+    border: 1px solid var(--lp-line-hi);
+    border-radius: var(--lp-r-1);
+    font-family: var(--lp-mono);
+    font-size: var(--lp-t-xs);
+    color: var(--lp-text-mute);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* ---------------------------------------------------------------- card */
+
+.lp-card {
+    background: var(--lp-surface);
+    border: 1px solid var(--lp-line);
+    border-radius: var(--lp-r-3);
+
+    &.is-selected {
+        border-color: var(--lp-accent-line);
+    }
+}
+
+.lp-divider {
+    height: 1px;
+    background: var(--lp-line);
+    border: none;
+}
+
+/* ------------------------------------------------------------ top bar */
+
+.lp-bar {
+    height: var(--lp-bar);
+    padding: 0 12px 0 16px;
+    gap: 12px;
+    border-bottom: 1px solid var(--lp-line);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+
+    .lp-bar__title {
+        font-size: var(--lp-t-body);
+        font-weight: 600;
+    }
+
+    .lp-bar__spacer {
+        flex: 1;
+    }
+
+    .lp-bar__sep {
+        width: 1px;
+        height: 18px;
+        background: var(--lp-line);
+        flex-shrink: 0;
+    }
+}
+
+/* ------------------------------------------------------- setting rows */
+
+.lp-field {
+    padding: 16px 0;
+    gap: 24px;
+    border-bottom: 1px solid var(--lp-line);
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    align-items: start;
+
+    &:last-child {
+        border-bottom: none;
+    }
+
+    .lp-field__name {
+        font-size: var(--lp-t-md);
+        font-weight: 500;
+    }
+
+    .lp-field__hint {
+        margin-top: 4px;
+        font-size: 11.5px;
+        line-height: 1.55;
+        color: var(--lp-text-mute);
+    }
+}
+
+@media (max-width: 900px) {
+    .lp-field {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 8px;
+    }
+}
+
+/* ------------------------------------------------------------- states */
+
+.lp-empty {
+    padding: 16px 14px;
+    font-size: var(--lp-t-cap);
+    line-height: 1.6;
+    color: var(--lp-text-faint);
+}
+
+.lp-progress {
+    height: 2px;
+    background: var(--lp-line);
+    border-radius: 2px;
+    overflow: hidden;
+
+    span {
+        height: 100%;
+        background: var(--lp-accent);
+        display: block;
+        transition: width var(--lp-slow) var(--lp-ease);
+    }
+
+    &.is-running span {
+        background: var(--lp-run);
+    }
+
+    &.is-indeterminate span {
+        width: 35%;
+        animation: lp-slide 1.2s var(--lp-ease) infinite;
+    }
+}
+
+@keyframes lp-slide {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(320%);
+    }
+}
+
+/* ------------------------------------------------------------- sheets */
+
+.lp-sheet {
+    background: var(--lp-chrome);
+    border-left: 1px solid var(--lp-line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+
+    .lp-sheet__head {
+        height: 36px;
+        padding: 0 8px 0 14px;
+        gap: 8px;
+        border-bottom: 1px solid var(--lp-line);
+        display: flex;
+        align-items: center;
+        flex-shrink: 0;
+    }
+
+    .lp-sheet__body {
+        flex: 1;
+        padding: 14px;
+        overflow: auto;
+    }
+}
+
+/* --------------------------------------------------------------- misc */
+
+.lp-scroll {
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
+.lp-fade-enter-active,
+.lp-fade-leave-active {
+    transition: opacity var(--lp-slow) var(--lp-ease);
+}
+
+.lp-fade-enter-from,
+.lp-fade-leave-to {
+    opacity: 0;
+}

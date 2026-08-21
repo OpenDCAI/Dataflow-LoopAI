@@ -1,27 +1,24 @@
 <template>
-    <div v-show="visible" class="looper-takeover-warning">
-        <fv-button
-            theme="dark"
-            class="interrupt-button"
-            background="linear-gradient(135deg, rgba(255, 204, 77, 1), rgba(242, 166, 34, 1))"
-            border-radius="50"
-            font-size="12"
-            style="width: 30px"
-            @click="handleLooperTakeoverInterrupt"
-        >
-            <i class="ms-Icon ms-Icon--CheckboxFill"></i>
-        </fv-button>
-        <p v-show="!runningMe && !waiting" class="warning-text">
-            {{ local('Looper will take over in') }}
+    <div v-show="visible" class="lp-takeover">
+        <span class="lp-dot is-running"></span>
+        <p v-show="!runningMe && !waiting" class="lp-takeover__text">
+            {{ local('Looper takes over in') }}
             <span>{{ seconds }}s</span>
-            {{ local('for the next action.') }}
+            {{ local('unless you type.') }}
         </p>
-        <p v-show="!runningMe && waiting" class="warning-text">
+        <p v-show="!runningMe && waiting" class="lp-takeover__text">
             {{ local('Waiting for response...') }}
         </p>
-        <p v-show="runningMe" class="warning-text">
+        <p v-show="runningMe" class="lp-takeover__text">
             {{ local('Looper executing...') }}
         </p>
+        <button
+            type="button"
+            class="lp-btn lp-btn--ghost lp-btn--sm lp-takeover__action"
+            @click="handleLooperTakeoverInterrupt"
+        >
+            {{ runningMe ? local('Cancel') : local('Hold') }}
+        </button>
     </div>
 </template>
 
@@ -168,33 +165,27 @@ export default {
 </script>
 
 <style lang="scss">
-.looper-takeover-warning {
-    flex: 1;
+.lp-takeover {
+    gap: 8px;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 4px 10px 4px 4px;
-    border-radius: 999px;
-    background: rgba(255, 245, 204, 0.96);
-    border: rgba(242, 166, 34, 0.35) solid thin;
-    box-shadow: 0px 4px 16px rgba(242, 166, 34, 0.18);
+    min-width: 0;
 
-    .interrupt-button {
-        height: 28px;
-        color: rgba(92, 54, 0, 1);
-        font-weight: 600;
-    }
-
-    .warning-text {
-        margin: 0;
-        font-size: 12px;
-        color: rgba(122, 73, 0, 1);
+    .lp-takeover__text {
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-sm);
+        color: var(--lp-run);
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
 
         span {
-            font-weight: 700;
-            color: rgba(166, 92, 0, 1);
+            font-weight: 500;
         }
+    }
+
+    .lp-takeover__action {
+        flex-shrink: 0;
     }
 }
 </style>

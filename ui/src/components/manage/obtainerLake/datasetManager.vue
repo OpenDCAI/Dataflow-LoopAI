@@ -659,7 +659,7 @@ export default {
 .dataset-manager {
     display: grid;
     gap: 12px;
-    color: rgba(35, 35, 35, 0.9);
+    color: var(--lp-text);
 }
 
 .dm-error-banner, .dm-notice {
@@ -727,7 +727,7 @@ export default {
     border: 1px solid rgba(90, 45, 133, 0.25);
     border-radius: 6px;
     background: #fff;
-    color: rgba(35, 35, 35, 0.85);
+    color: var(--lp-text);
     font-size: 12px;
     cursor: pointer;
     transition: background 0.15s ease;
@@ -763,7 +763,7 @@ export default {
     }
     th {
         background: rgba(90, 45, 133, 0.05);
-        color: rgba(65, 65, 65, 0.7);
+        color: var(--lp-text);
         font-size: 11px;
         font-weight: 700;
     }
@@ -810,7 +810,7 @@ export default {
     border: 1px solid rgba(90, 45, 133, 0.18);
     border-radius: 5px;
     background: #fff;
-    color: rgba(65, 65, 65, 0.75);
+    color: var(--lp-text);
     cursor: pointer;
     font-size: 12px;
     transition: background 0.15s ease;
@@ -874,7 +874,7 @@ export default {
     margin-bottom: 10px;
     font-size: 12px;
     font-weight: 700;
-    color: rgba(65, 65, 65, 0.8);
+    color: var(--lp-text);
 }
 .dm-block-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
@@ -886,7 +886,7 @@ export default {
         display: grid;
         gap: 4px;
         font-size: 11px;
-        color: rgba(65, 65, 65, 0.75);
+        color: var(--lp-text);
         span em { color: #b4232a; font-style: normal; }
     }
     input, select, textarea {

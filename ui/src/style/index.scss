@@ -1,0 +1,10 @@
+/**
+ * LoopAI Console — the one stylesheet the app imports.
+ * Order matters: tokens define the vocabulary, base sets element defaults,
+ * console adds the component layer, vendor pulls third-party chrome onto it.
+ */
+
+@use './tokens.scss';
+@use './base.scss';
+@use './console.scss';
+@use './vendor.scss';

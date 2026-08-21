@@ -1,452 +1,377 @@
 <template>
-    <transition name="task-slide">
-        <div v-show="thisValue" class="lp-task-container">
-            <div class="lp-task-header">
-                <div class="left-block">
-                    <fv-img class="logo" :src="img.task" alt="task"></fv-img>
-                    <p class="title">{{ local('Tasks') }}</p>
-                </div>
-                <fv-button border-radius="8" style="width: 35px; height: 35px" @click="thisValue = false">
-                    <i class="ms-Icon ms-Icon--ChevronLeft"></i>
-                </fv-button>
+    <aside class="lp-tasks">
+        <header class="lp-tasks__head">
+            <span class="lp-label">{{ local('Tasks') }}</span>
+            <div class="lp-tasks__head-actions">
+                <button
+                    type="button"
+                    class="lp-btn lp-btn--ghost lp-btn--icon lp-btn--sm"
+                    :class="{ 'is-on': showSearch }"
+                    :title="local('Search Tasks ...')"
+                    @click="toggleSearch"
+                >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                        <circle cx="11" cy="11" r="6.5" />
+                        <path d="M16 16l4 4" />
+                    </svg>
+                </button>
+                <button
+                    type="button"
+                    class="lp-btn lp-btn--icon lp-btn--sm"
+                    :title="local('New Task')"
+                    @click="startCreate"
+                >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <path d="M12 5v14M5 12h14" />
+                    </svg>
+                </button>
             </div>
-            <div class="lp-task-content">
-                <hr />
-                <div class="search-block">
-                    <fv-text-box :placeholder="local('Search Tasks ...')" icon="Search" class="task-search-box"
-                        :revealBorder="true" borderRadius="30" borderWidth="2" :isBoxShadow="true"
-                        :focusBorderColor="color" :revealBorderColor="'rgba(103, 105, 251, 0.6)'"
-                        :reveal-background-color="[
-                            'rgba(103, 105, 251, 0.1)',
-                            'rgba(103, 105, 251, 0.6)'
-                        ]" @debounce-input="searchText = $event"></fv-text-box>
-                    <div v-show="searchText" class="search-result-info">
-                        {{ local('Total') }}: {{ totalNumVisible }} {{ local('tasks') }}
-                        <p class="search-text">"{{ searchText }}"</p>
-                    </div>
-                </div>
-                <hr />
-                <fv-button icon="Add" border-radius="8" :is-box-shadow="true"
-                    style="width: calc(100% - 20px); height: 40px; margin-left: 10px"
-                    @click="(show.add = true), (addPanelMode = 'add')">{{ local('New Task') }}</fv-button>
-                <div v-show="!lock.task" class="task-list-loading">
-                    <fv-progress-ring loading="true" :r="20" :border-width="3" :color="color"
-                        :background="'rgba(245, 245, 245, 1)'"></fv-progress-ring>
-                </div>
-                <div class="task-list-block">
-                    <div v-show="item.show" v-for="(item, index) in tasks" :key="item.id" class="task-item"
-                        :class="[{ choosen: thisTask && thisTask.task_id === item.task_id }]" @click="selectTask(item)"
-                        @contextmenu="showRightMenu($event, item)">
-                        <div class="task-item-main">
-                            <div class="main-icon">
-                                <i class="ms-Icon ms-Icon--DialShape3"></i>
-                            </div>
+        </header>
 
-                            <div class="content-block">
-                                <p class="task-name" :title="item.name">{{ item.name }}</p>
-                                <div class="row-item">
-                                    <p class="task-info" :title="item.task_id">
-                                        {{ local('Task ID') }}: {{ item.task_id }}
-                                    </p>
-                                    <time-rounder :model-value="new Date(item.updatedAt)" :foreground="color"
-                                        style="width: auto"></time-rounder>
-                                </div>
-                            </div>
-                        </div>
-                        <hr />
-                    </div>
-                </div>
-            </div>
-            <task-panel v-model="show.add" :obj="currentContextItem" :addPanelMode="addPanelMode"
-                @confirm="confirmTask"></task-panel>
-            <fv-right-menu v-model="show.rightMenu" ref="rightMenu">
-                <span @click="(show.add = true), (addPanelMode = 'add')">
-                    <i class="ms-Icon ms-Icon--Add" :style="{ color: color }"></i>
-                    <p>{{ local('New Task') }}</p>
-                </span>
-                <span @click="(show.add = true), (addPanelMode = 'rename')">
-                    <i class="ms-Icon ms-Icon--Rename" :style="{ color: color }"></i>
-                    <p>{{ local('Rename Task') }}</p>
-                </span>
-                <hr />
-                <span @click="delTask(currentContextItem)">
-                    <i class="ms-Icon ms-Icon--Delete" :style="{ color: '#c8323b' }"></i>
-                    <p>{{ local('Delete Task') }}</p>
-                </span>
-            </fv-right-menu>
+        <div v-if="showSearch" class="lp-tasks__search">
+            <input
+                ref="search"
+                v-model="searchText"
+                class="lp-input"
+                type="text"
+                :placeholder="local('Search Tasks ...')"
+                @keydown.esc="closeSearch"
+            />
         </div>
-    </transition>
+
+        <div v-if="creating" class="lp-tasks__search">
+            <input
+                ref="create"
+                v-model="draftName"
+                class="lp-input lp-input--mono"
+                type="text"
+                :placeholder="local('Task name, or leave blank')"
+                @keydown.enter="confirmCreate"
+                @keydown.esc="cancelCreate"
+                @blur="confirmCreate"
+            />
+        </div>
+
+        <div class="lp-tasks__list lp-scroll">
+            <div
+                v-for="item in visibleTasks"
+                :key="item.id"
+                class="lp-tasks__item"
+                :class="{ 'is-current': isCurrent(item) }"
+                @click="select(item)"
+            >
+                <template v-if="armedId === item.id">
+                    <div class="lp-tasks__armed">
+                        <span class="lp-tasks__armed-copy">{{ local('Delete this task?') }}</span>
+                        <div class="lp-tasks__armed-actions">
+                            <button type="button" class="lp-btn lp-btn--danger lp-btn--sm" @click.stop="confirmDelete(item)">
+                                {{ local('Delete') }}
+                            </button>
+                            <button type="button" class="lp-btn lp-btn--ghost lp-btn--sm" @click.stop="armedId = null">
+                                {{ local('Cancel') }}
+                            </button>
+                        </div>
+                    </div>
+                </template>
+
+                <template v-else-if="renamingId === item.id">
+                    <input
+                        ref="rename"
+                        v-model="draftName"
+                        class="lp-input"
+                        type="text"
+                        @click.stop
+                        @keydown.enter="confirmRename(item)"
+                        @keydown.esc="renamingId = null"
+                        @blur="confirmRename(item)"
+                    />
+                </template>
+
+                <template v-else>
+                    <div class="lp-tasks__row">
+                        <span class="lp-dot" :class="dotClass(item)"></span>
+                        <span class="lp-tasks__name lp-truncate" :title="item.name">{{ item.name }}</span>
+                        <div class="lp-tasks__actions">
+                            <button
+                                type="button"
+                                class="lp-btn lp-btn--ghost lp-btn--icon lp-btn--sm"
+                                :title="local('Rename Task')"
+                                @click.stop="startRename(item)"
+                            >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" />
+                                </svg>
+                            </button>
+                            <button
+                                type="button"
+                                class="lp-btn lp-btn--ghost lp-btn--icon lp-btn--sm"
+                                :title="local('Delete Task')"
+                                @click.stop="armedId = item.id"
+                            >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                                    <path d="M5 7h14M10 7V5h4v2M8 7l1 12h6l1-12" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="lp-tasks__meta">
+                        <span class="lp-truncate" :title="item.task_id">{{ item.task_id }}</span>
+                        <span class="lp-tasks__age">{{ relativeTime(item.updatedAt) }}</span>
+                    </div>
+                </template>
+            </div>
+
+            <p v-if="!visibleTasks.length" class="lp-empty">
+                {{
+                    searchText
+                        ? local('No task matches that.')
+                        : local('No tasks yet. The first thing you send becomes one.')
+                }}
+            </p>
+        </div>
+    </aside>
 </template>
 
 <script>
 import { mapState, mapActions } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
 import { useLoopAI } from '@/stores/loopAI'
-import { useVueFlow } from '@vue-flow/core'
-import { useTheme } from '@/stores/theme'
-
-import timeRounder from '@/components/general/timeRounder.vue'
-import taskPanel from '@/components/manage/mainFlow/panels/taskPanel.vue'
-
-import taskIcon from '@/assets/flow/pipeline.svg'
 
 export default {
-    name: 'task',
-    components: {
-        timeRounder,
-        taskPanel
-    },
-    props: {
-        modelValue: {
-            default: false
-        },
-        flowId: {
-            default: ''
-        },
-        task: {
-            default: null
-        },
-        loading: {
-            default: false
-        }
-    },
+    name: 'TaskColumn',
     data() {
         return {
-            thisValue: this.modelValue,
-            thisLoading: this.loading,
             searchText: '',
-            thisTask: null,
-            currentContextItem: null,
-            addPanelMode: 'add',
-            show: {
-                add: false,
-                rightMenu: false
-            },
-            img: {
-                task: taskIcon
-            },
-            lock: {
-                task: true
-            }
-        }
-    },
-    watch: {
-        modelValue(newValue) {
-            this.thisValue = newValue
-            if (newValue) {
-                this.getConfigs()
-                this.getTaskList()
-            }
-        },
-        thisValue(newValue) {
-            this.$emit('update:modelValue', newValue)
-        },
-        loading(newValue) {
-            this.thisLoading = newValue
-        },
-        thisLoading(newValue) {
-            this.$emit('update:loading', newValue)
-        },
-        task(newValue) {
-            this.thisTask = newValue
-        },
-        thisTask() {
-            this.$emit('update:task', this.thisTask)
-        },
-        searchText() {
-            this.filterValues()
+            showSearch: false,
+            creating: false,
+            draftName: '',
+            renamingId: null,
+            armedId: null
         }
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
-        ...mapState(useLoopAI, ['tasks', 'config']),
-        ...mapState(useTheme, ['color', 'gradient']),
-        flatFormatedOperators() {
-            let operators = []
-            for (let key in this.groupOperators) {
-                operators.push(...this.groupOperators[key].items)
-            }
-            return operators
-        },
-        totalNumVisible() {
-            return this.tasks.filter((item) => item.show).length
+        ...mapState(useLoopAI, ['tasks', 'currentTask', 'msgStreamModel']),
+        visibleTasks() {
+            const needle = this.searchText.trim().toLowerCase()
+            if (!needle) return this.tasks
+            return this.tasks.filter((item) => (item.name || '').toLowerCase().includes(needle))
         }
     },
     mounted() {
         this.getTasks()
     },
     methods: {
-        ...mapActions(useLoopAI, ['getTasks', 'getConfigs']),
-        async getTaskList() {
-            if (!this.lock.task) return
-            this.lock.task = false
-            await this.getTasks()
-            this.lock.task = true
+        ...mapActions(useLoopAI, [
+            'getTasks',
+            'setCurrentTask',
+            'createTask',
+            'renameTask',
+            'deleteTask'
+        ]),
+        isCurrent(item) {
+            return this.currentTask?.task_id === item.task_id
         },
-        filterValues() {
-            this.tasks.forEach((item) => {
-                item.show = this.isSearchShowItem(item)
+        dotClass(item) {
+            if (!this.isCurrent(item)) return item.state === 'failed' ? 'is-failed' : ''
+            if (this.msgStreamModel.loading) return 'is-running'
+            if (this.msgStreamModel.status === 'failed') return 'is-failed'
+            return 'is-ok'
+        },
+        select(item) {
+            if (this.isCurrent(item)) return
+            this.armedId = null
+            this.setCurrentTask(item)
+        },
+        toggleSearch() {
+            this.showSearch = !this.showSearch
+            if (this.showSearch) {
+                this.$nextTick(() => this.$refs.search?.focus())
+            } else {
+                this.searchText = ''
+            }
+        },
+        closeSearch() {
+            this.searchText = ''
+            this.showSearch = false
+        },
+        startCreate() {
+            this.creating = true
+            this.draftName = ''
+            this.$nextTick(() => this.$refs.create?.focus())
+        },
+        cancelCreate() {
+            this.creating = false
+            this.draftName = ''
+        },
+        async confirmCreate() {
+            if (!this.creating) return
+            const name = this.draftName
+            this.creating = false
+            this.draftName = ''
+            await this.createTask(name)
+        },
+        startRename(item) {
+            this.renamingId = item.id
+            this.draftName = item.name
+            this.$nextTick(() => {
+                const input = Array.isArray(this.$refs.rename) ? this.$refs.rename[0] : this.$refs.rename
+                input?.focus()
+                input?.select()
             })
         },
-        isSearchShowItem(item) {
-            let searchText = this.searchText.toLowerCase()
-            return item.name.toLowerCase().includes(searchText)
+        async confirmRename(item) {
+            if (this.renamingId !== item.id) return
+            const name = this.draftName
+            this.renamingId = null
+            this.draftName = ''
+            if (name && name !== item.name) await this.renameTask(item, name)
         },
-        async selectTask(item) {
-            console.log(item)
-            this.thisTask = item
+        async confirmDelete(item) {
+            this.armedId = null
+            await this.deleteTask(item)
         },
-        delTask(item) {
-            if (!item) return
-            this.$infoBox(this.local('Are you sure to delete this task?'), {
-                status: 'error',
-                confirm: () => {
-                    this.$api.task.delTask(item.id).then((res) => {
-                        if (res.code === 200) {
-                            this.getTaskList()
-                            this.thisTask = null
-                        } else
-                            this.$barWarning(res.msg || this.local('Delete task failed'), {
-                                status: 'warning'
-                            })
-                    })
-                }
-            })
-        },
-        confirmTask(item) {
-            if (!this.thisTask) this.thisTask = item
-        },
-        showRightMenu($event, item) {
-            this.currentContextItem = item
-            $event.preventDefault()
-            $event.stopPropagation()
-            this.$refs.rightMenu.rightClick($event, document.body)
+        relativeTime(value) {
+            if (!value) return '—'
+            const then = new Date(value).getTime()
+            if (Number.isNaN(then)) return '—'
+            const seconds = Math.max(0, Math.round((Date.now() - then) / 1000))
+            if (seconds < 60) return this.local('now')
+            const minutes = Math.round(seconds / 60)
+            if (minutes < 60) return `${minutes}m`
+            const hours = Math.round(minutes / 60)
+            if (hours < 24) return `${hours}h`
+            const days = Math.round(hours / 24)
+            if (days < 30) return `${days}d`
+            return new Date(value).toISOString().slice(0, 10)
         }
     }
 }
 </script>
 
 <style lang="scss">
-.lp-task-container {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    background: rgba(250, 250, 250, 0.3);
-    border: rgba(120, 120, 120, 0.1) solid thin;
+.lp-tasks {
+    width: var(--lp-column);
+    flex-shrink: 0;
+    background: var(--lp-chrome);
+    border-right: 1px solid var(--lp-line);
     display: flex;
     flex-direction: column;
-    backdrop-filter: blur(10px);
+    min-height: 0;
 
-    hr {
-        margin: 10px 0px;
-        border: none;
-        border-top: rgba(120, 120, 120, 0.1) solid thin;
-    }
-
-    .lp-task-header {
-        position: relative;
-        width: 100%;
-        height: 50px;
-        margin-top: 20px;
-        padding: 15px;
+    .lp-tasks__head {
+        height: var(--lp-bar);
+        padding: 0 8px 0 14px;
+        border-bottom: 1px solid var(--lp-line);
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 15px;
+        flex-shrink: 0;
+    }
 
-        .left-block {
-            @include Vcenter;
+    .lp-tasks__head-actions {
+        gap: 4px;
+        display: flex;
+        align-items: center;
 
-            gap: 15px;
-        }
-
-        .title {
-            @include color-dataflow-title;
-
-            font-size: 18px;
-            font-weight: bold;
-            user-select: none;
-        }
-
-        .logo {
-            width: 25px;
-            height: 25px;
+        .is-on {
+            color: var(--lp-text);
+            background: var(--lp-raised);
         }
     }
 
-    .lp-task-content {
-        position: relative;
-        width: 100%;
-        height: 10px;
+    .lp-tasks__search {
+        padding: 8px 8px 4px 8px;
+        flex-shrink: 0;
+    }
+
+    .lp-tasks__list {
         flex: 1;
+        padding: 6px;
+        gap: 2px;
         display: flex;
         flex-direction: column;
+        min-height: 0;
+    }
 
-        .search-block {
-            position: relative;
-            width: 100%;
-            height: auto;
-            padding: 0px 10px;
-            display: flex;
-            flex-direction: column;
+    .lp-tasks__item {
+        padding: 9px 10px;
+        gap: 5px;
+        border-radius: var(--lp-r-2);
+        border-left: 2px solid transparent;
+        display: flex;
+        flex-direction: column;
+        cursor: pointer;
+        transition: background var(--lp-fast) var(--lp-ease);
 
-            .task-search-box {
-                width: 100%;
-                height: 40px;
-            }
+        &:hover {
+            background: var(--lp-surface);
 
-            .search-result-info {
-                @include Vcenter;
-
-                height: 35px;
-                margin-top: 5px;
-                padding: 0px 10px;
-                background: rgba(239, 239, 239, 1);
-                border-radius: 8px;
-                font-size: 12px;
-                font-weight: 400;
-                color: var(--node-status-color);
-
-                .search-text {
-                    margin-left: 5px;
-                    font-size: 12px;
-                    font-weight: 400;
-                    color: rgba(0, 90, 158, 1);
-                }
+            .lp-tasks__actions {
+                opacity: 1;
             }
         }
 
-        .task-list-loading {
-            position: absolute;
-            top: 150px;
-            left: 50%;
-            transform: translate(-50%, -50%);
-        }
-
-        .task-list-block {
-            position: relative;
-            width: 100%;
-            height: 10px;
-            flex: 1;
-            margin-top: 5px;
-            overflow: overlay;
-
-            .task-item {
-                position: relative;
-                width: 100%;
-                height: 80px;
-                padding: 0px 10px;
-                display: flex;
-                flex-direction: column;
-                transition: background 0.3s;
-
-                &:hover {
-                    background: rgba(227, 231, 251, 0.6);
-
-                    .task-item-main {
-                        .content-block {
-                            .task-name {
-                                color: rgba(0, 90, 158, 1);
-                            }
-                        }
-                    }
-                }
-
-                &:active {
-                    background: rgba(227, 231, 251, 0.8);
-                }
-
-                &.choosen {
-                    background: rgba(227, 231, 251, 1);
-                }
-
-                .task-item-main {
-                    position: relative;
-                    width: 100%;
-                    flex: 1;
-                    display: flex;
-                    align-items: center;
-
-                    .main-icon {
-                        @include HcenterVcenter;
-
-                        position: relative;
-                        width: 40px;
-                        height: 40px;
-                        flex-shrink: 0;
-                        background: linear-gradient(90deg,
-                                rgba(73, 131, 251, 1) 0%,
-                                rgba(100, 161, 252, 1) 100%);
-                        border: 1px solid rgba(120, 120, 120, 0.1);
-                        border-radius: 8px;
-                        color: whitesmoke;
-                        box-shadow: 0px 1px 2px rgba(0, 0, 0, 0.1);
-                    }
-
-                    .content-block {
-                        @include HstartC;
-
-                        position: relative;
-                        width: 50px;
-                        flex: 1;
-                        height: 100%;
-                        padding: 10px;
-                        line-height: 2;
-                        user-select: none;
-
-                        .row-item {
-                            @include HbetweenVcenter;
-
-                            position: relative;
-                            width: 100%;
-                        }
-
-                        .task-name {
-                            @include nowrap;
-
-                            position: relative;
-                            width: 100%;
-                            font-size: 12.8px;
-                            font-weight: bold;
-                            color: rgba(58, 61, 79, 1);
-                            transition: color 0.3s;
-                        }
-
-                        .task-info {
-                            @include nowrap;
-
-                            margin-right: 5px;
-                            font-size: 10px;
-                            color: rgba(120, 120, 120, 1);
-                        }
-                    }
-                }
-
-                hr {
-                    margin-top: 5px;
-                }
-            }
+        &.is-current {
+            background: var(--lp-raised);
+            border-left-color: var(--lp-accent);
         }
     }
-}
 
-.task-slide-enter-active {
-    transition: all 0.6s ease-out;
-}
+    .lp-tasks__row {
+        gap: 7px;
+        display: flex;
+        align-items: center;
+    }
 
-.task-slide-leave-active {
-    transition: all 0.3s;
-}
+    .lp-tasks__name {
+        flex: 1;
+        min-width: 0;
+        font-size: var(--lp-t-md);
+        color: var(--lp-text-dim);
+    }
 
-.task-slide-enter-from,
-.task-slide-leave-to {
-    width: 0px;
-    max-width: 0px;
-}
+    .is-current .lp-tasks__name {
+        color: var(--lp-text);
+        font-weight: 500;
+    }
 
-.task-slide-enter-to,
-.task-slide-leave-from {
-    width: 100%;
-    max-width: 100%;
+    .lp-tasks__actions {
+        gap: 2px;
+        display: flex;
+        align-items: center;
+        opacity: 0;
+        transition: opacity var(--lp-fast) var(--lp-ease);
+    }
+
+    .lp-tasks__meta {
+        gap: 8px;
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-xs);
+        color: var(--lp-text-mute);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .lp-tasks__age {
+        flex-shrink: 0;
+    }
+
+    .lp-tasks__armed {
+        gap: 8px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .lp-tasks__armed-copy {
+        font-size: var(--lp-t-cap);
+        color: var(--lp-text);
+    }
+
+    .lp-tasks__armed-actions {
+        gap: 6px;
+        display: flex;
+    }
 }
 </style>

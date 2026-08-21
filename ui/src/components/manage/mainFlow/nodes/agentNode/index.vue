@@ -13,7 +13,7 @@
                     :loading="true"
                     :r="18"
                     :border-width="3"
-                    background="white"
+                    background="var(--lp-raised)"
                     :color="thisData.borderColor"
                 ></fv-progress-ring>
             </div>
@@ -105,7 +105,7 @@
                             <fv-progress-bar
                                 :model-value="custom_info.value.progress * 100"
                                 :foreground="thisData.iconColor"
-                                :background="'white'"
+                                :background="'var(--lp-raised)'"
                                 :border-radius="8"
                                 style="width: 100%"
                             ></fv-progress-bar>

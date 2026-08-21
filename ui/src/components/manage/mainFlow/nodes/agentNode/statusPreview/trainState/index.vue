@@ -176,8 +176,8 @@ export default {
         padding: 5px;
         background: rgba(45, 45, 45, 1);
         font-size: 10px;
-        color: whitesmoke;
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: var(--lp-text);
+        border: 1px solid var(--lp-surface);
         border-radius: 8px;
         white-space: nowrap;
         overflow: overlay;
@@ -192,10 +192,10 @@ export default {
         margin-top: 5px;
         padding: 5px;
         gap: 5px;
-        background: rgba(250, 250, 250, 0.6);
+        background: var(--lp-surface);
         font-size: 10px;
-        color: whitesmoke;
-        border: 1px solid rgba(120, 120, 120, 0.1);
+        color: var(--lp-text);
+        border: 1px solid var(--lp-line);
         border-radius: 8px;
         white-space: nowrap;
         display: flex;
@@ -207,7 +207,7 @@ export default {
             width: 100%;
             height: auto;
             flex: 1;
-            background: rgba(255, 255, 255, 1);
+            background: var(--lp-surface);
             border-radius: 12px;
         }
     }

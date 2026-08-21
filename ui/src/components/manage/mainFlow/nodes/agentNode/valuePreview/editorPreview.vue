@@ -123,9 +123,9 @@ export default {
     width: 100%;
     min-height: 120px;
     max-height: 220px;
-    border: 1px solid rgba(120, 120, 120, 0.15);
+    border: 1px solid var(--lp-line);
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--lp-surface);
     overflow: auto;
 }
 

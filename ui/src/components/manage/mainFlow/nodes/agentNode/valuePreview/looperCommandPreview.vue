@@ -65,8 +65,8 @@ export default {
 .looper-command-preview {
     width: 100%;
     padding: 10px 12px;
-    background: rgba(255, 255, 255, 0.72);
-    border: 1px solid rgba(160, 160, 160, 0.18);
+    background: var(--lp-surface);
+    border: 1px solid var(--lp-line);
     border-radius: 12px;
     backdrop-filter: blur(8px);
     box-sizing: border-box;
@@ -89,7 +89,7 @@ export default {
         font-size: 8px;
         font-weight: bold;
         color: rgba(8, 145, 178, 1);
-        background: rgba(207, 250, 254, 0.95);
+        background: var(--lp-surface);
     }
 
     .looper-command-badge-label {
@@ -99,7 +99,7 @@ export default {
     }
 
     .looper-command-badge-value {
-        color: rgba(15, 23, 42, 1);
+        color: var(--lp-text);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -109,7 +109,7 @@ export default {
         width: 100%;
         padding: 2px 4px;
         font-size: 8px;
-        color: rgba(55, 65, 81, 1);
+        color: var(--lp-text);
         overflow: hidden;
 
         * {
@@ -121,7 +121,7 @@ export default {
         width: 100%;
         padding: 2px 4px;
         font-size: 8px;
-        color: rgba(120, 120, 120, 1);
+        color: var(--lp-text-mute);
         white-space: pre-wrap;
     }
 }

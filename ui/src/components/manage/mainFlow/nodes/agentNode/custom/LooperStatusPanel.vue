@@ -142,7 +142,7 @@ export default {
     padding: 12px;
     border-radius: 14px;
     background:
-        radial-gradient(circle at top left, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.72)),
+        radial-gradient(circle at top left, var(--lp-surface), var(--lp-surface)),
         linear-gradient(145deg, rgba(161, 145, 206, 0.12), rgba(88, 196, 255, 0.08));
     border: 1px solid rgba(90, 45, 133, 0.1);
     box-shadow: 0 10px 24px rgba(42, 51, 70, 0.08);
@@ -176,7 +176,7 @@ export default {
 .ring-percent {
     font-size: 10px;
     font-weight: 700;
-    color: rgba(45, 45, 45, 0.9);
+    color: var(--lp-text);
 }
 
 .hero-copy {
@@ -201,8 +201,8 @@ export default {
     border-radius: 999px;
     font-size: 10px;
     font-weight: 700;
-    color: white;
-    background: rgba(120, 120, 120, 0.9);
+    color: var(--lp-text);
+    background: var(--lp-raised);
 
     &.running {
         background: rgba(217, 119, 6, 0.95);
@@ -220,7 +220,7 @@ export default {
 .current-text {
     min-width: 0;
     font-size: 10px;
-    color: rgba(45, 45, 45, 0.72);
+    color: var(--lp-text);
     line-height: 1.35;
     overflow-wrap: anywhere;
 }
@@ -229,7 +229,7 @@ export default {
     margin: 0;
     font-size: 11px;
     line-height: 1.45;
-    color: rgba(45, 45, 45, 0.88);
+    color: var(--lp-text);
     display: -webkit-box;
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
@@ -254,8 +254,8 @@ export default {
     padding: 0 7px;
     border-radius: 999px;
     font-size: 10px;
-    color: rgba(65, 65, 65, 0.78);
-    background: rgba(255, 255, 255, 0.7);
+    color: var(--lp-text);
+    background: var(--lp-surface);
     border: 1px solid rgba(90, 45, 133, 0.08);
 }
 
@@ -270,13 +270,13 @@ export default {
     margin-bottom: 6px;
     font-size: 12px;
     font-weight: 700;
-    color: rgba(45, 45, 45, 0.88);
+    color: var(--lp-text);
 }
 
 .summary-card {
     padding: 10px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.64);
+    background: var(--lp-surface);
     border: 1px solid rgba(90, 45, 133, 0.12);
     box-sizing: border-box;
 

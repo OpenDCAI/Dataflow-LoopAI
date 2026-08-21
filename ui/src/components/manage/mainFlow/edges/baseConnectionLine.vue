@@ -1,32 +1,20 @@
 <template>
     <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" style="overflow: visible">
-        <defs>
-            <!-- 定义一个线性渐变 -->
-            <linearGradient id="edge-gradient" x1="0" y1="0" x2="1" y2="0">
-                <stop
-                    v-for="(value, index) in edgeColors"
-                    :key="index"
-                    :offset="(index * 100) / (edgeColorsLength - 1) + '%'"
-                    :stop-color="value"
-                />
-            </linearGradient>
-        </defs>
         <g>
             <path
                 class="vue-flow__connection"
                 fill="none"
-                :stroke="'url(#edge-gradient)'"
-                :stroke-width="3"
+                stroke="var(--lp-accent)"
+                :stroke-width="1.4"
                 :d="getBezierPath(props)[0]"
             />
-
             <circle
                 :cx="targetX"
                 :cy="targetY"
-                fill="#fff"
-                :r="4"
-                stroke="#6F3381"
-                :stroke-width="1.5"
+                fill="var(--lp-bg)"
+                :r="3.5"
+                stroke="var(--lp-accent)"
+                :stroke-width="1.4"
             />
         </g>
     </svg>
@@ -34,7 +22,6 @@
 
 <script setup>
 import { getBezierPath } from '@vue-flow/core'
-import { computed } from 'vue'
 
 const props = defineProps({
     sourceX: {
@@ -65,21 +52,4 @@ const props = defineProps({
         type: Object
     }
 })
-
-const defaultData = {
-    colors: ['rgba(229, 123, 67, 1)', 'rgba(225, 107, 56, 1)']
-}
-const thisData = computed(() => {
-    return {
-        ...defaultData,
-        ...props.data
-    }
-})
-const edgeColors = computed(() => {
-    if (thisData.value.colors && thisData.value.colors.length > 0) {
-        return thisData.value.colors
-    }
-    return defaultData.colors
-})
-const edgeColorsLength = computed(() => edgeColors.value.length)
 </script>

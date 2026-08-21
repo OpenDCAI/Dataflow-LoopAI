@@ -15,7 +15,7 @@
             '--default-handle-shadow-color': thisData.defaultHandleShadowColor
         }"
     >
-        <div class="lp-flow-node-shadow" :class="[{ 'running-shadow': running }]"></div>
+        <div v-show="running" class="lp-flow-node-run"></div>
         <div class="lp-flow-node-container" :class="[{ 'row-mode': rowLayoutContent }]">
             <div class="node-banner" :title="id">
                 <div class="icon-block" :style="{ background: thisData.iconBackground }">
@@ -27,8 +27,8 @@
                     <fv-img v-else class="icon-img" :src="thisData.img"></fv-img>
                 </div>
                 <div class="content-block">
-                    <p class="sub-status" :title="thisData.status">{{ thisData.status }}</p>
                     <p class="main-title" :title="thisData.label">{{ thisData.label }}</p>
+                    <p class="sub-status" :title="thisData.status">{{ thisData.status }}</p>
                 </div>
                 <div class="control-block" @mousedown.stop @click.stop>
                     <fv-button
@@ -65,17 +65,8 @@
             <div class="node-info">
                 <p>{{ thisData.nodeInfo }}</p>
             </div>
-            <div class="remain-content-block" :class="[{ row: rowLayoutContent }]">
-                <slot>
-                    <div class="node-group-item">
-                        <div class="node-row-item">
-                            <span class="info-title">Selected Info</span>
-                            <p class="info-value">{{ selected }}</p>
-                        </div>
-                        <span class="info-title">Position Info</span>
-                        <p class="info-value">{{ x }} {{ y }}</p>
-                    </div>
-                </slot>
+            <div v-if="$slots.default" class="remain-content-block" :class="[{ row: rowLayoutContent }]">
+                <slot></slot>
             </div>
             <Handle
                 v-if="thisData.useTargetHandle"
@@ -162,30 +153,46 @@ const thisData = computed(() => {
         ...props.data
     }
 })
-const x = computed(() => `${Math.round(props.position.x)}px`)
-const y = computed(() => `${Math.round(props.position.y)}px`)
 </script>
 
 <style lang="scss">
+/**
+ * A node is a flat card with a hue rule on top. Running is a moving hairline,
+ * not a halo; selection is the accent border, not a glow.
+ */
 .lp-flow-default-node {
-    --border-radius: 12px;
-    --node-background: rgba(252, 252, 252, 0.8);
-    --node-title-color: rgba(100, 108, 126, 1);
-    --node-status-color: rgba(168, 170, 176, 1);
-    --node-info-title-color: rgba(168, 170, 176, 1);
-    --node-shadow-color: rgba(122, 124, 206, 0.3);
-    --node-border-color: rgba(163, 164, 236, 1);
-    --node-icon-color: rgba(100, 108, 126, 1);
-    --node-group-background: rgba(246, 246, 246, 0.8);
-    --default-handle-color: rgba(163, 164, 236, 1);
-    --default-handle-shadow-color: rgba(122, 124, 206, 0.3);
+    position: relative;
+    width: auto;
+    height: auto;
+    --border-radius: var(--lp-r-3);
 
-    border-radius: var(--border-radius);
-    outline: 2px solid transparent;
-    transition: outline 0.2s ease-in-out;
+    .lp-flow-node-run {
+        position: absolute;
+        left: 0px;
+        top: 0px;
+        width: 100%;
+        height: 2px;
+        border-radius: 2px;
+        overflow: hidden;
+        z-index: 1;
 
-    &.selected {
-        outline-color: var(--node-border-color);
+        &::after {
+            content: '';
+            position: absolute;
+            width: 40%;
+            height: 100%;
+            background: var(--lp-run);
+            animation: lp-node-run 1.6s var(--lp-ease) infinite;
+        }
+    }
+
+    @keyframes lp-node-run {
+        0% {
+            transform: translateX(-100%);
+        }
+        100% {
+            transform: translateX(350%);
+        }
     }
 
     .lp-flow-node-container {
@@ -193,104 +200,78 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
         width: 250px;
         height: auto;
         max-height: 460px;
-        padding: 5px 0px;
-        background: rgba(255, 255, 255, 0.9);
-        border: 1px solid rgba(120, 120, 120, 0.2);
-        border-radius: var(--border-radius);
-        outline: 2px solid transparent;
+        padding: 0px 0px 8px 0px;
+        background: var(--lp-surface);
+        border: 1px solid var(--lp-line);
+        border-top: 2px solid var(--node-icon-color, var(--lp-line-hi));
+        border-radius: var(--lp-r-3);
         display: flex;
         flex-direction: column;
-        transition:
-            box-shadow 0.2s ease-in-out,
-            outline 0.2s ease-in-out;
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
-        box-shadow:
-            0px 0px 1px var(--node-shadow-color),
-            3px 6px 16px transparent,
-            -3px 6px 16px transparent;
+        transition: border-color var(--lp-fast) var(--lp-ease);
 
         &.row-mode {
             width: auto;
-            padding: 10px;
+            padding: 0px 0px 8px 0px;
         }
 
         &:hover {
-            box-shadow:
-                0px 0px 1px var(--node-shadow-color),
-                3px 6px 16px var(--node-shadow-color),
-                -3px 6px 16px var(--node-shadow-color);
-        }
-
-        &:active {
-            box-shadow:
-                0px 0px 1px var(--node-shadow-color),
-                2px 3px 8px var(--node-shadow-color),
-                -2px 3px 8px var(--node-shadow-color);
-        }
-
-        &.selected {
-            outline-color: var(--node-border-color);
+            border-left-color: var(--lp-line-hi);
+            border-right-color: var(--lp-line-hi);
+            border-bottom-color: var(--lp-line-hi);
         }
 
         .node-banner {
             position: relative;
-            width: calc(100% - 20px);
+            width: calc(100% - 24px);
             height: auto;
-            margin-left: 10px;
+            margin: 10px 12px 0px 12px;
+            gap: 8px;
             display: flex;
-            flex-direction: row;
+            align-items: center;
 
             .icon-block {
                 position: relative;
-                width: 35px;
-                height: 35px;
-                background: var(--node-icon-color);
-                border: 1px solid rgba(120, 120, 120, 0.1);
-                border-radius: 8px;
-                color: rgba(253, 253, 253, 1);
+                width: 22px;
+                height: 22px;
+                flex-shrink: 0;
+                background: transparent !important;
+                border: 1px solid var(--lp-line-hi);
+                border-radius: var(--lp-r-1);
+                color: var(--node-icon-color, var(--lp-text-dim));
+                font-size: 11px;
                 display: flex;
-                flex-direction: row;
                 justify-content: center;
                 align-items: center;
-                box-shadow: 0px 1px 2px rgba(0, 0, 0, 0.1);
 
                 .icon-img {
                     width: auto;
-                    height: 20px;
+                    height: 13px;
                 }
             }
 
             .content-block {
                 position: relative;
-                width: calc(100% - 80px);
-                height: 40px;
+                width: 50px;
                 flex: 1;
-                padding-left: 5px;
                 display: flex;
                 flex-direction: column;
                 justify-content: center;
-                align-items: center;
 
                 .main-title {
-                    position: relative;
                     width: 100%;
-                    height: auto;
-                    font-size: 13.8px;
+                    font-size: var(--lp-t-md);
                     font-weight: 600;
-                    color: var(--node-title-color);
+                    color: var(--lp-text);
                     text-overflow: ellipsis;
                     white-space: nowrap;
                     overflow: hidden;
                 }
 
                 .sub-status {
-                    position: relative;
                     width: 100%;
-                    height: auto;
-                    font-size: 10px;
-                    font-weight: 400;
-                    color: var(--node-status-color);
+                    font-family: var(--lp-mono);
+                    font-size: var(--lp-t-xs);
+                    color: var(--lp-text-mute);
                     text-overflow: ellipsis;
                     white-space: nowrap;
                     overflow: hidden;
@@ -300,25 +281,22 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             .control-block {
                 position: relative;
                 width: auto;
-                height: 40px;
-                padding: 0px;
+                gap: 4px;
+                flex-shrink: 0;
                 display: flex;
-                flex-direction: row;
-                justify-content: center;
                 align-items: center;
             }
         }
 
         .node-info {
             position: relative;
-            width: calc(100% - 20px);
-            max-width: 170px;
-            height: auto;
-            margin: 3px 10px;
+            width: calc(100% - 24px);
+            max-width: 220px;
+            margin: 6px 12px 0px 12px;
             flex-shrink: 0;
-            font-size: 8px;
-            font-weight: 400;
-            color: var(--node-status-color);
+            font-size: 11px;
+            line-height: 1.5;
+            color: var(--lp-text-mute);
             overflow: hidden;
         }
 
@@ -326,27 +304,13 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
             position: relative;
             width: 100%;
             height: auto;
-            margin-top: 5px;
-            gap: 5px;
+            margin-top: 10px;
+            gap: 0px;
             flex: 1;
-            background: var(--node-group-background);
-            border-radius: var(--border-radius);
-            font-family:
-                system-ui,
-                -apple-system,
-                BlinkMacSystemFont,
-                'Segoe UI',
-                Roboto,
-                Oxygen,
-                Ubuntu,
-                Cantarell,
-                'Open Sans',
-                'Helvetica Neue',
-                sans-serif;
+            background: transparent;
             display: flex;
             flex-direction: column;
-            box-shadow: inset 0px 1px 3px rgba(120, 120, 120, 0.1);
-            overflow: overlay;
+            overflow: auto;
 
             &.row {
                 flex-direction: row;
@@ -360,10 +324,7 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
                 flex-direction: column;
 
                 &:nth-child(2) {
-                    background: rgba(245, 245, 245, 1);
-                    border: 1px solid rgba(235, 235, 235, 1);
-                    border-top: none;
-                    border-bottom: none;
+                    border-left: 1px solid var(--lp-line);
                 }
             }
 
@@ -371,11 +332,9 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
                 position: relative;
                 width: 100%;
                 height: auto;
-                margin-bottom: 5px;
-                padding: 5px;
+                padding: 0px;
                 font-weight: 400;
-                border-radius: 6px;
-                line-height: 1.5;
+                line-height: 1.6;
                 overflow-x: hidden;
 
                 &.no-pad {
@@ -393,76 +352,73 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
                 position: relative;
                 width: 100%;
                 height: auto;
-                padding: 5px 15px;
+                padding: 4px 12px;
+                gap: 10px;
                 display: flex;
                 justify-content: space-between;
 
                 &.col {
-                    gap: 5px;
+                    gap: 4px;
                     flex-direction: column;
                     justify-content: flex-start;
                     align-items: flex-start;
                 }
 
                 &.w-pad {
-                    padding: 0px 10px;
+                    padding: 4px 12px;
                 }
 
                 .info-value {
-                    margin-left: 5px;
+                    margin-left: 0px;
                     text-overflow: ellipsis;
                     text-align: right;
                 }
             }
 
             hr {
-                width: calc(100% - 20px);
-                margin-left: 10px;
+                width: calc(100% - 24px);
+                margin-left: 12px;
                 border: 0px;
-                border-top: 1px solid rgba(120, 120, 120, 0.1);
+                border-top: 1px solid var(--lp-line);
             }
 
             .info-title {
-                font-size: 8px;
-                font-weight: 600;
-                color: var(--node-info-title-color);
+                font-family: var(--lp-mono);
+                font-size: var(--lp-t-xs);
+                font-weight: 400;
+                color: var(--lp-text-mute);
                 display: flex;
                 align-items: center;
             }
 
             .info-value {
                 flex: 1;
-                font-size: 12px;
+                min-width: 0;
+                font-family: var(--lp-mono);
+                font-size: var(--lp-t-sm);
                 font-weight: 400;
-                color: var(--node-title-color);
+                color: var(--lp-text-dim);
                 overflow: hidden;
 
                 &.tiny {
-                    font-size: 10px;
+                    font-size: var(--lp-t-xs);
                 }
             }
         }
 
         .handle-item {
-            width: 15px;
-            height: 15px;
-            background: var(--node-border-color);
-            outline: 3px solid transparent;
-            border: rgba(250, 250, 250, 1) solid 3px;
-            transition: all 0.2s ease-in-out;
+            width: 8px;
+            height: 8px;
+            background: var(--lp-line-hi);
+            border: 2px solid var(--lp-bg);
+            transition: background var(--lp-fast) var(--lp-ease);
 
             &:hover {
-                width: 18px;
-                height: 18px;
-                outline: 3px solid var(--node-shadow-color);
+                background: var(--lp-accent);
             }
 
             &.default {
-                background: var(--default-handle-color);
-
-                &:hover {
-                    outline: 3px solid var(--default-handle-shadow-color);
-                }
+                background: var(--node-border-color, var(--lp-line-hi));
             }
 
             &.title {
@@ -474,81 +430,25 @@ const y = computed(() => `${Math.round(props.position.y)}px`)
                         left: 0;
                         width: auto;
                         height: auto;
-                        padding: 5px;
-                        font-size: 12px;
-                        background: rgba(250, 250, 250, 1);
-                        border: 1px solid rgba(120, 120, 120, 0.1);
-                        border-radius: 6px;
+                        padding: 4px 6px;
+                        font-family: var(--lp-mono);
+                        font-size: var(--lp-t-sm);
+                        color: var(--lp-text);
+                        background: var(--lp-surface);
+                        border: 1px solid var(--lp-line-hi);
+                        border-radius: var(--lp-r-1);
                         white-space: nowrap;
                         transform: translate(calc(-100% - 10px), -50%);
                     }
                 }
             }
-
-            &:active {
-                width: 16px;
-                height: 16px;
-            }
         }
     }
 
-    .lp-flow-node-shadow {
-        position: absolute;
-        width: 100%;
-        height: 100%;
-        z-index: -1;
-
-        &.running-shadow {
-            &:before,
-            &:after {
-                content: '';
-                position: absolute;
-                top: -2px;
-                left: -2px;
-                width: calc(100% + 4px);
-                height: calc(100% + 4px);
-                background: linear-gradient(
-                    45deg,
-                    rgba(226, 121, 162, 1),
-                    rgba(146, 156, 218, 1),
-                    rgba(129, 208, 246, 1),
-                    rgba(239, 192, 48, 1),
-                    rgba(246, 100, 100, 1),
-                    rgba(226, 121, 162, 1),
-                    rgba(146, 156, 218, 1),
-                    rgba(129, 208, 246, 1),
-                    rgba(239, 192, 48, 1),
-                    rgba(246, 100, 100, 1)
-                );
-                background-size: 400%;
-                border-radius: var(--border-radius);
-                z-index: -1;
-                animation: shadow 20s linear infinite;
-            }
-
-            &:after {
-                top: -8px;
-                left: -8px;
-                width: calc(100% + 16px);
-                height: calc(100% + 16px);
-                filter: blur(24px);
-                opacity: 0.9;
-            }
-        }
-
-        @keyframes shadow {
-            0% {
-                background-position: 0 0;
-            }
-
-            50.01% {
-                background-position: 200% 0;
-            }
-
-            100% {
-                background-position: 0 0;
-            }
-        }
+    &.selected .lp-flow-node-container {
+        border-left-color: var(--lp-accent);
+        border-right-color: var(--lp-accent);
+        border-bottom-color: var(--lp-accent);
     }
 }
 </style>

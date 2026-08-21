@@ -10,6 +10,9 @@ import '@creatorsn/vfluent3/style.css';
 import PowerEditor from "@creatorsn/powereditor3";
 import "@creatorsn/powereditor3/powereditor3.css";
 
+// after the vendor sheets so the console tokens win
+import '@/style/index.scss';
+
 import apiPlugin from '@/axios'
 
 const app = createApp(App)

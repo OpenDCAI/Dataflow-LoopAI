@@ -224,9 +224,9 @@ export default {
     height: 240px;
     padding: 12px;
     box-sizing: border-box;
-    border: 1px solid rgba(218, 221, 230, 1);
+    border: 1px solid var(--lp-line);
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.92);
+    background: var(--lp-surface);
     display: flex;
     flex-direction: column;
 }
@@ -234,7 +234,7 @@ export default {
     margin-bottom: 8px;
     font-size: 13px;
     font-weight: 600;
-    color: rgba(44, 48, 60, 1);
+    color: var(--lp-text);
 }
 .model-chart-card :deep(.ol-chart-shell) {
     flex: 1;
@@ -244,9 +244,9 @@ export default {
     width: 100%;
     padding: 12px;
     box-sizing: border-box;
-    border: 1px solid rgba(218, 221, 230, 1);
+    border: 1px solid var(--lp-line);
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.88);
+    background: var(--lp-surface);
     display: grid;
     grid-template-columns: minmax(0, 1fr) 260px;
     gap: 10px;
@@ -254,7 +254,7 @@ export default {
 .model-detail-title {
     font-size: 14px;
     font-weight: 600;
-    color: rgba(35, 35, 35, 1);
+    color: var(--lp-text);
     display: flex;
     align-items: center;
     gap: 7px;
@@ -263,7 +263,7 @@ export default {
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    background: rgba(142, 148, 164, 1);
+    background: var(--lp-raised);
     flex-shrink: 0;
 }
 .model-detail-dot.healthy {
@@ -275,12 +275,12 @@ export default {
     box-shadow: 0 0 0 3px rgba(205, 76, 76, 0.12);
 }
 .model-detail-dot.disabled {
-    background: rgba(180, 184, 194, 1);
+    background: var(--lp-raised);
 }
 .model-detail-sub {
     margin-top: 4px;
     font-size: 12px;
-    color: rgba(96, 96, 96, 1);
+    color: var(--lp-text);
     word-break: break-all;
 }
 .model-detail-stats {
@@ -291,9 +291,9 @@ export default {
 .model-detail-stats p {
     padding: 6px;
     border-radius: 6px;
-    background: rgba(242, 244, 248, 1);
+    background: var(--lp-surface);
     font-size: 12px;
-    color: rgba(54, 58, 70, 1);
+    color: var(--lp-text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -303,7 +303,7 @@ export default {
     margin: 0;
     padding: 8px;
     border-radius: 6px;
-    background: rgba(255, 238, 238, 1);
+    background: var(--lp-surface);
     color: rgba(126, 32, 32, 1);
     font-size: 12px;
     white-space: pre-wrap;

@@ -64,8 +64,8 @@ export default {
 .msg-preview-item {
     width: 100%;
     padding: 10px 12px;
-    background: rgba(255, 255, 255, 0.72);
-    border: 1px solid rgba(160, 160, 160, 0.18);
+    background: var(--lp-surface);
+    border: 1px solid var(--lp-line);
     border-radius: 12px;
     backdrop-filter: blur(8px);
     box-sizing: border-box;
@@ -108,7 +108,7 @@ export default {
         width: 100%;
         padding: 2px 4px;
         font-size: 8px;
-        color: rgba(55, 65, 81, 1);
+        color: var(--lp-text);
         overflow: hidden;
 
         * {
@@ -119,14 +119,14 @@ export default {
     &.role-assistant {
         .msg-preview-role-badge {
             color: rgba(8, 145, 178, 1);
-            background: rgba(207, 250, 254, 0.95);
+            background: var(--lp-surface);
         }
     }
 
     &.role-system {
         .msg-preview-role-badge {
             color: rgba(124, 58, 237, 1);
-            background: rgba(237, 233, 254, 0.95);
+            background: var(--lp-surface);
         }
     }
 

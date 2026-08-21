@@ -319,17 +319,17 @@ export default {
     .bench-list-empty {
         padding: 16px;
         border-radius: 10px;
-        background: rgba(255, 255, 255, 0.8);
-        border: 1px dashed rgba(120, 120, 120, 0.2);
+        background: var(--lp-surface);
+        border: 1px dashed var(--lp-line);
         font-size: 12px;
-        color: rgba(120, 120, 120, 1);
+        color: var(--lp-text-mute);
     }
 
     .bench-card {
         padding: 14px;
         border-radius: 14px;
-        background: rgba(255, 255, 255, 0.82);
-        border: rgba(120, 120, 120, 0.08) solid thin;
+        background: var(--lp-surface);
+        border: var(--lp-line) solid thin;
         box-shadow: 0px 6px 18px rgba(18, 26, 64, 0.05);
     }
 
@@ -344,13 +344,13 @@ export default {
     .bench-card-title {
         font-size: 14px;
         font-weight: 600;
-        color: rgba(35, 41, 70, 1);
+        color: var(--lp-text);
     }
 
     .bench-card-subtitle {
         margin-top: 2px;
         font-size: 11px;
-        color: rgba(125, 132, 156, 1);
+        color: var(--lp-text-mute);
     }
 
     .bench-grid {
@@ -370,7 +370,7 @@ export default {
     .bench-field-label {
         margin-bottom: 6px;
         font-size: 12px;
-        color: rgba(95, 95, 95, 1);
+        color: var(--lp-text);
     }
 
     .bench-path-row {
@@ -383,14 +383,14 @@ export default {
         flex: 1;
         flex-shrink: 0;
         height: 30px;
-        background: rgba(255, 255, 255, 0.3);
+        background: var(--lp-surface);
         border: rgba(199, 168, 252, 0) solid 2px;
         box-sizing: border-box;
         transition: all 0.3s;
         cursor: pointer;
 
         &:hover {
-            background: rgba(255, 255, 255, 0.9);
+            background: var(--lp-surface);
             border: rgba(199, 168, 252, 0.3) solid 2px;
         }
     }
@@ -398,7 +398,7 @@ export default {
     .secondary-section {
         margin-top: 16px;
         padding-top: 12px;
-        border-top: rgba(120, 120, 120, 0.1) solid thin;
+        border-top: var(--lp-line) solid thin;
     }
 
     .secondary-section-header {

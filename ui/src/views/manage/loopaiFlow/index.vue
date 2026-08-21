@@ -1,104 +1,121 @@
 <template>
-    <div class="lp-default-container" :class="[{ 'show-pipeline': show.pipeline }]">
-        <page-loading :model-value="!currentTask || !currentTask.task_id" :z-index="3" acrylic>
-            <h1>{{ local('Start with a new Task') }}</h1>
-            <fv-button
-                theme="dark"
-                icon="OpenPaneMirrored"
-                :background="gradient"
-                border-radius="12"
-                font-size="16"
-                style="width: 150px; height: 45px; margin-top: 25px"
-                @click="show.taskNav = true"
-                >{{ local('Open Tasks') }}</fv-button
-            >
-        </page-loading>
-        <task-nav
-            v-model="show.taskNav"
-            class="lp-task-container"
-            v-model:task="currentTaskModel"
-        ></task-nav>
-        <div class="lp-flow-container">
-            <mainFlow
-                :id="flowId"
-                v-model:nodes="nodes"
-                v-model:edges="edges"
-                @click="show.taskNav = false"
-                @show-node-detail="showDetailNode"
-            ></mainFlow>
-            <div class="control-menu-block">
-                <fv-command-bar
-                    v-model="value"
-                    :options="options"
-                    :item-border-radius="30"
-                    background="rgba(255, 255, 255, 0.6)"
-                    class="command-bar"
+    <div class="lp-workspace">
+        <task-column></task-column>
+
+        <section class="lp-workspace__main">
+            <header class="lp-bar">
+                <span class="lp-bar__title lp-truncate">
+                    {{ currentTask ? currentTask.name : local('No task yet') }}
+                </span>
+
+                <span v-if="isRunning" class="lp-chip lp-chip--run">
+                    <span class="lp-dot is-running"></span>
+                    {{ runningLabel }}
+                </span>
+                <span v-else-if="currentTask" class="lp-chip">
+                    <span class="lp-dot" :class="{ 'is-failed': hasFailed }"></span>
+                    {{ hasFailed ? local('failed') : local('idle') }}
+                </span>
+
+                <div class="lp-bar__spacer"></div>
+
+                <div class="lp-seg" role="tablist">
+                    <button
+                        v-for="option in viewOptions"
+                        :key="option.key"
+                        type="button"
+                        role="tab"
+                        class="lp-seg__item"
+                        :class="{ 'is-active': view === option.key }"
+                        :aria-selected="view === option.key"
+                        @click="setView(option.key)"
+                    >
+                        {{ local(option.label) }}
+                    </button>
+                </div>
+
+                <div class="lp-bar__sep"></div>
+
+                <button
+                    v-if="isRunning"
+                    type="button"
+                    class="lp-btn lp-btn--danger"
+                    @click="handleStopClick"
                 >
-                    <template v-slot:optionItem="x">
-                        <div class="command-bar-item-wrapper">
-                            <fv-img v-if="x.item.img" class="option-img" :src="x.item.img" alt="" />
-                            <i
-                                v-else
-                                class="ms-Icon icon"
-                                :class="[`ms-Icon--${x.valueTrigger(x.item.icon)}`]"
-                                :style="{ color: x.valueTrigger(x.item.foreground) }"
-                            ></i>
-                            <p
-                                class="option-name"
-                                :style="{ color: x.valueTrigger(x.item.foreground) }"
-                            >
-                                {{ x.valueTrigger(x.item.name) }}
-                            </p>
-                            <i
-                                v-show="x.item.secondary.length > 0"
-                                class="ms-Icon ms-Icon--ChevronDown icon"
-                            ></i>
-                        </div>
-                    </template>
-                    <template v-slot:right-space>
-                        <div class="command-bar-right-space">
-                            <looper-takeover-warning></looper-takeover-warning>
-                            <fv-button
-                                v-show="!msgStreamModel.loading"
-                                theme="dark"
-                                :background="gradient"
-                                border-radius="50"
-                                font-size="12"
-                                style="width: 25px; height: 25px; flex-shrink: 0"
-                                @click="handleRefreshClick"
-                            >
-                                <i class="ms-Icon ms-Icon--Refresh"></i>
-                            </fv-button>
-                            <fv-button
-                                v-show="msgStreamModel.loading"
-                                theme="dark"
-                                :background="gradient"
-                                border-radius="50"
-                                font-size="12"
-                                style="width: 25px; height: 25px; flex-shrink: 0"
-                                @click="handleStopClick"
-                            >
-                                <i class="ms-Icon ms-Icon--Stop"></i>
-                            </fv-button>
-                            <i
-                                class="ms-Icon ms-Icon--FullCircleMask status-coin"
-                                :class="[
-                                    { ready: !msgStreamModel.loading },
-                                    { running: msgStreamModel.loading }
-                                ]"
-                                style="margin-left: 5px"
-                            ></i>
-                        </div>
-                    </template>
-                </fv-command-bar>
-                <current-task-block v-model="currentTaskModel"></current-task-block>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="6" y="6" width="12" height="12" rx="2" />
+                    </svg>
+                    {{ local('Stop') }}
+                </button>
+
+                <button
+                    v-else-if="resetArmed"
+                    type="button"
+                    class="lp-btn lp-btn--danger"
+                    @click="handleResetConfirm"
+                >
+                    {{ local('Confirm reset') }}
+                </button>
+
+                <button
+                    v-else
+                    type="button"
+                    class="lp-btn lp-btn--ghost lp-btn--icon"
+                    :disabled="!currentTask"
+                    :title="local('Reset conversation')"
+                    @click="armReset"
+                >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                        <path d="M20 12a8 8 0 1 1-2.3-5.6" />
+                        <path d="M20 4v4h-4" />
+                    </svg>
+                </button>
+
+                <button
+                    type="button"
+                    class="lp-btn lp-btn--ghost lp-btn--icon"
+                    :title="local('Resources')"
+                    @click="show.dataset = true"
+                >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                        <ellipse cx="12" cy="6" rx="7" ry="2.6" />
+                        <path d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6" />
+                        <path d="M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6" />
+                    </svg>
+                </button>
+
+                <button
+                    type="button"
+                    class="lp-btn lp-btn--ghost lp-btn--icon"
+                    :disabled="!currentTask"
+                    :title="local('States')"
+                    @click="handleAdjustStatesClick"
+                >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                        <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+                        <circle cx="16" cy="7" r="2" />
+                        <circle cx="10" cy="17" r="2" />
+                    </svg>
+                </button>
+            </header>
+
+            <div class="lp-workspace__body">
+                <div v-show="view !== 'log'" class="lp-workspace__canvas">
+                    <mainFlow
+                        :id="flowId"
+                        v-model:nodes="nodes"
+                        v-model:edges="edges"
+                        @show-node-detail="showDetailNode"
+                    ></mainFlow>
+                </div>
+                <msg-list v-show="view !== 'graph'" :class="{ 'is-wide': view === 'log' }"></msg-list>
             </div>
-            <div class="chat-query-block" :class="[{ 'full-screen': show.fullScreen }]">
-                <query-block v-model:full-screen-editor="show.fullScreen"></query-block>
-            </div>
-            <msg-list></msg-list>
-        </div>
-        <page-loading :model-value="!lock.loading" title="Loading..."></page-loading>
+
+            <footer class="lp-workspace__composer">
+                <query-block></query-block>
+            </footer>
+        </section>
+
         <resourcePanel v-model="show.dataset" :title="local('Resources')"></resourcePanel>
         <task-state-panel v-model="show.statePanel"></task-state-panel>
         <detail-node-panel
@@ -117,62 +134,46 @@ import { useVueFlow } from '@vue-flow/core'
 import { useLoopAI } from '@/stores/loopAI'
 
 import mainFlow from '@/components/manage/mainFlow/index.vue'
-import taskNav from '@/components/manage/mainFlow/tasks/index.vue'
-import pageLoading from '@/components/general/pageLoading.vue'
+import taskColumn from '@/components/manage/mainFlow/tasks/index.vue'
 import queryBlock from '@/components/manage/chat/queryBlock.vue'
 import msgList from '@/components/manage/chat/msgList.vue'
 import resourcePanel from '@/components/manage/mainFlow/panels/resourcePanel/index.vue'
-import currentTaskBlock from '@/components/manage/mainFlow/tools/currentTaskBlock.vue'
 import detailNodePanel from '@/components/manage/mainFlow/panels/detailNodePanel.vue'
 import taskStatePanel from '@/components/manage/loopaiFlow/taskStatePanel.vue'
-import looperTakeoverWarning from '@/components/manage/loopaiFlow/looperTakeoverWarning.vue'
 
-import resourceIcon from '@/assets/flow/resources.svg'
-import pipelineIcon from '@/assets/flow/pipeline.svg'
-import adjustIcon from '@/assets/flow/adjust.svg'
+const VIEW_STORAGE_KEY = 'loopai-workspace-view'
+
+/** Agent identity is a hue, at one chroma — never a gradient. */
+const HUE = {
+    looper: '#7fb2e8',
+    obtainer: '#59b3a9',
+    trainer: '#d4a24c',
+    judger: '#6fbf87',
+    analyzer: '#9d8ce8'
+}
 
 export default {
     name: 'LoopaiFlow',
     components: {
         mainFlow,
-        taskNav,
-        pageLoading,
+        taskColumn,
         queryBlock,
         msgList,
         resourcePanel,
-        currentTaskBlock,
         detailNodePanel,
-        taskStatePanel,
-        looperTakeoverWarning
+        taskStatePanel
     },
     data() {
         return {
             flowId: 'lp-main-flow',
-            value: null,
-            options: [
-                {
-                    name: () => this.local('Resources'),
-                    icon: 'Play',
-                    img: resourceIcon,
-                    func: () => {
-                        this.show.dataset = true
-                    }
-                },
-                {
-                    name: () => this.local('Task'),
-                    img: pipelineIcon,
-                    func: () => {
-                        this.show.taskNav ^= true
-                    }
-                },
-                {
-                    name: () => this.local('States'),
-                    img: adjustIcon,
-                    func: () => {
-                        this.handleAdjustStatesClick()
-                    }
-                }
+            view: 'split',
+            viewOptions: [
+                { key: 'graph', label: 'Graph' },
+                { key: 'split', label: 'Split' },
+                { key: 'log', label: 'Log' }
             ],
+            resetArmed: false,
+            resetArmTimer: null,
             nodes: [
                 {
                     id: 'trainer',
@@ -185,11 +186,9 @@ export default {
                         graphClsPrefix: 'trainer',
                         include_nodes: ['trainer'],
                         icon: 'Library',
-                        nodeInfo: 'Trainer Agent for Training',
-                        iconColor: 'rgba(234, 167, 35, 1)',
-                        background:
-                            'linear-gradient(130deg, rgba(239, 192, 40, 0.8), rgba(252, 252, 252, 0.8))',
-                        borderColor: 'rgba(234, 167, 35, 0.8)'
+                        nodeInfo: 'Trains the model on the exported mix.',
+                        iconColor: HUE.trainer,
+                        borderColor: HUE.trainer
                     }
                 },
                 {
@@ -203,11 +202,10 @@ export default {
                         graphClsPrefix: 'obtainer',
                         include_nodes: ['obtainer', 'obtainercli'],
                         icon: 'GiftboxOpen',
-                        nodeInfo:
-                            'ObtainerCLI handles acquisition, processing, recipe planning, and final training-data export.',
-                        iconColor: 'rgba(90, 45, 133, 1)',
+                        nodeInfo: 'Acquires, processes and exports the training mix.',
+                        iconColor: HUE.obtainer,
                         reverseHandle: true,
-                        borderColor: 'rgba(90, 45, 133, 0.8)'
+                        borderColor: HUE.obtainer
                     }
                 },
                 {
@@ -221,11 +219,9 @@ export default {
                         graphClsPrefix: 'judger',
                         include_nodes: ['judger'],
                         icon: 'Bug',
-                        nodeInfo: 'Judger Agent for evaluate the model performance with vllm.',
-                        iconColor: 'rgba(89, 169, 133, 1)',
-                        background:
-                            'linear-gradient(130deg, rgba(116, 220, 175, 0.8), rgba(252, 252, 252, 0.8))',
-                        borderColor: 'rgba(89, 169, 133, 0.8)'
+                        nodeInfo: 'Evaluates the checkpoint against the benchmarks.',
+                        iconColor: HUE.judger,
+                        borderColor: HUE.judger
                     }
                 },
                 {
@@ -239,13 +235,10 @@ export default {
                         graphClsPrefix: 'analyzer',
                         include_nodes: ['analyzer'],
                         icon: 'AreaChart',
-                        nodeInfo:
-                            'Analyzer Agent for analyzing the model performance from the results of Judger.',
-                        iconColor: 'rgba(98, 84, 191, 1)',
-                        background:
-                            'linear-gradient(130deg, rgba(150, 167, 222, 0.8), rgba(252, 252, 252, 0.8))',
+                        nodeInfo: 'Reads the results and decides what the next round needs.',
+                        iconColor: HUE.analyzer,
                         reverseHandle: true,
-                        borderColor: 'rgba(150, 167, 222, 0.8)'
+                        borderColor: HUE.analyzer
                     }
                 },
                 {
@@ -259,71 +252,27 @@ export default {
                         graphClsPrefix: 'looper',
                         include_nodes: ['looper'],
                         icon: 'Robot',
-                        nodeInfo: 'Looper Agent for Automation',
-                        iconColor: 'rgba(45, 45, 45, 1)',
-                        background:
-                            'linear-gradient(130deg, rgba(129, 208, 246, 0.8), rgba(252, 252, 252, 0.8))',
+                        nodeInfo: 'Orchestrates the round and hands off between agents.',
+                        iconColor: HUE.looper,
                         reverseHandle: true,
-                        borderColor: 'rgba(45, 45, 45, 0.8)'
+                        borderColor: HUE.looper
                     }
                 }
             ],
-
             edges: [
-                {
-                    id: '0',
-                    type: 'base-edge',
-                    source: 'trainer',
-                    target: 'judger',
-                    animated: true,
-                    data: {
-                        label: 'next to'
-                    }
-                },
-                {
-                    id: '1',
-                    type: 'base-edge',
-                    source: 'judger',
-                    target: 'analyzer',
-                    animated: true,
-                    data: {
-                        label: 'next to'
-                    }
-                },
-                {
-                    id: '2',
-                    type: 'base-edge',
-                    source: 'analyzer',
-                    target: 'obtainer',
-                    animated: true,
-                    data: {
-                        label: 'next to'
-                    }
-                },
-                {
-                    id: '3',
-                    type: 'base-edge',
-                    source: 'obtainer',
-                    target: 'trainer',
-                    animated: true,
-                    data: {
-                        label: 'next to'
-                    }
-                }
+                { id: '0', type: 'base-edge', source: 'trainer', target: 'judger', animated: true },
+                { id: '1', type: 'base-edge', source: 'judger', target: 'analyzer', animated: true },
+                { id: '2', type: 'base-edge', source: 'analyzer', target: 'obtainer', animated: true },
+                { id: '3', type: 'base-edge', source: 'obtainer', target: 'trainer', animated: true }
             ],
             detailNodeProps: null,
             timer: {
                 healthCheck: null
             },
             show: {
-                taskNav: false,
                 dataset: false,
                 statePanel: false,
-                detailNode: true,
-                fullScreen: false
-            },
-            lock: {
-                loading: true
+                detailNode: true
             }
         }
     },
@@ -333,46 +282,74 @@ export default {
         },
         currentTask(val) {
             this.clearLooperTakeoverCountdown()
+            this.resetArmed = false
             if (val) this.getStatus(val.task_id)
         }
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
-        ...mapState(useTheme, ['color', 'gradient']),
+        ...mapState(useTheme, ['color']),
         ...mapState(useLoopAI, ['currentTask', 'taskStatus', 'taskMessages', 'msgStreamModel']),
         isRunning() {
             return this.msgStreamModel.loading
         },
-        currentTaskModel: {
-            get() {
-                return this.currentTask
-            },
-            set(val) {
-                this.setCurrentTask(val)
+        hasFailed() {
+            return this.msgStreamModel.status === 'failed'
+        },
+        runningNode() {
+            try {
+                const running = this.taskStatus.node_status.find((node) => node.status === 'running')
+                return running?.node_name || null
+            } catch (error) {
+                return null
             }
+        },
+        runningLabel() {
+            return this.runningNode || this.local('running')
         }
     },
     mounted() {
-        this.setViewport()
-        this.getStatus(this.currentTask?.task_id)
+        this.restoreView()
+        this.fitGraph()
+        this.resumeTask().then(() => this.getStatus(this.currentTask?.task_id))
         this.healthCheckInit()
         this.getStateSchema()
+    },
+    beforeUnmount() {
+        clearInterval(this.timer.healthCheck)
+        clearTimeout(this.resetArmTimer)
+        this.clearLooperTakeoverCountdown()
     },
     methods: {
         ...mapActions(useLoopAI, [
             'getStatus',
             'getStateSchema',
-            'setCurrentTask',
+            'resumeTask',
             'resetStarterCodexSession',
             'terminateStarterCodexSession',
             'clearLooperTakeoverCountdown'
         ]),
-        setViewport() {
+        restoreView() {
+            try {
+                const stored = localStorage.getItem(VIEW_STORAGE_KEY)
+                if (this.viewOptions.some((option) => option.key === stored)) this.view = stored
+            } catch (error) {
+                /* private mode — the default split view is fine */
+            }
+        },
+        setView(key) {
+            this.view = key
+            try {
+                localStorage.setItem(VIEW_STORAGE_KEY, key)
+            } catch (error) {
+                /* nothing to persist to */
+            }
+        },
+        /* Open on the whole loop rather than on whichever node happens to sit at 0,0. */
+        fitGraph() {
             const flow = useVueFlow(this.flowId)
-            flow.setViewport({
-                x: 0,
-                y: 0,
-                zoom: 1
+            flow.onNodesInitialized(() => {
+                flow.fitView({ padding: 0.18, maxZoom: 1 })
             })
         },
         healthCheckInit() {
@@ -382,305 +359,97 @@ export default {
             }, 5000)
         },
         handleAdjustStatesClick() {
-            if (!this.currentTask?.task_id) {
-                this.$barWarning(this.local('No active task to view states.'), {
-                    status: 'warning'
-                })
-                return
-            }
+            if (!this.currentTask?.task_id) return
             this.show.statePanel = true
         },
-        handleRefreshClick() {
-            this.clearLooperTakeoverCountdown()
-            if (!this.currentTask?.task_id) {
-                this.$barWarning(this.local('No active task to reset.'), {
-                    status: 'warning'
-                })
-                return
-            }
-            this.$infoBox(this.local('Are you sure to reset this conversation?'), {
-                status: 'warning',
-                confirm: async () => {
-                    try {
-                        const res = await this.resetStarterCodexSession()
-                        if (res?.code === 200) {
-                            this.$barWarning(this.local('Conversation reset successfully.'), {
-                                status: 'correct'
-                            })
-                            return
-                        }
-                        this.$barWarning(
-                            res?.message || this.local('Failed to reset conversation.'),
-                            {
-                                status: 'warning'
-                            }
-                        )
-                    } catch (error) {
-                        this.$barWarning(this.local('Failed to reset conversation.'), {
-                            status: 'error'
-                        })
-                    }
-                }
-            })
+        /* Reset drops the conversation, so it arms in place instead of opening a dialog. */
+        armReset() {
+            if (!this.currentTask?.task_id) return
+            this.resetArmed = true
+            clearTimeout(this.resetArmTimer)
+            this.resetArmTimer = setTimeout(() => {
+                this.resetArmed = false
+            }, 4000)
         },
-        handleStopClick() {
+        async handleResetConfirm() {
+            this.resetArmed = false
+            clearTimeout(this.resetArmTimer)
             this.clearLooperTakeoverCountdown()
-            if (!this.currentTask?.task_id) {
-                this.$barWarning(this.local('No active task to terminate.'), {
-                    status: 'warning'
-                })
-                return
-            }
-            this.$infoBox(this.local('Are you sure to terminate this conversation?'), {
-                status: 'warning',
-                confirm: async () => {
-                    try {
-                        const res = await this.terminateStarterCodexSession()
-                        if (res?.code === 200) {
-                            this.$barWarning(this.local('Conversation terminated successfully.'), {
-                                status: 'correct'
-                            })
-                            return
-                        }
-                        this.$barWarning(
-                            res?.message || this.local('Failed to terminated conversation.'),
-                            {
-                                status: 'warning'
-                            }
-                        )
-                    } catch (error) {
-                        this.$barWarning(this.local('Failed to terminated conversation.'), {
-                            status: 'error'
-                        })
-                    }
+            try {
+                const res = await this.resetStarterCodexSession()
+                if (res?.code !== 200) {
+                    this.$barWarning(res?.message || this.local('Failed to reset conversation.'), {
+                        status: 'warning'
+                    })
                 }
-            })
+            } catch (error) {
+                this.$barWarning(this.local('Failed to reset conversation.'), { status: 'error' })
+            }
+        },
+        /* Stop is a stop, like ctrl-c: it acts on the first click. */
+        async handleStopClick() {
+            this.clearLooperTakeoverCountdown()
+            if (!this.currentTask?.task_id) return
+            try {
+                const res = await this.terminateStarterCodexSession()
+                if (res?.code !== 200) {
+                    this.$barWarning(res?.message || this.local('Failed to terminated conversation.'), {
+                        status: 'warning'
+                    })
+                }
+            } catch (error) {
+                this.$barWarning(this.local('Failed to terminated conversation.'), { status: 'error' })
+            }
         },
         showDetailNode(props) {
             this.detailNodeProps = props
             this.show.detailNode = true
         }
-    },
-    beforeUnmount() {
-        clearInterval(this.timer.healthCheck)
-        this.clearLooperTakeoverCountdown()
     }
 }
 </script>
 
 <style lang="scss">
-.lp-default-container {
+.lp-workspace {
     position: relative;
     width: 100%;
     height: 100%;
-    padding: 15px;
-    background-color: rgba(243, 243, 243, 1);
+    background: var(--lp-bg);
     display: flex;
+    overflow: hidden;
 
-    .lp-task-container {
-        position: absolute;
-        left: 0px;
-        top: 15px;
-        width: 300px;
-        height: calc(100% - 30px);
-        border-top-left-radius: 15px;
-        border-bottom-left-radius: 15px;
-        box-shadow: 1px 0px 2px rgba(120, 120, 120, 0.1);
-        z-index: 3;
-    }
-
-    .lp-flow-container {
+    .lp-workspace__main {
         position: relative;
-        width: 100%;
-        height: 100%;
         flex: 1;
-        background: rgba(250, 250, 250, 1);
-        border: rgba(120, 120, 120, 0.1) solid thin;
-        border-radius: 15px;
-        box-shadow: inset 0px 0px 6px rgba(0, 0, 0, 0.1);
-        overflow: hidden;
-
-        .chat-query-block {
-            position: absolute;
-            left: 0px;
-            bottom: 0px;
-            width: 100%;
-            height: 250px;
-            padding: 15px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-direction: column;
-            box-sizing: border-box;
-            transition: all 0.3s;
-            z-index: 2;
-
-            &.full-screen {
-                height: 600px;
-                max-height: 100%;
-            }
-        }
-    }
-
-    .control-menu-block {
-        position: absolute;
-        left: 0px;
-        top: 0px;
-        width: 100%;
-        height: auto;
-        padding: 35px 0px;
+        min-width: 0;
         display: flex;
-        justify-content: center;
-        z-index: 2;
-
-        .command-bar {
-            min-width: 320px;
-            width: 70%;
-            max-width: 700px;
-            border: rgba(120, 120, 120, 0.1) solid thin;
-            border-radius: 30px;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            box-shadow: 0px 1px 2px rgba(0, 0, 0, 0.1);
-
-            .command-bar-item {
-                &:hover {
-                    .option-img {
-                        filter: grayscale(0);
-                    }
-                }
-            }
-
-            .command-bar-item-wrapper {
-                position: relative;
-                width: 100%;
-                height: 100%;
-                display: flex;
-                align-items: center;
-
-                &:hover {
-                    .option-img {
-                        filter: grayscale(0);
-                    }
-                }
-            }
-
-            .option-img {
-                width: auto;
-                height: 15px;
-                filter: grayscale(100%);
-                transition: filter 0.2s;
-            }
-
-            .option-name {
-                margin-left: 8px;
-                font-size: 12px;
-                color: rgba(45, 48, 56, 1);
-            }
-
-            .command-bar-right-space {
-                @include Vcenter;
-
-                position: relative;
-                width: auto;
-                height: 100%;
-                padding-right: 5px;
-                gap: 3px;
-                max-width: calc(100% - 8px);
-
-                .status-coin {
-                    font-size: 10px;
-                    color: rgba(220, 38, 45, 1);
-                    animation-direction: alternate;
-                    transition: color 0.3s;
-
-                    &.running {
-                        color: rgba(255, 165, 0, 1);
-                        animation: coin-running 0.5s linear infinite;
-                    }
-
-                    &.ready {
-                        color: rgba(45, 168, 83, 1);
-                    }
-
-                    @keyframes coin-running {
-                        0% {
-                            transform: scale(1);
-                        }
-
-                        100% {
-                            transform: scale(1.2);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-.serving-menu {
-    .serving-item {
-        position: relative;
         flex-direction: column;
-        line-height: 1.5;
+    }
 
-        &.choosen {
-            &::before {
-                content: '';
-                position: absolute;
-                left: 0px;
-                top: 10px;
-                width: 3px;
-                height: calc(100% - 20px);
-                background: linear-gradient(135deg, rgba(69, 98, 213, 1), #ff0080);
-                border-radius: 8px;
-            }
+    .lp-workspace__body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+    }
 
-            .main-title {
-                @include color-rainbow;
+    .lp-workspace__canvas {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        background: var(--lp-bg);
+        overflow: hidden;
+    }
 
-                color: rgba(69, 98, 213, 1);
-            }
-        }
-
-        .main-title {
-            font-size: 16px;
-        }
-
-        .sec-title {
-            font-size: 10px;
-            color: rgba(120, 120, 120, 1);
-        }
+    .lp-workspace__composer {
+        flex-shrink: 0;
+        padding: 12px 16px 16px 16px;
+        border-top: 1px solid var(--lp-line);
     }
 }
 
-.lp-scale-up-to-up-enter-active {
-    animation: scaleUp 0.7s ease both;
-    animation-delay: 0.3s;
-}
-
-.lp-scale-up-to-up-leave-active {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    animation: scaleDownUp 0.7s ease both;
-    z-index: 8;
-}
-
-@keyframes scaleUp {
-    from {
-        opacity: 0;
-        transform: scale(0.3);
-    }
-}
-
-@keyframes scaleDownUp {
-    to {
-        opacity: 0;
-        transform: scale(1.2);
+@media (max-width: 1100px) {
+    .lp-workspace .lp-tasks {
+        display: none;
     }
 }
 </style>

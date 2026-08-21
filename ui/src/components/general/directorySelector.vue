@@ -273,7 +273,7 @@ export default {
                 rgba(73, 131, 251, 1) 0%,
                 rgba(100, 161, 252, 1) 100%
             );
-            border: 1px solid rgba(120, 120, 120, 0.1);
+            border: 1px solid var(--lp-line);
             border-radius: 8px;
             color: whitesmoke;
             box-shadow: 0px 1px 2px rgba(0, 0, 0, 0.1);

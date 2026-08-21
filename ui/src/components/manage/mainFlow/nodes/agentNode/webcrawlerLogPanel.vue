@@ -13,7 +13,7 @@
                         <i v-if="getNodeStatus(node) === NodeStatus.COMPLETED" class="ms-Icon ms-Icon--CheckMark"></i>
                         <i v-else-if="getNodeStatus(node) === NodeStatus.FAILED" class="ms-Icon ms-Icon--Cancel"></i>
                         <fv-progress-ring v-else-if="getNodeStatus(node) === NodeStatus.RUNNING" :loading="true" :r="6"
-                            :border-width="2" background="transparent" color="white"></fv-progress-ring>
+                            :border-width="2" background="transparent" color="var(--lp-text)"></fv-progress-ring>
                         <span v-else>{{ index + 1 }}</span>
                     </div>
                     <div v-if="index < orderedNodes.length - 1" class="node-line"
@@ -154,7 +154,7 @@ const isRunning = computed(() => {
         align-items: center;
         gap: 8px;
         padding: 0 8px 8px;
-        border-bottom: 1px solid rgba(200, 200, 200, 0.3);
+        border-bottom: 1px solid var(--lp-line);
         margin-bottom: 8px;
 
         .header-title {
@@ -177,7 +177,7 @@ const isRunning = computed(() => {
         transition: background-color 0.2s;
 
         &:hover {
-            background-color: rgba(200, 200, 200, 0.1);
+            background-color: var(--lp-line);
         }
 
         &.running {
@@ -208,29 +208,29 @@ const isRunning = computed(() => {
             justify-content: center;
             font-size: 10px;
             font-weight: 600;
-            color: white;
-            background-color: rgba(200, 200, 200, 0.5);
+            color: var(--lp-text);
+            background-color: var(--lp-line);
             transition: all 0.3s;
             flex-shrink: 0;
 
             &.pending {
-                background-color: rgba(200, 200, 200, 0.5);
-                color: rgba(100, 100, 100, 1);
+                background-color: var(--lp-line);
+                color: var(--lp-text);
             }
 
             &.running {
                 background-color: rgba(255, 165, 0, 1);
-                color: white;
+                color: var(--lp-text);
             }
 
             &.completed {
                 background-color: rgba(45, 168, 83, 1);
-                color: white;
+                color: var(--lp-text);
             }
 
             &.failed {
                 background-color: rgba(220, 38, 45, 1);
-                color: white;
+                color: var(--lp-text);
             }
         }
 
@@ -238,7 +238,7 @@ const isRunning = computed(() => {
             width: 2px;
             flex: 1;
             min-height: 16px;
-            background-color: rgba(200, 200, 200, 0.5);
+            background-color: var(--lp-line);
             transition: background-color 0.3s;
 
             &.completed {
@@ -262,7 +262,7 @@ const isRunning = computed(() => {
         .node-name {
             font-size: 12px;
             font-weight: 600;
-            color: rgba(50, 50, 50, 1);
+            color: var(--lp-text);
         }
 
         .node-status-tag {
@@ -272,8 +272,8 @@ const isRunning = computed(() => {
             flex-shrink: 0;
 
             &.pending {
-                background-color: rgba(200, 200, 200, 0.3);
-                color: rgba(100, 100, 100, 1);
+                background-color: var(--lp-line);
+                color: var(--lp-text);
             }
 
             &.running {
@@ -294,7 +294,7 @@ const isRunning = computed(() => {
 
         .node-message {
             font-size: 11px;
-            color: rgba(100, 100, 100, 1);
+            color: var(--lp-text);
             margin: 0;
             white-space: nowrap;
             overflow: hidden;
@@ -310,7 +310,7 @@ const isRunning = computed(() => {
 
             .progress-text {
                 font-size: 10px;
-                color: rgba(100, 100, 100, 1);
+                color: var(--lp-text);
                 min-width: 30px;
             }
         }

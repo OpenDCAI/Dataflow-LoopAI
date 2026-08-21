@@ -84,7 +84,7 @@ onBeforeUnmount(() => {
 
         position: absolute;
         inset: 0;
-        color: rgba(95, 95, 95, 1);
+        color: var(--lp-text);
         font-size: 13px;
         pointer-events: none;
     }

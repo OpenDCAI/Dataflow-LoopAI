@@ -76,7 +76,7 @@ export default {
     width: 100%;
     height: 100%;
     padding: 15px;
-    color: rgba(28, 30, 41, 1);
+    color: var(--lp-text);
     font-family:
         Akkurat Std,
         -apple-system,
@@ -105,20 +105,20 @@ export default {
     .bp-light-title {
         margin: 5px 0px;
         font-size: 12px;
-        color: rgba(95, 95, 95, 1);
+        color: var(--lp-text);
         user-select: none;
     }
 
     .bp-info {
         margin: 5px 0px;
         font-size: 12px;
-        color: rgba(120, 120, 120, 1);
+        color: var(--lp-text-mute);
         user-select: none;
     }
 
     .bp-std-info {
         font-size: 13.8px;
-        color: rgba(27, 27, 27, 1);
+        color: var(--lp-text);
         user-select: none;
     }
 
@@ -126,7 +126,7 @@ export default {
         margin: 5px 0px;
         font-size: 16px;
         font-weight: bold;
-        color: rgba(27, 27, 27, 1);
+        color: var(--lp-text);
         user-select: none;
     }
 
@@ -175,7 +175,7 @@ export default {
     hr {
         margin: 10px 0px;
         border: none;
-        border-top: rgba(120, 120, 120, 0.1) solid thin;
+        border-top: var(--lp-line) solid thin;
     }
 }
 

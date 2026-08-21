@@ -479,8 +479,8 @@ onBeforeUnmount(() => {
     right: 18px;
     width: min(390px, calc(100% - 36px));
     max-height: calc(100% - 350px);
-    color: rgba(36, 39, 48, 1);
-    background: rgba(255, 255, 255, 0.92);
+    color: var(--lp-text);
+    background: var(--lp-surface);
     border: 1px solid rgba(95, 99, 116, 0.18);
     border-radius: 8px;
     box-shadow: 0 10px 28px rgba(32, 36, 52, 0.13);
@@ -536,7 +536,7 @@ onBeforeUnmount(() => {
         height: 8px;
         border-radius: 50%;
         flex: 0 0 auto;
-        background: rgba(154, 160, 166, 1);
+        background: var(--lp-raised);
     }
     .live-dot.running, .stage-dot.running { background: rgba(35, 135, 235, 1); box-shadow: 0 0 0 4px rgba(35, 135, 235, 0.14); animation: breathe 1.5s ease-in-out infinite; }
     .live-dot.completed, .stage-dot.completed, .worker-dot { background: rgba(42, 159, 109, 1); }

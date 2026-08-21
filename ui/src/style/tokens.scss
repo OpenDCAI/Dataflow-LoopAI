@@ -1,0 +1,140 @@
+/**
+ * LoopAI Console — design tokens.
+ *
+ * Dark is the default; light is an override on [data-theme="light"].
+ * Rules the palette enforces:
+ *   - one accent, used for selection, focus and the single primary action;
+ *   - colour otherwise only ever means run state (idle/running/done/failed);
+ *   - agents are told apart by hue at a fixed chroma, never by gradient;
+ *   - depth comes from 1px lines, not from shadows or blur.
+ */
+
+:root {
+    /* surfaces */
+    --lp-bg: #0b0d11;
+    --lp-chrome: #101318;
+    --lp-surface: #14181e;
+    --lp-raised: #1a1f27;
+    --lp-active: #212832;
+    --lp-line: #232932;
+    --lp-line-hi: #313a46;
+
+    /* text */
+    --lp-text: #dfe4ec;
+    --lp-text-dim: #97a1b0;
+    --lp-text-mute: #6a7482;
+    --lp-text-faint: #4a5563;
+
+    /* accent */
+    --lp-accent: #6ba7ff;
+    --lp-accent-hi: #8dbcff;
+    --lp-accent-line: rgba(107, 167, 255, 0.35);
+    --lp-accent-wash: rgba(107, 167, 255, 0.12);
+    --lp-on-accent: #0b0d11;
+
+    /* run state */
+    --lp-idle: #6a7482;
+    --lp-run: #e0a33a;
+    --lp-run-wash: rgba(224, 163, 58, 0.12);
+    --lp-ok: #4fb477;
+    --lp-ok-wash: rgba(79, 180, 119, 0.12);
+    --lp-err: #e5645e;
+    --lp-err-wash: rgba(229, 100, 94, 0.12);
+    --lp-err-line: rgba(229, 100, 94, 0.4);
+
+    /* agent identity — hue only, same chroma */
+    --lp-looper: #7fb2e8;
+    --lp-obtainer: #59b3a9;
+    --lp-trainer: #d4a24c;
+    --lp-judger: #6fbf87;
+    --lp-analyzer: #9d8ce8;
+
+    /* type */
+    --lp-font: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --lp-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --lp-t-xs: 10.5px;
+    --lp-t-sm: 11px;
+    --lp-t-cap: 12px;
+    --lp-t-md: 12.5px;
+    --lp-t-body: 13px;
+    --lp-t-lg: 15px;
+    --lp-t-xl: 18px;
+    --lp-t-2xl: 22px;
+
+    /* space */
+    --lp-1: 4px;
+    --lp-2: 8px;
+    --lp-3: 12px;
+    --lp-4: 16px;
+    --lp-5: 24px;
+    --lp-6: 32px;
+
+    /* radii */
+    --lp-r-1: 4px;
+    --lp-r-2: 6px;
+    --lp-r-3: 8px;
+    --lp-r-full: 999px;
+
+    /* control heights */
+    --lp-h-sm: 24px;
+    --lp-h: 26px;
+    --lp-h-md: 28px;
+    --lp-h-lg: 34px;
+
+    /* chrome geometry */
+    --lp-rail: 52px;
+    --lp-column: 236px;
+    --lp-bar: 44px;
+
+    /* motion — one duration for hover, one for anything that moves */
+    --lp-fast: 120ms;
+    --lp-slow: 180ms;
+    --lp-ease: cubic-bezier(0.2, 0, 0, 1);
+
+    /* overlays are the only place a shadow is allowed */
+    --lp-overlay: 0 12px 32px rgba(0, 0, 0, 0.55);
+    --lp-scrim: rgba(6, 8, 11, 0.62);
+
+    color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+    --lp-bg: #f6f7f9;
+    --lp-chrome: #ffffff;
+    --lp-surface: #ffffff;
+    --lp-raised: #f1f3f6;
+    --lp-active: #e7eaf0;
+    --lp-line: #e2e6ec;
+    --lp-line-hi: #cdd4de;
+
+    --lp-text: #171b22;
+    --lp-text-dim: #59616e;
+    --lp-text-mute: #838c99;
+    --lp-text-faint: #a3abb7;
+
+    --lp-accent: #2f6fd0;
+    --lp-accent-hi: #245ab0;
+    --lp-accent-line: rgba(47, 111, 208, 0.35);
+    --lp-accent-wash: rgba(47, 111, 208, 0.1);
+    --lp-on-accent: #ffffff;
+
+    --lp-idle: #838c99;
+    --lp-run: #b57614;
+    --lp-run-wash: rgba(181, 118, 20, 0.1);
+    --lp-ok: #2f8f57;
+    --lp-ok-wash: rgba(47, 143, 87, 0.1);
+    --lp-err: #c33d38;
+    --lp-err-wash: rgba(195, 61, 56, 0.1);
+    --lp-err-line: rgba(195, 61, 56, 0.4);
+
+    --lp-looper: #3f7cb8;
+    --lp-obtainer: #2c8880;
+    --lp-trainer: #a2751f;
+    --lp-judger: #3d8f5b;
+    --lp-analyzer: #6a58bd;
+
+    --lp-overlay: 0 12px 32px rgba(23, 27, 34, 0.16);
+    --lp-scrim: rgba(23, 27, 34, 0.28);
+
+    color-scheme: light;
+}

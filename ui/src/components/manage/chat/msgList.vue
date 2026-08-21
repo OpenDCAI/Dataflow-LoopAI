@@ -1,31 +1,28 @@
 <template>
-    <div class="collaspe-block" @click="isCollapsed = !isCollapsed">
-        <i
-            class="ms-Icon"
-            :class="[`ms-Icon--${isCollapsed ? 'ChevronLeft' : 'ChevronRight'}`]"
-        ></i>
-    </div>
-    <div class="loopai-msg-list-container" ref="list" :class="{ collapsed: isCollapsed }">
-        <template v-for="(msg, index) in taskMessages" :key="index">
-            <transition name="msg-collapse" appear>
-                <msg-block v-show="showMe(msg)" :model-value="msg" />
-            </transition>
-        </template>
-        <transition name="msg-collapse" appear>
+    <section class="lp-transcript lp-sheet">
+        <header class="lp-sheet__head">
+            <span class="lp-label">{{ local('Transcript') }}</span>
+            <div class="lp-transcript__spacer"></div>
+            <span v-if="currentTask" class="lp-transcript__id">{{ currentTask.task_id }}</span>
+        </header>
+
+        <div ref="list" class="lp-sheet__body lp-transcript__body">
+            <template v-for="(msg, index) in taskMessages" :key="index">
+                <msg-block v-if="showMe(msg)" :model-value="msg" />
+            </template>
+
             <response-block v-show="msgStreamModel.loading"></response-block>
-        </transition>
-        <transition name="msg-collapse" appear>
-            <msg-block
-                v-show="msgStreamModel.status === 'failed'"
-                :model-value="{
-                    type: 'assistant',
-                    data: {
-                        content: local('##### Run Failed, Please Retry')
-                    }
-                }"
-            />
-        </transition>
-    </div>
+
+            <p v-if="msgStreamModel.status === 'failed'" class="lp-transcript__failed">
+                <span class="lp-dot is-failed"></span>
+                {{ local('Run failed. Send again to retry.') }}
+            </p>
+
+            <p v-if="!taskMessages.length && !msgStreamModel.loading" class="lp-empty">
+                {{ local('Nothing yet. Whatever you send below starts the loop.') }}
+            </p>
+        </div>
+    </section>
 </template>
 
 <script>
@@ -37,38 +34,33 @@ import responseBlock from './responseBlock/index.vue'
 import { mapState } from 'pinia'
 
 export default {
+    name: 'MsgList',
     components: {
         msgBlock,
         responseBlock
     },
-    props: {},
-    data() {
-        return {
-            isCollapsed: false
-        }
-    },
     watch: {
         'msgStreamModel.loading'() {
-            this.$nextTick(() => {
-                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
-            })
+            this.scrollToEnd()
         },
         'taskMessages.length'() {
-            this.$nextTick(() => {
-                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
-            })
+            this.scrollToEnd()
         },
         currentMsg() {
-            this.$nextTick(() => {
-                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
-            })
+            this.scrollToEnd()
         }
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
-        ...mapState(useLoopAI, ['taskMessages', 'msgStreamModel', 'currentMsg'])
+        ...mapState(useLoopAI, ['taskMessages', 'msgStreamModel', 'currentMsg', 'currentTask'])
     },
     methods: {
+        scrollToEnd() {
+            this.$nextTick(() => {
+                const list = this.$refs.list
+                if (list) list.scrollTop = list.scrollHeight
+            })
+        },
         showMe(msg) {
             return (
                 !msg.data.tool_calls ||
@@ -81,63 +73,39 @@ export default {
 </script>
 
 <style lang="scss">
-.collaspe-block {
-    @include HcenterVcenterC;
+.lp-transcript {
+    width: 404px;
+    flex-shrink: 0;
 
-    position: fixed;
-    top: 35px;
-    right: 35px;
-    width: 30px;
-    height: 30px;
-    background: rgba(245, 245, 245, 0.8);
-    border: rgba(120, 120, 120, 0.1) solid thin;
-    border-radius: 8px;
-    box-shadow: 0px 1px 3px rgba(0, 0, 0, 0.1);
-    transition: all 0.3s;
-    z-index: 9;
-
-    &:hover {
-        background: rgba(255, 255, 255, 0.8);
+    .lp-transcript__spacer {
+        flex: 1;
     }
 
-    &:active {
-        background: rgba(250, 250, 250, 0.8);
+    .lp-transcript__id {
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-xs);
+        color: var(--lp-text-faint);
     }
-}
-.loopai-msg-list-container {
-    @include HcenterC;
 
-    position: absolute;
-    top: 0px;
-    right: 0px;
-    width: min(450px, 90%);
-    height: 100%;
-    padding: 95px 15px 255px 15px;
-    overflow: auto;
-    transition: width 0.3s;
-    z-index: 1;
-
-    &.collapsed {
-        width: 0px;
+    .lp-transcript__body {
+        gap: 18px;
+        display: flex;
+        flex-direction: column;
+        overscroll-behavior: contain;
     }
-}
 
-.msg-collapse-enter-active,
-.msg-collapse-leave-active,
-.msg-collapse-appear-active {
-    overflow: hidden;
-    transition: max-height 1s ease-out;
-}
+    .lp-transcript__failed {
+        gap: 8px;
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-sm);
+        color: var(--lp-err);
+        display: flex;
+        align-items: center;
+    }
 
-.msg-collapse-enter-from,
-.msg-collapse-leave-to,
-.msg-collapse-appear-from {
-    max-height: 0;
-}
-
-.msg-collapse-enter-to,
-.msg-collapse-leave-from,
-.msg-collapse-appear-to {
-    max-height: 1000px;
+    &.is-wide {
+        width: 100%;
+        border-left: none;
+    }
 }
 </style>

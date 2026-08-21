@@ -33,7 +33,7 @@ const html = computed(() => {
 
 <style lang="scss">
 .md-text-default-block {
-    color: rgba(55, 65, 81, 1);
+    color: var(--lp-text);
 
     * {
         max-width: 100%;
@@ -112,7 +112,7 @@ const html = computed(() => {
             width: auto;
             font-weight: bold;
             text-align: left;
-            background-color: rgba(241, 243, 245, 1);
+            background-color: var(--lp-surface);
         }
 
         .selectedCell:after {
@@ -123,7 +123,7 @@ const html = computed(() => {
             right: 0;
             top: 0;
             bottom: 0;
-            background: rgba(200, 200, 255, 0.4);
+            background: var(--lp-surface);
             pointer-events: none;
         }
 

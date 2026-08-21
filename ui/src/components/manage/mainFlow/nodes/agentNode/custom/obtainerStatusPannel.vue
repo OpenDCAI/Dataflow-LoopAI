@@ -447,7 +447,7 @@ onBeforeUnmount(() => {
     min-height: 350px;
     display: grid;
     grid-template-columns: 0.92fr 1.28fr 0.92fr;
-    color: rgba(35, 35, 35, 0.9);
+    color: var(--lp-text);
 
     &.active {
         box-shadow: inset 0 3px 0 rgba(217, 144, 0, 0.82);
@@ -563,7 +563,7 @@ onBeforeUnmount(() => {
 .export-btn { font-size: 10px; padding: 2px 8px; border: 1px solid rgba(90, 45, 133, 0.35); border-radius: 4px; background: rgba(90, 45, 133, 0.06); color: rgba(90, 45, 133, 0.85); cursor: pointer; }
 .export-btn:hover { background: rgba(90, 45, 133, 0.14); }
 .export-preview-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 9999; display: flex; align-items: center; justify-content: center; }
-.export-preview-panel { background: #fff; border-radius: 8px; width: min(860px, 90vw); max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25); }
+.export-preview-panel { background: var(--lp-surface); border-radius: 8px; width: min(860px, 90vw); max-height: 80vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25); }
 .export-preview-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid rgba(90, 45, 133, 0.15); }
 .export-preview-head strong { font-size: 13px; color: rgba(90, 45, 133, 0.95); }
 .export-preview-loading, .export-preview-error { padding: 18px; font-size: 12px; color: rgba(65, 65, 65, 0.75); }

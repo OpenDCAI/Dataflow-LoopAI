@@ -1,123 +1,41 @@
 <template>
-    <div class="msg-block" :class="[{ dark: theme === 'dark' }]">
-        <div class="msg-wrapper">
-            <div class="msg-content-block">
-                <div class="row-block">
-                    <div
-                        v-if="thisValue.type === 'user'"
-                        class="msg-role-block"
-                        :style="{ background: gradient }"
-                    >
-                        <img class="agent-logo" :src="img.user" draggable="false" alt="" />
-                    </div>
-                    <div
-                        v-if="thisValue.type === 'assistant'"
-                        class="msg-role-block"
-                        :style="{ background: 'rgba(245, 245, 245, 1)' }"
-                    >
-                        <img class="agent-logo" :src="img.agent" draggable="false" alt="" />
-                    </div>
-                    <div
-                        v-if="thisValue.type === 'tool'"
-                        class="msg-role-block"
-                        :style="{ background: 'rgba(245, 245, 245, 1)' }"
-                    >
-                        <img class="agent-logo" :src="img.tool" draggable="false" alt="" />
-                    </div>
-                    <p class="msg-role-text">
-                        {{ getRoleName }}
-                    </p>
-                </div>
+    <article class="lp-msg" :class="[`is-${thisValue.type}`]">
+        <header class="lp-msg__head">
+            <span v-if="thisValue.type !== 'user'" class="lp-msg__hue"></span>
+            <span class="lp-label">{{ roleName }}</span>
+            <div class="lp-msg__spacer"></div>
+            <button
+                v-if="thisValue.type !== 'tool'"
+                type="button"
+                class="lp-btn lp-btn--ghost lp-btn--icon lp-btn--sm lp-msg__copy"
+                :title="local('Copy')"
+                @click="copyText"
+            >
+                <svg v-if="!justCopied" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="11" height="11" rx="2" />
+                    <path d="M5 15V6a2 2 0 0 1 2-2h8" />
+                </svg>
+                <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 12l5 5L20 6" />
+                </svg>
+            </button>
+        </header>
 
-                <div
-                    v-if="!editable && thisValue.type !== 'tool'"
-                    v-html="mdHTML"
-                    class="msg-content"
-                ></div>
-                <div
-                    v-if="editable && thisValue.type !== 'tool'"
-                    class="msg-editable-content-block"
-                >
-                    <power-editor
-                        :placeholder="local('Edit your question...')"
-                        :theme="theme"
-                        class="msg-power-editor"
-                        ref="editor"
-                        :editorBackground="theme === 'dark' ? 'rgba(52, 64, 84, 0.3)' : 'white'"
-                        :editorOutSideBackground="
-                            theme === 'dark' ? 'rgba(52, 64, 84, 0.3)' : 'white'
-                        "
-                        @on-mounted="setEditorContent"
-                    ></power-editor>
-                    <div class="msg-editable-control-block">
-                        <fv-button
-                            theme="dark"
-                            :background="gradient"
-                            :is-box-shadow="true"
-                            :disabled="holdon"
-                            style="width: 120px"
-                            @click="getEditorContent"
-                            >{{ local('Submit') }}</fv-button
-                        >
-                        <fv-button
-                            :is-box-shadow="true"
-                            style="margin-left: 15px; width: 120px"
-                            @click="editable = false"
-                            >{{ local('Cancel') }}</fv-button
-                        >
-                    </div>
-                </div>
-                <div v-if="!editable && thisValue.type === 'tool'" class="tool-msg-info">
-                    <span
-                        v-for="(item, index) in computedToolContent"
-                        class="tool-msg-item"
-                        :class="[{ long: computeLength(item.value) > 20 }]"
-                        :key="index"
-                        @click="copyTextContent(item.value)"
-                    >
-                        <p class="tool-msg-key">{{ item.key }}</p>
-                        <p class="tool-msg-value">{{ item.value }}</p>
-                    </span>
-                </div>
-            </div>
-            <div v-show="thisValue.type !== 'tool'" class="msg-control-block">
-                <div class="msg-control-right-block">
-                    <fv-button
-                        v-show="thisValue.type === 'user' && false"
-                        :theme="theme"
-                        :background="
-                            theme === 'dark' ? 'rgba(50, 58, 71, 1)' : 'rgba(255, 255, 255, 1)'
-                        "
-                        :border-radius="50"
-                        style="width: 25px; height: 25px; flex-shrink: 0"
-                        @click="editable = !editable"
-                    >
-                        <i
-                            class="ms-Icon"
-                            :class="[`ms-Icon--${editable ? 'Accept' : 'Edit'}`]"
-                            style="font-size: 12px"
-                        ></i>
-                    </fv-button>
-                    <fv-button
-                        :border-radius="50"
-                        :theme="theme"
-                        :background="
-                            theme === 'dark' ? 'rgba(50, 58, 71, 1)' : 'rgba(255, 255, 255, 1)'
-                        "
-                        style="width: 25px; height: 25px; margin-left: 5px; flex-shrink: 0"
-                        :title="local('Copy')"
-                        @click="copyText"
-                    >
-                        <i
-                            class="ms-Icon"
-                            :class="[`ms-Icon--${copyIcon}`]"
-                            style="font-size: 12px"
-                        ></i>
-                    </fv-button>
-                </div>
+        <div v-if="thisValue.type !== 'tool'" v-html="mdHTML" class="lp-msg__body"></div>
+
+        <div v-else class="lp-msg__tool">
+            <div
+                v-for="(item, index) in computedToolContent"
+                :key="index"
+                class="lp-msg__tool-row"
+                :title="local('Copy')"
+                @click="copyTextContent(item.value)"
+            >
+                <span class="lp-msg__tool-key">{{ item.key }}</span>
+                <span class="lp-msg__tool-value">{{ item.value }}</span>
             </div>
         </div>
-    </div>
+    </article>
 </template>
 
 <script>
@@ -134,30 +52,22 @@ import markdownItMark from 'markdown-it-mark'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/vs2015.css'
 
-import loopAI from '@/assets/logo/LoopAI_logo.svg'
-import userImg from '@/assets/chat/user.svg'
-import toolImg from '@/assets/chat/tool.svg'
-
 export default {
+    name: 'MsgBlock',
     props: {
         modelValue: {
             type: Object,
-            default: () => {}
-        },
-        holdon: {
-            default: false
+            default: () => ({})
         },
         loadingMsg: {
             default: false
-        },
-        theme: {
-            default: 'light'
         }
     },
     data() {
         return {
             thisValue: this.modelValue,
             mdHTML: '',
+            justCopied: false,
             md: new MarkdownIt({
                 html: true,
                 linkify: true,
@@ -175,24 +85,17 @@ export default {
                             )
                         } catch (error) {}
                     }
-                    return '' // 如果无法识别语言，则返回原始代码
+                    return ''
                 }
             })
                 .use(markdownItTexMath, {
                     engine: katex,
-                    delimiters: 'dollars', // 支持 \(...\), \[...\], $$...$$
+                    delimiters: 'dollars',
                     katexOptions: { throwOnError: false }
                 })
                 .use(markdownItSubscript)
                 .use(markdownItSuperscript)
                 .use(markdownItMark),
-            copyIcon: 'Set',
-            img: {
-                agent: loopAI,
-                user: userImg,
-                tool: toolImg
-            },
-            editable: false,
             timer: {
                 copyIcon: null
             }
@@ -211,500 +114,251 @@ export default {
     },
     computed: {
         ...mapState(useAppConfig, ['local']),
-        ...mapState(useTheme, ['color', 'gradient']),
-        getRoleName() {
+        ...mapState(useTheme, ['color']),
+        roleName() {
             if (this.thisValue.type === 'user') return this.local('You')
-            if (this.thisValue.type === 'assistant') return this.local('AI')
+            if (this.thisValue.type === 'assistant') return this.local('Looper')
+            if (!this.thisValue.type) return this.local('Looper')
             return this.thisValue.type[0].toUpperCase() + this.thisValue.type.slice(1)
         },
         computedContent() {
             try {
-                let content = this.thisValue.data.content
-                return content
+                return this.thisValue.data.content
             } catch (e) {}
-
             return ''
         },
         computedToolContent() {
             try {
-                let content = this.thisValue.data.content
-                content = JSON.parse(content)
+                let content = JSON.parse(this.thisValue.data.content)
                 let result = []
-                for (let key in content)
-                    result.push({
-                        key,
-                        value: content[key]
-                    })
+                for (let key in content) result.push({ key, value: content[key] })
                 return result
             } catch (e) {}
-
             return []
         }
     },
     mounted() {
         this.renderMarkdown()
     },
+    beforeUnmount() {
+        clearTimeout(this.timer.copyIcon)
+    },
     methods: {
         renderMarkdown() {
             let decode = this.computedContent.replace(/\n\n/g, '\n')
             decode = decode
-                .replace(/\$\s*/g, '$') // $ 后空格
-                .replace(/\s*\$/g, '$') // $ 前空格
-                .replace(/\\\(\s*/g, '$') // \( 后空格
-                .replace(/\s*\\\)/g, '$') // \) 前空格
-                .replace(/\\\[\s*/g, '$$') // \[ 后空格
-                .replace(/\s*\\\]/g, '$$') // \] 前空格
-            let mdHTML = this.md.render(decode)
+                .replace(/\$\s*/g, '$')
+                .replace(/\s*\$/g, '$')
+                .replace(/\\\(\s*/g, '$')
+                .replace(/\s*\\\)/g, '$')
+                .replace(/\\\[\s*/g, '$$')
+                .replace(/\s*\\\]/g, '$$')
+            const mdHTML = this.md.render(decode)
             this.mdHTML = mdHTML
             if (this.loadingMsg) {
+                // a caret riding the last line is the only "it is still writing" cue we need
                 this.$nextTick(() => {
-                    let contentEl = this.$el.querySelector('.msg-content')
+                    const contentEl = this.$el.querySelector('.lp-msg__body')
+                    if (!contentEl) return
                     let last = contentEl.lastElementChild
                     if (last && ['UL', 'OL', 'PRE'].includes(last.nodeName)) {
                         last = last.lastElementChild
                     }
-                    if (last) {
-                        let rangeEl = `<i class="msg-content-generating-block" style="background: ${this.gradient};"></i>`
-                        last.insertAdjacentHTML('beforeend', rangeEl)
-                    }
+                    if (last) last.insertAdjacentHTML('beforeend', '<i class="lp-msg__caret"></i>')
                 })
-            } else if (!this.loadingMsg) {
-                this.mdHTML = mdHTML + '<i></i>'
             }
         },
-        setEditorContent() {
-            let decode = this.computedContent.replace(/\n\n/g, '\n')
-            return this.$refs.editor.insertMarkdown(decode)
-        },
-        getEditorContent() {
-            let content = this.$refs.editor.saveMarkdown()
-            this.$emit('revise-submit', {
-                msg: this.thisValue,
-                content
-            })
-            this.editable = false
-        },
         copyText() {
-            let content = this.computedContent.replace(/\n\n/g, '\n')
+            const content = this.computedContent.replace(/\n\n/g, '\n')
             navigator.clipboard.writeText(content).then(() => {
-                this.copyIcon = 'Accept'
+                this.justCopied = true
                 clearTimeout(this.timer.copyIcon)
                 this.timer.copyIcon = setTimeout(() => {
-                    this.copyIcon = 'Set'
-                }, 1000)
+                    this.justCopied = false
+                }, 1200)
             })
         },
         copyTextContent(text) {
             if (typeof text === 'object') text = JSON.stringify(text)
-            navigator.clipboard.writeText(text).then(() => {
-                this.$barWarning(this.local('Copied'), {
-                    status: 'correct'
-                })
-            })
-        },
-        computeLength(obj) {
-            if (!obj) return 0
-            if (typeof obj === 'string') return obj.length
-            try {
-                obj = JSON.stringify(obj)
-                return obj.length
-            } catch (e) {
-                return 0
-            }
+            navigator.clipboard.writeText(text)
         }
     }
 }
 </script>
 
 <style lang="scss">
-.msg-block {
-    @include HcenterC;
-
+.lp-msg {
     position: relative;
     width: 100%;
-    height: auto;
     flex-shrink: 0;
-    margin-bottom: 5px;
+    gap: 8px;
     display: flex;
-    overflow: hidden;
+    flex-direction: column;
 
-    * {
-        td {
-            overflow: overlay;
-        }
+    &:hover .lp-msg__copy {
+        opacity: 1;
     }
 
-    &:last-child {
-        margin-bottom: 100px;
-    }
-
-    &.dark {
-        .msg-role-block {
-            .msg-guid {
-                color: whitesmoke;
-            }
-        }
-
-        .msg-wrapper {
-            background: rgba(43, 50, 76, 0.6);
-        }
-
-        .msg-content-block {
-            .msg-content {
-                color: rgba(185, 188, 200, 1);
-
-                a {
-                    color: rgba(155, 155, 255, 1);
-                }
-            }
-        }
-
-        .msg-control-block {
-            .version-display-block {
-                color: whitesmoke;
-            }
-        }
-    }
-
-    .msg-wrapper {
-        @include HcenterC;
-
-        position: relative;
-        width: 100%;
-        max-width: 900px;
-        height: auto;
-        padding: 5px 0px;
-        background: rgba(255, 255, 255, 0.3);
-        border: rgba(160, 160, 160, 0.2) solid thin;
-        border-radius: 12px;
-        transition: background 0.3s;
+    .lp-msg__head {
+        gap: 7px;
         display: flex;
-        backdrop-filter: blur(10px);
-        overflow: hidden;
-
-        &:hover {
-            background: rgba(255, 255, 255, 0.8);
-        }
+        align-items: center;
     }
 
-    .msg-control-block {
-        @include Vstart;
-
-        position: relative;
-        width: 100%;
-        max-width: 900px;
-        height: auto;
+    .lp-msg__hue {
+        width: 3px;
+        height: 12px;
+        background: var(--lp-looper);
+        border-radius: 2px;
         flex-shrink: 0;
-        padding: 2px 15px;
-        border-radius: 8px;
-
-        .msg-control-left-block {
-            @include Vcenter;
-
-            width: 150px;
-            height: 30px;
-            flex-shrink: 0;
-
-            .version-display-block {
-                @include HcenterVcenter;
-
-                margin: 0px 25px;
-                font-size: 12px;
-            }
-        }
-
-        .msg-control-right-block {
-            @include Hend;
-
-            width: auto;
-            height: auto;
-            flex: 1;
-            overflow: hidden;
-        }
     }
 
-    .msg-content-block {
-        position: relative;
-        width: 100%;
-        max-width: 900px;
-        height: auto;
-        flex-shrink: 0;
-        padding: 5px 15px;
-        gap: 10px;
-        display: flex;
-        flex-direction: column;
+    .lp-msg__spacer {
+        flex: 1;
+    }
 
-        .row-block {
-            @include Vcenter;
+    .lp-msg__copy {
+        opacity: 0;
+        transition: opacity var(--lp-fast) var(--lp-ease);
+    }
 
-            gap: 5px;
+    .lp-msg__body {
+        font-size: var(--lp-t-md);
+        line-height: 1.65;
+        color: var(--lp-text);
+        overflow-wrap: anywhere;
 
-            .msg-role-text {
-                font-size: 12px;
-                font-weight: bold;
-                color: rgba(13, 13, 13, 1);
-                user-select: none;
-            }
-
-            .msg-role-block {
-                @include HcenterVcenter;
-
-                width: 25px;
-                height: 25px;
-                border-radius: 50%;
-                user-select: none;
-                overflow: hidden;
-
-                .agent-logo {
-                    width: 15px;
-                    height: 15px;
-                }
-
-                .model-avatar {
-                    width: 25px;
-                    height: 25px;
-                    object-fit: cover;
-                }
-            }
+        > *:not(:last-child) {
+            margin-bottom: 8px;
         }
 
-        .msg-content {
-            @include VcenterC;
+        h1,
+        h2,
+        h3,
+        h4,
+        h5 {
+            margin-top: 4px;
+            font-size: var(--lp-t-body);
+            font-weight: 600;
+        }
 
-            position: relative;
-            width: 100%;
-            flex: 1;
-            padding: 0px 5px;
-            font-size: 0.8rem;
-            color: rgba(55, 65, 81, 1);
-            line-height: 1.6;
+        ul,
+        ol {
+            padding-left: 18px;
+        }
 
-            * {
-                max-width: 100%;
-                line-height: 1.5;
-            }
+        li {
+            margin: 2px 0;
+        }
 
-            p {
-                white-space: pre-wrap;
-            }
+        code {
+            padding: 1px 4px;
+            background: var(--lp-raised);
+            border-radius: var(--lp-r-1);
+            font-size: var(--lp-t-sm);
+        }
 
-            li {
-                margin-left: 15px;
-                margin-top: 10px;
-            }
-
-            pre {
-                width: 100%;
-                margin: 15px 0px;
-                padding: 15px;
-                background-color: rgba(36, 36, 36, 1);
-                border-radius: 8px;
-                box-sizing: border-box;
-                line-height: 1;
-                overflow-x: overlay;
-
-                code {
-                    color: inherit;
-                    padding: 0;
-                    background: none;
-                    font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
-                    color: whitesmoke;
-                    line-height: 1.5;
-
-                    &::before {
-                        content: attr(data-language);
-
-                        margin-bottom: 10px;
-                        color: rgba(245, 245, 245, 0.6);
-                        display: block;
-                    }
-                }
-            }
+        pre {
+            padding: 10px 12px;
+            background: var(--lp-bg);
+            border: 1px solid var(--lp-line);
+            border-radius: var(--lp-r-2);
+            font-size: var(--lp-t-sm);
+            line-height: 1.7;
+            overflow-x: auto;
 
             code {
-                padding: 4px 6px;
-                background-color: rgba(#616161, 0.1);
-                font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
-                font-size: 0.8rem;
-                color: rgba(235, 87, 87, 1);
-                border-radius: 3px;
-            }
-
-            table {
-                border-collapse: collapse;
-                table-layout: fixed;
-                width: 100%;
-                margin: 5px 0px;
-                display: table;
-                overflow: hidden;
-                overflow-y: visible;
-
-                td,
-                th {
-                    min-width: 1em;
-                    border: thin solid #ced4da;
-                    padding: 3px 5px;
-                    vertical-align: top;
-                    box-sizing: border-box;
-                    position: relative;
-
-                    > * {
-                        margin-bottom: 0;
-                    }
-                }
-
-                th {
-                    width: auto;
-                    font-weight: bold;
-                    text-align: left;
-                    background-color: rgba(241, 243, 245, 1);
-                }
-
-                .selectedCell:after {
-                    z-index: 2;
-                    position: absolute;
-                    content: '';
-                    left: 0;
-                    right: 0;
-                    top: 0;
-                    bottom: 0;
-                    background: rgba(200, 200, 255, 0.4);
-                    pointer-events: none;
-                }
-
-                .column-resize-handle {
-                    position: absolute;
-                    right: -2px;
-                    top: 0;
-                    bottom: -2px;
-                    width: 4px;
-                    background-color: rgba(145, 191, 209, 1);
-                    pointer-events: none;
-                }
-
-                p {
-                    margin: 0;
-                }
-            }
-
-            .msg-content-generating-block {
-                position: relative;
-                top: 2px;
-                width: 16px;
-                height: 16px;
-                margin-left: 10px;
-                border-radius: 50%;
-                user-select: none;
-                animation: flash 0.1s infinite alternate;
-                display: inline-block;
-            }
-
-            @keyframes flash {
-                from {
-                    opacity: 0;
-                }
-
-                to {
-                    opacity: 1;
-                    transform: scale(1.2);
-                }
+                padding: 0;
+                background: none;
             }
         }
 
-        .msg-editable-content-block {
-            @include HcenterC;
-
-            flex: 1;
-            margin-left: 15px;
-
-            .msg-power-editor {
-                width: 100%;
-                height: 300px;
-                border: rgba(200, 200, 200, 0.1) solid thin;
-                overflow: hidden;
-            }
-
-            .msg-editable-control-block {
-                @include HcenterVcenter;
-
-                width: 100%;
-                margin-top: 15px;
-            }
-        }
-
-        .tool-msg-info {
-            @include Vcenter;
-
+        table {
             width: 100%;
-            max-width: 100%;
-            gap: 5px;
-            flex-wrap: wrap;
-            user-select: none;
-            cursor: default;
-            overflow: hidden;
+            border-collapse: collapse;
+            font-size: var(--lp-t-sm);
 
-            .tool-msg-item {
-                @include HbetweenVcenter;
+            th,
+            td {
+                padding: 5px 8px;
+                border: 1px solid var(--lp-line);
+                text-align: left;
+            }
 
-                width: 100%;
-                height: auto;
-                gap: 5px;
-                padding: 5px;
-                background: linear-gradient(128deg, rgba(95, 75, 189, 1), rgba(148, 136, 225, 1));
-                font-size: 12px;
-                color: whitesmoke;
-                font-weight: bold;
-                border-radius: 999px;
-                box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.1);
-
-                &.long {
-                    border-radius: 8px;
-                    flex-direction: column;
-                    overflow-x: overlay;
-
-                    .tool-msg-value {
-                        width: 100%;
-                        border-radius: 8px;
-                    }
-                }
-
-                .tool-msg-key {
-                    @include Vcenter;
-
-                    width: auto;
-                    height: 100%;
-                    flex-shrink: 0;
-                }
-
-                .tool-msg-value {
-                    @include Vcenter;
-
-                    width: auto;
-                    max-width: 100%;
-                    min-height: 35px;
-                    flex: 1;
-                    height: auto;
-                    flex-shrink: 0;
-                    padding: 5px 10px;
-                    background: rgba(255, 255, 255, 1);
-                    font-size: 12px;
-                    color: rgba(95, 75, 189, 1);
-                    border-radius: 999px;
-                    white-space: pre-wrap;
-                    text-overflow: ellipsis;
-                    overflow-x: overlay;
-                }
+            th {
+                background: var(--lp-raised);
             }
         }
+
+        blockquote {
+            padding-left: 10px;
+            border-left: 2px solid var(--lp-line-hi);
+            color: var(--lp-text-dim);
+        }
+
+        img {
+            max-width: 100%;
+        }
+    }
+
+    .lp-msg__caret {
+        width: 6px;
+        height: 12px;
+        margin-left: 3px;
+        background: var(--lp-accent);
+        border-radius: 1px;
+        display: inline-block;
+        vertical-align: text-bottom;
+        animation: lp-caret 1s steps(2, start) infinite;
+    }
+
+    .lp-msg__tool {
+        padding: 8px 10px;
+        gap: 4px;
+        background: var(--lp-chrome);
+        border: 1px solid var(--lp-line);
+        border-radius: var(--lp-r-2);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .lp-msg__tool-row {
+        gap: 10px;
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-sm);
+        line-height: 1.7;
+        display: flex;
+        cursor: copy;
+
+        &:hover .lp-msg__tool-value {
+            color: var(--lp-text);
+        }
+    }
+
+    .lp-msg__tool-key {
+        width: 84px;
+        flex-shrink: 0;
+        color: var(--lp-text-mute);
+    }
+
+    .lp-msg__tool-value {
+        flex: 1;
+        min-width: 0;
+        color: var(--lp-text-dim);
+        overflow-wrap: anywhere;
+    }
+
+    /* the user's own turn reads as an inset card, the agent's as plain text */
+    &.is-user .lp-msg__body {
+        padding: 9px 11px;
+        background: var(--lp-surface);
+        border-radius: var(--lp-r-2);
     }
 }
 
-@media screen and (max-width: 1024px) {
-    .msg-block {
-        .msg-control-block {
-            .msg-control-right-block {
-            }
-        }
+@keyframes lp-caret {
+    to {
+        opacity: 0.15;
     }
 }
 </style>

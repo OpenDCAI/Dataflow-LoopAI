@@ -1,0 +1,152 @@
+/**
+ * LoopAI Console — element defaults.
+ * Everything here is unconditional: reset, typography, scrollbars, focus.
+ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    position: fixed;
+    left: 0;
+    top: 0;
+    background: var(--lp-bg);
+    color: var(--lp-text);
+    font-family: var(--lp-font);
+    font-size: var(--lp-t-body);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+#app {
+    width: 100%;
+    height: 100%;
+}
+
+h1,
+h2,
+h3,
+h4 {
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+}
+
+h1 {
+    font-size: var(--lp-t-2xl);
+}
+h2 {
+    font-size: var(--lp-t-xl);
+}
+h3 {
+    font-size: var(--lp-t-lg);
+}
+h4 {
+    font-size: var(--lp-t-body);
+}
+
+p {
+    text-wrap: pretty;
+}
+
+code,
+pre,
+kbd,
+samp {
+    font-family: var(--lp-mono);
+}
+
+hr {
+    border: none;
+    border-top: 1px solid var(--lp-line);
+}
+
+a {
+    color: var(--lp-accent);
+    text-decoration: none;
+
+    &:hover {
+        color: var(--lp-accent-hi);
+    }
+}
+
+button,
+input,
+textarea,
+select {
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+}
+
+button {
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+::selection {
+    background: var(--lp-accent-wash);
+}
+
+/* Focus is visible for keyboard users and silent for the mouse. */
+:focus {
+    outline: none;
+}
+
+:focus-visible {
+    outline: 2px solid var(--lp-accent);
+    outline-offset: 1px;
+}
+
+/* Scrollbars read as part of the surface, not as a control. */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: var(--lp-line-hi);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: var(--lp-r-full);
+
+    &:hover {
+        background-color: var(--lp-text-faint);
+    }
+}
+
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--lp-line-hi) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

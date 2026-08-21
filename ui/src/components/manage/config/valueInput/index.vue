@@ -276,9 +276,9 @@ export default {
         height: 100%;
         flex: 1;
         padding: 5px 15px;
-        background: rgba(255, 255, 255, 0.8);
+        background: var(--lp-surface);
         font-size: 12px;
-        color: rgba(120, 120, 120, 1);
+        color: var(--lp-text-mute);
         border-radius: 6px;
         user-select: none;
     }
@@ -286,14 +286,14 @@ export default {
     .breadcrumb-custom {
         flex: 1;
         flex-shrink: 0;
-        background: rgba(120, 120, 120, 0.1);
+        background: var(--lp-raised);
 
         &:hover {
-            background: rgba(120, 120, 120, 0.2);
+            background: var(--lp-raised);
         }
 
         &:active {
-            background: rgba(120, 120, 120, 0.3);
+            background: var(--lp-raised);
         }
     }
 }

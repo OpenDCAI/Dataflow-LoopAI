@@ -1,0 +1,445 @@
+/**
+ * LoopAI Console — third-party retune.
+ *
+ * vfluent3, PowerEditor and Vue Flow ship a light Fluent look with reveal
+ * effects, drop shadows and hard-coded whites. The screens that were rewritten
+ * use the console vocabulary directly; the leaf controls that remain (config
+ * inputs, the dataset manager, pickers) are pulled onto the same tokens here so
+ * the app reads as one surface instead of two.
+ *
+ * `!important` is deliberate: these libraries paint their colours as inline
+ * styles from component props, and there is no call site to change.
+ */
+
+/* ------------------------------------------------------------- buttons */
+
+.fv-Button {
+    div.fv-button-main-container {
+        border-radius: var(--lp-r-2);
+        box-shadow: none !important;
+
+        &:hover {
+            background: transparent;
+        }
+
+        .fv-button-container {
+            background: var(--lp-raised) !important;
+            border-radius: var(--lp-r-2);
+            transition:
+                background var(--lp-fast) var(--lp-ease),
+                border-color var(--lp-fast) var(--lp-ease);
+
+            span.fv-btn-content-block {
+                color: var(--lp-text) !important;
+                font-size: var(--lp-t-cap);
+                font-weight: 500;
+            }
+
+            i {
+                color: inherit;
+            }
+        }
+
+        .fv-button-regular-border {
+            border: 1px solid var(--lp-line-hi) !important;
+            border-radius: var(--lp-r-2);
+        }
+
+        /* the reveal sweep is pure decoration — take it out */
+        .fv-button-reveal-container {
+            display: none !important;
+        }
+
+        &:hover .fv-button-container {
+            background: var(--lp-active) !important;
+        }
+
+        &.disabled {
+            filter: none;
+            opacity: 1;
+
+            .fv-button-container {
+                background: var(--lp-surface) !important;
+            }
+
+            span.fv-btn-content-block {
+                color: var(--lp-text-faint) !important;
+            }
+        }
+    }
+
+    /* theme="dark" marks the single primary action on a screen */
+    &.dark div.fv-button-main-container {
+        .fv-button-container {
+            background: var(--lp-accent) !important;
+
+            span.fv-btn-content-block {
+                color: var(--lp-on-accent) !important;
+                font-weight: 600;
+            }
+        }
+
+        .fv-button-regular-border {
+            border-color: transparent !important;
+        }
+
+        &:hover .fv-button-container {
+            background: var(--lp-accent-hi) !important;
+        }
+    }
+}
+
+/* ------------------------------------------------------------- inputs */
+
+.fv-TextBox {
+    background: var(--lp-bg) !important;
+    border-radius: var(--lp-r-2);
+    box-shadow: none !important;
+
+    .fv-text-box-wrapper-container {
+        background: transparent !important;
+        border: 1px solid var(--lp-line-hi) !important;
+        border-radius: var(--lp-r-2);
+    }
+
+    .fv-text-box-reveal-container {
+        display: none !important;
+    }
+
+    input,
+    .fv-text-box-input,
+    textarea {
+        background: transparent !important;
+        color: var(--lp-text) !important;
+        font-size: var(--lp-t-cap);
+
+        &::placeholder {
+            color: var(--lp-text-faint) !important;
+        }
+    }
+
+    i {
+        color: var(--lp-text-mute) !important;
+    }
+}
+
+.fv-Combobox {
+    .combobox-container {
+        background: var(--lp-bg) !important;
+        border-radius: var(--lp-r-2);
+        box-shadow: none !important;
+
+        p,
+        span,
+        input {
+            color: var(--lp-text) !important;
+            font-size: var(--lp-t-cap);
+        }
+
+        i {
+            color: var(--lp-text-mute) !important;
+        }
+    }
+
+    .fv-combobox-reveal-container {
+        display: none !important;
+    }
+}
+
+.fv-combobox-item {
+    background: var(--lp-surface) !important;
+    color: var(--lp-text) !important;
+
+    &:hover {
+        background: var(--lp-raised) !important;
+    }
+}
+
+.fv-ToggleSwitch {
+    .fv-toggle-border {
+        border-color: var(--lp-line-hi) !important;
+    }
+}
+
+/* ------------------------------------------------------- containers */
+
+.fv-Collapse {
+    background: var(--lp-surface) !important;
+    border: 1px solid var(--lp-line);
+    border-radius: var(--lp-r-3);
+    box-shadow: none !important;
+    overflow: hidden;
+
+    .collapse-description-container {
+        background: transparent !important;
+        padding: 10px 14px;
+
+        .collapse-title,
+        .collapse-description {
+            color: var(--lp-text) !important;
+            font-size: var(--lp-t-md);
+            font-weight: 600;
+        }
+
+        .collapse-info {
+            color: var(--lp-text-mute) !important;
+            font-size: 11.5px;
+        }
+
+        .collapse-icon-box,
+        .collapse-icon-box-default,
+        .collapse-expand-icon-block {
+            color: var(--lp-text-mute) !important;
+        }
+    }
+
+    .collapse-detail {
+        background: transparent !important;
+        color: var(--lp-text);
+    }
+}
+
+.fv-Callout {
+    background-color: var(--lp-surface) !important;
+    color: var(--lp-text) !important;
+    border: 1px solid var(--lp-line-hi);
+    border-radius: var(--lp-r-2);
+    font-size: var(--lp-t-cap);
+    box-shadow: var(--lp-overlay) !important;
+}
+
+.fv-Panel {
+    .fv-panel-back-board {
+        background: var(--lp-scrim) !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+    }
+
+    .fv-panel-container {
+        background: var(--lp-surface) !important;
+        border: 1px solid var(--lp-line);
+        border-radius: var(--lp-r-3);
+        color: var(--lp-text);
+        box-shadow: var(--lp-overlay) !important;
+    }
+
+    .fv-panel-title,
+    .panel-title {
+        color: var(--lp-text) !important;
+        font-size: var(--lp-t-lg) !important;
+        font-weight: 600;
+    }
+}
+
+.fv-Drawer {
+    background: var(--lp-surface) !important;
+    color: var(--lp-text);
+
+    .fv-drawer-control-block {
+        height: var(--lp-bar);
+        border-bottom: 1px solid var(--lp-line);
+
+        .drawer-title {
+            color: var(--lp-text) !important;
+            font-size: var(--lp-t-lg);
+            font-weight: 600;
+        }
+    }
+}
+
+.fv-RightMenu {
+    background: var(--lp-surface) !important;
+    border: 1px solid var(--lp-line-hi);
+    border-radius: var(--lp-r-2);
+    box-shadow: var(--lp-overlay) !important;
+
+    .right-menu-list {
+        span {
+            color: var(--lp-text) !important;
+            font-size: var(--lp-t-cap);
+
+            &:hover {
+                background: var(--lp-raised) !important;
+            }
+
+            &:active {
+                background: var(--lp-active) !important;
+            }
+        }
+
+        hr {
+            border-top: 1px solid var(--lp-line);
+        }
+    }
+}
+
+.fv-InfoBox {
+    .fv-info-box-container,
+    .info-box-container {
+        background: var(--lp-surface) !important;
+        color: var(--lp-text) !important;
+        border: 1px solid var(--lp-line-hi);
+        border-radius: var(--lp-r-3);
+        box-shadow: var(--lp-overlay) !important;
+    }
+}
+
+.fv-MessageBar {
+    border-radius: var(--lp-r-2);
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+
+    .msg-bar-block {
+        font-size: var(--lp-t-cap) !important;
+        color: var(--lp-text) !important;
+    }
+
+    i {
+        color: inherit !important;
+    }
+
+    &.normal {
+        background: var(--lp-surface) !important;
+        border: 1px solid var(--lp-line-hi);
+    }
+
+    &.warning {
+        background: var(--lp-surface) !important;
+        border: 1px solid var(--lp-run);
+
+        .msg-bar-block {
+            color: var(--lp-run) !important;
+        }
+    }
+
+    &.correct {
+        background: var(--lp-surface) !important;
+        border: 1px solid var(--lp-ok);
+
+        .msg-bar-block {
+            color: var(--lp-ok) !important;
+        }
+    }
+
+    &.error {
+        background: var(--lp-surface) !important;
+        border: 1px solid var(--lp-err);
+
+        .msg-bar-block {
+            color: var(--lp-err) !important;
+        }
+    }
+}
+
+.fv-DetailsList,
+.fv-TableView {
+    color: var(--lp-text);
+
+    .fv-details-list-head,
+    .fv-tableview-head {
+        background: var(--lp-chrome) !important;
+        border-bottom: 1px solid var(--lp-line);
+    }
+
+    .fv-details-list-content,
+    .fv-tableview-data-row {
+        background: transparent !important;
+        border-bottom: 1px solid var(--lp-line);
+
+        &:hover {
+            background: var(--lp-raised) !important;
+        }
+    }
+}
+
+.fv-ListView {
+    .list-view-container .list-view-item {
+        color: var(--lp-text);
+
+        &:hover {
+            background: var(--lp-raised) !important;
+        }
+    }
+}
+
+.fv-Breadcrumb {
+    color: var(--lp-text-dim);
+
+    &:hover {
+        border-color: var(--lp-line-hi);
+    }
+}
+
+.fv-ProgressBar {
+    &.normal {
+        background: var(--lp-line) !important;
+
+        i {
+            background: var(--lp-accent) !important;
+        }
+    }
+}
+
+/* -------------------------------------------------------- Vue Flow */
+
+.vue-flow__node {
+    font-family: var(--lp-font);
+}
+
+.vue-flow__handle {
+    background: var(--lp-line-hi);
+    border: 2px solid var(--lp-bg);
+}
+
+.vue-flow__edge-path,
+.vue-flow__connection-path {
+    stroke: var(--lp-line-hi);
+}
+
+.vue-flow__controls,
+.vue-flow__minimap {
+    background: var(--lp-chrome);
+    border: 1px solid var(--lp-line);
+    border-radius: var(--lp-r-2);
+    box-shadow: none;
+}
+
+.vue-flow__controls-button {
+    background: transparent;
+    border-bottom: 1px solid var(--lp-line);
+    fill: var(--lp-text-dim);
+
+    &:hover {
+        background: var(--lp-raised);
+    }
+}
+
+/* ----------------------------------------------------- PowerEditor */
+
+.power-editor,
+.pe-editor-container {
+    color: var(--lp-text);
+
+    .ProseMirror {
+        color: var(--lp-text);
+        font-family: var(--lp-font);
+        font-size: var(--lp-t-body);
+
+        p.is-editor-empty:first-child::before {
+            color: var(--lp-text-faint);
+        }
+
+        code {
+            background: var(--lp-raised);
+            color: var(--lp-text);
+            border-radius: var(--lp-r-1);
+            padding: 1px 4px;
+        }
+
+        pre {
+            background: var(--lp-bg);
+            border: 1px solid var(--lp-line);
+            border-radius: var(--lp-r-2);
+        }
+    }
+}

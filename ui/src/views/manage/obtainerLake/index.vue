@@ -1,90 +1,86 @@
 <template>
     <div class="dm-container">
         <div class="dm-major-container">
-            <div class="dm-title-block">
-                <div class="title-copy">
-                    <p class="main-title">DataMixer</p>
-                    <p class="sub-title" :title="workspaceTitle">{{ workspaceTitle }}</p>
-                    <div class="view-switch">
-                        <button
-                            v-for="view in views"
-                            :key="view.key"
-                            type="button"
-                            :class="{ active: activeView === view.key }"
-                            @click="setActiveView(view.key)"
-                        >
-                            {{ view.label }}
-                        </button>
-                    </div>
-                </div>
-                <div class="right-block">
-                    <fv-text-box
-                        v-if="advancedMode"
-                        v-model="lakePath"
-                        class="lake-input"
-                        border-radius="6"
-                        :reveal-border="true"
-                        :is-box-shadow="true"
-                        placeholder=".datamixer/lake.yaml"
-                        :title="local('Path to the lake config file')"
-                        @keyup.enter="refresh"
-                    ></fv-text-box>
-                    <fv-button
-                        icon="Refresh"
-                        :disabled="loading || rebuilding"
-                        border-radius="6"
-                        :is-box-shadow="true"
-                        :title="local('Reload the DataMixer monitor data')"
-                        @click="refresh"
+            <header class="lp-bar dm-title-block">
+                <span class="lp-bar__title">DataMixer</span>
+                <input
+                    v-if="advancedMode"
+                    v-model="lakePath"
+                    class="lp-input lp-input--mono lake-input"
+                    type="text"
+                    placeholder=".datamixer/lake.yaml"
+                    :title="local('Path to the lake config file')"
+                    @keyup.enter="refresh"
+                />
+                <span v-else class="dm-workspace lp-truncate" :title="workspaceTitle">
+                    {{ workspaceTitle }}
+                </span>
+
+                <div class="lp-bar__spacer"></div>
+
+                <div class="lp-seg" role="tablist">
+                    <button
+                        v-for="view in views"
+                        :key="view.key"
+                        type="button"
+                        role="tab"
+                        class="lp-seg__item"
+                        :class="{ 'is-active': activeView === view.key }"
+                        :aria-selected="activeView === view.key"
+                        @click="setActiveView(view.key)"
                     >
-                        {{ local('Refresh') }}
-                    </fv-button>
-                    <fv-button
-                        v-if="advancedMode"
-                        icon="Sync"
+                        {{ view.label }}
+                    </button>
+                </div>
+
+                <div class="lp-bar__sep"></div>
+
+                <button
+                    type="button"
+                    class="lp-btn lp-btn--ghost lp-btn--icon"
+                    :disabled="loading || rebuilding"
+                    :title="local('Reload the DataMixer monitor data')"
+                    @click="refresh"
+                >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                        <path d="M20 12a8 8 0 1 1-2.3-5.6" />
+                        <path d="M20 4v4h-4" />
+                    </svg>
+                </button>
+
+                <template v-if="advancedMode">
+                    <button
+                        type="button"
+                        class="lp-btn lp-btn--ghost"
                         :disabled="loading || rebuilding"
-                        border-radius="6"
-                        :is-box-shadow="true"
                         :title="local('Rebuild the monitor cache, may take a while')"
                         @click="rebuildMonitorCache"
                     >
                         {{ rebuilding ? local('Rebuilding') : local('Rebuild Cache') }}
-                    </fv-button>
-                    <fv-button
-                        v-if="advancedMode"
-                        theme="dark"
-                        icon="LightningBolt"
+                    </button>
+                    <button
+                        type="button"
+                        class="lp-btn lp-btn--ghost"
                         :disabled="loading || rebuilding || probing || !monitor"
-                        :background="gradient"
-                        border-radius="6"
-                        :is-box-shadow="true"
                         :title="local('Check embedding service availability')"
                         @click="probeEmbedding"
                     >
                         {{ probing ? local('Probing') : local('Probe') }}
-                    </fv-button>
-                    <fv-button
-                        icon="DeveloperTools"
-                        :theme="advancedMode ? 'dark' : 'light'"
-                        :background="advancedMode ? 'rgba(64, 99, 170, 1)' : ''"
-                        border-radius="6"
-                        :is-box-shadow="true"
-                        :title="local('Show advanced tools')"
-                        @click="toggleAdvanced"
-                    >
-                        {{ local('Advanced') }}
-                    </fv-button>
-                    <fv-button
-                        icon="LocaleLanguage"
-                        border-radius="6"
-                        :is-box-shadow="true"
-                        :title="local('Switch Language')"
-                        @click="toggleLanguage"
-                    >
-                        {{ language === 'zh' ? 'EN' : '中文' }}
-                    </fv-button>
-                </div>
-            </div>
+                    </button>
+                </template>
+
+                <button
+                    type="button"
+                    class="lp-btn lp-btn--ghost lp-btn--icon"
+                    :class="{ 'is-on': advancedMode }"
+                    :title="local('Show advanced tools')"
+                    @click="toggleAdvanced"
+                >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                        <path d="M8 6l-4 6 4 6M16 6l4 6-4 6" />
+                    </svg>
+                </button>
+            </header>
 
             <div class="dm-content-block">
                 <div v-if="loading || rebuilding" class="monitor-loading-strip">
@@ -1109,9 +1105,6 @@ export default {
     },
     methods: {
         ...mapActions(useAppConfig, ['setLanguage']),
-        toggleLanguage() {
-            this.setLanguage(this.language === 'zh' ? 'en' : 'zh')
-        },
         toggleAdvanced() {
             this.advancedMode = !this.advancedMode
             try {
@@ -1457,7 +1450,7 @@ export default {
     position: relative;
     width: 100%;
     height: 100%;
-    background-color: rgba(243, 243, 243, 1);
+    background-color: var(--lp-surface);
     display: flex;
     justify-content: center;
 
@@ -1479,7 +1472,7 @@ export default {
         padding: 22px 18px 12px;
         z-index: 2;
         gap: 16px;
-        background: rgba(243, 243, 243, 0.9);
+        background: var(--lp-surface);
         backdrop-filter: blur(18px);
 
         .title-copy {
@@ -1490,7 +1483,7 @@ export default {
         .main-title {
             font-size: 26px;
             font-weight: 600;
-            color: rgba(30, 32, 38, 1);
+            color: var(--lp-text);
             line-height: 1.2;
         }
 
@@ -1500,7 +1493,7 @@ export default {
             max-width: min(780px, 52vw);
             margin-top: 5px;
             font-size: 13px;
-            color: rgba(87, 91, 101, 1);
+            color: var(--lp-text);
         }
 
         .view-switch {
@@ -1514,8 +1507,8 @@ export default {
                 padding: 0 10px;
                 border: 1px solid rgba(48, 55, 67, 0.1);
                 border-radius: 6px;
-                color: rgba(64, 72, 86, 1);
-                background: rgba(255, 255, 255, 0.84);
+                color: var(--lp-text);
+                background: var(--lp-surface);
                 cursor: pointer;
                 font-size: 12px;
 
@@ -1560,7 +1553,7 @@ export default {
 .kpi-card {
     border: 1px solid rgba(42, 47, 56, 0.08);
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.93);
+    background: var(--lp-surface);
     box-shadow: 0 12px 26px rgba(28, 32, 40, 0.055);
 }
 
@@ -1572,7 +1565,7 @@ export default {
     margin-bottom: 10px;
     padding: 0 14px;
     color: rgba(157, 48, 58, 1);
-    background: rgba(255, 246, 246, 0.96);
+    background: var(--lp-surface);
 }
 
 .monitor-loading-strip {
@@ -1698,7 +1691,7 @@ export default {
     }
 
     .runtime-title {
-        color: rgba(34, 38, 46, 1);
+        color: var(--lp-text);
         font-size: 17px;
         font-weight: 700;
     }
@@ -1707,7 +1700,7 @@ export default {
         @include nowrap;
 
         margin-top: 7px;
-        color: rgba(90, 96, 108, 1);
+        color: var(--lp-text);
         font-size: 12px;
     }
 
@@ -1724,7 +1717,7 @@ export default {
         padding: 10px;
         border: 1px solid rgba(48, 55, 67, 0.08);
         border-radius: 6px;
-        background: rgba(247, 248, 251, 1);
+        background: var(--lp-surface);
         cursor: pointer;
         text-align: left;
 
@@ -1737,13 +1730,13 @@ export default {
         }
 
         span {
-            color: rgba(94, 100, 112, 1);
+            color: var(--lp-text);
             font-size: 11px;
         }
 
         strong {
             margin-top: 7px;
-            color: rgba(34, 38, 46, 1);
+            color: var(--lp-text);
             font-size: 15px;
             font-weight: 700;
         }
@@ -1756,26 +1749,26 @@ export default {
 
         &.good {
             border-color: rgba(20, 145, 116, 0.18);
-            background: rgba(241, 250, 247, 1);
+            background: var(--lp-surface);
         }
 
         &.running {
             border-color: rgba(64, 99, 170, 0.22);
-            background: rgba(242, 246, 255, 1);
+            background: var(--lp-surface);
         }
 
         &.warn {
             border-color: rgba(203, 101, 36, 0.22);
-            background: rgba(255, 248, 241, 1);
+            background: var(--lp-surface);
         }
 
         &.bad {
             border-color: rgba(185, 72, 83, 0.24);
-            background: rgba(255, 247, 247, 1);
+            background: var(--lp-surface);
         }
 
         &.missing {
-            background: rgba(246, 247, 249, 1);
+            background: var(--lp-surface);
         }
     }
 
@@ -1831,12 +1824,12 @@ export default {
         padding: 0 10px;
         border-radius: 6px;
         border: none;
-        background: rgba(246, 247, 250, 1);
+        background: var(--lp-surface);
         cursor: pointer;
         text-align: left;
 
         &:hover {
-            background: rgba(239, 242, 248, 1);
+            background: var(--lp-surface);
         }
 
         .surface-dot {
@@ -1861,7 +1854,7 @@ export default {
         }
 
         p {
-            color: rgba(35, 38, 45, 1);
+            color: var(--lp-text);
             font-size: 13px;
             font-weight: 600;
         }
@@ -1869,7 +1862,7 @@ export default {
         span {
             display: block;
             margin-top: 3px;
-            color: rgba(95, 101, 113, 1);
+            color: var(--lp-text);
             font-size: 12px;
         }
     }
@@ -1900,11 +1893,11 @@ export default {
     .command-group {
         padding: 10px;
         border-radius: 6px;
-        background: rgba(247, 248, 251, 1);
+        background: var(--lp-surface);
 
         p {
             margin-bottom: 8px;
-            color: rgba(43, 48, 58, 1);
+            color: var(--lp-text);
             font-size: 13px;
             font-weight: 600;
         }
@@ -1920,8 +1913,8 @@ export default {
             padding: 0 9px;
             border: 1px solid rgba(48, 55, 67, 0.1);
             border-radius: 6px;
-            background: rgba(255, 255, 255, 0.92);
-            color: rgba(60, 67, 80, 1);
+            background: var(--lp-surface);
+            color: var(--lp-text);
             font-size: 12px;
             cursor: pointer;
 
@@ -1953,8 +1946,8 @@ export default {
 
         textarea {
             padding: 9px;
-            background: rgba(252, 253, 255, 1);
-            color: rgba(36, 40, 48, 1);
+            background: var(--lp-surface);
+            color: var(--lp-text);
             outline: none;
 
             &:focus {
@@ -2057,7 +2050,7 @@ export default {
         }
 
         p {
-            color: rgba(34, 38, 46, 1);
+            color: var(--lp-text);
             font-size: 14px;
             font-weight: 600;
         }
@@ -2065,7 +2058,7 @@ export default {
         span {
             display: block;
             margin-top: 8px;
-            color: rgba(95, 101, 113, 1);
+            color: var(--lp-text);
             font-size: 12px;
         }
     }
@@ -2089,17 +2082,17 @@ export default {
         padding: 12px;
         border: 1px solid rgba(48, 55, 67, 0.1);
         border-radius: 8px;
-        background: rgba(248, 249, 252, 1);
+        background: var(--lp-surface);
         cursor: pointer;
 
         &.active {
             border-color: rgba(20, 145, 116, 0.42);
-            background: rgba(241, 250, 247, 1);
+            background: var(--lp-surface);
         }
 
         &.missing {
             border-color: rgba(185, 72, 83, 0.28);
-            background: rgba(255, 247, 247, 1);
+            background: var(--lp-surface);
         }
     }
 
@@ -2119,7 +2112,7 @@ export default {
         }
 
         p {
-            color: rgba(34, 38, 46, 1);
+            color: var(--lp-text);
             font-size: 14px;
             font-weight: 700;
         }
@@ -2127,7 +2120,7 @@ export default {
         span {
             display: block;
             margin-top: 4px;
-            color: rgba(95, 101, 113, 1);
+            color: var(--lp-text);
             font-size: 12px;
         }
 
@@ -2152,8 +2145,8 @@ export default {
 
             padding: 7px 8px;
             border-radius: 6px;
-            color: rgba(58, 64, 76, 1);
-            background: rgba(255, 255, 255, 0.9);
+            color: var(--lp-text);
+            background: var(--lp-surface);
             font-size: 12px;
             text-align: center;
         }
@@ -2162,7 +2155,7 @@ export default {
     .lake-path {
         @include nowrap;
 
-        color: rgba(85, 92, 106, 1);
+        color: var(--lp-text);
         font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
         font-size: 12px;
     }
@@ -2203,8 +2196,8 @@ export default {
 
         min-height: 140px;
         border-radius: 8px;
-        color: rgba(95, 101, 113, 1);
-        background: rgba(247, 248, 251, 1);
+        color: var(--lp-text);
+        background: var(--lp-surface);
         font-size: 13px;
     }
 }
@@ -2248,14 +2241,14 @@ export default {
 
         .kpi-label {
             font-size: 12px;
-            color: rgba(92, 97, 107, 1);
+            color: var(--lp-text);
         }
 
         .kpi-value {
             margin-top: 4px;
             font-size: 24px;
             font-weight: 700;
-            color: rgba(30, 32, 38, 1);
+            color: var(--lp-text);
             line-height: 1.1;
         }
 
@@ -2288,7 +2281,7 @@ export default {
         padding: 14px;
         border: 1px solid rgba(185, 72, 83, 0.14);
         border-radius: 6px;
-        background: rgba(255, 248, 248, 1);
+        background: var(--lp-surface);
 
         strong {
             font-size: 30px;
@@ -2301,7 +2294,7 @@ export default {
 
             margin-top: 8px;
             font-size: 12px;
-            color: rgba(92, 97, 107, 1);
+            color: var(--lp-text);
         }
     }
 
@@ -2322,14 +2315,14 @@ export default {
         padding: 8px 10px;
         border: 1px solid rgba(48, 55, 67, 0.08);
         border-radius: 6px;
-        background: rgba(247, 248, 251, 1);
+        background: var(--lp-surface);
         cursor: pointer;
 
         span {
             @include nowrap;
 
             font-size: 12px;
-            color: rgba(34, 38, 46, 1);
+            color: var(--lp-text);
         }
 
         strong {
@@ -2406,14 +2399,14 @@ export default {
 
             font-size: 15px;
             font-weight: 600;
-            color: rgba(34, 37, 43, 1);
+            color: var(--lp-text);
         }
 
         span {
             @include nowrap;
 
             font-size: 12px;
-            color: rgba(94, 100, 112, 1);
+            color: var(--lp-text);
         }
     }
 
@@ -2446,14 +2439,14 @@ export default {
         padding: 8px;
         border: none;
         border-radius: 6px;
-        background: rgba(246, 247, 250, 1);
+        background: var(--lp-surface);
         text-align: left;
         cursor: pointer;
 
         span {
             display: block;
             font-size: 11px;
-            color: rgba(96, 102, 114, 1);
+            color: var(--lp-text);
         }
 
         p {
@@ -2462,7 +2455,7 @@ export default {
             margin-top: 5px;
             font-size: 12px;
             font-weight: 600;
-            color: rgba(34, 38, 46, 1);
+            color: var(--lp-text);
         }
     }
 
@@ -2486,14 +2479,14 @@ export default {
         padding: 0 8px;
         border: none;
         border-radius: 6px;
-        background: rgba(247, 248, 251, 1);
-        color: rgba(38, 42, 50, 1);
+        background: var(--lp-surface);
+        color: var(--lp-text);
         font-size: 12px;
         text-align: left;
         cursor: pointer;
 
         &:hover {
-            background: rgba(238, 241, 247, 1);
+            background: var(--lp-surface);
         }
 
         .table-status {
@@ -2531,8 +2524,8 @@ export default {
         padding: 0 10px;
         border: 1px solid rgba(48, 55, 67, 0.1);
         border-radius: 6px;
-        background: rgba(246, 247, 250, 1);
-        color: rgba(69, 75, 88, 1);
+        background: var(--lp-surface);
+        color: var(--lp-text);
         cursor: pointer;
         font-size: 12px;
 
@@ -2562,14 +2555,14 @@ export default {
 
             padding: 6px 8px;
             border-radius: 6px;
-            background: rgba(244, 246, 250, 1);
-            color: rgba(31, 35, 43, 1);
+            background: var(--lp-surface);
+            color: var(--lp-text);
             font-size: 12px;
         }
 
         span {
             margin-right: 6px;
-            color: rgba(100, 106, 118, 1);
+            color: var(--lp-text);
         }
     }
 }
@@ -2619,7 +2612,7 @@ export default {
             min-height: 38px;
             padding: 9px 8px;
             border-bottom: 1px solid rgba(48, 55, 67, 0.08);
-            color: rgba(39, 43, 51, 1);
+            color: var(--lp-text);
             font-size: 12px;
             text-align: left;
             vertical-align: top;
@@ -2632,8 +2625,8 @@ export default {
             position: sticky;
             top: 0;
             z-index: 1;
-            background: rgba(255, 255, 255, 0.98);
-            color: rgba(92, 98, 110, 1);
+            background: var(--lp-surface);
+            color: var(--lp-text);
             font-weight: 600;
         }
 
@@ -2641,7 +2634,7 @@ export default {
             cursor: pointer;
 
             &:hover td {
-                background: rgba(246, 248, 252, 1);
+                background: var(--lp-surface);
             }
         }
     }
@@ -2753,6 +2746,180 @@ export default {
                 display: none;
             }
         }
+    }
+}
+</style>
+
+<style lang="scss">
+/* DataMixer keeps its layout; only its surface colours move onto the tokens. */
+.dm-container {
+    background: var(--lp-bg);
+    color: var(--lp-text);
+
+    .dm-major-container {
+        max-width: none;
+    }
+
+    .dm-title-block {
+        position: relative;
+        padding: 0 12px 0 16px;
+        background: transparent;
+        backdrop-filter: none;
+
+        .lake-input {
+            width: 240px;
+        }
+
+        .dm-workspace {
+            max-width: 320px;
+            font-family: var(--lp-mono);
+            font-size: var(--lp-t-sm);
+            color: var(--lp-text-mute);
+        }
+
+        .is-on {
+            background: var(--lp-accent-wash);
+            color: var(--lp-accent);
+        }
+    }
+
+    .dm-content-block {
+        padding: 24px 28px 48px 28px;
+        gap: 24px;
+    }
+
+    .dm-panel,
+    .lake-card,
+    .kpi-card,
+    .config-tile,
+    .runtime-state,
+    .lake-runtime-panel,
+    .surface-item,
+    .benchmark-item {
+        background: var(--lp-surface);
+        border: 1px solid var(--lp-line);
+        border-radius: var(--lp-r-3);
+        box-shadow: none;
+        color: var(--lp-text);
+    }
+
+    .lake-card.active,
+    .runtime-state.active {
+        border-color: var(--lp-accent-line);
+    }
+
+    .lake-card.missing {
+        opacity: 0.6;
+    }
+
+    .panel-head {
+        p {
+            font-family: var(--lp-mono);
+            font-size: var(--lp-t-sm);
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+            color: var(--lp-text-mute);
+        }
+
+        span {
+            font-family: var(--lp-mono);
+            font-size: var(--lp-t-sm);
+            color: var(--lp-text-faint);
+        }
+    }
+
+    .active-score span,
+    .kpi-value,
+    .benchmark-score {
+        font-family: var(--lp-mono);
+        font-weight: 500;
+        color: var(--lp-text);
+    }
+
+    .kpi-label,
+    .kpi-note,
+    .runtime-subtitle,
+    .lake-path,
+    .active-meta span,
+    .lake-card-metrics span {
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-sm);
+        color: var(--lp-text-mute);
+    }
+
+    .empty-lakes,
+    .benchmark-empty {
+        color: var(--lp-text-faint);
+    }
+
+    button {
+        color: inherit;
+    }
+
+    .lake-action-row button,
+    .lake-card-actions button,
+    .runtime-actions button,
+    .command-actions button,
+    .command-chips button {
+        height: var(--lp-h-md);
+        padding: 0 10px;
+        gap: 6px;
+        background: var(--lp-raised);
+        color: var(--lp-text);
+        border: 1px solid var(--lp-line-hi);
+        border-radius: var(--lp-r-2);
+        font-size: var(--lp-t-cap);
+        display: inline-flex;
+        align-items: center;
+
+        &:hover {
+            background: var(--lp-active);
+        }
+
+        &.secondary {
+            background: transparent;
+            color: var(--lp-text-dim);
+            border-color: var(--lp-line);
+        }
+
+        &:disabled {
+            background: var(--lp-surface);
+            color: var(--lp-text-faint);
+            cursor: not-allowed;
+        }
+    }
+
+    .command-runner textarea,
+    .preview-table {
+        background: var(--lp-bg);
+        color: var(--lp-text);
+        border: 1px solid var(--lp-line-hi);
+        border-radius: var(--lp-r-2);
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-cap);
+    }
+
+    .monitor-progress {
+        background: var(--lp-line);
+
+        span {
+            background: var(--lp-accent);
+        }
+    }
+
+    .monitor-loading-copy,
+    .error-banner {
+        font-family: var(--lp-mono);
+        font-size: var(--lp-t-cap);
+    }
+
+    .error-banner {
+        padding: 8px 12px;
+        gap: 8px;
+        background: var(--lp-err-wash);
+        color: var(--lp-err);
+        border: 1px solid var(--lp-err-line);
+        border-radius: var(--lp-r-2);
     }
 }
 </style>

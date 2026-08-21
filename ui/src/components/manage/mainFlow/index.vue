@@ -14,11 +14,11 @@
         >
             <Background
                 variant="dots"
-                gap="20"
-                size="3"
-                :color="'rgba(200, 200, 200, 0.3)'"
+                gap="22"
+                size="1.5"
+                color="var(--lp-line-hi)"
                 :style="{
-                    backgroundColor: isDragOver ? 'rgba(87, 99, 206, 0.05)' : 'transparent',
+                    backgroundColor: isDragOver ? 'var(--lp-accent-wash)' : 'transparent',
                     transition: 'background-color 0.2s ease'
                 }"
             ></Background>
@@ -184,5 +184,9 @@ const deleteNode = (nodeInfo) => {
     position: relative;
     width: 100%;
     height: 100%;
+
+    .vue-flow__pane {
+        background: transparent;
+    }
 }
 </style>

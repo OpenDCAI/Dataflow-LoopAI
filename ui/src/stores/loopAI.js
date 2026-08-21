@@ -46,6 +46,24 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         })
     }
 
+    const LAST_TASK_STORAGE_KEY = 'loopai-last-task'
+
+    const readLastTaskId = () => {
+        try {
+            return localStorage.getItem(LAST_TASK_STORAGE_KEY)
+        } catch (error) {
+            return null
+        }
+    }
+    const writeLastTaskId = (taskId) => {
+        try {
+            if (taskId) localStorage.setItem(LAST_TASK_STORAGE_KEY, taskId)
+            else localStorage.removeItem(LAST_TASK_STORAGE_KEY)
+        } catch (error) {
+            /* private mode — the workspace just opens on the newest task */
+        }
+    }
+
     const tasks = ref([])
     const getTasks = async () => {
         await proxy.$api.task.getTasks().then((res) => {
@@ -54,6 +72,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                 _tasks.forEach((item) => {
                     item.show = true
                 })
+                _tasks.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
                 tasks.value = _tasks
             } else {
                 proxy.$barWarning(res.message, {
@@ -61,6 +80,62 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                 })
             }
         })
+    }
+
+    /**
+     * Opening the workspace should never ask a question it can answer itself:
+     * resume the task you were last on, else the most recently touched one.
+     */
+    const resumeTask = async () => {
+        if (currentTask.value?.task_id) return currentTask.value
+        await getTasks()
+        if (!tasks.value.length) return null
+        const lastId = readLastTaskId()
+        const resumed = tasks.value.find((item) => item.task_id === lastId) || tasks.value[0]
+        await setCurrentTask(resumed)
+        return resumed
+    }
+
+    const createTask = async (name) => {
+        const taskName = (name || '').trim() || `task-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}`
+        const res = await proxy.$api.task.createTask({
+            name: taskName,
+            config: JSON.stringify(config.value),
+            state: ''
+        })
+        if (res.code !== 200) {
+            proxy.$barWarning(res.message || 'Failed to create the task.', { status: 'warning' })
+            return null
+        }
+        await getTasks()
+        const created = tasks.value.find((item) => item.task_id === res.data?.task_id) || res.data
+        await setCurrentTask(created)
+        return created
+    }
+
+    const renameTask = async (task, name) => {
+        if (!task?.id || !name?.trim()) return false
+        const res = await proxy.$api.task.updateTask({ id: task.id, name: name.trim() })
+        if (res.code !== 200) {
+            proxy.$barWarning(res.message || 'Failed to rename the task.', { status: 'warning' })
+            return false
+        }
+        if (currentTask.value?.task_id === task.task_id) currentTask.value.name = name.trim()
+        await getTasks()
+        return true
+    }
+
+    const deleteTask = async (task) => {
+        if (!task?.id) return false
+        const res = await proxy.$api.task.delTask(task.id)
+        if (res.code !== 200) {
+            proxy.$barWarning(res.message || 'Failed to delete the task.', { status: 'warning' })
+            return false
+        }
+        const wasCurrent = currentTask.value?.task_id === task.task_id
+        await getTasks()
+        if (wasCurrent) await setCurrentTask(tasks.value[0] || null)
+        return true
     }
 
     const emptyTaskStatus = () => ({
@@ -141,6 +216,7 @@ export const useLoopAI = defineStore('useLoopAI', () => {
 
     const setCurrentTask = async (task) => {
         currentTask.value = task || null
+        writeLastTaskId(task?.task_id || null)
         taskStatus.value = emptyTaskStatus()
         taskMessages.value = []
         msgStreamModel.value.msgs = []
@@ -319,6 +395,10 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         getResources,
         tasks,
         getTasks,
+        resumeTask,
+        createTask,
+        renameTask,
+        deleteTask,
         taskStatus,
         getStatus,
         taskMessages,

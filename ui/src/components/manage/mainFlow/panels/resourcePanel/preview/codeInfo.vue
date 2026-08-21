@@ -150,7 +150,7 @@ export default {
     position: relative;
     width: 100%;
     height: 500px;
-    border: 1px solid rgba(120, 120, 120, 0.1);
+    border: 1px solid var(--lp-line);
     border-radius: 8px;
     overflow: hidden;
     background: white;

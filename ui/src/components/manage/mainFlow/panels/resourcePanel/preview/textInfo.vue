@@ -87,7 +87,7 @@ export default {
     height: 500px;
     padding: 5px;
     background: white;
-    border: 1px solid rgba(120, 120, 120, 0.1);
+    border: 1px solid var(--lp-line);
     border-radius: 8px;
     box-shadow: 0px 1px 3px rgba(0, 0, 0, 0.1);
     display: flex;
@@ -98,12 +98,12 @@ export default {
 
     .empty-icon {
         font-size: 40px;
-        color: rgba(120, 120, 120, 0.5);
+        color: var(--lp-text-mute);
     }
 
     .empty-title {
         font-size: 16px;
-        color: rgba(120, 120, 120, 0.5);
+        color: var(--lp-text-mute);
     }
 }
 </style>

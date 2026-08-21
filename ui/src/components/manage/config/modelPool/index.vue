@@ -862,9 +862,9 @@ export default {
     width: 100%;
     padding: 14px;
     box-sizing: border-box;
-    border: 1px solid rgba(210, 213, 222, 0.9);
+    border: 1px solid var(--lp-line);
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.86);
+    background: var(--lp-surface);
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -879,12 +879,12 @@ export default {
 .model-pool-title {
     font-size: 16px;
     font-weight: 600;
-    color: rgba(36, 36, 36, 1);
+    color: var(--lp-text);
 }
 .model-pool-sub {
     margin-top: 4px;
     font-size: 12px;
-    color: rgba(98, 98, 98, 1);
+    color: var(--lp-text);
     word-break: break-all;
 }
 .model-pool-actions {
@@ -897,9 +897,9 @@ export default {
 .model-pool-overview-pill {
     height: 30px;
     padding: 0 10px;
-    border: 1px solid rgba(218, 221, 230, 1);
+    border: 1px solid var(--lp-line);
     border-radius: 6px;
-    background: rgba(248, 249, 251, 1);
+    background: var(--lp-surface);
     display: flex;
     align-items: center;
     gap: 7px;
@@ -909,12 +909,12 @@ export default {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: rgba(142, 148, 164, 1);
+    background: var(--lp-raised);
 }
 .model-pool-overview-pill p {
     font-size: 12px;
     font-weight: 600;
-    color: rgba(58, 64, 78, 1);
+    color: var(--lp-text);
     white-space: nowrap;
 }
 .model-pool-overview-pill.healthy span {
@@ -934,9 +934,9 @@ export default {
 .model-pool-metric {
     min-width: 0;
     padding: 10px 12px;
-    border: 1px solid rgba(224, 226, 232, 1);
+    border: 1px solid var(--lp-line);
     border-radius: 8px;
-    background: rgba(250, 251, 253, 1);
+    background: var(--lp-surface);
 }
 .model-pool-metric span {
     font-size: 11px;
@@ -948,7 +948,7 @@ export default {
     margin-top: 6px;
     font-size: 20px;
     font-weight: 700;
-    color: rgba(31, 38, 55, 1);
+    color: var(--lp-text);
     white-space: nowrap;
 }
 .model-tier-strip {
@@ -959,9 +959,9 @@ export default {
 .model-tier-card {
     min-width: 0;
     padding: 10px;
-    border: 1px solid rgba(224, 226, 232, 1);
+    border: 1px solid var(--lp-line);
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.96);
+    background: var(--lp-surface);
 }
 .model-tier-card.high {
     border-top: 3px solid rgba(38, 166, 112, 1);
@@ -996,22 +996,22 @@ export default {
     font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
-    color: rgba(45, 51, 68, 1);
+    color: var(--lp-text);
 }
 .tier-badge {
     padding: 2px 7px;
     border-radius: 999px;
-    background: rgba(242, 244, 248, 1);
+    background: var(--lp-surface);
     font-size: 11px;
     font-weight: 700;
-    color: rgba(74, 80, 96, 1);
+    color: var(--lp-text);
 }
 .tier-bar {
     width: 100%;
     height: 5px;
     margin: 10px 0 8px;
     border-radius: 4px;
-    background: rgba(225, 229, 235, 1);
+    background: var(--lp-surface);
     overflow: hidden;
 }
 .tier-bar span {
@@ -1040,10 +1040,10 @@ export default {
 .model-node-card {
     min-width: 0;
     padding: 10px;
-    border: 1px solid rgba(224, 226, 232, 1);
-    border-left: 4px solid rgba(142, 148, 164, 1);
+    border: 1px solid var(--lp-line);
+    border-left: 4px solid var(--lp-line);
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.98);
+    background: var(--lp-surface);
     display: flex;
     flex-direction: column;
     gap: 9px;
@@ -1067,7 +1067,7 @@ export default {
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    background: rgba(142, 148, 164, 1);
+    background: var(--lp-raised);
     flex-shrink: 0;
 }
 .model-node-card.healthy .node-status-dot {
@@ -1085,7 +1085,7 @@ export default {
 .node-name-block p {
     font-size: 13px;
     font-weight: 700;
-    color: rgba(35, 40, 55, 1);
+    color: var(--lp-text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1102,10 +1102,10 @@ export default {
 .node-tier {
     padding: 2px 7px;
     border-radius: 999px;
-    background: rgba(242, 244, 248, 1);
+    background: var(--lp-surface);
     font-size: 10px;
     font-weight: 700;
-    color: rgba(75, 82, 98, 1);
+    color: var(--lp-text);
     text-transform: uppercase;
     flex-shrink: 0;
 }
@@ -1120,9 +1120,9 @@ export default {
     min-width: 0;
     padding: 5px 6px;
     border-radius: 6px;
-    background: rgba(245, 247, 250, 1);
+    background: var(--lp-surface);
     font-size: 11px;
-    color: rgba(66, 72, 88, 1);
+    color: var(--lp-text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1143,7 +1143,7 @@ export default {
 .serving-item-light-title {
     margin: 5px 0;
     font-size: 12px;
-    color: rgba(95, 95, 95, 1);
+    color: var(--lp-text);
     user-select: none;
 }
 .model-register-head {
@@ -1155,7 +1155,7 @@ export default {
 .model-register-title {
     font-size: 14px;
     font-weight: 600;
-    color: rgba(44, 48, 60, 1);
+    color: var(--lp-text);
 }
 .model-register-list {
     width: 100%;
@@ -1168,10 +1168,10 @@ export default {
     height: 32px;
     padding: 0 26px 0 8px;
     box-sizing: border-box;
-    border: 1px solid rgba(210, 213, 222, 1);
+    border: 1px solid var(--lp-line);
     border-radius: 6px;
-    background: rgba(255, 255, 255, 1);
-    color: rgba(44, 48, 60, 1);
+    background: var(--lp-surface);
+    color: var(--lp-text);
     font-size: 13px;
     outline: none;
     appearance: none;
@@ -1181,7 +1181,7 @@ export default {
     cursor: pointer;
 }
 .model-select-native:hover {
-    border-color: rgba(160, 166, 180, 1);
+    border-color: var(--lp-line);
 }
 .model-select-native:focus {
     border-color: rgba(123, 139, 209, 1);
@@ -1189,7 +1189,7 @@ export default {
 .model-probe-message {
     padding: 8px 10px;
     border-radius: 6px;
-    background: rgba(238, 244, 255, 1);
+    background: var(--lp-surface);
     color: rgba(54, 76, 128, 1);
     font-size: 12px;
 }
@@ -1203,9 +1203,9 @@ export default {
     min-width: 0;
     padding: 12px;
     box-sizing: border-box;
-    border: 1px solid rgba(224, 226, 232, 1);
+    border: 1px solid var(--lp-line);
     border-radius: 8px;
-    background: rgba(249, 250, 252, 1);
+    background: var(--lp-surface);
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -1222,7 +1222,7 @@ export default {
 .service-config-head p {
     font-size: 13px;
     font-weight: 600;
-    color: rgba(44, 48, 60, 1);
+    color: var(--lp-text);
 }
 .service-config-fields {
     display: grid;
@@ -1241,7 +1241,7 @@ export default {
 }
 .service-config-fields .field-item span {
     font-size: 12px;
-    color: rgba(95, 95, 95, 1);
+    color: var(--lp-text);
 }
 @media (max-width: 760px) {
     .model-pool-head {
