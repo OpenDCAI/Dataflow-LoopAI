@@ -19,6 +19,7 @@ from loopai.agents.Obtainer.datamixer.webagents.webcrawler_dm import (
     WebCrawlerTools,
     WebPageFetcher,
     WebSearchClient,
+    _AGENT_SYSTEM_PROMPT,
     _normalize_rubric,
     canonicalize_url,
     mask_proxy_url,
@@ -26,6 +27,17 @@ from loopai.agents.Obtainer.datamixer.webagents.webcrawler_dm import (
     resolve_network_proxy,
     playwright_process_env,
 )
+
+
+def test_agent_prompt_filters_only_by_domain_relevance() -> None:
+    assert (
+        "Reject a URL only when its actual subject matter is outside"
+        in _AGENT_SYSTEM_PROMPT
+    )
+    assert "PHI must not cause a domain-relevant page" in _AGENT_SYSTEM_PROMPT
+    assert "authoritative, content-rich" not in _AGENT_SYSTEM_PROMPT
+    assert "Avoid search result pages" not in _AGENT_SYSTEM_PROMPT
+    assert "page type, content quality, fetchability" in _AGENT_SYSTEM_PROMPT
 
 
 def rubric_payload(

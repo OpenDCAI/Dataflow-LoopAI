@@ -417,7 +417,7 @@ def unbind_lake_obtainer_context(
     link_path: str | Path = ".datamixer/lake.yaml",
 ) -> dict[str, Any]:
     """Clear active task/run bindings so a stale task_id never leaks into a
-    new task. WebAgent defaults (model, workers, ...) are intentionally kept."""
+    new task. WebAgent defaults such as model and query count are kept."""
     return update_lake_obtainer_context(
         link_path=link_path,
         updates={key: "" for key in OBTAINER_ACTIVE_BINDING_KEYS},

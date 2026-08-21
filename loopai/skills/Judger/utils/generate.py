@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Standalone code/text2sql sample generation — no LangGraph dependency."""
 
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -16,13 +17,14 @@ logger = get_logger()
 
 def _init_model(model_path: str, base_url: str, api_key: str,
                 temperature: float = 0, top_p: float = 0.95):
+    max_tokens = int(os.getenv("JUDGER_MAX_TOKENS") or "16384")
     return ChatOpenAI(
         model=model_path,
         api_key=api_key,
         base_url=base_url,
         temperature=temperature,
         top_p=top_p,
-        max_tokens=16384,
+        max_tokens=max_tokens,
     )
 
 

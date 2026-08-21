@@ -172,3 +172,11 @@ class ModelPool:
 
     def list(self) -> list[dict]:
         return [ModelSpec(**v).masked() for v in self._models.values()]
+
+
+def model_max_concurrency(root: str | Path, model_name: str) -> int:
+    """Read a model's current concurrency limit from the warehouse registry."""
+    name = str(model_name or "").strip()
+    if not name:
+        raise ValueError("model name is required to resolve max_concurrency")
+    return max(1, int(ModelPool(root).get(name).max_concurrency))

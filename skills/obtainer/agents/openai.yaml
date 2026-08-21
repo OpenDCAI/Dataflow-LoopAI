@@ -1,0 +1,4 @@
+interface:
+  display_name: "Obtainer"
+  short_description: "Turn data needs into production training data"
+  default_prompt: "Use $obtainer to turn an Analyzer report into a production training-data export."

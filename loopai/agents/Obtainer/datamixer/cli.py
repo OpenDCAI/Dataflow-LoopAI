@@ -464,8 +464,9 @@ def cmd_query(args) -> int:
 
 
 # keys the warehouse owns; never round-tripped as writable sample fields
-_RESERVED_FIELDS = {"content", "sample_id", "dataset_id", "cid", "created_at",
-                    "version", "tags", "tags_json", "embedding"}
+_RESERVED_FIELDS = {"content", "source_content", "sample_id", "dataset_id",
+                    "cid", "created_at", "version", "tags", "tags_json",
+                    "embedding"}
 
 
 def cmd_export_jsonl(args) -> int:
@@ -477,6 +478,7 @@ def cmd_export_jsonl(args) -> int:
     ``input_key`` and the ``sample_id`` lets ``apply-jsonl`` merge results back.
     """
     from . import utils
+    from .dataflow_agent import _add_content_export_fields
     s = _open(args)
     ds_id = s.catalog.resolve_dataset(args.dataset) if args.dataset else None
     field = args.field
@@ -495,6 +497,7 @@ def cmd_export_jsonl(args) -> int:
                         content = None
                     rec = {"sample_id": r["sample_id"],
                            field: utils.extract_text(content) if content else ""}
+                    _add_content_export_fields(rec, content, field=field)
                     for k, v in r.items():
                         if k in _RESERVED_FIELDS or k == field or v is None:
                             continue
@@ -527,6 +530,8 @@ def cmd_apply_jsonl(args) -> int:
     stored content is never overwritten.
     """
     s = _open(args)
+    from .dataflow_agent import _is_nullish, _source_content_keys
+
     key, field = args.key, args.field
     updated = missing = skipped = seen = 0
     try:
@@ -547,8 +552,10 @@ def cmd_apply_jsonl(args) -> int:
             if not s.catalog.get_sample(sid):
                 missing += 1
                 continue
+            original_content_keys = _source_content_keys(rec)
             upd = {k: v for k, v in rec.items()
-                   if k not in _RESERVED_FIELDS and k != key and k != field}
+                   if k not in _RESERVED_FIELDS and k != key and k != field
+                   and k not in original_content_keys and not _is_nullish(v)}
             if upd:
                 s.catalog.update_fields(sid, upd)
                 updated += 1
@@ -1262,6 +1269,7 @@ def cmd_dataflow_agent_run(args) -> int:
             apply=args.apply,
             recipe_path=args.recipe,
             mix_plan_path=args.mix_plan,
+            internalize_skill=not args.no_skill_internalize,
         )
     except (KeyError, ValueError, FileNotFoundError, codex.CodexError) as e:
         s.close()
@@ -1274,6 +1282,17 @@ def cmd_dataflow_agent_run(args) -> int:
         print(f"dataflow agent-run: {mode}")
         print(f"target    : {d['target']}")
         print(f"trial rows: {d['trial_rows_exported']}")
+        skill_intel = d.get("skill_internalization")
+        if skill_intel:
+            if skill_intel.get("ok"):
+                action = skill_intel.get("action", "done")
+                name = skill_intel.get("skill") or skill_intel.get("name") or ""
+                evicted = skill_intel.get("evicted") or []
+                print(f"skill     : internalize {action} {name}"
+                      + (f" (evicted: {', '.join(evicted)})" if evicted else ""))
+            else:
+                reason = skill_intel.get("skipped") and skill_intel.get("reason") or skill_intel.get("error")
+                print(f"skill     : internalize skipped/failed - {reason}")
         upstream = d.get("upstream") or {}
         if upstream.get("delivered_pipeline"):
             print(f"delivered : pipeline {ar.get('pipeline_path', '')} "
@@ -2089,6 +2108,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="deprecated: the DataFlow agent now only delivers the "
                         "trial-verified pipeline; the upper layer runs the chunked "
                         "scaffold over full_input.jsonl and merges with apply-jsonl")
+    a.add_argument("--no-skill-internalize", action="store_true",
+                   help="skip the post-run skill internalizer agent (default: "
+                        "internalize the delivered pipeline into the DataFlow "
+                        "skill library; disable globally with "
+                        "DATAFLOW_SKILL_INTERNALIZE=0)")
     a.set_defaults(func=cmd_dataflow_agent_run)
 
     wa = sub.add_parser(
@@ -2174,8 +2198,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="optional separate model-pool name for query expansion")
     a.add_argument("--subquery-count", type=int, default=24,
                    help="number of focused subgoals to enqueue (default: 24)")
-    a.add_argument("--workers", type=int, default=4,
-                   help="concurrent webagent workers (default: 4)")
+    a.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help=(
+            "concurrent webagent workers; omitted reads max_concurrency from "
+            "the selected warehouse model on every start/resume"
+        ),
+    )
     a.add_argument("--batch-size", type=int, default=0,
                    help="tasks to process in this invocation; 0 drains the queue")
     a.add_argument("--task-retries", type=int, default=1,

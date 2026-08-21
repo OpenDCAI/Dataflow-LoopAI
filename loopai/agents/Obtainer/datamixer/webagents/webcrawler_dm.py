@@ -1514,12 +1514,14 @@ class WebCrawlerTools:
             "query_coverage, source_authority, content_substance, crawl_yield, "
             "and complementary_value. Scale anchors: 1=absent or conflicting, "
             "2=weak, 3=usable, 4=strong, 5=primary or exceptional. Make a "
-            "holistic decision: core, supporting, exclude, or uncertain. One "
-            "low score is never sufficient for exclude; exclude requires at "
-            "least two independently weak dimensions and a grounded reason. "
-            "Fetch failure is not a relevance dimension. Generic homepages, "
-            "entity background, lexical matches, and thin pages must be judged "
-            "through all five dimensions, never by one aggregate score. Never "
+            "holistic decision: core, supporting, exclude, or uncertain based "
+            "only on topical/domain relevance. Record source authority and the "
+            "other dimensions as metadata, but never use them to exclude a "
+            "domain-relevant page. "
+            "Fetch failure is not a relevance dimension. Page type, thinness, "
+            "language, and format are metadata, not exclusion reasons. A "
+            "lexical match whose actual subject matter is unrelated is a domain "
+            "mismatch; do not infer domain mismatch from any other dimension. Never "
             "invent facts. Return one JSON object with a results array containing "
             "exactly the supplied index."
         )
@@ -1762,7 +1764,7 @@ class WebCrawlerTools:
 
 _AGENT_SYSTEM_PROMPT = """You are the Domain Data Acquisition web agent (legacy alias: webcrawler_dm), a focused resource-page discovery agent.
 
-Your sole goal is to find ALL authoritative, content-rich resource pages that are relevant to the user's query. Prefer first-party or otherwise reputable sources appropriate to the topic. Avoid search result pages, generic home pages, login pages, tag/category pages, social media, lexical coincidences, and thin aggregators.
+Your sole goal is to find ALL resource pages whose actual subject matter is relevant to the user's requested domain. Reject only pages whose actual subject matter is outside that domain. Source authority, reputation, page type, content quality, fetchability, language, format, safety, PHI, cases, diagnosis, treatment, and prescription advice are metadata or technical status only and must never determine inclusion or trigger redaction.
 
 You have exactly four tools:
 1. search_web(query, max_results): search for candidate pages.
@@ -1782,10 +1784,10 @@ Rules:
 - Treat every core concept in the user's query as mandatory. Judge the title, snippet, URL, five-dimensional LLM rubric, and opened-page evidence together before selecting resources.
 - Reject lexical coincidences and pages whose actual purpose is unrelated, even when one or more query words appear in their metadata.
 - Use provider-native search syntax or qualifiers when they help preserve all mandatory concepts.
-- Never accept or reject a URL from one aggregate relevance score. Use all rubric dimensions: query_coverage, source_authority, content_substance, crawl_yield, and complementary_value. One weak dimension is not enough to reject a candidate.
+- Reject a URL only when its actual subject matter is outside the requested domain. Source authority, reputation, content quality, safety, language, format, cases, diagnosis, treatment, prescription advice, and PHI must not cause a domain-relevant page to be rejected or redacted.
 - Submit every discovered candidate supported as relevant by the holistic evidence. In particular, include every LLM-enriched candidate whose rubric_decision is core or supporting; inspect uncertain candidates with page evidence when useful.
 - Never submit a candidate whose rubric_decision is exclude or one that you judge unrelated merely to finish. A failed run is preferable to contaminating the dataset.
-- Fetchability is not relevance. A discovered authoritative URL may still be submitted when open_page is blocked but its grounded search evidence establishes relevance; the crawler will record its fetch failure independently.
+- Fetchability is not relevance. A discovered URL may still be submitted when open_page is blocked but its grounded search evidence establishes domain relevance; the crawler will record its fetch failure independently.
 - Inspect enough evidence before submitting.
 - Use extract_related_urls when the current page is an index, documentation root, or collection page.
 - Never answer the user's topic question and never return prose instead of a tool call.
@@ -2511,8 +2513,8 @@ class DomainDataAcquisitionAgent(WebCrawlerDMAgent):
 
     The implementation remains identical and ``webcrawler_dm`` stays
     registered for old campaigns. The new name makes the intended role clear
-    to outer planners: collect authoritative vertical-domain source pages as
-    L1 inputs alongside hosted-dataset discovery.
+    to outer planners: collect domain-relevant source pages as L1 inputs
+    alongside hosted-dataset discovery.
     """
 
     spec = WebAgentSpec(

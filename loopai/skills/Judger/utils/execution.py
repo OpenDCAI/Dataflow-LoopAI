@@ -14,15 +14,27 @@ logger = get_logger()
 
 """提取python代码"""
 def filter_code(solution_str: str):
-    python_pattern = r'```python(.*?)```'
-    matches = list(re.finditer(python_pattern, solution_str, re.DOTALL))
-    
-    if not matches:
-        logger.error("[Error] No valid PYTHON tags found")
+    if not solution_str:
         return solution_str
-    
-    # logger.info(f"[Parsed SQL]: {matches[-1].group(1).strip()}")
-    return matches[-1].group(1).strip()
+
+    def strip_think_blocks(text: str) -> str:
+        return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+    solution_str = strip_think_blocks(solution_str)
+
+    python_pattern = r"```(?:python|py)?\s*\n?(.*?)```"
+    matches = list(re.finditer(python_pattern, solution_str, re.DOTALL | re.IGNORECASE))
+    if matches:
+        return strip_think_blocks(matches[-1].group(1)).strip()
+
+    code_prefixes = ("def ", "async def ", "class ", "import ", "from ", "@")
+    lines = solution_str.splitlines()
+    for idx, line in enumerate(lines):
+        if line.lstrip().startswith(code_prefixes):
+            return "\n".join(lines[idx:]).strip()
+
+    logger.warning("[Warning] No valid Python code found; using raw completion")
+    return solution_str
 
 """s1为生成代码，s2为提示词"""
 def add_import(s1, s2):

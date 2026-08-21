@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from loopai.agents.Obtainer.datamixer import codex
-from loopai.agents.Obtainer.datamixer.models import ModelPool, ModelSpec
+from loopai.agents.Obtainer.datamixer.models import DEFAULTS, ModelPool, ModelSpec
 from loopai.schema.model_pool import responses_url
 
 from .errors import ObtainerCliError
@@ -65,6 +65,8 @@ def _ensure_webagent_model(warehouse: Path, provider: dict, provider_meta: dict)
     """
     warehouse.mkdir(parents=True, exist_ok=True)
     name = str(provider_meta["webagent_model"])
+    pool = ModelPool(warehouse)
+    registered = pool.get(name) if name in pool.names() else None
     spec = ModelSpec(
         name=name,
         api_url=responses_url(str(provider.get("base_url") or "")),
@@ -72,8 +74,11 @@ def _ensure_webagent_model(warehouse: Path, provider: dict, provider_meta: dict)
         response_format="response",
         model=str(provider_meta["resolved_model"]),
         note="Managed by ObtainerCLI from the resolved Codex default model.",
+        max_concurrency=(
+            registered.max_concurrency
+            if registered is not None else DEFAULTS["max_concurrency"]
+        ),
     )
-    pool = ModelPool(warehouse)
     pool.add(spec)
     pool.set_default(name)
     return name
@@ -106,8 +111,8 @@ Hard rules:
    - Run Obtainer SearchAgent to discover hosted datasets and construct the
      provider-download candidate manifest.
    - Run DataMixer's registered `domain_data_acquisition` campaign (legacy alias
-     `webcrawler_dm`) to collect authoritative vertical-domain resource pages as
-     L1 raw HTML in the target warehouse.
+     `webcrawler_dm`) to collect domain-relevant resource pages as L1 raw HTML
+     in the target warehouse.
    SearchAgent and WebAgent cover different source types; neither substitutes
    for the other. Start WebAgent with `--detach --auto-process`: its persistent
    L1 -> L2 -> L3 queues begin consuming each accepted page immediately. Do not
@@ -117,7 +122,8 @@ Hard rules:
    the other work continues. Keep their artifacts, failures, and accepted
    outputs separate in the final report.
    WebAgent terminal state is not a completion gate for this worker. Continuously
-   evaluate current per-bucket lake record/token counts and quality gates. Once
+   evaluate current per-bucket lake record/token counts and domain-relevance
+   gates. Once
    they satisfy the plan, record `lake_ready=true` plus the observed counts and
    gate evidence in `final_report.json`, then finish the worker's bounded work so
    the outer agent can immediately start postprocessing, indexing, recipe
@@ -130,7 +136,11 @@ Hard rules:
 4. Before discovery, write `manifest/data_mix_plan.json`. It must contain the
    current objective/failure taxonomy, `target_datasets`, a non-empty `buckets`
    list, each bucket's `name`, `weight`, `target_datasets`, `search_objectives`,
-   `quality_gates`, and a concrete `rationale`. Weights must sum to 1.0. Use it
+   `quality_gates`, and a concrete `rationale`. `quality_gates` is a legacy
+   schema key and may contain only domain-relevance checks; authority, license,
+   language, quality, safety, PHI, cases, diagnosis, treatment, prescription
+   content, and other non-domain properties are forbidden gates. Weights must
+   sum to 1.0. Use it
    to make SearchAgent task JSON domain-specific and to prevent one capability
    from crowding out the planned mix. Include the plan and observed acquisition
    mix in `final_report.json`.
@@ -145,9 +155,17 @@ Hard rules:
    crowd out another.
 6. If direct web/Hugging Face/Kaggle discovery is more appropriate for the
    caller's instruction, write an equivalent manifest yourself and continue.
-7. Before downloading, compare the candidate list against the original user
-   request and Analyzer report. Remove clearly unrelated datasets and write
-   both a filtered manifest and a rejection report with exact reasons.
+7. Before downloading, compare the candidate list against the current requested
+   domain. Domain relevance is the ONLY candidate-filtering criterion. Reject a
+   dataset only when its actual subject matter is outside the current domain,
+   and write that concrete domain mismatch to the rejection report. Do not
+   reject or redact a domain-relevant dataset because of source authority,
+   reputation, source family, license type or status, language, task/label
+   shape, quality, safety, PHI, case records, individualized diagnosis or
+   treatment, or prescription advice. Preserve those properties as metadata
+   and preserve the source rows unchanged for downstream processing. A caller
+   instruction may narrow the requested domain, but it must not turn these
+   non-domain properties into candidate filters.
 8. Each single dataset is capped at {max_rows_per_dataset} rows and
    {max_bytes_per_dataset} output bytes. Do not bypass these caps. Smaller
    sampled downloads are allowed for broad acquisition, but record sampled_rows,
@@ -247,6 +265,15 @@ def _worker_env(
         "TASK_ID",
         "task_id",
         "DB_PATH",
+        "CODEX_API_KEY",
+        "CODEX_BASE_URL",
+        "CODEX_MODEL",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "DEEPSEEK_MODEL",
+        "OBTAINER_API_KEY",
+        "OBTAINER_BASE_URL",
+        "OBTAINER_MODEL",
     ):
         env.pop(key, None)
     env["CODEX_HOME"] = str(_worker_codex_home())
@@ -427,7 +454,7 @@ Required discovery procedure:
 1. Create `{run_dir}/manifest/data_mix_plan.json` before creating discovery
    tasks. It must record the planned capability/domain proportions from the
    current request and Analyzer failure taxonomy, the `target_datasets` budget,
-   planned count per bucket, source/quality gates, and rationale. Then create
+   planned count per bucket, domain-relevance gates, and rationale. Then create
    `{run_dir}/manifest/tasks.json` with a top-level `tasks` list, where every
    task belongs to a planned bucket. Read
    `{run_dir}/thread.json` and use its non-empty `webagent_model` exactly as
@@ -460,7 +487,6 @@ SEARCHAGENT_PID=$!
     --dataset {run_dir.name}_web_l1 \
     --model "$WEBAGENT_MODEL" \
     --subquery-count {max(4, min(24, target_datasets))} \
-    --workers 4 \
     --auto-process \
     --detach \
 {focus_keywords_arg}    --search-provider tavily \

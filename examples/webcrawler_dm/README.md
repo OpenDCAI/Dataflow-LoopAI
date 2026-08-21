@@ -74,7 +74,6 @@ python3 -m loopai.agents.Obtainer.datamixer \
   --query "collect authoritative resources about hypertension" \
   --model deepseek-proxy \
   --subquery-count 24 \
-  --workers 4 \
   --batch-size 8
 ```
 

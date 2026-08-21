@@ -622,6 +622,9 @@ def test_pt_to_sft_qa_repairs_an_empty_json_object(monkeypatch, tmp_path) -> Non
         store.close()
 
     assert len(calls) == 2
+    assert "Preserve domain-relevant case details" in calls[0][0]["content"]
+    assert "do not redact" in calls[0][0]["content"]
+    assert "avoid personalized diagnosis" not in calls[0][0]["content"]
     assert "previous JSON was incomplete" in calls[1][-1]["content"]
     assert rows[0]["qa_generated"] is True
     assert rows[0]["qa_model"] == "fake"

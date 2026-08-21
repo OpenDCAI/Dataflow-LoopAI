@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,13 @@ from loopai.skills.ObtainerCLI.lake_manager import (
 router = APIRouter(tags=["obtainer"])
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+# Longer than the shortest UI polling interval so a large live catalog is not
+# rescanned continuously while still keeping dashboard data near-real-time.
+WEBAGENT_OVERVIEW_CACHE_TTL_SECONDS = 30.0
+
+_WebAgentOverviewKey = tuple[str, str, str, str]
+_webagent_overview_cache: dict[_WebAgentOverviewKey, tuple[float, dict[str, Any]]] = {}
+_webagent_overview_inflight: dict[_WebAgentOverviewKey, asyncio.Task[dict[str, Any]]] = {}
 
 
 class DataMixerCliRequest(BaseModel):
@@ -72,6 +81,155 @@ def _resolve_datamixer_root(*, lake: str | None = None, root: str | None = None)
             path = REPO_ROOT / path
         return path
     return warehouse_root(_resolve_lake_path(lake))
+
+
+def _read_lake_monitor_payload(lake: str | None) -> dict[str, Any]:
+    lake_path = _resolve_lake_path(lake)
+    return read_monitor_state(warehouse_root(lake_path), lake=lake_path)
+
+
+def _webagent_overview_key(
+    lake: str | None,
+    root: str | None,
+    run_id: str | None,
+    task_id: str | None,
+) -> _WebAgentOverviewKey:
+    return tuple(str(value or "").strip() for value in (lake, root, run_id, task_id))
+
+
+def _build_webagent_overview_payload(
+    lake: str | None,
+    root: str | None,
+    run_id: str | None,
+    task_id: str | None,
+) -> dict[str, Any]:
+    """Build the complete dashboard payload in a worker thread."""
+    lake_path = _resolve_lake_path(lake)
+    lake_pointer = current_lake_pointer(link_path=lake_path)
+    context = lake_pointer.get("obtainer_context") or {}
+    warehouse = _resolve_datamixer_root(lake=lake, root=root)
+    data = build_web_pipeline_overview(
+        warehouse,
+        run_id=run_id,
+        acquisition_run=str(context.get("obtainer_active_acquisition_run") or "") or None,
+        lake_context=context,
+        project_root=REPO_ROOT,
+        task_id=task_id,
+        explicit_binding=bool(root or run_id),
+    )
+    initialized = bool(data.get("initialized"))
+    bound_warehouse = str(data.get("warehouse") or "")
+    pointer_warehouse = str(lake_pointer.get("warehouse") or "")
+    pointer_matches = bool(
+        initialized
+        and bound_warehouse
+        and pointer_warehouse
+        and Path(bound_warehouse).expanduser().resolve()
+        == Path(pointer_warehouse).expanduser().resolve()
+    )
+    data["lake"] = {
+        "lake_config": lake_pointer.get("lake_config") if pointer_matches else None,
+        "lake_root": (
+            lake_pointer.get("lake_root") if pointer_matches
+            else str(Path(bound_warehouse).parent) if initialized and bound_warehouse
+            else None
+        ),
+        "warehouse": bound_warehouse if initialized else None,
+        "loaded": bool(
+            initialized and bound_warehouse
+            and (Path(bound_warehouse) / "datamixer.toml").is_file()
+        ),
+    }
+    data["monitor"] = (
+        read_monitor_state(
+            bound_warehouse,
+            lake=lake_path if pointer_matches else None,
+        )
+        if initialized else None
+    )
+
+    live_summary = data.get("summary") or {}
+    monitor = data.get("monitor")
+    if isinstance(monitor, dict) and live_summary.get("datasets") is not None:
+        monitor.setdefault("summary", {})["datasets"] = int(live_summary["datasets"])
+        monitor["summary"]["records"] = int(live_summary.get("records") or 0)
+
+    if isinstance(monitor, dict):
+        latest = monitor.setdefault("latest", {})
+        cached_exports = latest.get("exports")
+        if isinstance(cached_exports, list):
+            enriched = []
+            for row in cached_exports:
+                if isinstance(row, dict):
+                    row = dict(row)
+                    if not row.get("description"):
+                        row["description"] = _export_preview(row).get("description")
+                    enriched.append(row)
+                else:
+                    enriched.append(row)
+            latest["exports"] = enriched
+    return data
+
+
+def _prune_webagent_overview_cache(now: float) -> None:
+    expired = [
+        key
+        for key, (cached_at, _) in _webagent_overview_cache.items()
+        if now - cached_at >= WEBAGENT_OVERVIEW_CACHE_TTL_SECONDS
+    ]
+    for key in expired:
+        _webagent_overview_cache.pop(key, None)
+
+
+async def _refresh_webagent_overview(
+    key: _WebAgentOverviewKey,
+    lake: str | None,
+    root: str | None,
+    run_id: str | None,
+    task_id: str | None,
+) -> dict[str, Any]:
+    data = await asyncio.to_thread(
+        _build_webagent_overview_payload,
+        lake,
+        root,
+        run_id,
+        task_id,
+    )
+    now = time.monotonic()
+    _prune_webagent_overview_cache(now)
+    _webagent_overview_cache[key] = (now, data)
+    return data
+
+
+async def _get_webagent_overview_payload(
+    lake: str | None,
+    root: str | None,
+    run_id: str | None,
+    task_id: str | None,
+) -> dict[str, Any]:
+    key = _webagent_overview_key(lake, root, run_id, task_id)
+    now = time.monotonic()
+    cached = _webagent_overview_cache.get(key)
+    if cached and now - cached[0] < WEBAGENT_OVERVIEW_CACHE_TTL_SECONDS:
+        return copy.deepcopy(cached[1])
+
+    task = _webagent_overview_inflight.get(key)
+    if task is None:
+        task = asyncio.create_task(
+            _refresh_webagent_overview(key, lake, root, run_id, task_id)
+        )
+        _webagent_overview_inflight[key] = task
+
+        def clear_inflight(completed: asyncio.Task[dict[str, Any]]) -> None:
+            if _webagent_overview_inflight.get(key) is completed:
+                _webagent_overview_inflight.pop(key, None)
+            if not completed.cancelled():
+                completed.exception()
+
+        task.add_done_callback(clear_inflight)
+
+    data = await asyncio.shield(task)
+    return copy.deepcopy(data)
 
 
 def _datamixer_command_payload() -> dict[str, Any]:
@@ -291,8 +449,7 @@ def _run_obtainercli_dm_for_webui(request: DataMixerCliRequest) -> dict[str, Any
 @router.get("/lake/monitor", operation_id="getObtainerLakeMonitor", summary="获取 Obtainer 数据湖监控数据")
 async def get_lake_monitor(lake: str | None = None):
     try:
-        lake_path = _resolve_lake_path(lake)
-        data = read_monitor_state(warehouse_root(lake_path), lake=lake_path)
+        data = await asyncio.to_thread(_read_lake_monitor_payload, lake)
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=data)()
@@ -311,72 +468,7 @@ async def get_webagent_overview(
 ):
     """Read current queue/pipeline state for the active-task dashboard."""
     try:
-        lake_path = _resolve_lake_path(lake)
-        lake_pointer = current_lake_pointer(link_path=lake_path)
-        context = lake_pointer.get("obtainer_context") or {}
-        warehouse = _resolve_datamixer_root(lake=lake, root=root)
-        data = build_web_pipeline_overview(
-            warehouse,
-            run_id=run_id,
-            acquisition_run=str(context.get("obtainer_active_acquisition_run") or "") or None,
-            lake_context=context,
-            project_root=REPO_ROOT,
-            task_id=task_id,
-            explicit_binding=bool(root or run_id),
-        )
-        initialized = bool(data.get("initialized"))
-        bound_warehouse = str(data.get("warehouse") or "")
-        pointer_warehouse = str(lake_pointer.get("warehouse") or "")
-        pointer_matches = bool(
-            initialized
-            and bound_warehouse
-            and pointer_warehouse
-            and Path(bound_warehouse).expanduser().resolve()
-            == Path(pointer_warehouse).expanduser().resolve()
-        )
-        data["lake"] = {
-            "lake_config": lake_pointer.get("lake_config") if pointer_matches else None,
-            "lake_root": (
-                lake_pointer.get("lake_root") if pointer_matches
-                else str(Path(bound_warehouse).parent) if initialized and bound_warehouse
-                else None
-            ),
-            "warehouse": bound_warehouse if initialized else None,
-            "loaded": bool(
-                initialized and bound_warehouse
-                and (Path(bound_warehouse) / "datamixer.toml").is_file()
-            ),
-        }
-        data["monitor"] = (
-            read_monitor_state(
-                bound_warehouse,
-                lake=lake_path if pointer_matches else None,
-            )
-            if data.get("initialized") else None
-        )
-        # Keep the dashboard's headline counts consistent with what the agents
-        # read: monitor_state is a cache and can lag behind the live catalog.
-        live_summary = data.get("summary") or {}
-        monitor = data.get("monitor")
-        if isinstance(monitor, dict) and live_summary.get("datasets") is not None:
-            monitor.setdefault("summary", {})["datasets"] = int(live_summary["datasets"])
-            monitor["summary"]["records"] = int(live_summary.get("records") or 0)
-        # Live-enrich cached export rows with manifest-backed descriptions so the
-        # task card can show recipe/records/buckets without waiting on a cache rebuild.
-        if isinstance(monitor, dict):
-            latest = monitor.setdefault("latest", {})
-            cached_exports = latest.get("exports")
-            if isinstance(cached_exports, list):
-                enriched = []
-                for row in cached_exports:
-                    if isinstance(row, dict):
-                        row = dict(row)
-                        if not row.get("description"):
-                            row["description"] = _export_preview(row).get("description")
-                        enriched.append(row)
-                    else:
-                        enriched.append(row)
-                latest["exports"] = enriched
+        data = await _get_webagent_overview_payload(lake, root, run_id, task_id)
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=data)()
@@ -395,7 +487,12 @@ async def rebuild_lake_monitor(lake: str | None = None):
 @router.get("/lake/embedding_health", operation_id="getObtainerEmbeddingHealth", summary="探测 Obtainer embedding 服务状态")
 async def get_embedding_health(lake: str | None = None, timeout_seconds: float = 3.0):
     try:
-        data = probe_embedding_health(lake=_resolve_lake_path(lake), timeout_seconds=timeout_seconds)
+        lake_path = _resolve_lake_path(lake)
+        data = await asyncio.to_thread(
+            probe_embedding_health,
+            lake=lake_path,
+            timeout_seconds=timeout_seconds,
+        )
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=data)()
@@ -421,9 +518,11 @@ async def get_datamixer_lake_current(lake: str | None = None):
 )
 async def scan_datamixer_lakes(lake: str | None = None, max_depth: int = 6):
     try:
-        data = scan_lake_candidates(
+        active_link = _resolve_repo_path(lake, ".datamixer/lake.yaml")
+        data = await asyncio.to_thread(
+            scan_lake_candidates,
             project_root=REPO_ROOT,
-            active_link=_resolve_repo_path(lake, ".datamixer/lake.yaml"),
+            active_link=active_link,
             max_depth=max_depth,
         )
     except Exception as exc:

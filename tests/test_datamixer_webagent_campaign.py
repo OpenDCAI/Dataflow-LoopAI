@@ -425,6 +425,58 @@ def test_campaign_runs_with_four_concurrent_workers_and_persists_status(tmp_path
     reopened.close()
 
 
+def test_campaign_auto_concurrency_reloads_model_registration_on_resume(tmp_path) -> None:
+    root = tmp_path / "warehouse"
+    store = DataStore.init(root)
+    ModelPool(root).add(ModelSpec(
+        name="auto-model",
+        api_url="mock://llm",
+        max_concurrency=2,
+    ))
+    store.close()
+
+    class FakeExpander:
+        def __init__(self, root, model):  # noqa: ARG002
+            pass
+
+        def expand(self, root_query, count):  # noqa: ARG002
+            return [ExpandedQuery(f"q{index}") for index in range(count)], []
+
+    runner = WebAgentCampaignRunner(
+        root,
+        task_executor=lambda task, context: {  # noqa: ARG005
+            "selected_url": f"https://example.test/{task['position']}"
+        },
+        expander_factory=FakeExpander,
+    )
+    first = runner.start(
+        "root",
+        CampaignConfig(
+            model="auto-model",
+            subquery_count=2,
+            batch_size=1,
+        ),
+    )
+    assert first["status"] == "paused"
+    assert first["workers"] == 2
+    assert first["llm_concurrency"] == 2
+    assert first["llm_concurrency_model"] == "auto-model"
+    assert first["llm_concurrency_source"] == "model_pool"
+
+    ModelPool(root).add(ModelSpec(
+        name="auto-model",
+        api_url="mock://llm",
+        max_concurrency=5,
+    ))
+    assert runner.status(first["run_id"])["llm_concurrency"] == 5
+    resumed = runner.resume(first["run_id"], max_tasks=1)
+    assert resumed["status"] == "completed"
+    assert resumed["workers"] == 5
+    assert resumed["llm_concurrency"] == 5
+    assert resumed["llm_concurrency_source"] == "model_pool"
+    runner.close()
+
+
 def test_campaign_retries_one_task_without_stopping_other_workers(tmp_path) -> None:
     store = DataStore.init(tmp_path / "warehouse")
     store.close()
@@ -699,6 +751,11 @@ def test_campaign_pipeline_model_overrides_classifier_and_qa(
         license="unknown",
         meta={"quality_level": "L1"},
     )
+    ModelPool(root).add(ModelSpec(
+        name="resolved-model",
+        api_url="mock://llm",
+        max_concurrency=11,
+    ))
     store.close()
     pipeline = tmp_path / "pipeline.yaml"
     pipeline.write_text(
@@ -775,11 +832,17 @@ def test_campaign_pipeline_model_overrides_classifier_and_qa(
     }
     assert operators["domain_classify"]["args"]["model"] == "resolved-model"
     assert operators["pt_to_sft_qa"]["args"]["model"] == "resolved-model"
+    assert operators["domain_classify"]["args"]["max_concurrency"] == 11
+    assert operators["pt_to_sft_qa"]["args"]["max_concurrency"] == 11
     stream_operators = {
         item["name"]: item for item in prepared["spec"]["operators"]
     }
     assert stream_operators["domain_classify"]["args"]["model"] == "resolved-model"
     assert stream_operators["pt_to_sft_qa"]["args"]["model"] == "resolved-model"
+    assert stream_operators["domain_classify"]["args"]["max_concurrency"] == 11
+    assert stream_operators["pt_to_sft_qa"]["args"]["max_concurrency"] == 11
+    assert prepared["llm_concurrency"] == 11
+    assert prepared["llm_concurrency_source"] == "model_pool"
 
 
 def test_failed_task_retry_reprocesses_new_l1_into_l2_l3(monkeypatch, tmp_path) -> None:
@@ -1048,13 +1111,13 @@ def test_concurrent_datastore_ingest_uses_separate_connections(tmp_path) -> None
     check.close()
 
 
-def test_campaign_cli_defaults_to_four_workers_and_24_subqueries() -> None:
+def test_campaign_cli_defaults_to_auto_workers_and_24_subqueries() -> None:
     args = build_parser().parse_args([
         "webagent", "campaign", "start", "webcrawler_dm",
         "--query", "broad resource request",
         "--model", "deepseek-proxy",
     ])
-    assert args.workers == 4
+    assert args.workers is None
     assert args.batch_size == 0
     assert args.subquery_count == 24
     assert args.max_steps == 30
@@ -1162,7 +1225,12 @@ def test_campaign_pipeline_injects_mineru_service_settings(monkeypatch, tmp_path
     from loopai.agents.Obtainer.datamixer.webagents.campaign import WebAgentCampaignRunner
 
     root = tmp_path / "warehouse"
-    DataStore.init(root)
+    DataStore.init(root).close()
+    ModelPool(root).add(ModelSpec(
+        name="fake",
+        api_url="mock://llm",
+        max_concurrency=9,
+    ))
     pipeline = tmp_path / "pipeline.yaml"
     pipeline.write_text(
         """pipeline:
@@ -1228,3 +1296,5 @@ def test_campaign_pipeline_injects_mineru_service_settings(monkeypatch, tmp_path
         assert args["mineru_model"] == "/models/mineru-html"
         assert args["mineru_transport"] == "http"
         assert args["mineru_gpu"] == "2"
+        assert ops["domain_classify"]["args"]["max_concurrency"] == 9
+        assert ops["pt_to_sft_qa"]["args"]["max_concurrency"] == 9

@@ -28,12 +28,55 @@ from .codex import CodexError, provider_from_model, run_via_sdk
 from .models import ModelPool
 from .store import read_jsonl
 
-RESERVED_FIELDS = {"content", "sample_id", "dataset_id", "cid", "created_at",
-                   "version", "tags", "tags_json", "embedding"}
+RESERVED_FIELDS = {"content", "source_content", "sample_id", "dataset_id", "cid",
+                   "created_at", "version", "tags", "tags_json", "embedding"}
 
 # Hard-coded per-turn budget for the DataFlow agent Codex session. One hour so
 # the agent can finish the full (not just trial) processing on large datasets.
 DATAFLOW_AGENT_TIMEOUT = 3600
+DATAFLOW_AGENT_SDK_RETRY_ATTEMPTS = 6
+DATAFLOW_AGENT_SDK_RETRY_BASE_SECONDS = 15.0
+DATAFLOW_AGENT_SDK_RETRY_MAX_SECONDS = 180.0
+
+
+def _dataflow_sdk_retry_config() -> tuple[int, float, float]:
+    """Return bounded retry settings for transient Codex SDK failures."""
+    def number(name: str, default: float, minimum: float) -> float:
+        try:
+            return max(float(os.environ.get(name, default)), minimum)
+        except (TypeError, ValueError):
+            return default
+
+    attempts = int(number(
+        "DATAFLOW_AGENT_SDK_RETRY_ATTEMPTS",
+        DATAFLOW_AGENT_SDK_RETRY_ATTEMPTS,
+        1,
+    ))
+    base = number(
+        "DATAFLOW_AGENT_SDK_RETRY_BASE_SECONDS",
+        DATAFLOW_AGENT_SDK_RETRY_BASE_SECONDS,
+        0.0,
+    )
+    maximum = max(number(
+        "DATAFLOW_AGENT_SDK_RETRY_MAX_SECONDS",
+        DATAFLOW_AGENT_SDK_RETRY_MAX_SECONDS,
+        0.0,
+    ), base)
+    return attempts, base, maximum
+
+
+def _is_retryable_dataflow_sdk_error(exc: Exception) -> bool:
+    """Identify upstream failures that are useful to retry."""
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return True
+    message = str(exc).lower()
+    if any(token in message for token in (
+        "timed out", "timeout", "connection reset", "connection aborted",
+        "connection refused", "temporarily unavailable", "service unavailable",
+        "bad gateway", "gateway timeout", "rate limit", "too many requests",
+    )):
+        return True
+    return bool(re.search(r"\b(?:429|500|502|503|504)\b", message))
 
 
 def _write_dataflow_status(path: Path, **updates: Any) -> dict[str, Any]:
@@ -57,18 +100,57 @@ def _operator_name(value: Any) -> str:
     return str(value or "")
 
 
+def _is_nullish(value: Any) -> bool:
+    return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def _add_content_export_fields(rec: dict[str, Any], content: Any, *, field: str) -> None:
+    """Preserve the stored content object and expose dict keys generically.
+
+    ``raw_content`` remains the backward-compatible text bridge for existing
+    DataFlow operators. ``content`` preserves the imported payload shape, while
+    ``source_content`` gives apply/merge logic an immutable copy it can use to
+    distinguish original content fields from newly generated fields.
+    """
+    if content is None:
+        return
+    rec["content"] = content
+    rec["source_content"] = content
+    if not isinstance(content, dict):
+        return
+    for key, value in content.items():
+        if key in rec or key == field or value is None:
+            continue
+        rec[key] = value
+
+
+def _source_content_keys(rec: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for container_key in ("source_content", "content"):
+        content = rec.get(container_key)
+        if isinstance(content, dict):
+            keys.update(str(key) for key in content.keys())
+    return keys
+
+
 def parse_llm_scalar_score(value: Any, *, minimum: int = 1, maximum: int = 5) -> int:
     """Parse one final integer score without reading chain-of-thought numbers."""
     if value is None:
         raise ValueError("LLM score response is missing")
     text = str(value).strip()
     answer_blocks = re.findall(r"<answer>(.*?)</answer>", text, flags=re.DOTALL | re.IGNORECASE)
-    if answer_blocks:
-        # Use the LAST <answer> block (innermost), which is the model's actual answer.
+    if len(answer_blocks) > 1:
+        raise ValueError("LLM score response contains multiple answer blocks")
+    if len(answer_blocks) == 1:
+        # Use a single <answer> block while tolerating a duplicated outer wrapper.
         # The API helper may wrap thinking/reasoning + answer tags around the model output
         # where content already has <answer> tags, creating nested wrapping.
         # Strip all <answer></answer> tags from the extracted text to get the raw score.
-        text = re.sub(r'</?answer\s*>', '', answer_blocks[-1], flags=re.IGNORECASE).strip()
+        text = re.sub(r'</?answer\s*>', '', answer_blocks[0], flags=re.IGNORECASE).strip()
+        text = re.sub(
+            r"<think>.*?</think>", "", text,
+            flags=re.DOTALL | re.IGNORECASE,
+        ).strip()
     else:
         # Strip any remaining <answer>/</answer> tags before parsing
         text = re.sub(r'</?answer\s*>', '', text, flags=re.IGNORECASE).strip()
@@ -170,6 +252,15 @@ DATAFLOW_AGENTS_MD = """# LoopAI DataMixer DataFlow Agent
    `sft-export-agent` 出湖；规模不达标前禁止出湖。这是上层的出湖门，你在
    交付 summary 里说明桶规模与预期冗余即可。若用户明确指定 L3 出湖，则跳过
    L4 门，L3 数据可直接出湖（仍需满足湖内可用量/配比/质量门）。
+
+## 技能库（历史 pipeline 沉淀）
+
+`$CODEX_HOME/skills/` 下存放由历史成功运行自动内化的 DataFlow pipeline 技能
+（每次 `dataflow agent-run` 交付后由额外的 internalizer agent 按 skill-creator
+规范生成，最多 20 个，功能一致的保留更早的并重置生命周期）。规划 operator 链
+前先浏览技能库：若存在与当前 target 匹配的技能，按该技能的说明复用其算子链、
+字段映射与阈值，并适配本次字段与目标；**仍必须完成试跑并交付**，试跑与全量
+使用同一 pipeline。不要修改技能库文件本身。
 
 ## 硬约束
 
@@ -299,6 +390,7 @@ def export_trial_jsonl(store, *, dataset: str | None, where: str | None,
                     "sample_id": row["sample_id"],
                     field: utils.extract_text(content) if content else "",
                 }
+                _add_content_export_fields(rec, content, field=field)
                 for k, v in row.items():
                     if k in RESERVED_FIELDS or k == field or v is None:
                         continue
@@ -348,6 +440,7 @@ def _write_jsonl_row(fh, row: dict[str, Any], field: str) -> None:
     content = row.get("_content")
     rec = {"sample_id": row["sample_id"],
            field: utils.extract_text(content) if content else ""}
+    _add_content_export_fields(rec, content, field=field)
     for k, v in row.items():
         if k in RESERVED_FIELDS or k == field or k == "_content" or v is None:
             continue
@@ -471,8 +564,10 @@ def apply_processed_jsonl(store, *, file: str | Path, key: str = "sample_id",
         if not store.catalog.get_sample(sid):
             missing += 1
             continue
+        original_content_keys = _source_content_keys(rec)
         upd = {k: v for k, v in rec.items()
-               if k not in RESERVED_FIELDS and k != key and k != field}
+               if k not in RESERVED_FIELDS and k != key and k != field
+               and k not in original_content_keys and not _is_nullish(v)}
         if upd:
             store.catalog.update_fields(sid, upd)
             updated += 1
@@ -576,6 +671,13 @@ Required behavior:
    `loopai.agents.Obtainer.datamixer.dataflow_agent`, and test it against a
    synthetic response whose reasoning contains other 1-5 numbers before
    accepting the output.
+   - Configure DataFlow serving from `DF_API_URL`, `DF_API_KEY`, and `DF_MODEL`
+     when those environment variables are present; do not hard-code a proxy
+     endpoint or model in the generated pipeline.
+   - Make serving concurrency, retry count, and read timeout configurable via
+     environment variables, with bounded defaults. Do not force
+     `max_workers=1` for a multi-row trial unless the pipeline documents why;
+     one slow request must not serialize the entire trial.
 8. Compute every count, range, and example mentioned in the final summary from
    the processed files after they are written. Do not rely on remembered model
    output.
@@ -833,11 +935,14 @@ def run_dataflow_agent(
     apply: bool = False,
     recipe_path: str | Path | None = None,
     mix_plan_path: str | Path | None = None,
+    internalize_skill: bool | None = None,
 ) -> dict[str, Any]:
     if not model:
         raise CodexError("dataflow agent-run requires --model")
     if not target.strip():
         raise ValueError("dataflow agent-run requires --target")
+    if internalize_skill is None:
+        internalize_skill = os.environ.get("DATAFLOW_SKILL_INTERNALIZE", "1") != "0"
 
     root = Path(store.root)
     run_dir = Path(work_dir) if work_dir else root / "runs" / "dataflow_agent"
@@ -941,13 +1046,38 @@ def run_dataflow_agent(
                     attempt=attempt + 1,
                     feedback=f"DataFlowAgent 第 {attempt + 1} 次规划/试运行（交付 pipeline，全量由上层执行）",
                 )
-                agent_result = run_via_sdk(
-                    current_prompt,
-                    prov,
-                    cwd=str(root),
-                    timeout=DATAFLOW_AGENT_TIMEOUT,
-                    thread_id=thread_id,
-                )
+                sdk_attempts, retry_base, retry_max = _dataflow_sdk_retry_config()
+                for sdk_attempt in range(sdk_attempts):
+                    try:
+                        agent_result = run_via_sdk(
+                            current_prompt,
+                            prov,
+                            cwd=str(root),
+                            timeout=DATAFLOW_AGENT_TIMEOUT,
+                            thread_id=thread_id,
+                        )
+                        break
+                    except Exception as exc:
+                        if (
+                            not _is_retryable_dataflow_sdk_error(exc)
+                            or sdk_attempt + 1 >= sdk_attempts
+                        ):
+                            raise
+                        delay = min(retry_base * (2 ** sdk_attempt), retry_max)
+                        _write_dataflow_status(
+                            status_path,
+                            phase="running",
+                            attempt=attempt + 1,
+                            feedback=(
+                                "DataFlowAgent 上游临时失败，"
+                                f"{delay:g} 秒后重试 SDK 请求 "
+                                f"({sdk_attempt + 2}/{sdk_attempts})"
+                            ),
+                            error=str(exc),
+                        )
+                        time.sleep(delay)
+                else:  # defensive: the loop exits via break or raises above
+                    raise CodexError("DataFlowAgent SDK retry loop exhausted")
                 try:
                     agent_result = validate_dataflow_agent_result(
                         agent_result,
@@ -1072,6 +1202,38 @@ def run_dataflow_agent(
             applied_rows=int((merge or {}).get("updated") or 0),
             feedback=str(agent_result.get("summary") or "DataFlowAgent 已完成"),
         )
+        skill_intel: dict[str, Any] | None = None
+        if internalize_skill and agent_result.get("ok") and agent_result.get("pipeline_path"):
+            try:
+                from .skill_library import internalize_run_artifacts
+
+                skill_intel = internalize_run_artifacts(
+                    run_dir=run_dir.resolve(),
+                    target=target,
+                    dataset=dataset,
+                    where=where,
+                    field=field,
+                    expected_outputs=expected_outputs,
+                    agent_result=agent_result,
+                    prov=prov,
+                    cwd=str(root),
+                    timeout=int(
+                        os.environ.get("DATAFLOW_SKILL_INTERNALIZE_TIMEOUT", "900")
+                    ),
+                )
+            except Exception as exc:
+                skill_intel = {"ok": False, "error": str(exc)}
+            result["skill_internalization"] = skill_intel
+            _write_dataflow_status(
+                status_path,
+                state="completed",
+                phase="completed",
+                skill_internalization=skill_intel,
+                feedback=(
+                    "已交付 pipeline；技能内化："
+                    f"{skill_intel.get('action') if skill_intel.get('ok') else '失败'}"
+                ),
+            )
         return result
     except Exception as exc:
         _write_dataflow_status(

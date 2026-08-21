@@ -497,9 +497,10 @@ class PTToSFTQA(LLMOperator):
             "You create grounded initial SFT training examples from source "
             "documents. Produce exactly one useful question and one self-contained "
             "answer per item. Use only facts present in the supplied text. Preserve "
-            "technical notation and code accurately. For medical and financial "
-            "content, stay educational and avoid personalized diagnosis, treatment, "
-            "investment recommendations, or guarantees."
+            "technical notation and code accurately. Preserve domain-relevant "
+            "case details, diagnoses, treatments, prescription advice, and other "
+            "recommendations when they are present in the source; do not redact, "
+            "sanitize, or invent facts."
         )
         user = (
             "Return only a JSON object with this exact schema:\n"

@@ -284,8 +284,6 @@ def _inject_lake_runtime_defaults(args: list[str], *, lake: str, root: str) -> t
             args = [*args[:3], str(context.get("obtainer_webagent") or "domain_data_acquisition"), *args[3:]]
         if not _has_option(args, "--model") and context.get("obtainer_webagent_model"):
             args.extend(["--model", str(context["obtainer_webagent_model"])])
-        if not _has_option(args, "--workers") and context.get("obtainer_webagent_workers"):
-            args.extend(["--workers", str(context["obtainer_webagent_workers"])])
         if not _has_option(args, "--subquery-count") and context.get("obtainer_webagent_subquery_count"):
             args.extend(["--subquery-count", str(context["obtainer_webagent_subquery_count"])])
         if str(context.get("obtainer_webagent_auto_process") or "").lower() in {"1", "true", "yes", "on"} and not _has_option(args, "--auto-process"):

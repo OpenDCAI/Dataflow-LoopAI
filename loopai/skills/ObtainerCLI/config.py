@@ -22,7 +22,6 @@ OBTAINER_CONTEXT_DEFAULTS: Dict[str, str] = {
     "obtainer_webagent_model": "",
     "obtainer_resolved_model": "",
     "obtainer_model_source": "",
-    "obtainer_webagent_workers": "4",
     "obtainer_webagent_subquery_count": "24",
     "obtainer_webagent_auto_process": "false",
     "obtainer_active_acquisition_run": "",

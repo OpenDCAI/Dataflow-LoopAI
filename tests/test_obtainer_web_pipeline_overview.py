@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import threading
 
+from api.app.controllers import obtainer as obtainer_controller
 from api.app.utils.obtainer.web_pipeline import build_web_pipeline_overview
 from loopai.agents.Obtainer.datamixer.operators.streaming import PersistentPipelineQueue
 from loopai.agents.Obtainer.datamixer.store import DataStore
@@ -341,3 +344,66 @@ def test_web_pipeline_overview_summary_is_live_catalog_counts(tmp_path) -> None:
 
     data = build_web_pipeline_overview(root, project_root=tmp_path)
     assert data["summary"] == {"datasets": 1, "records": 2}
+
+
+def test_webagent_overview_endpoint_offloads_coalesces_and_caches(monkeypatch) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def slow_build(lake, root, run_id, task_id):
+        nonlocal calls
+        calls += 1
+        started.set()
+        assert release.wait(timeout=2)
+        return {"source": "worker", "nested": {"value": 1}}
+
+    obtainer_controller._webagent_overview_cache.clear()
+    obtainer_controller._webagent_overview_inflight.clear()
+    monkeypatch.setattr(
+        obtainer_controller,
+        "_build_webagent_overview_payload",
+        slow_build,
+    )
+
+    async def run_scenario():
+        first = asyncio.create_task(
+            obtainer_controller.get_webagent_overview(root="/tmp/warehouse", task_id="task-1")
+        )
+        try:
+            for _ in range(100):
+                if started.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            assert started.is_set()
+
+            second = asyncio.create_task(
+                obtainer_controller.get_webagent_overview(
+                    root="/tmp/warehouse",
+                    task_id="task-1",
+                )
+            )
+            await asyncio.sleep(0.05)
+            assert calls == 1
+            assert not first.done()
+            assert not second.done()
+
+            release.set()
+            first_response, second_response = await asyncio.gather(first, second)
+            assert first_response["data"] == second_response["data"]
+
+            first_response["data"]["nested"]["value"] = 99
+            cached_response = await obtainer_controller.get_webagent_overview(
+                root="/tmp/warehouse",
+                task_id="task-1",
+            )
+            assert cached_response["data"]["nested"]["value"] == 1
+            assert calls == 1
+        finally:
+            release.set()
+
+    try:
+        asyncio.run(run_scenario())
+    finally:
+        obtainer_controller._webagent_overview_cache.clear()
+        obtainer_controller._webagent_overview_inflight.clear()

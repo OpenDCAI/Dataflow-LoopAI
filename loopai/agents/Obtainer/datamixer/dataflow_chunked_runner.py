@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -200,7 +201,7 @@ def merge_chunk(
             )
         merged = dict(source)
         for key, value in processed.items():
-            if key not in source and value is not None:
+            if key not in source and value is not None and not (isinstance(value, float) and math.isnan(value)):
                 merged[key] = value
                 added_fields.add(key)
         out_fh.write(json.dumps(merged, ensure_ascii=False) + "\n")

@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.modules.setdefault("colorlog", types.SimpleNamespace(ColoredFormatter=logging.Formatter))
 
-from loopai.skills.ObtainerCLI.cli import run
+from loopai.skills.ObtainerCLI.cli import _inject_lake_runtime_defaults, run
 from loopai.skills.ObtainerCLI.config import read_lake_config, write_lake_config
 from loopai.skills.ObtainerCLI.errors import ObtainerCliError
 from loopai.skills.ObtainerCLI.lake_manager import (
@@ -155,6 +155,43 @@ def test_lake_context_persists_with_the_loaded_warehouse(tmp_path: Path) -> None
     assert current["obtainer_context"]["obtainer_active_acquisition_run"].endswith("acquisition_01")
     assert canonical["obtainer_webagent_model"] == "deepseek-proxy"
 
+
+def test_lake_runtime_does_not_inject_legacy_fixed_webagent_workers(
+    tmp_path: Path,
+) -> None:
+    lake_root = tmp_path / "lake"
+    warehouse = lake_root / "warehouse"
+    DataStore.init(warehouse).close()
+    pointer = tmp_path / "repo" / ".loopai" / "lake.yaml"
+    write_lake_config(
+        pointer,
+        root=lake_root,
+        warehouse=warehouse,
+        obtainer_context_values={"obtainer_webagent_model": "registered-model"},
+    )
+    text = pointer.read_text(encoding="utf-8")
+    pointer.write_text(
+        text.replace(
+            "obtainer_webagent_subquery_count:",
+            "obtainer_webagent_workers: 4\nobtainer_webagent_subquery_count:",
+        ),
+        encoding="utf-8",
+    )
+
+    args, effective_root = _inject_lake_runtime_defaults(
+        ["webagent", "campaign", "start", "--query", "collect resources"],
+        lake=str(pointer),
+        root="",
+    )
+
+    assert args[:4] == [
+        "webagent", "campaign", "start", "domain_data_acquisition"
+    ]
+    assert args[args.index("--model") + 1] == "registered-model"
+    assert "--workers" not in args
+    assert effective_root == ""
+
+
 def test_dm_lake_unbind_clears_active_bindings_but_keeps_webagent_defaults(
     tmp_path: Path,
     capsys,
@@ -169,7 +206,6 @@ def test_dm_lake_unbind_clears_active_bindings_but_keeps_webagent_defaults(
         updates={
             "obtainer_webagent": "domain_data_acquisition",
             "obtainer_webagent_model": "deepseek-chat",
-            "obtainer_webagent_workers": "4",
             "obtainer_active_task_id": "fdda07da-dead-beef-task",
             "obtainer_active_acquisition_run": str(warehouse / "obtainer_runs" / "acquisition_stale"),
             "obtainer_active_campaign_id": "campaign-stale",
@@ -190,7 +226,7 @@ def test_dm_lake_unbind_clears_active_bindings_but_keeps_webagent_defaults(
     assert context["obtainer_active_l1_dataset"] == ""
     assert context["obtainer_webagent"] == "domain_data_acquisition"
     assert context["obtainer_webagent_model"] == "deepseek-chat"
-    assert context["obtainer_webagent_workers"] == "4"
+    assert "obtainer_webagent_workers" not in context
     current = current_lake_pointer(link_path=pointer)
     assert current["obtainer_context"]["obtainer_active_task_id"] == ""
 
@@ -1794,11 +1830,19 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
         records,
         [
             {
-                "content": {"question": "What is 1+1?", "answer": "2"},
+                "content": {
+                    "question": "What is 1+1?",
+                    "answer": "2",
+                    "custom_payload": {"difficulty": "easy"},
+                },
                 "source_uri": "hf://math/0",
             },
             {
-                "content": {"question": "What is 2+2?", "answer": "4"},
+                "content": {
+                    "question": "What is 2+2?",
+                    "answer": "4",
+                    "custom_payload": {"difficulty": "easy"},
+                },
                 "source_uri": "hf://math/1",
             },
         ],
@@ -1812,12 +1856,30 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
         sample_line = next(line for line in prompt.splitlines() if line.startswith("- Sample JSONL file:"))
         sample_path = Path(sample_line.split(":", 1)[1].strip())
         rows = [json.loads(line) for line in sample_path.read_text(encoding="utf-8").splitlines()]
+        rows_by_question = {row["question"]: row for row in rows}
+        assert rows_by_question["What is 1+1?"]["source_content"] == {
+            "question": "What is 1+1?",
+            "answer": "2",
+            "custom_payload": {"difficulty": "easy"},
+        }
+        assert rows_by_question["What is 1+1?"]["content"] == rows_by_question["What is 1+1?"]["source_content"]
+        assert rows_by_question["What is 1+1?"]["answer"] == "2"
+        assert rows_by_question["What is 1+1?"]["custom_payload"] == {"difficulty": "easy"}
         full_line = next(
             line for line in prompt.splitlines()
             if line.startswith("- Full input JSONL")
         )
         full_path = Path(full_line.split(":", 1)[1].strip())
         full_rows = [json.loads(line) for line in full_path.read_text(encoding="utf-8").splitlines()]
+        full_by_question = {row["question"]: row for row in full_rows}
+        assert full_by_question["What is 2+2?"]["source_content"] == {
+            "question": "What is 2+2?",
+            "answer": "4",
+            "custom_payload": {"difficulty": "easy"},
+        }
+        assert full_by_question["What is 2+2?"]["content"] == full_by_question["What is 2+2?"]["source_content"]
+        assert full_by_question["What is 2+2?"]["answer"] == "4"
+        assert full_by_question["What is 2+2?"]["custom_payload"] == {"difficulty": "easy"}
 
         def write_processed(src_rows, name):
             processed = work_dir / name
@@ -1922,6 +1984,7 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
             "--expected-outputs",
             "math_answer_quality",
             "--apply",
+            "--no-skill-internalize",
         ],
         capsys,
     )
@@ -1972,6 +2035,105 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
     )
     tags = [json.loads(row["tags_json"]) for row in query["rows"]]
     assert [tag["math_answer_quality"] for tag in tags] == [0.95, 0.95]
+    for tag in tags:
+        assert "content" not in tag
+        assert "source_content" not in tag
+        assert "question" not in tag
+        assert "answer" not in tag
+        assert "custom_payload" not in tag
+
+
+def test_apply_jsonl_skips_preserved_source_content_fields(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input" / "code_sft.jsonl"
+    processed = tmp_path / "processed.jsonl"
+    content = {
+        "instruction": "Write add(a, b).",
+        "input": "",
+        "output": "def add(a, b):\n    return a + b",
+        "custom_payload": {"origin_schema": "alpaca-like"},
+    }
+    _write_jsonl(
+        records,
+        [{
+            "content": content,
+            "source_uri": "hf://code/0",
+        }],
+    )
+
+    _dm(warehouse, ["init"], capsys)
+    _dm(
+        warehouse,
+        [
+            "ingest",
+            "code_sft",
+            "--file",
+            str(records),
+            "--quality-level",
+            "L3",
+            "--stage",
+            "sft",
+            "--domain",
+            "code",
+            "--task-type",
+            "SFT",
+        ],
+        capsys,
+    )
+    query = _dm(
+        warehouse,
+        ["query", "--dataset", "code_sft", "--columns", "sample_id", "--limit", "1"],
+        capsys,
+    )
+    sample_id = query["rows"][0]["sample_id"]
+    _write_jsonl(
+        processed,
+        [{
+            "sample_id": sample_id,
+            "raw_content": "Write add(a, b).\n\ndef add(a, b):\n    return a + b",
+            "content": content,
+            "source_content": content,
+            "instruction": content["instruction"],
+            "input": content["input"],
+            "output": content["output"],
+            "custom_payload": content["custom_payload"],
+            "derived_label": "keep",
+            "empty_generated_field": None,
+        }],
+    )
+
+    result = _dm(
+        warehouse,
+        ["apply-jsonl", "--file", str(processed), "--field", "raw_content"],
+        capsys,
+    )
+    assert result["updated"] == 1
+    query = _dm(
+        warehouse,
+        [
+            "query",
+            "--dataset",
+            "code_sft",
+            "--columns",
+            "sample_id,tags_json",
+            "--limit",
+            "1",
+        ],
+        capsys,
+    )
+    tags = json.loads(query["rows"][0]["tags_json"])
+    assert tags["derived_label"] == "keep"
+    assert "content" not in tags
+    assert "source_content" not in tags
+    assert "instruction" not in tags
+    assert "input" not in tags
+    assert "output" not in tags
+    assert "custom_payload" not in tags
+    assert "empty_generated_field" not in tags
+
 
 def test_dataflow_operator_llm_uses_default_qwen_not_codex_model(
     tmp_path: Path,
@@ -2132,6 +2294,7 @@ def test_dataflow_agent_continues_incomplete_thread_until_valid(
             "dataflow", "agent-run", "--target", "audit quality",
             "--model", "codex-test", "--dataset", "finance_l2",
             "--trial-rows", "1", "--work-dir", str(work_dir),
+            "--no-skill-internalize",
         ],
         capsys,
     )
@@ -2140,6 +2303,81 @@ def test_dataflow_agent_continues_incomplete_thread_until_valid(
     assert len(calls) == 2
     assert calls[1][1] == "thread-1"
     assert "Finish the operator decision" in calls[1][0]
+
+
+def test_dataflow_agent_retries_transient_sdk_failure_then_succeeds(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from loopai.agents.Obtainer.datamixer import dataflow_agent
+
+    warehouse = tmp_path / "warehouse"
+    records = tmp_path / "input.jsonl"
+    work_dir = tmp_path / "agent"
+    _write_jsonl(records, [{"content": {"text": "finance quality sample"}}])
+    calls: list[str | None] = []
+
+    def fake_run(prompt, prov, cwd, timeout=600, thread_id=None, **kwargs):  # noqa: ARG001
+        calls.append(thread_id)
+        if len(calls) == 1:
+            raise dataflow_agent.CodexError("unexpected status 503 Service Unavailable")
+        trial_path = work_dir / "trial_input.jsonl"
+        processed = work_dir / "processed.jsonl"
+        pipeline = work_dir / "pipeline.py"
+        processed.write_text(trial_path.read_text(encoding="utf-8"), encoding="utf-8")
+        pipeline.write_text("# generated pipeline\n", encoding="utf-8")
+        return {
+            "ok": True,
+            "mode": "trial_run",
+            "operator_decision": {
+                "ops": ["PromptedGenerator"],
+                "field_flow": "raw_content -> quality_score",
+                "reason": "generate a derived quality score",
+            },
+            "pipeline_path": str(pipeline),
+            "processed_jsonl": str(processed),
+            "trial_rows_in": 1,
+            "trial_rows_out": 1,
+            "full_processed_jsonl": None,
+            "full_rows_in": None,
+            "full_rows_out": None,
+            "stdout_tail": "",
+            "errors": [],
+            "summary": "trial complete after retry",
+        }
+
+    monkeypatch.setattr(dataflow_agent, "run_via_sdk", fake_run)
+    monkeypatch.setattr(dataflow_agent.time, "sleep", lambda seconds: None)
+    _dm(warehouse, ["init"], capsys)
+    _dm(
+        warehouse,
+        ["model", "add", "--name", "codex-test", "--api-url", "mock://agent"],
+        capsys,
+    )
+    _dm(
+        warehouse,
+        [
+            "ingest", "finance_l2", "--file", str(records),
+            "--quality-level", "L2", "--domain", "general",
+        ],
+        capsys,
+    )
+
+    result = _dm(
+        warehouse,
+        [
+            "dataflow", "agent-run", "--target", "audit quality",
+            "--model", "codex-test", "--dataset", "finance_l2",
+            "--trial-rows", "1", "--work-dir", str(work_dir),
+            "--no-skill-internalize",
+        ],
+        capsys,
+    )
+
+    assert result["agent_result"]["mode"] == "trial_run"
+    assert calls == [None, None]
+
 
 def test_dataflow_agent_rejects_dropped_original_metadata(
     tmp_path: Path,
@@ -2211,7 +2449,7 @@ def test_dataflow_agent_rejects_dropped_original_metadata(
         "dm", "--root", str(warehouse), "dataflow", "agent-run",
         "--target", "audit quality", "--model", "codex-test",
         "--dataset", "finance_l2", "--trial-rows", "1",
-        "--work-dir", str(work_dir), "--json",
+        "--work-dir", str(work_dir), "--no-skill-internalize", "--json",
     ])
     payload = _last_json(capsys)
 
@@ -2279,7 +2517,7 @@ def test_dataflow_agent_delivers_trial_pipeline_for_upstream_full_run(
         "dm", "--root", str(warehouse), "dataflow", "agent-run",
         "--target", "audit quality", "--model", "codex-test",
         "--dataset", "finance_l2", "--trial-rows", "1",
-        "--work-dir", str(work_dir), "--json",
+        "--work-dir", str(work_dir), "--no-skill-internalize", "--json",
     ])
     payload = _last_json(capsys)
 
@@ -2907,7 +3145,11 @@ def test_dataset_acquisition_agent_start_dry_run_writes_worker_prompt(
     assert payload["status"] == "dry_run"
     assert payload["command"] == "dm.dataset-acquisition-agent"
     prompt = (run_dir / "worker_prompt.md").read_text(encoding="utf-8")
-    assert "compare the candidate list against the original user" in prompt
+    assert "compare the candidate list against the current requested" in prompt
+    assert "Domain relevance is the ONLY candidate-filtering criterion" in prompt
+    assert "reject or redact a domain-relevant dataset" in prompt
+    assert "PHI, case records, individualized diagnosis" in prompt
+    assert "sources cannot satisfy the requested sample shape" not in prompt
     assert "Each single dataset is capped at 100000 rows" in prompt
     assert "2147483648 output bytes" in prompt
     assert "DataMixer `ingest` or `agent-ingest`" in prompt
@@ -3207,6 +3449,40 @@ def test_dataset_acquisition_agent_start_defaults_to_background(
     assert registered["models"]["codex"]["model"] == "deepseek-chat"
     assert registered["models"]["codex"]["response_format"] == "response"
 
+
+def test_managed_webagent_registration_preserves_concurrency(tmp_path: Path) -> None:
+    from loopai.agents.Obtainer.datamixer.models import ModelPool, ModelSpec
+    from loopai.skills.ObtainerCLI import dataset_acquisition_agent
+
+    warehouse = tmp_path / "warehouse"
+    DataStore.init(warehouse).close()
+    pool = ModelPool(warehouse)
+    pool.add(ModelSpec(
+        name="codex",
+        api_url="http://old.example/v1/responses",
+        model="old-model",
+        response_format="response",
+        max_concurrency=17,
+    ))
+
+    resolved = dataset_acquisition_agent._ensure_webagent_model(
+        warehouse,
+        {
+            "base_url": "http://new.example/v1",
+            "api_key": "new-key",
+        },
+        {
+            "webagent_model": "codex",
+            "resolved_model": "new-model",
+        },
+    )
+
+    registered = ModelPool(warehouse).get("codex")
+    assert resolved == "codex"
+    assert registered.model == "new-model"
+    assert registered.max_concurrency == 17
+
+
 def test_dataset_acquisition_agent_large_start_uses_scaled_default_timeout(
     tmp_path: Path,
     monkeypatch,
@@ -3320,6 +3596,7 @@ def test_dataset_acquisition_worker_env_isolates_outer_task_context(
 ) -> None:
     from loopai.skills.ObtainerCLI import dataset_acquisition_agent
     from loopai.agents.Obtainer.datamixer import codex
+    from loopai.utils.hf_endpoints import DEFAULT_HF_ENDPOINTS
 
     monkeypatch.setenv("TASK_ID", "outer-task")
     monkeypatch.setenv("task_id", "outer-task-lower")
@@ -3336,13 +3613,13 @@ def test_dataset_acquisition_worker_env_isolates_outer_task_context(
     assert "DB_PATH" not in env
     assert "CODEX_THREAD_ID" not in env
     assert "CODEX_USE_PROJECT_CONFIG" not in env
-    assert env["CODEX_HOME"].endswith("codex_home_worker")
+    assert env["CODEX_HOME"].endswith("outputs/obtainer/.codex/worker")
     assert env["LOOPAI_WORKER_KIND"] == "dataset-acquisition-agent"
     python_executable = codex.loopai_python_executable()
     assert env["LOOPAI_PYTHON_EXECUTABLE"] == python_executable
     assert str(Path(python_executable).resolve().parent) in env["PATH"].split(":")
-    assert env["HF_ENDPOINT"] == "https://hf-mirror.com"
-    assert env["HF_HUB_ENDPOINT"] == "https://hf-mirror.com"
+    assert env["HF_ENDPOINT"] == DEFAULT_HF_ENDPOINTS[0]
+    assert env["HF_HUB_ENDPOINT"] == DEFAULT_HF_ENDPOINTS[0]
     assert env["HF_HUB_DISABLE_TELEMETRY"] == "1"
     assert "CODEX_API_KEY" not in env
     assert "CODEX_BASE_URL" not in env

@@ -38,6 +38,7 @@ class ChunkTestPipeline:
             responses = df["response"].tolist()
             df["quality_score"] = [(len(str(r)) % 5) + 1 for r in responses]
             df["chunk_tag"] = ["l4"] * len(df)
+            df["empty_generated_field"] = [None] * len(df)
             return df
 
         self.signals = PandasOperator(process_fn=[_add_signals])
@@ -119,6 +120,7 @@ def test_chunked_runner_merges_10000_row_chunks_in_order(tmp_path: Path) -> None
     assert report["chunks"][0]["processed_file"].endswith("l4_step_step1.jsonl")
     assert "quality_score" in report["added_fields"]
     assert "chunk_tag" in report["added_fields"]
+    assert "empty_generated_field" not in report["added_fields"]
 
     # Order must be exactly the input order and every original field preserved.
     expected = [json.loads(line) for line in input_path.read_text(encoding="utf-8").splitlines()]
@@ -129,6 +131,7 @@ def test_chunked_runner_merges_10000_row_chunks_in_order(tmp_path: Path) -> None
             assert out[key] == value, f"field {key!r} changed for {src['sample_id']}"
         assert out["quality_score"] == (len(str(src["response"])) % 5) + 1
         assert out["chunk_tag"] == "l4"
+        assert "empty_generated_field" not in out
 
     # Default cleanup removes the scratch cache.
     assert not (tmp_path / "cache_full").exists()

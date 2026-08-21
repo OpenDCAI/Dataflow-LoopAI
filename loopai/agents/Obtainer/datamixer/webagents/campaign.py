@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import llm
-from ..models import ModelPool, system_default_model_name
+from ..models import ModelPool, model_max_concurrency, system_default_model_name
 from ..store import DataStore
 from .base import create
 from .webcrawler_dm import WebCrawlerDMConfig, mask_proxy_url
@@ -39,7 +39,7 @@ class CampaignConfig:
     model: str = ""
     expand_model: str = ""
     subquery_count: int = 24
-    workers: int = 4
+    workers: int | None = None
     batch_size: int = 0
     task_retries: int = 1
     dataset: str = "domain_data_acquisition_l1"
@@ -60,7 +60,9 @@ class CampaignConfig:
 
     def __post_init__(self) -> None:
         self.subquery_count = max(1, min(64, int(self.subquery_count)))
-        self.workers = max(1, min(32, int(self.workers)))
+        if self.workers is not None:
+            value = int(self.workers)
+            self.workers = value if value > 0 else None
         self.batch_size = max(0, int(self.batch_size))
         self.task_retries = max(0, int(self.task_retries))
         if not self.expand_model:
@@ -81,8 +83,9 @@ _EXPAND_SYSTEM = """You are a search-campaign planner for a web data collector.
 
 Split one broad user request into diverse, non-overlapping, search-ready small
 goals. Each goal will be handled independently by a web agent whose job is to
-find all authoritative relevant resource URLs. Cover distinct aspects, resource types,
-subtopics, audiences, jurisdictions, methods, and primary-source institutions.
+find all domain-relevant resource URLs. Cover distinct aspects, resource types,
+subtopics, audiences, jurisdictions, methods, and institutions without using
+source authority as an inclusion criterion.
 
 Write each query in the terminology and language used by its target search
 ecosystem, rather than mechanically copying the root query. For global
@@ -575,6 +578,12 @@ class CampaignQueue:
 
 
 TaskExecutor = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+_LLM_PIPELINE_OPERATORS = frozenset({
+    "domain_classify",
+    "pt_to_sft_qa",
+    "pt_to_sft_code",
+    "pt_to_sft_text2sql",
+})
 
 
 class WebAgentCampaignRunner:
@@ -642,12 +651,12 @@ class WebAgentCampaignRunner:
         requeued_failed = 0
         if retry_failed:
             requeued_failed = self.queue.reset_failed(run_id)
-        configured = int(campaign["config"].get("workers") or 4)
+        configured = campaign["config"].get("workers")
         configured_batch = int(campaign["config"].get("batch_size") or 0)
         previous_pipeline = campaign.get("pipeline") or {}
         return self._execute(
             run_id,
-            workers=workers or configured,
+            workers=workers if workers is not None else configured,
             max_tasks=max_tasks if max_tasks is not None else (configured_batch or None),
             force_pipeline=(
                 requeued_failed > 0
@@ -668,6 +677,7 @@ class WebAgentCampaignRunner:
         if campaign is None:
             raise KeyError(f"webagent campaign not found: {run_id}")
         summary = self.queue.summary(run_id)
+        concurrency = self._campaign_concurrency_metadata(campaign["config"])
         out = {
             "run_id": run_id,
             "status": campaign["status"],
@@ -682,6 +692,7 @@ class WebAgentCampaignRunner:
             "expansion": campaign["expansion"],
             "pipeline": campaign.get("pipeline"),
             "queue": summary,
+            **concurrency,
         }
         if include_tasks:
             out["tasks"] = self.queue.list_tasks(
@@ -703,14 +714,17 @@ class WebAgentCampaignRunner:
         self,
         run_id: str,
         *,
-        workers: int,
+        workers: int | None,
         max_tasks: int | None = None,
         force_pipeline: bool = False,
     ) -> dict[str, Any]:
         campaign = self.queue.get_campaign(run_id)
         if campaign is None:
             raise KeyError(f"webagent campaign not found: {run_id}")
-        workers = max(1, min(32, int(workers)))
+        concurrency = self._campaign_concurrency_metadata(
+            campaign["config"], workers=workers, strict=True
+        )
+        workers = int(concurrency["llm_concurrency"])
         max_tasks = None if not max_tasks else max(1, int(max_tasks))
         budget = {"remaining": max_tasks}
         budget_lock = threading.Lock()
@@ -858,6 +872,7 @@ class WebAgentCampaignRunner:
         self.queue.mark_campaign(run_id, status, "; ".join(all_errors))
         report = self.status(run_id, include_tasks=True, limit=10000)
         report["workers"] = workers
+        report.update(concurrency)
         report["batch_size"] = max_tasks or 0
         report["elapsed_s"] = round(time.time() - started, 3)
         report["selected_urls"] = []
@@ -873,6 +888,42 @@ class WebAgentCampaignRunner:
                     report["selected_urls"].append(url)
         self._write_final_report(run_id, report)
         return report
+
+    def _campaign_concurrency_metadata(
+        self,
+        settings: dict[str, Any],
+        *,
+        workers: int | str | None = None,
+        strict: bool = False,
+    ) -> dict[str, Any]:
+        """Resolve campaign workers, re-reading models.json for automatic runs."""
+        configured = settings.get("workers") if workers is None else workers
+        if configured not in {None, "", 0, "0", "auto"}:
+            resolved = max(1, int(configured))
+            return {
+                "workers": resolved,
+                "llm_concurrency": resolved,
+                "llm_concurrency_model": str(settings.get("model") or ""),
+                "llm_concurrency_source": "campaign_override",
+            }
+        model = str(settings.get("model") or "").strip()
+        try:
+            resolved = model_max_concurrency(self.root, model)
+        except (KeyError, TypeError, ValueError):
+            if strict:
+                raise
+            return {
+                "workers": None,
+                "llm_concurrency": None,
+                "llm_concurrency_model": model,
+                "llm_concurrency_source": "unresolved",
+            }
+        return {
+            "workers": resolved,
+            "llm_concurrency": resolved,
+            "llm_concurrency_model": model,
+            "llm_concurrency_source": "model_pool",
+        }
 
     def _prepare_campaign_pipeline(
         self, run_id: str, campaign: dict[str, Any]
@@ -903,6 +954,14 @@ class WebAgentCampaignRunner:
             # LLM operators use the model-pool default; URL discovery keeps the
             # Codex default (the campaign model).
             model = system_default_model_name() or str(settings.get("model") or "")
+        has_llm_operators = any(
+            operator.get("name") in _LLM_PIPELINE_OPERATORS
+            for operator in spec.get("operators", [])
+        )
+        llm_concurrency = (
+            model_max_concurrency(self.root, model)
+            if model and has_llm_operators else None
+        )
         extractor = str(settings.get("pipeline_extractor") or "pipeline")
         mineru_gpu = str(settings.get("pipeline_mineru_gpu") or "0")
         mineru_url = str(settings.get("pipeline_mineru_url") or "").strip()
@@ -929,12 +988,11 @@ class WebAgentCampaignRunner:
                     args["mineru_model"] = mineru_model
                 if mineru_transport:
                     args["mineru_transport"] = mineru_transport
-            elif name in {
-                "domain_classify", "pt_to_sft_qa", "pt_to_sft_code",
-                "pt_to_sft_text2sql",
-            }:
+            elif name in _LLM_PIPELINE_OPERATORS:
                 if model:
                     args["model"] = model
+                if llm_concurrency is not None:
+                    args["max_concurrency"] = llm_concurrency
                 if name == "domain_classify" and focus_keywords:
                     args["focus_keywords"] = [
                         *(args.get("focus_keywords") or []),
@@ -951,6 +1009,11 @@ class WebAgentCampaignRunner:
             "pipeline_path": str(path),
             "focus_keywords": focus_keywords,
             "model": model,
+            "llm_concurrency": llm_concurrency,
+            "llm_concurrency_model": model,
+            "llm_concurrency_source": (
+                "model_pool" if llm_concurrency is not None else "not_applicable"
+            ),
             "extractor": extractor,
             "l2_dataset": l2_dataset,
             "l3_dataset": l3_dataset,
@@ -976,6 +1039,9 @@ class WebAgentCampaignRunner:
             "active_stages": [name for name in active if name],
             "pipeline_path": meta.get("pipeline_path") or "",
             "model": meta.get("model") or "",
+            "llm_concurrency": meta.get("llm_concurrency"),
+            "llm_concurrency_model": meta.get("llm_concurrency_model") or "",
+            "llm_concurrency_source": meta.get("llm_concurrency_source") or "",
             "extractor": meta.get("extractor") or "",
             "selected": int(progress.get("selected") or 0),
             "source_done": bool(progress.get("source_done")),
@@ -1080,6 +1146,14 @@ class WebAgentCampaignRunner:
             # LLM operators use the model-pool default; URL discovery keeps the
             # Codex default (the campaign model).
             model = system_default_model_name() or str(settings.get("model") or "")
+        has_llm_operators = any(
+            operator.get("name") in _LLM_PIPELINE_OPERATORS
+            for operator in spec.get("operators", [])
+        )
+        llm_concurrency = (
+            model_max_concurrency(self.root, model)
+            if model and has_llm_operators else None
+        )
         extractor = str(settings.get("pipeline_extractor") or "pipeline")
         mineru_gpu = str(settings.get("pipeline_mineru_gpu") or "0")
         mineru_url = str(settings.get("pipeline_mineru_url") or "").strip()
@@ -1101,8 +1175,11 @@ class WebAgentCampaignRunner:
                     args["mineru_model"] = mineru_model
                 if mineru_transport:
                     args["mineru_transport"] = mineru_transport
-            elif name in {"domain_classify", "pt_to_sft_qa"} and model:
-                args["model"] = model
+            elif name in _LLM_PIPELINE_OPERATORS:
+                if model:
+                    args["model"] = model
+                if llm_concurrency is not None:
+                    args["max_concurrency"] = llm_concurrency
             output = operator.get("output") or operator.get("materialize")
             if isinstance(output, dict):
                 if output.get("quality_level") == "L2":
@@ -1131,6 +1208,11 @@ class WebAgentCampaignRunner:
                 "current_stage": "",
                 "pipeline_path": str(path),
                 "model": model,
+                "llm_concurrency": llm_concurrency,
+                "llm_concurrency_model": model,
+                "llm_concurrency_source": (
+                    "model_pool" if llm_concurrency is not None else "not_applicable"
+                ),
                 "extractor": extractor,
                 "replaced_existing": replaced_existing,
                 "levels": {},
@@ -1186,6 +1268,11 @@ class WebAgentCampaignRunner:
             ),
             "pipeline_path": str(path),
             "model": model,
+            "llm_concurrency": llm_concurrency,
+            "llm_concurrency_model": model,
+            "llm_concurrency_source": (
+                "model_pool" if llm_concurrency is not None else "not_applicable"
+            ),
             "extractor": extractor,
             "replaced_existing": replaced_existing,
             "result": result.to_dict(),
