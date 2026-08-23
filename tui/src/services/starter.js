@@ -10,7 +10,18 @@ export async function fetchTaskSession(taskId) {
 }
 
 export async function submitTaskQuery(payload) {
-  return api.starter.starterCodexStream(payload)
+  const response = await axios({
+    method: 'post',
+    url: '/starter/codex/stream',
+    data: payload,
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    // Session startup can legitimately take a long time while the backend
+    // allocates a worker and waits for the first model output.
+    timeout: 0
+  })
+  return response.data
 }
 
 export async function runTaskLooper(taskId, payload = {}) {
