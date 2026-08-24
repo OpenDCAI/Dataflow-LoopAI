@@ -32,6 +32,11 @@ User  ⇄  Starter (Codex SDK)  ⇄  Node (Skill)
 
 ## 📰 1. News
 
+* **[2026-08] 🚀 LoopAI-v2 is now available!**
+  LoopAI-v2 introduces a `codex-sdk`-powered Starter that turns conversational intent into executable optimization work.
+  It answers simple requests directly, orchestrates complex tasks across reusable nodes and skills, and supports session continuity, streaming feedback, and configurable model-pool integration.
+  Build and run closed-loop workflows—from evaluation and analysis to data acquisition and training—with a more extensible interactive entry point.
+
 * **[2026-05] 🎉 LoopAI (v0.1.0) is officially open-sourced!**
   We are excited to release the first version of LoopAI, enabling full automation from **natural language instructions to model optimization**.
   Say goodbye to tedious manual pipelines—LLM evaluation and optimization are now as simple as chatting.
