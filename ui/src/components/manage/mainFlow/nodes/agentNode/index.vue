@@ -154,7 +154,6 @@ import { useLoopAI } from '@/stores/loopAI'
 import baseNode from '@/components/manage/mainFlow/nodes/baseNode.vue'
 import valuePreview from './valuePreview/index.vue'
 import trainState from './statusPreview/trainState/index.vue'
-import WebcrawlerStatusPannel from './custom/webcrawlerStatusPannel.vue'
 import ObtainerStatusPannel from './custom/obtainerStatusPannel.vue'
 import LooperStatusPanel from './custom/LooperStatusPanel.vue'
 
@@ -250,7 +249,6 @@ const stateFiltered = computed(() => {
 
 const normalizedGraphPrefix = computed(() => String(thisData.value.graphClsPrefix || '').toLowerCase())
 const isObtainerNode = computed(() => normalizedGraphPrefix.value.includes('obtainer'))
-const isWebCrawlerNode = computed(() => normalizedGraphPrefix.value.includes('webcrawler'))
 const isLooperNode = computed(() => normalizedGraphPrefix.value.includes('looper'))
 const showGenericState = computed(() => {
     return Boolean(loopAIState.value) && !isObtainerNode.value
@@ -285,9 +283,6 @@ const showGenericCustomInfo = computed(() => !isObtainerNode.value && !isLooperN
 
 // 自定义节点信息展示
 const customStatusPanel = computed(() => {
-    if (isWebCrawlerNode.value) {
-        return WebcrawlerStatusPannel
-    }
     if (isObtainerNode.value) {
         return ObtainerStatusPannel
     }

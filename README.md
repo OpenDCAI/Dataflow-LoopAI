@@ -28,10 +28,6 @@ User  ⇄  Starter (Codex SDK)  ⇄  Node (Skill)
                                  (Evaluation → Data Collection → Training)
 ```
 
-<p align="center">
-  <img src="docs/assets/workflow.svg" alt="LoopAI Workflow" width="90%"/>
-</p>
-
 ---
 
 ## 📰 1. News

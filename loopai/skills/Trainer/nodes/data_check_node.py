@@ -74,7 +74,7 @@ def data_check_node(state: LoopAIState) -> LoopAIState:
                 )
                 if not source_path:
                     raise ValueError(
-                        "Verl 缺少数据源；请设置 verl_source_dataset_path，或先让 Constructor 生成数据"
+                        "Verl 缺少数据源；请设置 verl_source_dataset_path，或先通过 Obtainer 准备数据"
                     )
                 trainer_state['verl_source_dataset_path'] = source_path
                 if not explicit_source and generated_source:

@@ -12,12 +12,6 @@ Dataflow-LoopAI 是一个具备**自演化**能力的智能系统，围绕 Start
                                （评测 → 分析 → 数据获取 → 训练）
 ```
 
-## 🧠 整体框架
-
-<p align="center">
-  <img src="assets/workflow.svg" alt="Dataflow-LoopAI 工作流程图" width="90%"/>
-</p>
-
 ---
 
 ## 📂 项目结构说明
@@ -42,12 +36,9 @@ Dataflow-LoopAI/
 │   └── scripts/               # 启动、测试、独立运行脚本
 │
 ├── loopai/                    # 项目核心 Python 代码
-│   ├── agents/                # 历史/兼容目录；当前仍保留 BaseAgent、Obtainer 和部分旧实现
+│   ├── agents/                # 历史/兼容目录；当前仍保留 BaseAgent 和 Obtainer
 │   │   ├── BaseAgent/         # 基础 Agent / 节点能力封装
-│   │   ├── Obtainer/          # 旧数据获取实现
-│   │   ├── Constructor/       # 旧构造与清洗相关实现
-│   │   ├── Postprocess/       # 旧后处理相关实现
-│   │   └── WebCrawler/        # 旧爬取实现
+│   │   └── Obtainer/          # 旧数据获取实现
 │   │
 │   ├── common/                # 通用工具、事件流、异常、Prompt 等
 │   ├── mcp/                   # MCP 服务与工具
@@ -58,8 +49,7 @@ Dataflow-LoopAI/
 │   │   ├── Judger/
 │   │   ├── Looper/
 │   │   ├── ObtainerCLI/
-│   │   ├── Trainer/
-│   │   └── WebCrawler/
+│   │   └── Trainer/
 │   └── utils/                 # 通用辅助代码
 │
 ├── skills/                    # 实际给系统消费的技能说明 Markdown（SKILL.md）
@@ -67,7 +57,6 @@ Dataflow-LoopAI/
 │   ├── Configer/
 │   ├── Judger/
 │   ├── Trainer/
-│   ├── WebCrawler/
 │   └── obtainer/
 │
 ├── scripts/                   # 项目脚本，例如 UI 发布、代理启动等
@@ -117,7 +106,7 @@ Dataflow-LoopAI/
 
 - 分析评测结果，抽取 failure pattern、insight 和结构化结论
 
-### ObtainerCLI / WebCrawler
+### ObtainerCLI / DataMixer 网页采集
 
 - 负责数据搜索、下载、入湖、导出以及网页采集相关流程
 

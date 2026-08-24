@@ -12,12 +12,6 @@ User  <->  Starter (Codex SDK)  <->  Node (Skill)
                                               (Evaluation -> Analysis -> Data Acquisition -> Training)
 ```
 
-## Framework Overview
-
-<p align="center">
-  <img src="assets/workflow.svg" alt="Dataflow-LoopAI workflow" width="90%"/>
-</p>
-
 ---
 
 ## Project Layout
@@ -42,12 +36,9 @@ Dataflow-LoopAI/
 │   └── scripts/               # Startup, test, and standalone scripts
 │
 ├── loopai/                    # Core Python implementation
-│   ├── agents/                # Historical / compatibility directory; still contains BaseAgent, Obtainer, and legacy modules
+│   ├── agents/                # Historical / compatibility directory; still contains BaseAgent and Obtainer
 │   │   ├── BaseAgent/         # Base agent / node capability wrappers
-│   │   ├── Obtainer/          # Legacy data acquisition implementation
-│   │   ├── Constructor/       # Legacy constructor and cleaning implementation
-│   │   ├── Postprocess/       # Legacy postprocess implementation
-│   │   └── WebCrawler/        # Legacy crawler implementation
+│   │   └── Obtainer/          # Legacy data acquisition implementation
 │   │
 │   ├── common/                # Shared tools, event flow, exceptions, prompts, etc.
 │   ├── mcp/                   # MCP server and tools
@@ -58,8 +49,7 @@ Dataflow-LoopAI/
 │   │   ├── Judger/
 │   │   ├── Looper/
 │   │   ├── ObtainerCLI/
-│   │   ├── Trainer/
-│   │   └── WebCrawler/
+│   │   └── Trainer/
 │   └── utils/                 # Common helpers
 │
 ├── skills/                    # Runtime skill definitions consumed by the system (SKILL.md)
@@ -67,7 +57,6 @@ Dataflow-LoopAI/
 │   ├── Configer/
 │   ├── Judger/
 │   ├── Trainer/
-│   ├── WebCrawler/
 │   └── obtainer/
 │
 ├── scripts/                   # Project scripts such as UI release and proxy startup helpers
@@ -117,7 +106,7 @@ This developer guide now uses **Skill / Node** terminology instead of maintainin
 
 - Analyzes evaluation results and extracts failure patterns, insights, and structured conclusions
 
-### ObtainerCLI / WebCrawler
+### ObtainerCLI / DataMixer Web Acquisition
 
 - Handles dataset search, download, lake ingest, export, and web collection flows
 

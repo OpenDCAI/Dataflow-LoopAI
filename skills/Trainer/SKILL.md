@@ -116,13 +116,14 @@ prepared = prepare(
 
 ### Verl GRPO State
 
-Native Verl inputs may supply both training and validation Parquet files. When
-the current round instead has Constructor-generated JSON/JSONL, leave
-`verl_source_dataset_path` empty to use `constructor.mapping_results.output_file`,
-or set it explicitly. Trainer converts native/messages/Alpaca/QA records into a
-version-scoped Parquet pair before generating YAML. `pyarrow` is required for
-conversion. Every output row contains a non-empty chat-message-list `prompt`, a
-`data_source`, and `reward_model.ground_truth`.
+Native Verl inputs may supply both training and validation Parquet files. For
+historical tasks whose generated JSON/JSONL path remains in
+`constructor.mapping_results.output_file`, leave `verl_source_dataset_path`
+empty to use that compatibility input, or set it explicitly. Trainer converts
+native/messages/Alpaca/QA records into a version-scoped Parquet pair before
+generating YAML. `pyarrow` is required for conversion. Every output row contains
+a non-empty chat-message-list `prompt`, a `data_source`, and
+`reward_model.ground_truth`.
 
 ```python
 prepared = prepare(
@@ -149,18 +150,16 @@ prepared = prepare(
 
 ### Generated Data and Multi-Round Verl
 
-Keep the boundary between components explicit:
-
-- Constructor generates and cleans task data.
-- Trainer owns Verl-only adaptation, deterministic train/validation splitting,
-  reward contract selection, and executable GRPO config generation.
-- Do not add Verl-specific output formats to Constructor and do not change the
-  existing SFT Constructor path.
+Trainer owns Verl-only adaptation, deterministic train/validation splitting,
+reward contract selection, and executable GRPO config generation. The retired
+Constructor is not invoked; its task-state section is read only for historical
+`mapping_results` compatibility.
 
 On every fresh Verl `prepare()` round:
 
 1. Prefer an explicitly supplied `verl_source_dataset_path`; otherwise use the
-   current Constructor output before any persisted older source.
+   current task's legacy `constructor.mapping_results` compatibility input, then
+   the active Obtainer output, before any persisted older source.
 2. Reuse native train/validation Parquet unchanged. Convert JSON, JSONL, or
    non-native Parquet under
    `{trainer_output_dir}/prepared_data/{train,validation}.parquet`.
@@ -289,7 +288,7 @@ Required Trainer fields:
 - `train_input_config_template_path`
 - `train_input_model_name`
 - for SFT: `train_framework=llamafactory`, `train_stage=sft`, and `llamafactory_dir`
-- for GRPO: `train_framework=verl`, `train_stage=grpo`, `verl_dir`, either a native train Parquet or generated source/Constructor output, and a valid reward mode. Validation may be supplied, reused, or deterministically split.
+- for GRPO: `train_framework=verl`, `train_stage=grpo`, `verl_dir`, either a native train Parquet or generated source (including legacy Constructor task state), and a valid reward mode. Validation may be supplied, reused, or deterministically split.
 
 ## Versioned Runtime
 

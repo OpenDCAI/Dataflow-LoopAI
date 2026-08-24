@@ -116,7 +116,7 @@ default_states:
     verl_algorithm: "grpo"
     verl_rollout_backend: "vllm" # vllm 或 sglang
     verl_model_backend: "fsdp"
-    # 可直接填原生 Verl Parquet；多轮闭环也可留空，由 Trainer 优先读取本轮 Constructor JSON/JSONL 输出。
+    # 可直接填原生 Verl Parquet；留空时 Trainer 兼容读取历史 constructor.mapping_results 或当前 Obtainer 输出。
     verl_source_dataset_path: ""
     verl_source_eval_dataset_path: ""
     verl_data_adapter: "auto" # auto、native、messages、alpaca 或 qa

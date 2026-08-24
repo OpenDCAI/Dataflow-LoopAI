@@ -23,10 +23,10 @@ export default defineConfig({
     },
     server: {
         host: '0.0.0.0',
-        port: 5174,
+        port: 5175,
         proxy: {
             '/api': {
-                target: 'http://127.0.0.1:8855/', // 后端 FastAPI 地址
+                target: 'http://127.0.0.1:8857/', // 后端 FastAPI 地址
                 changeOrigin: true,
                 rewrite: path => path.replace(/^\/api/, '') // 后端路由无 /api 前缀
             }

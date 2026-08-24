@@ -79,9 +79,9 @@ GRPO 训练/验证 Parquet 至少需要 `prompt`、`data_source`、`reward_model
 
 ## 生成数据与多轮 GRPO
 
-Constructor 仍负责生成和清洗数据；当 `train_framework=verl` 时，Trainer 在每轮 `prepare()` 中负责最后一段训练协议适配：
+旧 Constructor 不再执行；当 `train_framework=verl` 时，Trainer 仍兼容读取历史任务状态，并在每轮 `prepare()` 中负责最后一段训练协议适配：
 
-1. 优先读取本轮 `constructor.mapping_results.output_file`，也可用 `verl_source_dataset_path` 显式覆盖。
+1. 优先使用显式的 `verl_source_dataset_path`；否则兼容读取本任务历史 `constructor.mapping_results.output_file`，再读取当前 Obtainer 输出。
 2. 自动识别原生 Verl、messages/ShareGPT、Alpaca 或普通 QA，转换为本轮目录下的 `prepared_data/train.parquet`。
 3. 若未提供验证数据，按 `verl_validation_ratio` 和 `verl_split_seed` 确定性切分；多轮仅在 reward 协议兼容时复用上一轮验证 Parquet。
 4. 生成 `dataset_manifest.json` 和 `rejected_rows.jsonl`，记录来源、去重、拒绝、切分、哈希和 reward 决策。
@@ -97,7 +97,7 @@ trainer:
   verl_env_path: verl
   train_input_model_name: /path/to/base-model
   train_input_task_description: Mathematics reasoning with GRPO
-  verl_source_dataset_path: ""       # 留空时使用本轮 Constructor 输出
+  verl_source_dataset_path: ""       # 留空时兼容读取历史 Constructor 任务状态或当前 Obtainer 输出
   verl_data_adapter: auto
   verl_validation_ratio: 0.05
   verl_reuse_previous_validation: true
@@ -157,7 +157,7 @@ Verl 实时进度优先读取 `metrics/verl_metrics.jsonl` 的 `training/global_
 
 **输入：**
 - `train_input_dataset_path`: SFT 数据或原生 Verl Parquet
-- `verl_source_dataset_path`: 可选的生成数据路径；未配置时读取 Constructor 输出
+- `verl_source_dataset_path`: 可选的生成数据路径；未配置时兼容读取历史 Constructor 任务状态或当前 Obtainer 输出
 
 **输出：**
 - 数据格式验证报告

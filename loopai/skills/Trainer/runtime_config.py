@@ -107,7 +107,7 @@ _TRAINER_FIELD_HINTS: Dict[str, Dict[str, Any]] = {
     "verl_source_dataset_path": {
         "required": False,
         "source": "user_or_upstream",
-        "description": "Generated JSON/JSONL/Parquet source; defaults to the latest Constructor output.",
+        "description": "Generated JSON/JSONL/Parquet source; falls back to legacy Constructor task state or current Obtainer output.",
         "example": "/path/to/generated.jsonl",
     },
     "verl_source_eval_dataset_path": {
@@ -634,7 +634,7 @@ def resolve_trainer_runtime_config(
     persisted_source_origin = str(trainer.get("verl_source_dataset_origin") or "").strip().lower()
     # Only kwargs/environment values are explicit for *this* invocation.  A
     # task-state path marked ``user`` may simply be the previous round's seed
-    # dataset and must not permanently mask the current Constructor output.
+    # dataset and must not permanently mask current upstream compatibility data.
     explicit_verl_source = requested_verl_source
     selected_verl_source = _first_non_empty(
         explicit_verl_source,

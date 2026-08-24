@@ -30,7 +30,7 @@ pip install uv
 uv pip install -e .
 ```
 
-如果后续要使用网页采集等能力(WebCrawler)，建议再补一次：
+如果后续要使用 DataMixer 网页采集等能力，建议再补一次：
 
 ```bash
 playwright install

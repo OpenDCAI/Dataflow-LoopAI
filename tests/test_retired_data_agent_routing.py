@@ -1,25 +1,20 @@
 from pathlib import Path
-from typing import get_args
-
 from api.app.services.task.service import parse_task_state_overrides
 from api.app.utils.task.task import build_task_state_config, config_format
-from loopai.agents.Starter.tools.check_motivation import MotivationType, check_motivation
 from loopai.common.prompts.prompt_loader import PromptLoader
-from loopai.schema.states import get_state_config_schema
+from loopai.schema.states import (
+    LoopAIState,
+    RETIRED_DATA_AGENT_STATE_SECTIONS,
+    get_state_config_schema,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_all_data_intents_use_obtainer_route():
-    motivations = set(get_args(MotivationType))
-
-    assert "constructor" not in motivations
-    assert "webcrawler" not in motivations
-    assert check_motivation.invoke({"motivation": "obtain"}) == {
-        "motivation": "obtain",
-        "next_to": "obtain_node",
-    }
+def test_loopai_state_keeps_retired_sections_for_historical_deserialization():
+    assert RETIRED_DATA_AGENT_STATE_SECTIONS == {"constructor", "webcrawler"}
+    assert {"constructor", "webcrawler"} <= LoopAIState.__annotations__.keys()
 
 
 def test_active_starter_instructions_do_not_advertise_retired_data_agents():
