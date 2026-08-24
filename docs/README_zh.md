@@ -1,6 +1,6 @@
 <div align="center">
   <img src="./assets/LoopAI.svg" width="160" alt="LoopAI Logo" />
-  <h1>LoopAI：面向 LLM 自主优化的闭环框架</h1>
+  <h1>LoopAI：面向 LLM 自演化的闭环框架</h1>
 
   <p>
     <a href="https://www.python.org/">
@@ -11,20 +11,20 @@
     </a>
   </p>
 
-  <h4><i>✨ 具备自优化能力的智能系统 ✨</i></h4>
+  <h4><i>✨ 具备自演化能力的智能系统 ✨</i></h4>
 </div>
 
 <br>
 
 简体中文 | [English](/README.md)
 
-LoopAI 是一个面向**特定领域大语言模型（LLMs）自优化**的智能系统。它能够自动检测并评估模型生成中的缺陷，并通过**对话驱动的数据获取与闭环优化机制**，持续提升模型性能。
+LoopAI 是一个面向**特定领域大语言模型（LLMs）自演化**的智能系统。它能够自动检测并评估模型生成中的缺陷，并通过**对话驱动的数据获取与闭环优化机制**，持续提升模型性能。
 
 ```text
-User  ⇄  Starter（调度器）  ⇄  Sub-Agent
+User  ⇄  Starter（Codex SDK）  ⇄  Node （Skill）
                   │
                   ├── 简单问题 → 直接返回
-                  └── 复杂任务 → 图执行流程
+                  └── 复杂任务 → 闭环执行流程
                                  （评测 → 数据收集 → 训练）
 ```
 
@@ -36,7 +36,7 @@ User  ⇄  Starter（调度器）  ⇄  Sub-Agent
 
 ## 📰 1. 最新动态
 
-* **[2026-03] 🎉 LoopAI（v0.1.0）正式开源！**
+* **[2026-05] 🎉 LoopAI（v0.1.0）正式开源！**
   我们发布了 LoopAI 的首个版本，实现了从**自然语言指令到模型优化的全流程自动化**。
   告别繁琐的人工流程，让 LLM 的评测与优化像对话一样简单直观。
   ⭐ 欢迎 Star 支持并关注后续更新！
@@ -53,7 +53,7 @@ User  ⇄  Starter（调度器）  ⇄  Sub-Agent
 
 **LoopAI 对这一范式进行了重构**：
 
-> 🚀 *一切可以自动化的工作，全部交给 Agent 完成。*
+> 🚀 *一切可以自动化的工作，全部交给系统运行时处理。*
 
 从评测到再训练，LoopAI 提供了一个**无缝衔接、交互友好、全流程自动化**的优化体验。
 
@@ -61,7 +61,7 @@ User  ⇄  Starter（调度器）  ⇄  Sub-Agent
 
 ## 🔍 3. 系统概览
 
-LoopAI 将 LLM 的优化流程重构为一个**基于图的执行框架（Graph / Node / State）**，致力于构建新一代交互式优化系统：
+LoopAI 将 LLM 的优化流程重构为一个**基于节点的执行框架（Graph / Node / State）**，致力于构建新一代交互式优化系统：
 
 * 🗣️ **NL2Optimize**
   只需用自然语言描述你的目标（例如：“提升模型的代码生成能力”），系统即可自动解析意图并规划优化流程。
@@ -73,7 +73,10 @@ LoopAI 将 LLM 的优化流程重构为一个**基于图的执行框架（Graph 
   支持在关键步骤（如评测结果审核、数据筛选）进行人工干预，实现灵活的优化策略调整。
 
 * 📊 **可扩展架构**
-  基于 LangGraph 状态管理机制，支持轻松接入私有数据集与自定义评测指标。
+  通过可组合节点、持久化任务状态和 Codex 驱动的编排机制，接入私有数据集、评测服务和训练流程。
+
+* 🧭 **Codex 驱动的 Starter**
+  Starter 基于 `codex-sdk` 实现，作为交互入口负责理解用户意图，并分发到合适的节点或技能。
 
 ---
 
@@ -81,20 +84,69 @@ LoopAI 将 LLM 的优化流程重构为一个**基于图的执行框架（Graph 
 
 ### 4.1 安装
 
-建议使用 Conda 管理 Python 版本，并使用 `uv` 创建项目虚拟环境与安装依赖：
-
 ```bash
 conda create -n loopai python=3.12
 conda activate loopai
 
 pip install uv
-uv venv
-source .venv/bin/activate
-
 uv pip install -e .
 ```
 
-如果已经在合适的 Python 3.12 环境中，也可以只执行 `pip install uv` 之后的步骤。
+要使用基于 `codex-sdk` 的 starter，还需要先安装 Codex 本体；如果你的机器上已经装好了，可以直接跳过这一步。
+
+Codex 本体的官方安装方式可以按你的环境选择：
+
+```bash
+# macOS / Linux 官方安装脚本
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+
+# 或者继续使用 npm 全局安装
+npm install -g @openai/codex
+```
+
+如果你在 macOS 上，也可以使用 Homebrew：
+
+```bash
+brew install --cask codex
+```
+
+如果你在 Windows 上，官方安装脚本是：
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+```
+
+安装完成后，建议先做一次检查：
+
+```bash
+which codex
+codex --version
+```
+
+首次运行时直接执行：
+
+```bash
+codex
+```
+
+然后按提示登录。官方当前支持两种常见方式：
+
+* 使用 ChatGPT 账户登录
+* 使用 OpenAI API Key 登录
+
+确认 `codex` 可用后，再安装 `codex-runner` 依赖：
+
+```bash
+cd codex-runner
+yarn
+```
+
+你也可以顺手做一次 `codex-runner` 的构建检查：
+
+```bash
+cd codex-runner
+yarn build
+```
 
 ---
 
@@ -108,22 +160,43 @@ uv pip install -e .
 cp examples/config/starter.yaml ./starter.yaml
 ```
 
-2. 编辑 `starter.yaml`，并至少自行填写以下 `system` 字段：
+2. 编辑 `starter.yaml`。通常下面这份最小配置就足以把后端启动起来：
 
 ```yaml
 system:
-  starter_api_key: ""
-  starter_model_path: ""
-  starter_model_name: ""
-  starter_base_url: ""
+  api_port: 8855
   tavily_api_key: ""
-  kaggle_username: ""
-  kaggle_key: ""
+  codex_workspace: "<当前项目目录>"
+  codex_home: "<当前项目目录>/codex_home"
+
+model:
+  proxy_base_url: "http://127.0.0.1:{和api_port一致}/responseProxy/v1"
+  proxy_api_key: "loopai-local-proxy"
+  default_model: "default"
+  codex_model: "default"
+  looper_model: "default"
+  default_tier: "medium"
+  pool:
+    - tier: "medium"
+      name: "default"
+      api_key: "xxx"
+      base_url: "https://api.deepseek.com"
+      model_name: "deepseek-v4-flash"
+      maxworker: 1
+      wire_api: "chat"
+      response_format: ""
+      enabled: true
 ```
 
-这些字段用于配置 Starter 模型服务，以及 LoopAI 使用的外部数据搜索凭据。
+服务启动后，其它大部分配置都可以再进入 WebUI 的 Configer 流程中补齐或调整。实际启动时，最关键的是端口和至少一条可用的默认模型池配置。 `codex_workspace` 应指向当前项目目录，`codex_home` 一般指向 `<当前项目目录>/codex_home`。
 
-`tavily_api_key`、`kaggle_username` 和 `kaggle_key` 的获取位置可见 [API_KEYS_zh.md](./API_KEYS_zh.md)。请不要把真实凭据提交到仓库。
+配置说明：
+
+* `proxy_base_url` 适用于把 OpenAI 兼容的 Chat Completions 接口转换成 Responses 风格接口，以支持 `deepseek-v4-flash` 这类模型。
+* `default_model` 指向 `model.pool` 里某个条目的 `name`，一般作为各节点默认使用的 API 模型。
+* `codex_model` 是 starter 使用的模型。
+
+`Tavily` 以及其它可选第三方凭据的获取方式可见 [API_KEYS_zh.md](./API_KEYS_zh.md)。请不要把真实凭据提交到仓库。
 
 ---
 
@@ -133,6 +206,8 @@ LoopAI 支持两种运行模式：
 
 #### ✅ 方式一：WebUI API 模式（推荐）
 
+1. 安装已发布的前端 dist。
+
 生产环境或常规 WebUI 使用场景下，先安装已发布的前端 dist。后端会直接托管 `api/dist`，因此不需要构建或运行前端开发服务器。
 
 ```bash
@@ -141,7 +216,7 @@ python scripts/download_ui_release.py
 
 如果脚本无法自动下载 release 产物，可以手动从 GitHub Release 页面下载前端 dist 压缩包，并解压到 `api/dist`。
 
-然后启动后端：
+2. 启动后端：
 
 ```bash
 python api/start.py
@@ -149,13 +224,13 @@ python api/start.py
 
 WebUI 和 API 服务地址：
 
-```
+```text
 http://localhost:8855
 ```
 
 API 文档地址：
 
-```
+```text
 http://localhost:8855/docs
 ```
 
@@ -169,19 +244,36 @@ http://localhost:8855/docs
 
 ---
 
-#### ✅ 方式二：命令行模式
+#### ✅ 方式二：终端模式
 
-启动 LoopAI 后端服务：
+终端 UI 主要用于无法方便访问网页的机器。目前它支持任务管理，以及在主界面对话中发起各节点执行；但暂时还不覆盖数据湖操作、手动配置修改，以及 WebUI 中更复杂的状态查看流程。
+
+首次使用时先构建，再启动：
 
 ```bash
-python api/start.py
+cd tui
+yarn build
+yarn start
+```
+
+如果之前已经构建过，直接启动即可：
+
+```bash
+cd tui
+yarn start
+```
+
+默认连接的后端地址为：
+
+```text
+http://127.0.0.1:8855
 ```
 
 ---
 
 ### 4.4 可选运行时依赖
 
-`pip install -e .` 会安装 LoopAI 主框架、API 服务、图编排和常用数据处理依赖。部分 Agent 会调用较重的机器学习运行时，这些依赖通常和 CUDA、PyTorch、推理/训练框架版本强相关，建议拆到独立 Conda 环境中维护。
+`pip install -e .` 会安装 LoopAI 主框架、API 服务、编排运行时和常用数据处理依赖。部分节点和技能会调用较重的机器学习运行时，这些依赖通常和 CUDA、PyTorch、推理/训练框架版本强相关，建议拆到独立 Conda 环境中维护。
 
 推荐环境划分：
 
@@ -201,57 +293,60 @@ conda create -n loopai-verl python=3.10
 
 请根据本机 CUDA/PyTorch 版本，分别按照 `vllm`、`LLaMA-Factory`、`verl` 的官方安装方式安装依赖。LoopAI 不在主依赖里固定这些包的版本，因为 GPU 环境通常需要按机器单独适配。
 
-各 Agent 依赖说明：
+各技能依赖说明：
 
-* **JudgerAgent**：如果需要本地评测模型，通常需要在独立环境中安装 `vllm`，并将 `judger.eval_vllm_env_path` 配置为该环境的 Python 可执行文件，例如 `/path/to/miniconda3/envs/loopai-vllm/bin/python`。当 `judger.eval_base_url` 为空时，Judger 会使用这个解释器在子进程中启动本地 vLLM OpenAI 兼容服务，并读取 `eval_vllm_port`、`eval_vllm_tensor_parallel_size`、`eval_vllm_gpu_memory_utilization`、`eval_env_configs` 等参数。如果你已经手动启动了兼容服务，则填写 `judger.eval_base_url` 即可。
-* **AnalyzerAgent**：Analyzer 通过 `analyzer.analyze_base_url`、`analyzer.analyze_model_path`、`analyzer.analyze_api_key` 调用 OpenAI 兼容聊天接口。本地分析时，可以复用 vLLM 环境启动分析模型，并将 `analyze_base_url` 指向该服务。当前 Analyzer 不会自动拉起 vLLM。
-* **ObtainerCLI/DataMixer**：这是目前唯一支持的数据工作流。Hosted dataset 与网页数据获取、下载、规范化、入湖、清洗去重、质量处理、格式映射、recipe 规划和最终训练数据导出，统一使用 `skills/obtainer/SKILL.md`、`docs/OBTAINERCLI_USAGE.md` 和 `python -m loopai.skills.ObtainerCLI.cli`。已弃用的独立数据 Agent 不得调度。托管 worker 会从 warehouse model pool、`CODEX_*`/`DEEPSEEK_*` 环境变量或 starter system config 解析模型端点。
+* **Judger Skill**：如果需要本地评测模型，通常需要在独立环境中安装 `vllm`，并将 `judger.eval_vllm_env_path` 配置为该环境的 Python 可执行文件，例如 `/path/to/miniconda3/envs/loopai-vllm/bin/python`。当 `judger.eval_base_url` 为空时，Judger 会使用这个解释器在子进程中启动本地 vLLM OpenAI 兼容服务，并读取 `eval_vllm_port`、`eval_vllm_tensor_parallel_size`、`eval_vllm_gpu_memory_utilization`、`eval_env_configs` 等参数。如果你已经手动启动了兼容服务，则填写 `judger.eval_base_url` 即可。
+* **Analyzer Skill**：Analyzer 通过 `analyzer.analyze_base_url`、`analyzer.analyze_model_path`、`analyzer.analyze_api_key` 调用 OpenAI 兼容聊天接口。本地分析时，可以复用 vLLM 环境启动分析模型，并将 `analyze_base_url` 指向该服务。当前 Analyzer 不会自动拉起 vLLM。
+* **Obtainer Skill**：旧的 `ObtainerAgent` 已退休。数据搜索、下载、入湖和 SFT 导出应使用 `skills/obtainer/SKILL.md`、`docs/OBTAINERCLI_USAGE.md` 和 `python -m loopai.skills.ObtainerCLI.cli`。新的 dataset-acquisition worker 会从 warehouse model pool、`CODEX_*`/`DEEPSEEK_*` 环境变量或 starter system config 解析模型端点。
+* **Constructor Skill**：后处理、清洗和格式映射使用 `pip install -e .` 安装的 LoopAI 主环境。Constructor 通过 `constructor.model_path`、`constructor.base_url`、`constructor.api_key` 调用 OpenAI 兼容聊天接口；如果这些字段为空，部分路径会回退使用 Analyzer 的模型配置。Benchmark-aware 清洗可以额外使用 `constructor.benchmark_source_dir` 或 benchmark pool 相关字段，postprocess v2 流程也可能使用 `TAVILY_API_KEY` 做 source reference 搜索。
+* **WebCrawler Skill**：Web 抓取仍然作为可扩展运行时节点存在，可以和 Obtainer、Constructor 流程结合使用，组成数据获取链路。
 * **Trainer Skill**：本地训练通常需要 `LLaMA-Factory` 或 `verl`。将 `trainer.train_framework` 设置为 `llamafactory` 或 `verl`。使用 LlamaFactory 时，需要配置 `trainer.llamafactory_dir` 为 LLaMA-Factory 仓库路径，并配置 `trainer.llamafactory_env_path` 为环境根目录或 `bin` 目录，例如 `/path/to/miniconda3/envs/loopai-llamafactory/bin`。使用 verl 时，可在 trainer 或 system 配置中提供 `verl_dir` 和 `verl_env_path`。Trainer 会通过内部任务管理器拉起对应训练框架的子进程并持续回传日志；Skill 调用会保持前台同步，直到训练完成、失败或取消。
 
-这些字段可以通过 WebUI 的 Configer 流程、Agent state，或 `starter.yaml` 中对应的 `judger`、`analyzer`、`obtainer`、`trainer`、`system` 配置段提供。
+这些字段可以通过 WebUI 的 Configer 流程、节点 state，或 `starter.yaml` 中对应的 `judger`、`analyzer`、`obtainer`、`constructor`、`trainer`、`system` 配置段提供。
 
 ---
 
-## 🧠 5. 核心 Agents
+## 🧠 5. 核心 Nodes
 
-LoopAI 中的每个 Agent 都被实现为一个**可独立运行、可组合的子图模块**。
+LoopAI 的主要运行时由**可独立组合的节点**构成，由 starter 负责统一协调执行，skills 则提供可复用的能力封装。
 
-### 🤖 StarterAgent（调度器）
+### 🤖 Starter
 
 * 负责用户交互与任务意图解析
-* 动态编排下游 Agent
+* 基于 `codex-sdk` 协调下游 skills 和 nodes
 * 管理整体任务执行流程
 
-### 🤖 JudgerAgent（评测代理）
+### 🔁 Looper Node
+
+* 作为用户对话与 starter 之间的连续性维护层
+* 在合适的情况下自动维护 chat 流程，结合最新 conversation 总结上下文并补齐后续参数
+* 代替用户继续与 starter 对话，让闭环流程不必依赖每一步都手动接话
+* 当下一步已经能从上下文推断出来时，帮助长流程持续推进，尽量避免 loop 中断
+
+### 🤖 Judger Node
 
 * 自动生成评测用例（基于 LLM）
 * 对接外部评测系统执行测试
 * 收集结构化评测结果与日志
 
-### 🤖 AnalyzerAgent（分析代理）
+### 🤖 Analyzer Node
 
 * 对评测结果进行统计分析
 * 自动挖掘错误模式与失败类型
 * 输出高可读性的诊断报告
 
-### 🤖 ObtainerCLI/DataMixer（数据获取与处理）
+### 🤖 Obtainer、Constructor 与 WebCrawler Nodes
 
-* 通过托管 acquisition worker 检索 hosted dataset 并采集垂直领域网页
-* 下载、规范化并入湖到 DataMixer warehouse，同时注册 dataset card 与 lineage
-* 清洗、去重、质量校验并映射异构数据
-* 规划 DataMixer recipe 并导出最终可训练数据集
+* 按能力域检索和下载数据集
+* 将数据入湖到 DataMixer warehouse，并注册 dataset card 与 lineage
+* 通过 DataMixer recipe 导出训练数据
+* 支持清洗、格式映射和可扩展的 Web 数据抓取
 
-### 🛠️ Trainer Skill（训练技能）
+### 🛠️ Trainer Node
 
 * 基于新数据执行增量训练
 * 支持持续学习以避免遗忘
 * 实现模型能力的闭环提升
-
-### 🤖 ConfigerAgent（配置代理）
-
-* 与用户进行配置交互
-* 支持动态参数调整
-* 处理缺失信息与流程恢复
 
 ---
 
@@ -260,9 +355,10 @@ LoopAI 中的每个 Agent 都被实现为一个**可独立运行、可组合的�
 我们将持续在以下方向推进 LoopAI：
 
 * 💻 **扩展更多应用领域**
-* 🤖 **增强 Agent 智能与自主性**
-* 🌐 **构建在线平台与社区**
-* 📊 **提升可视化能力**
+* 🧪 **优化训练策略与 Data Selection**
+* 🛡️ **强化 Starter 边界能力和安全限制**
+* 📏 **垂域评估优化**
+* 🧩 **插件化节点**
 
 ---
 
