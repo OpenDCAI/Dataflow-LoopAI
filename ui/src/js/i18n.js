@@ -466,5 +466,833 @@ export default {
     "Stop signal sent": {
         "en": "Stop signal sent",
         "zh": "停止信号已发送"
+    },
+    "Refresh": {
+        "en": "Refresh",
+        "zh": "刷新"
+    },
+    "Switch Language": {
+        "en": "Switch language",
+        "zh": "切换中英文界面语言"
+    },
+    "Workbench": {
+        "en": "Workbench",
+        "zh": "工作台"
+    },
+    "Datasets": {
+        "en": "Datasets",
+        "zh": "数据集"
+    },
+    "Lake Management": {
+        "en": "Lake Management",
+        "zh": "数据湖管理"
+    },
+    "Advanced": {
+        "en": "Advanced",
+        "zh": "高级模式"
+    },
+    "Show advanced tools": {
+        "en": "Show or hide advanced tools (command line, cache rebuild, JSON details)",
+        "zh": "显示或隐藏高级工具（命令行、缓存重建、JSON 详情）"
+    },
+    "Reload the DataMixer monitor data": {
+        "en": "Reload the DataMixer monitor data",
+        "zh": "重新加载 DataMixer 监控数据"
+    },
+    "Rebuild the monitor cache, may take a while": {
+        "en": "Rescan the warehouse and rebuild the monitor cache (may take a while)",
+        "zh": "重新扫描仓库并重建监控缓存（可能耗时较长）"
+    },
+    "Check embedding service availability": {
+        "en": "Check whether the embedding service is reachable",
+        "zh": "检查嵌入（Embedding）服务是否可用"
+    },
+    "Path to the lake config file": {
+        "en": "Path to the lake config file",
+        "zh": "数据湖配置文件路径"
+    },
+    "Rebuild Cache": {
+        "en": "Rebuild Cache",
+        "zh": "重建缓存"
+    },
+    "Rebuilding": {
+        "en": "Rebuilding",
+        "zh": "重建中"
+    },
+    "Probe": {
+        "en": "Probe",
+        "zh": "探测"
+    },
+    "Probing": {
+        "en": "Probing",
+        "zh": "探测中"
+    },
+    "Model Pool": {
+        "en": "Model Pool",
+        "zh": "模型池"
+    },
+    "Online": {
+        "en": "Online",
+        "zh": "在线"
+    },
+    "All Online": {
+        "en": "All Online",
+        "zh": "全部在线"
+    },
+    "Partial Online": {
+        "en": "Partial Online",
+        "zh": "部分在线"
+    },
+    "Unavailable": {
+        "en": "Unavailable",
+        "zh": "不可用"
+    },
+    "Not Probed": {
+        "en": "Not Probed",
+        "zh": "未探测"
+    },
+    "Default Model": {
+        "en": "Default Model",
+        "zh": "默认模型"
+    },
+    "Codex Model": {
+        "en": "Codex Model",
+        "zh": "Codex 模型"
+    },
+    "Default Tier": {
+        "en": "Default Tier",
+        "zh": "默认层级"
+    },
+    "Proxy URL": {
+        "en": "Proxy URL",
+        "zh": "代理地址"
+    },
+    "Registered Models": {
+        "en": "Registered Models",
+        "zh": "已注册模型"
+    },
+    "Add Model": {
+        "en": "Add Model",
+        "zh": "添加模型"
+    },
+    "Tier": {
+        "en": "Tier",
+        "zh": "层级"
+    },
+    "Name": {
+        "en": "Name",
+        "zh": "名称"
+    },
+    "Model Name": {
+        "en": "Model Name",
+        "zh": "模型名"
+    },
+    "Base URL": {
+        "en": "Base URL",
+        "zh": "接口地址"
+    },
+    "API Key": {
+        "en": "API Key",
+        "zh": "API 密钥"
+    },
+    "Max Worker": {
+        "en": "Max Worker",
+        "zh": "最大并发"
+    },
+    "Response API": {
+        "en": "Response API",
+        "zh": "响应接口"
+    },
+    "Response Format": {
+        "en": "Response Format",
+        "zh": "响应格式"
+    },
+    "Enabled": {
+        "en": "Enabled",
+        "zh": "启用"
+    },
+    "Disabled": {
+        "en": "Disabled",
+        "zh": "停用"
+    },
+    "Requests": {
+        "en": "Requests",
+        "zh": "请求数"
+    },
+    "Errors": {
+        "en": "Errors",
+        "zh": "错误数"
+    },
+    "Latency": {
+        "en": "Latency",
+        "zh": "延迟"
+    },
+    "Tokens": {
+        "en": "Tokens",
+        "zh": "Token 用量"
+    },
+    "Avg Latency": {
+        "en": "Avg Latency",
+        "zh": "平均延迟"
+    },
+    "Probing models...": {
+        "en": "Probing models...",
+        "zh": "正在探测模型…"
+    },
+    "Probe finished.": {
+        "en": "Probe finished.",
+        "zh": "探测完成。"
+    },
+    "Probe finished with unavailable models.": {
+        "en": "Probe finished, but no model is available.",
+        "zh": "探测完成，模型不可用。"
+    },
+    "Probe failed.": {
+        "en": "Probe failed.",
+        "zh": "探测失败。"
+    },
+    "Health": {
+        "en": "Health",
+        "zh": "健康分"
+    },
+    "Warnings": {
+        "en": "Warnings",
+        "zh": "警告"
+    },
+    "warnings": {
+        "en": "warnings",
+        "zh": "条警告"
+    },
+    "Records": {
+        "en": "Records",
+        "zh": "记录数"
+    },
+    "records": {
+        "en": "records",
+        "zh": "条记录"
+    },
+    "datasets": {
+        "en": "datasets",
+        "zh": "个数据集"
+    },
+    "Embedding Coverage": {
+        "en": "Embedding Coverage",
+        "zh": "嵌入覆盖率"
+    },
+    "pending": {
+        "en": "pending",
+        "zh": "条待处理"
+    },
+    "Quality Findings": {
+        "en": "Quality Findings",
+        "zh": "质量发现"
+    },
+    "Exports": {
+        "en": "Exports",
+        "zh": "导出"
+    },
+    "ingest runs": {
+        "en": "ingest runs",
+        "zh": "次摄取运行"
+    },
+    "Warehouse": {
+        "en": "Warehouse",
+        "zh": "数据仓库"
+    },
+    "views": {
+        "en": "views",
+        "zh": "个视图"
+    },
+    "Ingest Runs": {
+        "en": "Ingest Runs",
+        "zh": "摄取运行"
+    },
+    "recent": {
+        "en": "recent",
+        "zh": "条最近记录"
+    },
+    "Composition": {
+        "en": "Composition",
+        "zh": "数据构成"
+    },
+    "Level": {
+        "en": "Level",
+        "zh": "层级"
+    },
+    "Quality Level": {
+        "en": "Quality Level",
+        "zh": "质量等级"
+    },
+    "Processing Level": {
+        "en": "Processing Level",
+        "zh": "处理阶段"
+    },
+    "Domain": {
+        "en": "Domain",
+        "zh": "领域"
+    },
+    "Source": {
+        "en": "Source",
+        "zh": "来源"
+    },
+    "Top Tags": {
+        "en": "Top Tags",
+        "zh": "热门标签"
+    },
+    "values": {
+        "en": "values",
+        "zh": "项"
+    },
+    "Embedding": {
+        "en": "Embedding",
+        "zh": "嵌入索引"
+    },
+    "Model": {
+        "en": "Model",
+        "zh": "模型"
+    },
+    "Backend": {
+        "en": "Backend",
+        "zh": "后端"
+    },
+    "Provider": {
+        "en": "Provider",
+        "zh": "提供方"
+    },
+    "items": {
+        "en": "items",
+        "zh": "项"
+    },
+    "Latest DataMixer Rows": {
+        "en": "Latest DataMixer Rows",
+        "zh": "最新数据"
+    },
+    "Runs": {
+        "en": "Runs",
+        "zh": "运行"
+    },
+    "Quality": {
+        "en": "Quality",
+        "zh": "质量"
+    },
+    "Lake Config": {
+        "en": "Lake Config",
+        "zh": "湖配置文件"
+    },
+    "Warehouse Root": {
+        "en": "Warehouse Root",
+        "zh": "仓库根目录"
+    },
+    "Catalog": {
+        "en": "Catalog",
+        "zh": "数据目录"
+    },
+    "Namespace": {
+        "en": "Namespace",
+        "zh": "命名空间"
+    },
+    "Active Lake": {
+        "en": "Active Lake",
+        "zh": "当前数据湖"
+    },
+    "Discovered Lakes": {
+        "en": "Discovered Lakes",
+        "zh": "已发现数据湖"
+    },
+    "candidates": {
+        "en": "candidates",
+        "zh": "个候选"
+    },
+    "Scan": {
+        "en": "Scan",
+        "zh": "扫描"
+    },
+    "Scanning": {
+        "en": "Scanning",
+        "zh": "扫描中"
+    },
+    "Rescan the workspace for DataMixer lakes": {
+        "en": "Rescan the workspace for DataMixer lakes",
+        "zh": "重新扫描工作区中的 DataMixer 数据湖"
+    },
+    "Unload": {
+        "en": "Unload",
+        "zh": "卸载"
+    },
+    "Disconnect the active lake (data is kept on disk)": {
+        "en": "Disconnect the active lake (data is kept on disk)",
+        "zh": "断开当前数据湖连接（磁盘上的数据会保留）"
+    },
+    "Load": {
+        "en": "Load",
+        "zh": "加载"
+    },
+    "Load this lake as the active one": {
+        "en": "Load this lake as the active one",
+        "zh": "将该数据湖加载为当前数据湖"
+    },
+    "Details": {
+        "en": "Details",
+        "zh": "详情"
+    },
+    "Active": {
+        "en": "Active",
+        "zh": "已激活"
+    },
+    "No DataMixer lakes found": {
+        "en": "No DataMixer lakes found",
+        "zh": "未发现 DataMixer 数据湖"
+    },
+    "DataMixer Command Surface": {
+        "en": "DataMixer Command Surface",
+        "zh": "DataMixer 命令面板"
+    },
+    "Running": {
+        "en": "Running",
+        "zh": "运行中"
+    },
+    "Seen": {
+        "en": "Seen",
+        "zh": "读取"
+    },
+    "Written": {
+        "en": "Written",
+        "zh": "写入"
+    },
+    "Quarantined": {
+        "en": "Quarantined",
+        "zh": "隔离"
+    },
+    "Indexed": {
+        "en": "Indexed",
+        "zh": "已索引"
+    },
+    "Pending": {
+        "en": "Pending",
+        "zh": "待索引"
+    },
+    "Record": {
+        "en": "Record",
+        "zh": "记录"
+    },
+    "Text": {
+        "en": "Text",
+        "zh": "文本"
+    },
+    "Severity": {
+        "en": "Severity",
+        "zh": "严重级别"
+    },
+    "Score": {
+        "en": "Score",
+        "zh": "分数"
+    },
+    "Detector": {
+        "en": "Detector",
+        "zh": "检测器"
+    },
+    "Created": {
+        "en": "Created",
+        "zh": "创建时间"
+    },
+    "Finished": {
+        "en": "Finished",
+        "zh": "完成时间"
+    },
+    "Export": {
+        "en": "Export",
+        "zh": "导出"
+    },
+    "Strategy": {
+        "en": "Strategy",
+        "zh": "策略"
+    },
+    "Rows": {
+        "en": "Rows",
+        "zh": "行数"
+    },
+    "Format": {
+        "en": "Format",
+        "zh": "格式"
+    },
+    "Code": {
+        "en": "Code",
+        "zh": "代码"
+    },
+    "Table": {
+        "en": "Table",
+        "zh": "表"
+    },
+    "Line": {
+        "en": "Line",
+        "zh": "行"
+    },
+    "Cache": {
+        "en": "Cache",
+        "zh": "缓存"
+    },
+    "Last refresh": {
+        "en": "Last refresh",
+        "zh": "最近刷新"
+    },
+    "No DataMixer warehouse loaded": {
+        "en": "No DataMixer warehouse loaded",
+        "zh": "未加载 DataMixer 数据仓库"
+    },
+    "Monitor cache is missing": {
+        "en": "Monitor cache is missing",
+        "zh": "监控缓存缺失"
+    },
+    "Monitor cache is rebuilding": {
+        "en": "Monitor cache is rebuilding",
+        "zh": "监控缓存正在重建"
+    },
+    "Monitor cache is stale": {
+        "en": "Monitor cache is stale",
+        "zh": "监控缓存已过期"
+    },
+    "DataMixer warehouse needs attention": {
+        "en": "DataMixer warehouse needs attention",
+        "zh": "数据仓库需要关注"
+    },
+    "DataMixer warehouse is healthy": {
+        "en": "DataMixer warehouse is healthy",
+        "zh": "数据仓库运行正常"
+    },
+    "Waiting for monitor response": {
+        "en": "Waiting for monitor response",
+        "zh": "等待监控数据返回"
+    },
+    "Rebuilding monitor cache": {
+        "en": "Rebuilding monitor cache",
+        "zh": "正在重建监控缓存"
+    },
+    "Refreshing monitor": {
+        "en": "Refreshing monitor",
+        "zh": "正在刷新监控数据"
+    },
+    "Run a DataMixer command to inspect its JSON result.": {
+        "en": "Run a DataMixer command to inspect its JSON result.",
+        "zh": "运行一条 DataMixer 命令以查看其 JSON 结果。"
+    },
+    "DataMixer Summary": {
+        "en": "DataMixer Summary",
+        "zh": "DataMixer 概要"
+    },
+    "Monitor": {
+        "en": "Monitor",
+        "zh": "监控"
+    },
+    "Embedding Probe": {
+        "en": "Embedding Probe",
+        "zh": "嵌入探测"
+    },
+    "Ingest / Agent Ingest": {
+        "en": "Ingest / Agent Ingest",
+        "zh": "摄取 / 智能摄取"
+    },
+    "Recipe Export": {
+        "en": "Recipe Export",
+        "zh": "配方导出"
+    },
+    "##### Run Failed, Please Retry": {
+        "en": "##### Run Failed, Please Retry",
+        "zh": "##### 运行失败，请重试"
+    },
+    "Analyzer Model": {
+        "en": "Analyzer Model",
+        "zh": "Analyzer模型"
+    },
+    "Are you sure to reset this conversation?": {
+        "en": "Are you sure to reset this conversation?",
+        "zh": "确定要重置此对话吗？"
+    },
+    "Are you sure to terminate this conversation?": {
+        "en": "Are you sure to terminate this conversation?",
+        "zh": "确定要终止此对话吗？"
+    },
+    "Assistant": {
+        "en": "Assistant",
+        "zh": "AI助手"
+    },
+    "Benchmark": {
+        "en": "Benchmark",
+        "zh": "基准测试"
+    },
+    "Benchmark Guard": {
+        "en": "Benchmark Guard",
+        "zh": "基准守卫"
+    },
+    "Collapse": {
+        "en": "Collapse",
+        "zh": "折叠"
+    },
+    "Command": {
+        "en": "Command",
+        "zh": "命令"
+    },
+    "Command Execution": {
+        "en": "Command Execution",
+        "zh": "命令执行"
+    },
+    "Completed": {
+        "en": "Completed",
+        "zh": "已完成"
+    },
+    "Conversation reset successfully.": {
+        "en": "Conversation reset successfully.",
+        "zh": "对话重置成功。"
+    },
+    "Conversation terminated successfully.": {
+        "en": "Conversation terminated successfully.",
+        "zh": "对话终止成功。"
+    },
+    "Copied": {
+        "en": "Copied",
+        "zh": "已复制"
+    },
+    "DataMixer": {
+        "en": "DataMixer",
+        "zh": "数据混合器"
+    },
+    "Default": {
+        "en": "Default",
+        "zh": "默认"
+    },
+    "Expand": {
+        "en": "Expand",
+        "zh": "展开"
+    },
+    "Failed": {
+        "en": "Failed",
+        "zh": "失败"
+    },
+    "Failed to let Looper take over.": {
+        "en": "Failed to let Looper take over.",
+        "zh": "让Looper接管失败。"
+    },
+    "Failed to reset conversation.": {
+        "en": "Failed to reset conversation.",
+        "zh": "重置对话失败。"
+    },
+    "Failed to terminated conversation.": {
+        "en": "Failed to terminated conversation.",
+        "zh": "终止对话失败。"
+    },
+    "File Change": {
+        "en": "File Change",
+        "zh": "文件更改"
+    },
+    "Finishing": {
+        "en": "Finishing",
+        "zh": "正在完成"
+    },
+    "History Summary": {
+        "en": "History Summary",
+        "zh": "历史摘要"
+    },
+    "Info": {
+        "en": "Info",
+        "zh": "信息"
+    },
+    "Lake": {
+        "en": "Lake",
+        "zh": "湖"
+    },
+    "Lake monitor cache failed": {
+        "en": "Lake monitor cache failed",
+        "zh": "数据湖监控缓存失败"
+    },
+    "Lake monitor cache is missing": {
+        "en": "Lake monitor cache is missing",
+        "zh": "数据湖监控缓存缺失"
+    },
+    "Lake monitor cache is rebuilding": {
+        "en": "Lake monitor cache is rebuilding",
+        "zh": "数据湖监控缓存正在重建"
+    },
+    "Lake monitor cache is stale": {
+        "en": "Lake monitor cache is stale",
+        "zh": "数据湖监控缓存已过时"
+    },
+    "Lake runtime has warnings": {
+        "en": "Lake runtime has warnings",
+        "zh": "数据湖运行时存在警告"
+    },
+    "Lake runtime is ready": {
+        "en": "Lake runtime is ready",
+        "zh": "数据湖运行时已就绪"
+    },
+    "Load a DataMixer lake or scan available warehouses.": {
+        "en": "Load a DataMixer lake or scan available warehouses.",
+        "zh": "加载数据混合器数据湖或扫描可用仓库。"
+    },
+    "Looper Model": {
+        "en": "Looper Model",
+        "zh": "Looper模型"
+    },
+    "Looper executing...": {
+        "en": "Looper executing...",
+        "zh": "Looper正在执行..."
+    },
+    "Looper takeover canceled.": {
+        "en": "Looper takeover canceled.",
+        "zh": "Looper接管已取消。"
+    },
+    "Looper takeover interrupted.": {
+        "en": "Looper takeover interrupted.",
+        "zh": "Looper接管已中断。"
+    },
+    "Looper will take over in": {
+        "en": "Looper will take over in",
+        "zh": "Looper将在"
+    },
+    "No DataMixer lake loaded": {
+        "en": "No DataMixer lake loaded",
+        "zh": "未加载数据混合器数据湖"
+    },
+    "No Message": {
+        "en": "No Message",
+        "zh": "无消息"
+    },
+    "No Messages": {
+        "en": "No Messages",
+        "zh": "无消息"
+    },
+    "No active task to reset.": {
+        "en": "No active task to reset.",
+        "zh": "没有可重置的活动任务。"
+    },
+    "No active task to terminate.": {
+        "en": "No active task to terminate.",
+        "zh": "没有可终止的活动任务。"
+    },
+    "No active task to view states.": {
+        "en": "No active task to view states.",
+        "zh": "没有可查看状态的活动任务。"
+    },
+    "No benchmark guard sets registered": {
+        "en": "No benchmark guard sets registered",
+        "zh": "未注册基准守卫集"
+    },
+    "No state config available.": {
+        "en": "No state config available.",
+        "zh": "无可用状态配置。"
+    },
+    "Operation": {
+        "en": "Operation",
+        "zh": "操作"
+    },
+    "Please select a task first.": {
+        "en": "Please select a task first.",
+        "zh": "请先选择一个任务。"
+    },
+    "Processed": {
+        "en": "Processed",
+        "zh": "已处理"
+    },
+    "Rebuild": {
+        "en": "Rebuild",
+        "zh": "重建"
+    },
+    "Select Default Tier": {
+        "en": "Select Default Tier",
+        "zh": "选择默认层级"
+    },
+    "Select Response API": {
+        "en": "Select Response API",
+        "zh": "选择响应API"
+    },
+    "Select Response Format": {
+        "en": "Select Response Format",
+        "zh": "选择响应格式"
+    },
+    "Select Tier": {
+        "en": "Select Tier",
+        "zh": "选择层级"
+    },
+    "Show Messages": {
+        "en": "Show Messages",
+        "zh": "显示消息"
+    },
+    "Tool": {
+        "en": "Tool",
+        "zh": "工具"
+    },
+    "Unknown": {
+        "en": "Unknown",
+        "zh": "未知"
+    },
+    "Update Config Failed.": {
+        "en": "Update Config Failed.",
+        "zh": "更新配置失败。"
+    },
+    "Updated": {
+        "en": "Updated",
+        "zh": "已更新"
+    },
+    "User": {
+        "en": "User",
+        "zh": "用户"
+    },
+    "Waiting for response...": {
+        "en": "Waiting for response...",
+        "zh": "等待响应..."
+    },
+    "for the next action.": {
+        "en": "for the next action.",
+        "zh": "用于下一步操作。"
+    },
+    "registered benchmark sets": {
+        "en": "registered benchmark sets",
+        "zh": "已注册的基准测试集"
+    },
+    "rows": {
+        "en": "rows",
+        "zh": "行"
+    },
+    "Embedding Model": {
+        "en": "Embedding Model",
+        "zh": "Embedding 模型"
+    },
+    "MinerU-HTML Document Parsing": {
+        "en": "MinerU-HTML Document Parsing",
+        "zh": "MinerU-HTML 文档解析"
+    },
+    "Text Field": {
+        "en": "Text Field",
+        "zh": "文本字段"
+    },
+    "GPU": {
+        "en": "GPU",
+        "zh": "GPU"
+    },
+    "Transport": {
+        "en": "Transport",
+        "zh": "传输方式"
+    },
+    "Select Transport": {
+        "en": "Select Transport",
+        "zh": "选择传输方式"
+    },
+    "Select Backend": {
+        "en": "Select Backend",
+        "zh": "选择后端"
+    },
+    "Service URL": {
+        "en": "Service URL",
+        "zh": "服务地址"
+    },
+    "Python Env Path": {
+        "en": "Python Env Path",
+        "zh": "Python 环境路径"
+    },
+    "Model Path": {
+        "en": "Model Path",
+        "zh": "模型路径"
+    },
+    "sets": {
+        "en": "sets",
+        "zh": "集"
     }
 }

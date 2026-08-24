@@ -42,8 +42,9 @@
             :disabled="holdon"
             style="margin-left: 5px"
             @click="submitQuery"
-            >{{ local('Submit') }}</fv-button
-        >
+            >{{ local('Submit') }}
+            <i class="ms-Icon ms-Icon--ReturnKeySm" style="margin-left: 5px"></i>
+        </fv-button>
     </div>
 </template>
 
@@ -83,28 +84,30 @@ export default {
     computed: {
         ...mapState(useAppConfig, ['local', 'language']),
         ...mapState(useTheme, ['color', 'gradient']),
-        ...mapState(useLoopAI, ['taskStatus', 'msgStreamModel']),
+        ...mapState(useLoopAI, ['msgStreamModel', 'currentTask', 'looperTakeover']),
         placeholder() {
-            if (this.taskStatus.interrupt_value)
-                return this.taskStatus.interrupt_value + ' ' + this.local(`(Press Ctrl + Enter)`)
             return this.local(`Ask me anything (Press Ctrl + Enter)`)
         },
         holdon() {
-            return !this.taskStatus.running || this.msgStreamModel.loading || !this.lock.submit
+            return !this.lock.submit || this.looperActive
         },
         runningLLM() {
-            try {
-                return this.taskStatus.running_tasks.includes('llm_node')
-            } catch (e) {
-                return false
-            }
+            return this.msgStreamModel.loading
+        },
+        looperActive() {
+            return this.looperTakeover.active
         }
     },
     mounted() {
         this.eventInit()
     },
     methods: {
-        ...mapActions(useLoopAI, ['getStatus', 'getMsgStream']),
+        ...mapActions(useLoopAI, [
+            'getStatus',
+            'getMsgStream',
+            'clearLooperTakeoverCountdown',
+            'setLooperTakeoverCountdown'
+        ]),
         imgInterceptor({ deleteNode }) {
             this.$nextTick(() => {
                 deleteNode()
@@ -123,26 +126,46 @@ export default {
             }
         },
         submitQuery() {
-            if (this.msgStreamModel.loading) return
-            if (!this.taskStatus.running) return
-            if (!this.lock.submit) return
+            if (!this.lock.submit || this.looperActive) return
+            this.clearLooperTakeoverCountdown()
             let msg = this.$refs.editor.saveMarkdown()
             msg = msg.trim()
             if (msg === '') return
-            this.lock.submit = false
-            this.$api.starter.agentInput(msg).then(async (res) => {
-                if (res.code === 200) {
-                    this.$refs.editor.editor().commands.setContent('')
-                    this.getStatus()
-                    this.getMsgStream()
-                    this.lock.submit = true
-                } else {
-                    this.lock.submit = true
-                    this.$barWarning(res.message, {
-                        status: 'warning'
-                    })
-                }
+            let session_id = this.currentTask?.task_id
+            if (!session_id) {
+                this.$barWarning(this.local('Please select a task first.'), {
+                    status: 'warning'
+                })
+                return
+            }
+            this.setLooperTakeoverCountdown({
+                seconds: 10,
+                duration: 10,
+                active: true
             })
+            this.lock.submit = false
+            this.$api.starter
+                .starterCodexStream({ prompt: msg, session_id })
+                .then(async (res) => {
+                    if (res.code === 200) {
+                        this.$refs.editor.editor().commands.setContent('')
+                        await this.getStatus(session_id)
+                        this.lock.submit = true
+                    } else {
+                        this.clearLooperTakeoverCountdown()
+                        this.lock.submit = true
+                        this.$barWarning(res.message, {
+                            status: 'warning'
+                        })
+                    }
+                })
+                .catch((error) => {
+                    this.clearLooperTakeoverCountdown()
+                    this.lock.submit = true
+                    this.$barWarning(error.message, {
+                        status: 'error'
+                    })
+                })
         }
     }
 }

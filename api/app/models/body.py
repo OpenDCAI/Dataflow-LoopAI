@@ -32,12 +32,31 @@ class ConfigModel(BaseModel):
     config: str
 
 
+class TaskStateConfigModel(BaseModel):
+    id: Optional[int] = None
+    task_id: Optional[str] = None
+    name: Optional[str] = None
+    states: Optional[dict] = None
+
+
 class TaskItem(BaseModel):
     id: Optional[int] = None
     task_id: Optional[str] = None
     name: Optional[str] = None
     config: Optional[str] = None
     state: Optional[str] = None
+    ai_thread_id: Optional[str] = None
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+
+
+class TaskRuntimeItem(BaseModel):
+    id: Optional[int] = None
+    task_id: str
+    node_name: str
+    version: str
+    state: Optional[str] = None
+    status: str
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
 
@@ -52,3 +71,14 @@ class ResourceItem(BaseModel):
     size: Optional[int] = None
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
+
+
+class StarterCodexRequest(BaseModel):
+    prompt: str
+    workspace: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class StarterLooperRequest(BaseModel):
+    workspace: Optional[str] = None
+    execute_command: bool = True

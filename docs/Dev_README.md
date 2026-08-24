@@ -2,581 +2,673 @@
 
 简体中文 | [English](./Dev_README_en.md)
 
-Dataflow-LoopAI 是一个具备自优化能力的智能系统，能够自动检测并评估特定领域大语言模型的生成缺陷。它通过对话式主动数据获取与自驱优化机制，实现数据与模型的持续协同演进。
+Dataflow-LoopAI 是一个具备**自演化**能力的智能系统，围绕 Starter、Looper 与各类节点 / Skill，完成评测、分析、数据获取、训练和持续迭代。
 
-```markdown
-用户  ⇄  管理器（控制逻辑） ⇄  LangGraph（状态机）
-                 │
-                 ├── 普通问答：直接返回
-                 └── 复杂任务：进入图（评估 → 挖掘 → 训练）
+```text
+用户  ⇄  Starter（Codex SDK）  ⇄  Node（Skill）
+                    │
+                    ├── 普通问答：直接返回
+                    └── 复杂任务：闭环执行
+                               （评测 → 分析 → 数据获取 → 训练）
 ```
-
-## 🧠 整体框架
-
-<p align="center">
-  <img src="assets/workflow.svg" alt="Dataflow-LoopAI 工作流程图" width="90%"/>
-</p>
 
 ---
 
 ## 📂 项目结构说明
 
-下面是经过整理与美化的项目目录结构，展示了主要模块的职责：
+下面的结构说明以**当前仓库实际内容**为准，同时标明推荐的新开发位置：
 
-```
+```text
 Dataflow-LoopAI/
-├── api/                       # WebUI 后端，FastAPI 服务与静态前端 dist 托管
-│   ├── app/controllers/       # config / task / resource / starter 等 API 路由
-│   ├── app/utils/             # Starter 进程、资源预览、硬件监控等后端工具
+├── api/                       # WebUI 后端，FastAPI 服务、任务接口、responseProxy、数据库接入
+│   ├── app/controllers/       # starter / task / config 等路由
+│   ├── app/services/          # starter session、looper、任务运行服务
+│   ├── app/utils/             # 配置、监控、凭据迁移等后端工具
 │   ├── db/                    # SQLite 数据库目录
 │   └── dist/                  # 发布版前端产物，生产环境由 FastAPI 直接托管
 │
+├── codex-runner/              # Codex runner，负责对接本地 codex 运行时与事件流
+│
+├── docs/                      # 项目文档与图片资源
+│   └── assets/                # 图片与素材
+│
 ├── examples/                  # 示例脚本与运行用例
-│   └── scripts/               # 启动、测试等脚本
+│   └── scripts/               # 启动、测试、独立运行脚本
 │
-├── loopai/                    # 项目核心目录
-│   ├── agents/                # 各类智能 Agent（每个 Agent 是一个子状态机）
-│   │   ├── BaseAgent/         # 基础 Agent 定义
-│   │   ├── Starter/           # 主入口 Agent
-│   │   ├── Analyzer/          # 模型评估/挖掘 Agent
-│   │   ├── Obtainer/          # 数据获取 Agent
-│   │   └── ...                # 其他自定义 Agent
+├── loopai/                    # 项目核心 Python 代码
+│   ├── agents/                # 历史/兼容目录；当前仍保留 BaseAgent 和 Obtainer
+│   │   ├── BaseAgent/         # 基础 Agent / 节点能力封装
+│   │   └── Obtainer/          # 旧数据获取实现
 │   │
-│   ├── common/                # 全局工具
-│   │   ├── prompts/           # 通用 Prompt 模板
-│   │   └── ...                # 其它通用组件
-│   │
-│   ├── memory/                # 持久化存储（当前使用简单存储，未来可扩展数据库）
-│   │
-│   ├── states/                # 状态定义 & 事件定义
-│   │
-│   ├── utils/                 # 通用工具类与辅助代码
-│   │
-│   └── ...                    # 其它框架相关内容
+│   ├── common/                # 通用工具、事件流、异常、Prompt 等
+│   ├── mcp/                   # MCP 服务与工具
+│   ├── schema/                # 状态、模型池、事件、系统配置 schema
+│   ├── skills/                # 当前推荐的新能力实现目录
+│   │   ├── Analyzer/
+│   │   ├── Configer/
+│   │   ├── Judger/
+│   │   ├── Looper/
+│   │   ├── ObtainerCLI/
+│   │   └── Trainer/
+│   └── utils/                 # 通用辅助代码
 │
-├── scripts/                   # 发布、下载等项目脚本
-│   ├── download_ui_release.py # 下载 GitHub 发布页中的前端 dist 到 api/dist
-│   └── release_ui.sh          # 打 UI 标签并触发 GitHub Actions 发布
+├── skills/                    # 实际给系统消费的技能说明 Markdown（SKILL.md）
+│   ├── Analyzer/
+│   ├── Configer/
+│   ├── Judger/
+│   ├── Trainer/
+│   └── obtainer/
 │
-├── ui/                        # Vue 3 + Vite 前端源码
-│   └── src/                   # 页面、组件、路由、API 调用封装
+├── scripts/                   # 项目脚本，例如 UI 发布、代理启动等
 │
-└── docs/                      # 文档与资源
-    └── assets/                # 图片与素材
+├── tui/                       # 终端 UI（tasks 管理、主界面对话、节点状态查看）
+│
+└── ui/                        # Vue 3 + Vite WebUI 前端源码
 ```
 
-🤖 已实现的核心 Agent
+### 当前推荐的开发位置
 
-目前 Dataflow-LoopAI 已实现以下核心 Agent，每个 Agent 均作为一个 **可独立运行、可组合调度的子图（subgraph）**：
+当前开发结构和早期版本相比已经发生变化：
 
-### ✅ `StarterAgent`
+1. 新的 Sub-Agent / Skill 不再优先放在 `loopai/agents` 下开发。
+2. 新的能力实现统一优先放在 `loopai/skills` 下。
+3. 根目录的 `skills` 目录用于定义实际给系统消费的 `SKILL.md`。
+4. `loopai/agents` 里仍保留部分历史实现与兼容代码，文档描述必须以仓库当前内容为准，不要假设它已经完全清空。
 
-作为系统的 **总调度器**，负责：
+可以简单理解为：
 
-* 与用户对话
-* 解析任务意图
-* 自动选择并调用其他 Agent
-* 管理任务的整体执行流程
+- `loopai/skills`：放 Python 侧的技能实现、工具代码、运行逻辑
+- `skills`：放技能定义文件，主要是实际使用的 `SKILL.md`
+- `loopai/agents`：历史实现、兼容层，以及仍未完全迁移的部分模块
 
-### ✅ `JudgerAgent`
-
-用于自动评测待测试模型，主要功能包括：
-
-* 自动生成代码（调用 LLM）
-* 提交到 OJ（在线判题）系统执行
-* 收集运行结果与评测数据
-
-### ✅ `AnalyzerAgent`
-
-基于 JudgerAgent 的评测结果，负责：
-
-* 统计与分析模型表现
-* 挖掘错误类别与模式
-* 生成可读性强的分析报告
-
-### ✅ `ConfigerAgent`
-
-作为系统的交互式配置专家，负责：
-
-* 与用户对话修改配置信息
-* 缺失信息反馈和修改再校验（待实现）
-* 继续执行中断节点（待实现）
-
-### ✅ `ObtainerAgent`
-
-作为系统的数据获取单元，负责：
-
-* 将用户的需求进行分析并调研
-* 收集相关数据集信息
-* 收集相关网页数据信息（待实现）
-* 整理各种格式的数据至可以直接用于训练的格式
 ---
 
-## 📦 安装
+## 🧩 核心 Skills / Nodes
+
+当前开发文档统一使用 **Skill / Node** 口径，不再单独强调 Core Agents。
+
+### Starter
+
+- 基于 `codex-sdk` 的系统入口
+- 负责用户对话、意图识别、节点调度和整体闭环推进
+
+### Looper
+
+- 替代用户维护与 Starter 的连续对话
+- 结合 conversation 自动总结上下文、补齐参数、推进下一步
+- 避免因为缺少人工接话导致 loop 中断
+
+### Judger
+
+- 执行评测、生成结果、输出评测指标与日志
+
+### Analyzer
+
+- 分析评测结果，抽取 failure pattern、insight 和结构化结论
+
+### ObtainerCLI / DataMixer 网页采集
+
+- 负责数据搜索、下载、入湖、导出以及网页采集相关流程
+
+### Trainer
+
+- 负责训练任务编排、配置生成、执行、日志回传和结果管理
+
+说明：`Configer` 当前仍然存在并用于配置读写与运行态更新，但这里不再把它单独列为核心 Skill。
+
+---
+
+## 📦 安装与开发启动
+
+### Python 依赖
 
 ```bash
-pip install -e .
+conda create -n loopai python=3.12
+conda activate loopai
+
+pip install uv
+uv pip install -e .
 ```
 
-## ✅ 快速使用指南 (终端)
+### WebUI 前端开发
 
-1. 将 `examples/config/starter.yaml` 复制到 `./starter.yaml`，并修改其中的 `system` 配置参数。
-
-2. 运行 `run_starter.py` 脚本启动 LoopAI。
-
-```bash
-python examples/scripts/run_starter.py
-```
-
-## ✅ 快速开发指南
-
-### 0️⃣ WebUI 前端开发
-
-生产环境推荐直接下载已发布的前端 dist：
+生产环境或正常使用时，优先直接下载已发布的前端 dist：
 
 ```bash
 python scripts/download_ui_release.py
 ```
 
-本节只用于需要修改或调试 `ui/` 源码的开发场景。
+仅在需要修改或调试 `ui/` 源码时，再执行下面步骤。
 
 #### 1. 安装 NVM
 
 ```bash
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-```
-
-#### 2. 激活 NVM
-
-```bash
 source ~/.bashrc  # 或 ~/.zshrc
 ```
 
-#### 3. 安装 Node.js
+#### 2. 安装 Node.js 20 与 Yarn
 
 ```bash
 nvm install 20
 nvm use 20
 nvm alias default 20
-```
 
-#### 4. 验证安装
-
-```bash
-node -v
-npm -v
-```
-
-#### 5. 安装 Yarn
-
-```bash
 corepack enable
 corepack prepare yarn@stable --activate
 ```
 
-#### 6. 安装依赖
+#### 3. 启动前端开发环境
 
 ```bash
 cd ui
 yarn
+yarn dev
 ```
 
-#### 7. 配置后端代理
+如果后端不在 `127.0.0.1:8855`，请修改 `ui/vite.config.js` 里的代理配置。
 
-如果后端没有运行在 `127.0.0.1:8855`，请编辑 `ui/vite.config.js`：
+### TUI 开发
 
-```javascript
-server: {
-  host: '0.0.0.0',
-  proxy: {
-    '/api': {
-      target: 'http://<host>:8855/',
-      changeOrigin: true,
-      rewrite: path => path.replace(/^\/api/, '')
-    }
-  }
-}
+`tui/` 是终端 UI，适用于无法方便访问网页的环境。
+
+```bash
+cd tui
+yarn
 ```
 
-#### 8. 启动前端
+开发模式：
 
 ```bash
 yarn dev
 ```
 
-Vite 开发服务器会将 `/api/*` 代理到 FastAPI 后端；生产环境则由 `python api/start.py` 直接从 `api/dist` 托管静态前端。
-
-#### 9. 发布前端 dist
-
-前端改动准备好后，在仓库根目录运行发布脚本：
+构建并启动：
 
 ```bash
-bash scripts/release_ui.sh [可选版本号]
+yarn build
+yarn start
 ```
 
-如果省略版本号，脚本会交互式要求输入版本。它会更新 `ui/package.json`，创建 `ui-v<version>` 标签，并推送分支和标签；随后 GitHub Action 会构建并发布前端 dist 产物。
+### codex-runner 开发
 
-### 1️⃣ 启动 vLLM 服务
+`codex-runner/` 负责与本地 Codex 运行时衔接。
 
 ```bash
-conda activate vllm
-bash examples/scripts/run_manager_vllm.sh
+cd codex-runner
+yarn
+yarn build
 ```
 
 ---
 
-### 2️⃣ 运行测试示例（以 `run_judger.py` 为例）
+## 🧭 新 Skill / Node 的开发约定
 
-修改脚本中的模型路径与配置：
+旧文档中关于“如何定义 Agent”的部分已经不再适用，当前统一替换为 Node / Skill 开发约定。推荐按下面顺序理解一个新节点的开发逻辑：
+
+### 1. 推荐目录结构
+
+后续新增能力时，建议按下面结构组织：
+
+```text
+loopai/skills/<SkillName>/
+├── __init__.py
+├── runner.py
+├── cli.py              # 如有必要再加
+├── utils/
+├── nodes/              # 如有复杂节点逻辑
+└── ...
+
+skills/<SkillName>/SKILL.md
+```
+
+约定说明：
+
+1. `loopai/skills/<SkillName>/__init__.py` 作为统一入口。
+2. `runner.py` 一般作为主要执行入口。
+3. 如果需要独立命令行调用，可以增加 `cli.py`。
+4. 如果新增了 CLI，记得同步更新 [setup.py](/home/lpc/repos/Dataflow-LoopAI/setup.py) 的 `entry_points`。
+5. 实际供系统消费的技能定义放在根目录 `skills/<SkillName>/SKILL.md`。
+
+当前 `setup.py` 中已经存在的 `console_scripts` 示例：
 
 ```python
-{
-    'eval_model_path': '/home/lpc/models/glm-4-9b-chat/',
-    'eval_base_url': 'http://127.0.0.1:8911/v1',
-    'eval_api_key': api_key,
-    'eval_test_case_path': '/home/lpc/repos/Dataflow-LoopAI/output/test.json',
-    'eval_problem_path': '/home/lpc/repos/Dataflow-LoopAI/data/human-eval-v2-20210705.jsonl',
-    'eval_result_path': '/home/lpc/repos/Dataflow-LoopAI/output/result.json',
+entry_points={
+    "console_scripts": [
+        "loopai-obtainercli=loopai.skills.ObtainerCLI.cli:main",
+        "loopai-judger=loopai.skills.Judger.cli:main",
+        "loopai-analyzer=loopai.skills.Analyzer.cli:main",
+    ],
 }
 ```
 
-运行：
+### 2. 入口函数与运行时参数约定
 
-```bash
-python examples/scripts/run_judger.py
-```
-## 运行 Obtainer 节点示例
+Node 开发里一个很重要的约定是：`task_id`、`DB_PATH` 等运行时参数应由**入口函数主动从环境变量读取**；如果缺失，入口函数需要**立即报错并退出**，不要静默继续执行。
 
-### 配置
+推荐做法：
 
-1. **模型配置**：将 `examples/config/starter.yaml` 复制到 `./starter.yaml`，并修改 Obtainer 相关模型路径与参数。
-   - 注意：RAG 当前仅支持基于 API 的嵌入模型。
+1. 入口函数先读取环境变量，例如 `TASK_ID`、`DB_PATH`。
+2. 如果缺失必填项，直接抛错或通过统一异常结构返回失败。
+3. 当存在 `task_id` 时，优先通过配置接口读取数据库中的运行态配置。
+4. 参数校验、数据库访问、缺参报错，最好统一收敛到一层接口里处理。
 
-2. **必要 API 密钥**：
-   - **Kaggle 凭据**：从 [Kaggle](https://www.kaggle.com/) 获取 API 凭据，并在 YAML 配置中填写。
-   - **Tavily API 密钥**：在 `examples/scripts/` 目录创建 `tavily_api_key.txt`，写入从 [Tavily](https://www.tavily.com/) 获取的 API 密钥。
-   - **RAG API 密钥**：在项目根目录创建 `rag_api_key.txt`，写入嵌入模型 API 密钥。
+### 3. State 继承与运行时注入
 
-### 执行
+Sub-Agent / Node 一般继承 `LoopAIState` 中对应的子状态，例如 `JudgerState`。
 
-```bash
-bash examples/scripts/run_obtainer.sh
-```
----
-
-## 🛠️ 定义一个新 Agent
-
-在 Dataflow-LoopAI 中，每个 **Agent 实质上是一个子图（subgraph）**，由多个节点函数与边逻辑构成，并会被自动整合到 `StarterAgent` 中进行协调调度。
-
-### ✅ 继承 `BaseAgent`
-
-所有自定义 Agent 需继承 `BaseAgent`，其提供：
-
-* 基础事件记录机制（`agent_event`）
-* 可选通用 LLM 对话节点构建方法：`create_llm_node`
-* 标准的图初始化入口：`init_graph`
-* 统一的调用协议：`__call__`
-
-### ✅ 初始化图（状态机）
+运行时注入参数示例：
 
 ```python
-def init_graph(self, **kwargs):
-    builder = StateGraph(LoopAIState)
-    ...
-    self.graph = builder.compile(
-        checkpointer=self.checkpointer,
-        store=self.store,
-        **kwargs
-    )
+import os
+
+from loopai.skills.Configer import (
+    get_configer_task_state_config,
+    update_configer_task_state_config,
+)
+
+# 入口函数中应主动读取环境变量
+DB_PATH = os.environ.get("DB_PATH")
+TASK_ID = os.environ.get("TASK_ID")
+
+if not DB_PATH:
+    raise ValueError("missing required env: DB_PATH")
+if not TASK_ID:
+    raise ValueError("missing required env: TASK_ID")
+
+# 读取当前任务的 judger 运行态配置
+judger_cfg = get_configer_task_state_config(
+    section_name="judger",
+)
+
+if not judger_cfg.get("ok"):
+    raise ValueError(judger_cfg.get("message", "failed to load judger config"))
+
+judger_config = judger_cfg["data"]["config"]
+print(judger_config)
+
+eval_api_key = judger_config.get("eval_api_key", {}).get("value")
+eval_temperature = judger_config.get("eval_temperature", {}).get("value")
+
+if not eval_api_key:
+    raise ValueError("missing required config: judger.eval_api_key")
+if eval_temperature is None:
+    raise ValueError("missing required config: judger.eval_temperature")
+
+# 更新当前任务的 judger 运行态配置
+update_result = update_configer_task_state_config(
+    "judger",
+    {
+        "eval_api_key": {"value": "xxx", "type": "str"},
+        "eval_temperature": 0.2,
+    },
+)
+
+if not update_result.get("ok"):
+    raise ValueError(update_result.get("message", "failed to update judger config"))
+
+print(update_result["data"]["config"])
 ```
 
-### ✅ Agent 调用方式
+### 4. 成功 / 失败返回格式
 
-* 子图模式：
+建议统一使用下面的返回结构。
 
-```python
-self.init_graph(**kwargs)
-return self.graph
-```
-
-* StarterAgent 中的流式调用：
-
-```python
-for res in self.graph.stream(
-        Command(resume=input),
-        subgraphs=True,
-        stream_mode=["updates", "messages"],
-        **invoke_args
-    ):
-    yield res
-```
-
-### 📐 Agent 规范建议
-
-为了保持项目可维护性与一致性，推荐遵循以下规范：
-
-1. 命名规范
-
-* Agent 类名：**大写开头驼峰**（如 `AnalyzerAgent`）
-* 文件夹：**大写开头驼峰**
-* Python 文件：**小写 + 下划线**（如 `eval_model.py`）
-
-2. 代码组织结构
-
-当节点逻辑较复杂时，推荐：
-
-* ✅ 节点放入 `nodes/` 子文件夹：
-  示例：`loopai/agents/Analyzer/nodes/eval_model.py`
-
-* ✅ 工具函数放入 `utils/`：
-  示例：`loopai/agents/Analyzer/utils/llmaj.py`
-
-* ✅ LLM 工具调用放入 `tools/`：
-  示例：`loopai/agents/Starter/tools/check_motivation.py`
-
-* ✅ Agent 本体保持“薄”，节点逻辑不要堆积在类中，便于维护。
-
----
-
-## 🧩 全局 Prompt 使用规范
-
-为了保证整个系统中 Prompt 的统一性与可维护性，Dataflow-LoopAI 提供了 **全局 Prompt 模板管理机制**。所有通用 Prompt 均在 `common/prompts/` 中定义，并通过统一的加载器进行管理。
-
-### ✅ Prompt 模板加载机制
-
-默认全局 Prompt 模板文件位于：
-
-```
-loopai/common/prompts/
-```
-
-由以下工具类负责加载：
-
-```
-prompt_loader.py
-```
-
-在 `BaseAgent` 中统一初始化：
-
-```python
-self.prompt_loader = PromptLoader(prompt_template_dir)
-```
-
-你可以通过修改 `prompt_template_dir` 来指定不同的 Prompt 扫描路径，实现自定义扩展。
-
----
-
-### 工具调用
-
-由于我们重写了ReAct节点, 我们观察到, 尽管Sub-Agent采用不同LLM_Node时可能限定定义了不同的工具, 但是Sub-Agent仍然可能受到上下文影响调用本不属于它可使用的工具。因此, 如果你需要自定义工具, 切记返回的为对象`dict`, 避免造成StarterAgent及其它Sub-Agent在校验时无法解析结果而报错。
-
-## 🧭 Agent 的系统 Prompt 定义
-
-每个继承 `BaseAgent` 的自定义 Agent，需要通过以下两个抽象属性指定自身的系统 Prompt：
-
-```python
-@property
-@abstractmethod
-def system_prompt_type(self) -> str:
-    """系统 Prompt 类型"""
-    return "system"
-
-@property
-@abstractmethod
-def system_prompt_name(self) -> str:
-    """系统 Prompt 名称"""
-    pass
-```
-
-### ✅ `system_prompt_type`
-
-* 用于指定 Prompt 的角色类型，如：
-
-  * `"system"`
-  * `"user"`
-  * `"assistant"`
-* 其对应的文件存储格式为：
-
-```
-<prompt_type>_prompt.json
-```
-
-例如：
-
-```
-system_prompt.json
-user_prompt.json
-assistant_prompt.json
-```
-
-### ✅ `system_prompt_name`
-
-* 用于指定具体要加载的 Prompt 名称，例如 `"default_prompt"`。
-* 加载方式为在对应的 `<prompt_type>_prompt.json` 文件中查找同名字段：
+成功：
 
 ```json
 {
-  "default_prompt": "..."
+  "ok": true,
+  "status": "completed",
+  "message": "Sub-agent completed.",
+  "data": {},
+  "error": null
 }
 ```
 
-系统将自动从对应 JSON 中读取该模板，作为 Agent 的系统 Prompt 注入运行流程。
+失败：
 
-## 📡 状态监测机制
+```json
+{
+  "ok": false,
+  "status": "failed",
+  "message": "Sub-agent crashed with an unhandled exception.",
+  "data": null,
+  "error": {
+    "type": "RuntimeError",
+    "code": "UNHANDLED_EXCEPTION",
+    "detail": "vector index not found",
+    "traceback": "...",
+    "recoverable": true,
+    "time": "2026-06-01T00:00:00Z"
+  }
+}
+```
 
-`BaseAgent` 内置了 `AgentEvent`，用于完整追踪 Agent 的执行过程。
-
-### 🌟 其记录的信息包括：
-
-* 当前事件类型（`stream_mode`）
-* 当前执行节点（`node`）
-* 状态更新（`state`）
-* 消息流（`stream_message`）
-* 执行路径（`node_path`）
-* 自定义事件字典（`custom_info`）
-
-虽然每个 Agent 理论上都可以维护自己的 `AgentEvent`，但在 LoopAI 中，为了统一管理，我们只使用 **StarterAgent** 中的 `AgentEvent`。
-
----
-
-## 🔍 LangGraph 可捕获的事件类型
-
-* ✅ `update` —— 节点执行结束后的状态更新事件
-* ✅ `message` —— LLM 或节点返回的消息
-* ✅ `custom` —— 用户自定义事件
-
-基于这些事件类型，LoopAI 将监测事件分为两类：
-
-### A. **预设事件**
-
-包括 `update` 与 `message`：
-
-* `update`：仅在节点执行完成后触发
-* `message`：捕获基于 ChatOpenAI 的消息，并支持流式返回
-
-⚠️ 预设事件存在的局限性：
-
-* 缺乏 **实时性**（无法在节点执行过程中触发）
-* 只能记录存放在 `LoopAIState` 中的字段变化
-
-### B. **自定义事件**
-
-为提升实时性与灵活性，我们引入了自定义事件机制：
-
-* 可在节点执行过程中实时触发
-* 可记录无需写入 `LoopAIState` 的临时信息
-* 支持更灵活的业务扩展和状态监控
-
----
-
-## 🚀 自定义 Stream 事件
-
-在子图中，有些参数无需保存到 `LoopAIState`，但仍需监测。这类信息可以通过 **自定义事件**（`get_stream_writer`）进行流式返回。
-
-LoopAI 使用 `StreamEvent` 规范自定义事件的格式。所有自定义事件都会被记录进 `AgentEvent` 的 `custom_info` 字段，并最终展示在可视化工具中。
-
-### 🧱 StreamEvent 字段说明
-
-| 字段           | 含义           | 可选 |
-| -------------- | -------------- | ---- |
-| `current`      | 当前节点名称   | 必填 |
-| `progress`     | 进度百分比     | 可选 |
-| `progress_num` | 当前进度数值   | 可选 |
-| `total`        | 总进度         | 可选 |
-| `message`      | 输出文本消息   | 可选 |
-| `data`         | 任意自定义数据 | 可选 |
-
----
-
-## 📘 示例：实时监测 `configer_error` 字段
-
-假设我们希望在 `AnalyzerAgent` 的 `eval_model` 节点中，实时监测 `configer_error` 的变化。
-
-示例代码：
+建议统一通过 `emit_error` / `emit_success` 输出：
 
 ```python
-from langgraph.config import get_stream_writer
-from loopai.schema.events import StreamEvent
+from loopai.common.exception import emit_error, emit_success, ErrorCode
 
-from loopai.schema.states import LoopAIState
-from loopai.agents import BaseAgent
-
-writer = get_stream_writer()
-
-@BaseAgent.set_current
-def node(state: LoopAIState):
-    writer(StreamEvent(
-        current=state['current'],
-        data={'configer_error': state['configer_error']}
-    ).json())
-```
-
-`@BaseAgent.set_current` 会在执行前设置当前节点名称，这样事件中便能记录正确的 `current` 字段。
-
-StarterAgent 接收到该自定义事件后，会将其写入：
-
-```
-AgentEvent.custom_info[state['current']]
-```
-
-其中 value 为数组，每触发一次 writer，就会追加一个事件对象。
-
----
-
-## ❗ 异常处理机制
-
-### 🔎 参数异常和对话式调参
-
-如果节点检测到必要参数缺失，可以触发异常处理流程：
-
-```python
-required_fields = {
-    "analyzer": [
-        "analyze_model_path", "analyze_base_url", "analyze_api_key", "analyze_temperature", "analyze_top_p", 
-        "output_brief", "analyze_task_type",  "analyze_sampling_top_k", "output_suggestion", "analyze_batch_size"
-    ],
-    "judger": ["eval_result_path"],
-    "default": ["output_dir"]
-} # 在这里可以定义当前Agent下需要的参数, 并在下面的代码中进行检查
-missing_fields = {}
-for key in required_fields:
-    for field in required_fields[key]:
-        if key == 'default':
-            if field not in state:
-                missing_fields.setdefault(key, []).append(field)
-        else:
-            if field not in state.get(key, {}):
-                missing_fields.setdefault(key, []).append(field)
-if missing_fields:
-    state['exception'] = 'ConfigerError'
-    state['next_to'] = 'config_node'
-    state['automated_query'] = self.prompt_loader("automated_query", "analyzer_missing_fields_prompt") # 使用相应的自动查询Prompt, 以便在跳出ConfigerAgent后向Agent进行通报
-    state.setdefault('configer', {})['configer_error'] = missing_fields
-    goto_node = runtime.context['exception_navigate'] # 在context中定义了StarterAgent中异常处理要跳转来进行处理的节点(默认为route_node)
-    logger.info(f'found missing fields, goto {goto_node}')
-    return Command(
-        update=state,
-        goto=goto_node,
-        graph=Command.PARENT
+try:
+    raise ValueError("missing codex_api_key")
+except Exception as e:
+    emit_error(
+        e,
+        code=ErrorCode.CONFIG_ERROR,
+        recoverable=True,
+        message="Codex runtime config is incomplete.",
     )
 ```
 
-如果需要在子图中统一定义, 建议统一命名为`check_required_fields`, 为了获取当前Agent下需要的参数, 可以定义嵌套函数来返回该节点:
+### 5. 实时事件流与节点状态
+
+实时事件流示例：
 
 ```python
-def get_check_required_fields_node(self):
-      @BaseAgent.set_current
-      def check_required_fields(state: LoopAIState, runtime: Runtime[RuntimeContext]):
-          ...
-      return check_required_fields
+from loopai.common.event_tool import StreamEvent, get_event_writer
+
+writer = get_event_writer(name="judger", context_id="task_001")
+
+writer(StreamEvent(
+    current="judger",
+    progress=0.2,
+    message="loading dataset",
+    data={"rows": 128},
+))
+
+writer(StreamEvent(
+    current="judger",
+    progress=1.0,
+    message="finished",
+))
 ```
 
-字段说明：
+建议在子节点一开始执行时就触发 `writer`，这样会把节点状态更新为 `running`。当运行结束或报错时，节点运行状态需要使用 `writer.set_failed` / `writer.set_completed` 手动告知。
 
-* **`exception`**：异常类型
-* **`next_to`**：需要跳转到的异常处理节点，如 `config_node`
-* **`automated_query`**：自动生成的查询，用于在完成参数不全后提示 StarterAgent 用户已经补全了哪些参数, 并自动向Agent进行通报
-* **`configer.configer_error`**：传递给 ConfigerAgent 的缺失参数字段
-* **`goto_node`**：异常处理跳转节点，如外部配置的 `exception_navigate`
+当前这些方法已经封装进 `emit_error` 和 `emit_success`，因此执行过程中只需传入 `stream_writer`：
 
-如果异常无法通过 Configer 修复，但仍希望继续流程，可以将 `next_to` 设置为 `query_node`，并定义相应的 `automated_query`。StarterAgent 会根据该提示引导用户进行必要的手动操作。
+```python
+from loopai.common.exception import emit_error, emit_success, ErrorCode
+from loopai.common.event_tool import StreamEvent, get_event_writer
+
+writer = get_event_writer(name="judger", context_id="task_001")
+
+try:
+    raise ValueError("missing codex_api_key")
+except Exception as e:
+    emit_error(
+        e,
+        code=ErrorCode.CONFIG_ERROR,
+        recoverable=True,
+        stream_writer=writer,
+        message="Codex runtime config is incomplete.",
+    )
+
+emit_success(data={...}, stream_writer=writer)
+```
+
+### 6. 开发备注
+
+1. `python examples/scripts/run_judger.py` 相关旧说明已经移除，不再作为当前推荐开发路径。
+2. 新功能优先放在 `loopai/skills` 下，除非你明确是在维护 `loopai/agents` 里的历史模块。
+3. 文档规范和实际项目结构如果有出入，始终以仓库当前代码为准。
+
+---
+
+## 📐 LoopAI Sub-Agent Skill 补充规范
+
+### 1. 先决条件（Prerequisites / Input Contract）
+
+定义执行该 sub-agent 的最小必要输入集合，用于保证任务可调度与可复现。
+
+#### 1.1 必填参数（Required）
+
+- `task_id`：任务唯一标识（用于 trace / retry / logging）
+- `input`：核心输入数据（字符串 / JSON / 结构化对象）
+- `context`：上下文信息（可选但推荐，如历史状态 / embedding / external memory）
+- `config`：运行配置（如 model、temperature、top_k、timeout 等）
+- `callback`：回调或结果写入方式（stream / webhook / queue）
+
+#### 1.2 可选参数（Optional）
+
+- `trace_id`：链路追踪 ID
+- `priority`：任务优先级（用于 scheduler）
+- `resource_limit`：资源限制（CPU / GPU / time / tokens）
+
+#### 1.3 执行前校验（Pre-check）
+
+- 参数完整性检查（required fields）
+- schema validation（JSON schema / pydantic）
+- 依赖资源可用性（index / model / db / cache）
+- 权限校验（是否允许调用 external tool）
+
+---
+
+### 2. 错误体系（Error Model & Recovery Strategy）
+
+统一 sub-agent 错误返回结构，并定义可恢复策略与建议处理方式。
+
+#### 2.1 标准错误结构
+
+```json
+{
+  "ok": false,
+  "status": "failed | partial_failed | timeout",
+  "message": "Human readable error summary",
+  "data": null,
+  "error": {
+    "type": "RuntimeError | ValidationError | ResourceError | ExternalServiceError | TimeoutError",
+    "code": "MACHINE_READABLE_CODE",
+    "detail": "Specific failure context",
+    "traceback": "...",
+    "recoverable": true,
+    "retry_after": 3,
+    "time": "ISO-8601"
+  }
+}
+```
+
+#### 2.2 主要错误类型分类与处理建议
+
+##### （1）ValidationError（输入非法）
+
+- 典型原因：
+  - 参数缺失
+  - schema 不匹配
+  - 类型错误
+- 处理建议：
+  - 返回字段级错误（field-level error）
+  - 前端/上游修正输入
+  - 不建议自动 retry
+
+##### （2）RuntimeError（执行异常）
+
+- 典型原因：
+  - null pointer / undefined state
+  - pipeline stage error
+- 处理建议：
+  - 自动 fallback（如降级模型 / 简化流程）
+  - retry ≤ 2 次
+  - 打印完整 trace
+
+##### （3）ResourceError（资源不足）
+
+- 典型原因：
+  - vector index / model 未加载
+  - GPU / memory 不足
+- 处理建议：
+  - 切换 backup resource
+  - queue 等待重试
+  - 触发 autoscaling（如有）
+
+##### （4）ExternalServiceError（外部依赖失败）
+
+- 典型原因：
+  - embedding API failed
+  - DB / vector DB unreachable
+- 处理建议：
+  - retry with exponential backoff
+  - fallback cache
+  - degrade to offline mode
+
+##### （5）TimeoutError（超时）
+
+- 典型原因：
+  - 长链路推理
+  - IO 卡住
+- 处理建议：
+  - checkpoint resume
+  - reduce max_tokens / batch size
+  - task split
+
+---
+
+### 3. 输出契约（Output Contract / Result Spec）
+
+定义 sub-agent 成功执行后必须返回的结构，确保可被上层（trainer / orchestrator / analyzer）消费。
+
+#### 3.1 标准输出结构
+
+```json
+{
+  "ok": true,
+  "status": "success",
+  "result": {},
+  "metrics": {},
+  "artifacts": [],
+  "logs": [],
+  "trace_id": "",
+  "time_cost_ms": 0
+}
+```
+
+#### 3.2 `result`（核心结果）
+
+不同 sub-agent 类型需定义各自 result。
+
+**Trainer Agent / Node**
+
+- `model`: 模型路径 / checkpoint
+- `loss_curve`: training loss array
+- `eval_metrics`: validation metrics
+- 用途：
+  - checkpoint selection
+  - early stopping
+  - model ranking
+
+**Judger / Evaluator Agent / Node**
+
+- `pass_at_k`
+- `accuracy / f1 / reward_score`
+- `ranking_scores`
+- 用途：
+  - model selection
+  - RL reward shaping
+  - benchmark report
+
+**Analyzer Agent / Node**
+
+- `insights`: 结构化分析结果
+- `clusters / topics`
+- `error_patterns`
+- 用途：
+  - 数据清洗
+  - failure diagnosis
+  - dataset iteration
+
+**Tool / Executor Agent / Node**
+
+- `execution_result`
+- `side_effects`
+- `output_files`
+- 用途：
+  - pipeline chaining
+  - artifact storage
+
+#### 3.3 `metrics`（过程指标）
+
+统一用于监控与调优：
+
+- `latency_ms`
+- `token_usage`
+- `memory_peak`
+- `gpu_utilization`
+- `retry_count`
+
+#### 3.4 `artifacts`（产物）
+
+- 模型文件
+- index / embedding store
+- jsonl / dataset dump
+- report / visualization
+
+---
+
+## 🔌 Codex 接入补充
+
+### 1. 模型与代理方式
+
+#### 使用 DeepSeek API（推荐）
+
+**方式一：Rust 代理脚本**
+
+先安装 Rust：
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
+
+然后启动代理：
+
+```bash
+LOOPAI_CODEX_PROXY_UPSTREAM_API_KEY=<YOUR_API_KEY> ./scripts/start_codex_deepseek_proxy.sh
+```
+
+**方式二：基于 model pool 的后端原生代理**
+
+项目已经支持基于 model pool 的后端原生转发。启动前需要先在 `starter.yaml` 中配置模型池与代理地址；如果数据库已初始化且旧配置已经落库，通常需要删除数据库后重新初始化，或在 WebUI 中重新更新对应配置。
+
+```yaml
+system:
+  api_port: 8855
+
+model:
+  proxy_base_url: "http://127.0.0.1:8855/responseProxy/v1"
+  proxy_api_key: "loopai-local-proxy"
+  default_model: "default"
+  codex_model: "default"
+  looper_model: "default"
+  default_tier: "medium"
+  pool:
+    - tier: "medium"
+      name: "default"
+      api_key: "<YOUR_DEEPSEEK_API_KEY>"
+      base_url: "https://api.deepseek.com"
+      model_name: "deepseek-v4-flash"
+      maxworker: 1
+      wire_api: "chat"
+      response_format: ""
+      enabled: true
+```
+
+然后在 WebUI 中把 Codex / Starter 请求地址配置为：
+
+```text
+http://127.0.0.1:8855/responseProxy/v1
+```
+
+这里真正的上游供应商地址应放在 `model.pool[*].base_url` 中，例如 `https://api.deepseek.com`，而不是再单独写一个旧的 `codex_chat_proxy_url`。
+
+### 2. 启动顺序
+
+完成 DeepSeek 转发或其它 Codex 接入后，另起终端启动后端：
+
+```bash
+python api/start.py
+```
+
+然后在 WebUI 中配置对应请求地址，点击 `Update` 即可。
+
+---

@@ -1,0 +1,161 @@
+from __future__ import annotations
+
+import os
+from typing import Any, Dict, Optional
+
+_DEFAULT_OUTPUT_DIR = "./outputs"
+
+_SCHEMA_DEFAULTS: Dict[str, Any] = {
+    "eval_temperature": 0,
+    "eval_top_p": 0.95,
+    "eval_batch_size": 10,
+    "eval_case_num": 10,
+    "eval_vllm_tensor_parallel_size": 1,
+    "eval_vllm_gpu_memory_utilization": 0.9,
+    "cuda_visible_devices": "0",
+}
+
+
+def _first_non_empty(*values: Any) -> Any:
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _judger(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(state, dict):
+        return {}
+    judger = state.setdefault("judger", {})
+    if not isinstance(judger, dict):
+        state["judger"] = {}
+        return state["judger"]
+    return judger
+
+
+def resolve_judger_runtime_config(
+    state: Optional[Dict[str, Any]],
+    task_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Resolve Judger global runtime config from state + env + defaults.
+
+    bench-level fields (name, task_type, problem_path, eval_type, etc.)
+    come from ``benchlist`` / ``extra_benchlist`` directly.
+    """
+    judger = _judger(state)
+    is_state_dict = isinstance(state, dict)
+
+    # --- model / vllm (global) ---
+    model_path = _first_non_empty(
+        os.getenv("JUDGER_MODEL_PATH"),
+        judger.get("eval_model_path"),
+    )
+    temperature = _first_non_empty(
+        os.getenv("JUDGER_TEMPERATURE"),
+        judger.get("eval_temperature"),
+        _SCHEMA_DEFAULTS["eval_temperature"],
+    )
+    top_p = _first_non_empty(
+        os.getenv("JUDGER_TOP_P"),
+        judger.get("eval_top_p"),
+        _SCHEMA_DEFAULTS["eval_top_p"],
+    )
+    batch_size = _first_non_empty(
+        os.getenv("JUDGER_BATCH_SIZE"),
+        judger.get("eval_batch_size"),
+        _SCHEMA_DEFAULTS["eval_batch_size"],
+    )
+    case_num = _first_non_empty(
+        os.getenv("JUDGER_CASE_NUM"),
+        judger.get("eval_case_num"),
+        _SCHEMA_DEFAULTS["eval_case_num"],
+    )
+    tensor_parallel_size = _first_non_empty(
+        os.getenv("JUDGER_TENSOR_PARALLEL_SIZE"),
+        judger.get("eval_vllm_tensor_parallel_size"),
+        _SCHEMA_DEFAULTS["eval_vllm_tensor_parallel_size"],
+    )
+    gpu_memory_utilization = _first_non_empty(
+        os.getenv("JUDGER_GPU_MEMORY_UTILIZATION"),
+        judger.get("eval_vllm_gpu_memory_utilization"),
+        _SCHEMA_DEFAULTS["eval_vllm_gpu_memory_utilization"],
+    )
+    cuda_visible_devices = _first_non_empty(
+        os.getenv("CUDA_VISIBLE_DEVICES"),
+        judger.get("cuda_visible_devices"),
+        _SCHEMA_DEFAULTS["cuda_visible_devices"],
+    )
+
+    # --- global ---
+    resolved_task_id = _first_non_empty(
+        task_id,
+        os.getenv("TASK_ID"),
+        state.get("task_id") if is_state_dict else None,
+    )
+    output_dir = _first_non_empty(
+        os.getenv("OUTPUT_DIR"),
+        state.get("output_dir") if is_state_dict else None,
+        _DEFAULT_OUTPUT_DIR,
+    )
+    db_path = os.getenv("DB_PATH")
+
+    # --- type coercion ---
+    try:
+        temperature = float(temperature) if temperature is not None else 0.0
+    except (TypeError, ValueError):
+        temperature = 0.0
+    try:
+        top_p = float(top_p) if top_p is not None else 0.95
+    except (TypeError, ValueError):
+        top_p = 0.95
+    try:
+        batch_size = int(batch_size) if batch_size is not None else 10
+    except (TypeError, ValueError):
+        batch_size = 10
+    try:
+        case_num = int(case_num) if case_num is not None else 10
+    except (TypeError, ValueError):
+        case_num = 10
+    try:
+        tensor_parallel_size = int(tensor_parallel_size) if tensor_parallel_size is not None else 1
+    except (TypeError, ValueError):
+        tensor_parallel_size = 1
+    try:
+        gpu_memory_utilization = float(gpu_memory_utilization) if gpu_memory_utilization is not None else 0.9
+    except (TypeError, ValueError):
+        gpu_memory_utilization = 0.9
+
+    # --- write resolved values back into state ---
+    if is_state_dict:
+        if resolved_task_id:
+            state["task_id"] = resolved_task_id
+        if output_dir:
+            state["output_dir"] = output_dir
+        for key, val in (
+            ("eval_model_path", model_path),
+            ("eval_temperature", temperature),
+            ("eval_top_p", top_p),
+            ("eval_batch_size", batch_size),
+            ("eval_case_num", case_num),
+            ("eval_vllm_tensor_parallel_size", tensor_parallel_size),
+            ("eval_vllm_gpu_memory_utilization", gpu_memory_utilization),
+            ("cuda_visible_devices", cuda_visible_devices),
+        ):
+            if val is not None:
+                state["judger"][key] = val
+        if db_path:
+            state["DB_PATH"] = db_path
+
+    return {
+        "task_id": str(resolved_task_id) if resolved_task_id else "",
+        "output_dir": str(output_dir or _DEFAULT_OUTPUT_DIR),
+        "db_path": db_path,
+        "model_path": model_path,
+        "temperature": temperature,
+        "top_p": top_p,
+        "batch_size": batch_size,
+        "case_num": case_num,
+        "tensor_parallel_size": tensor_parallel_size,
+        "gpu_memory_utilization": gpu_memory_utilization,
+        "cuda_visible_devices": str(cuda_visible_devices),
+    }

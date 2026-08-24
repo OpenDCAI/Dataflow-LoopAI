@@ -6,29 +6,40 @@
         ></i>
     </div>
     <div class="loopai-msg-list-container" ref="list" :class="{ collapsed: isCollapsed }">
-        <msg-block
-            v-show="showMe(msg)"
-            v-for="(msg, index) in taskMessages"
-            :key="index"
-            :model-value="msg"
-        />
-        <msg-block
-            v-if="msgStreamModel.msg"
-            :model-value="msgStreamModel.msg[0]"
-            :loadingMsg="true"
-        />
+        <template v-for="(msg, index) in taskMessages" :key="index">
+            <transition name="msg-collapse" appear>
+                <msg-block v-show="showMe(msg)" :model-value="msg" />
+            </transition>
+        </template>
+        <transition name="msg-collapse" appear>
+            <response-block v-show="msgStreamModel.loading"></response-block>
+        </transition>
+        <transition name="msg-collapse" appear>
+            <msg-block
+                v-show="msgStreamModel.status === 'failed'"
+                :model-value="{
+                    type: 'assistant',
+                    data: {
+                        content: local('##### Run Failed, Please Retry')
+                    }
+                }"
+            />
+        </transition>
     </div>
 </template>
 
 <script>
+import { useAppConfig } from '@/stores/appConfig'
 import { useLoopAI } from '@/stores/loopAI'
 
 import msgBlock from './msgBlock.vue'
+import responseBlock from './responseBlock/index.vue'
 import { mapState } from 'pinia'
 
 export default {
     components: {
-        msgBlock
+        msgBlock,
+        responseBlock
     },
     props: {},
     data() {
@@ -37,24 +48,25 @@ export default {
         }
     },
     watch: {
-        'msgStreamModel.msg'() {
-            this.$nextTick(() => {
-                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
-            })
-        },
         'msgStreamModel.loading'() {
-            this.$.list.$nextTick(() => {
+            this.$nextTick(() => {
                 this.$refs.list.scrollTop = this.$refs.list.scrollHeight
             })
         },
         'taskMessages.length'() {
             this.$nextTick(() => {
-                this.$.list.scrollTop = this.$.list.scrollHeight
+                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
+            })
+        },
+        currentMsg() {
+            this.$nextTick(() => {
+                this.$refs.list.scrollTop = this.$refs.list.scrollHeight
             })
         }
     },
     computed: {
-        ...mapState(useLoopAI, ['taskMessages', 'msgStreamModel'])
+        ...mapState(useAppConfig, ['local']),
+        ...mapState(useLoopAI, ['taskMessages', 'msgStreamModel', 'currentMsg'])
     },
     methods: {
         showMe(msg) {
@@ -100,7 +112,7 @@ export default {
     right: 0px;
     width: min(450px, 90%);
     height: 100%;
-    padding: 95px 15px;
+    padding: 95px 15px 255px 15px;
     overflow: auto;
     transition: width 0.3s;
     z-index: 1;
@@ -108,5 +120,24 @@ export default {
     &.collapsed {
         width: 0px;
     }
+}
+
+.msg-collapse-enter-active,
+.msg-collapse-leave-active,
+.msg-collapse-appear-active {
+    overflow: hidden;
+    transition: max-height 1s ease-out;
+}
+
+.msg-collapse-enter-from,
+.msg-collapse-leave-to,
+.msg-collapse-appear-from {
+    max-height: 0;
+}
+
+.msg-collapse-enter-to,
+.msg-collapse-leave-from,
+.msg-collapse-appear-to {
+    max-height: 1000px;
 }
 </style>

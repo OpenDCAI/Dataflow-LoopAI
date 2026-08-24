@@ -1,0 +1,489 @@
+"""
+训练任务管理器
+从 api/app/utils/train/tasks.py 迁移到 loopai
+
+主要改动：
+- 移除对 api 侧 starter.yaml 的直接依赖，改为通过构造函数参数传入配置
+- 移除对 api 相对路径的依赖
+- 使用 loopai 的 logger 替代 print
+"""
+
+import os
+import signal
+import subprocess
+import shutil
+from pathlib import Path
+from typing import Dict, Optional
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import json
+import yaml
+
+from loopai.logger import get_logger
+from loopai.common.tracking import (
+    assert_no_retired_tracking,
+    contains_retired_tracking_reference,
+    strip_retired_tracking_environment,
+)
+from .task_status import TaskStatus
+from .task_tools import ensure_directory_exists, get_current_timestamp
+from .realtime_log_parser import RealTimeLogParser
+from .verl_launcher import build_verl_launch
+
+logger = get_logger()
+
+
+def _config_uses_deepspeed(config_path: str) -> bool:
+    """Return True when the LLaMA-Factory YAML enables a DeepSpeed config."""
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+    except Exception as exc:
+        logger.warning(f"读取训练配置以检查 deepspeed 失败: {exc}")
+        return False
+
+    deepspeed = config.get("deepspeed") if isinstance(config, dict) else None
+    return bool(deepspeed)
+
+
+class TaskManager:
+    """训练任务管理器
+    
+    负责管理训练任务的生命周期：创建、启动、监控、取消、查询。
+    通过 subprocess 启动训练进程，使用 RealTimeLogParser 实时解析日志。
+    """
+
+    def __init__(self, configs_dir: str, logs_dir: str, runs_dir: str, app_config: dict = None):
+        """
+        初始化任务管理器
+        
+        Args:
+            configs_dir: 配置文件存储目录
+            logs_dir: 日志文件存储目录
+            runs_dir: 运行记录存储目录
+            app_config: 应用配置字典，包含以下可选字段：
+                - llamafactory_dir: LlamaFactory 安装目录
+                - verl_dir: verl 安装目录
+                - llamafactory_env_path: LlamaFactory 虚拟环境路径
+                - CUDA_VISIBLE_DEVICES: GPU 设备号
+        """
+        self.configs_dir = configs_dir
+        self.logs_dir = logs_dir
+        self.runs_dir = runs_dir
+        self.tasks: Dict[str, Dict] = {}
+        self.executor = ThreadPoolExecutor(max_workers=4)
+
+        # 配置通过参数传入，而非从 starter.yaml 读取
+        self.app_config = app_config or {}
+        self.llamafactory_dir = self.app_config.get("llamafactory_dir", "")
+        self.verl_dir = self.app_config.get("verl_dir", "")
+
+        # 实时日志解析器字典，按任务ID索引
+        self.log_parsers: Dict[str, RealTimeLogParser] = {}
+
+        # 确保目录存在
+        for directory in [configs_dir, logs_dir, runs_dir]:
+            ensure_directory_exists(directory)
+        if self.llamafactory_dir:
+            ensure_directory_exists(self.llamafactory_dir)
+
+    def create_task(self, task_id: str, config_path: str, framework: str, task_name: Optional[str] = None) -> Dict:
+        """创建新的训练任务"""
+        task_info = {
+            'task_id': task_id,
+            'task_name': task_name or task_id,
+            'config_path': config_path,
+            'framework': framework,
+            'status': TaskStatus.PENDING,
+            'created_at': get_current_timestamp(),
+            'started_at': None,
+            'completed_at': None,
+            'error_message': None,
+            'process': None,
+            'process_group_id': None,
+            'cancel_requested': False,
+        }
+
+        self.tasks[task_id] = task_info
+        return task_info
+
+    def get_last_task(self) -> Optional[Dict]:
+        """获取最后创建的任务"""
+        if not self.tasks:
+            return None
+        sorted_tasks = sorted(self.tasks.values(), key=lambda x: x['created_at'], reverse=True)
+        return sorted_tasks[0]
+
+    def start_training(self, task_id: str, output_dir: str) -> bool:
+        """启动训练任务"""
+        if task_id not in self.tasks:
+            return False
+
+        task_info = self.tasks[task_id]
+
+        if task_info['status'] != TaskStatus.PENDING:
+            return False
+
+        # 更新任务状态
+        task_info['status'] = TaskStatus.RUNNING
+        task_info['started_at'] = get_current_timestamp()
+        self.metrics_dir = os.path.join(output_dir, "metrics")
+        ensure_directory_exists(self.metrics_dir)
+
+        # 在线程池中异步执行训练
+        future = self.executor.submit(self._run_training, task_id)
+        task_info['future'] = future
+
+        return True
+
+    def _get_safe_env(self) -> dict:
+        """获取安全的环境变量配置"""
+        env = strip_retired_tracking_environment(os.environ)
+
+        # 从配置中获取
+        env["CUDA_VISIBLE_DEVICES"] = self.app_config.get("CUDA_VISIBLE_DEVICES", "0,1")
+        env["NCCL_ALGO"] = "Ring"
+
+        # 获取 LLaMA Factory 环境路径
+        llamafactory_env_path = self.app_config.get("llamafactory_env_path", "")
+        if llamafactory_env_path:
+            env["LLAMAFACTORY_ENV_PATH"] = llamafactory_env_path
+        else:
+            logger.warning("未找到LLAMAFACTORY_ENV_PATH配置，将使用系统默认的llamafactory-cli")
+
+        return env
+
+    def _run_training(self, task_id: str) -> None:
+        """执行训练任务的内部方法"""
+        task_info = self.tasks[task_id]
+        config_path = task_info['config_path']
+        log_path = os.path.join(self.logs_dir, f"{task_id}.log")
+        framework = task_info['framework']
+
+        # 创建实时日志解析器
+        metrics_file = os.path.join(self.metrics_dir, "metrics.json")
+        log_parser = RealTimeLogParser(log_path, metrics_file)
+        self.log_parsers[task_id] = log_parser
+
+        try:
+            if task_info.get('cancel_requested'):
+                return
+
+            if framework == 'llamafactory':
+                self._run_llamafactory_training(task_info, config_path, log_path, log_parser)
+            elif framework == 'verl':
+                self._run_verl_training(task_info, config_path, log_path, log_parser)
+            else:
+                task_info['status'] = TaskStatus.FAILED
+                task_info['error_message'] = f"Unsupported training framework: {framework}"
+                with open(log_path, 'a', encoding='utf-8') as log_file:
+                    log_file.write(f"\n\nError: Unsupported training framework: {framework}\n")
+
+        except Exception as e:
+            task_info['status'] = TaskStatus.FAILED
+            task_info['error_message'] = str(e)
+
+            with open(log_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(f"\n\nError: {str(e)}\n")
+
+        finally:
+            # 停止实时日志解析
+            if task_id in self.log_parsers:
+                self.log_parsers[task_id].stop_monitoring()
+
+            task_info['completed_at'] = get_current_timestamp()
+            task_info['process'] = None
+
+    def _run_llamafactory_training(self, task_info: dict, config_path: str, log_path: str, log_parser: RealTimeLogParser) -> None:
+        """执行 LlamaFactory 训练"""
+        with open(config_path, "r", encoding="utf-8") as config_file:
+            config = yaml.safe_load(config_file) or {}
+        if not isinstance(config, dict):
+            raise ValueError(f"LLaMA-Factory config must be a mapping: {config_path}")
+        assert_no_retired_tracking(config)
+
+        env = self._get_safe_env()
+        config_env_path = self.app_config.get("llamafactory_env_path", "")
+        env_path = env.get("LLAMAFACTORY_ENV_PATH") or config_env_path
+
+        # 尝试根据环境路径推断 PYTHONPATH 和 PATH
+        python_site_packages = None
+        bin_path = None
+        env_root = None
+        if env_path:
+            env_path = os.path.abspath(env_path)
+            env_root = env_path
+            if os.path.basename(env_path) == "bin":
+                env_root = os.path.dirname(env_path)
+
+            lib_dir = os.path.join(env_root, "lib")
+            if os.path.isdir(lib_dir):
+                try:
+                    candidates = [d for d in os.listdir(lib_dir) if d.startswith("python")]
+                    candidates.sort()
+                    for py_dir in reversed(candidates):
+                        candidate = os.path.join(lib_dir, py_dir, "site-packages")
+                        if os.path.isdir(candidate):
+                            python_site_packages = candidate
+                            break
+                except Exception:
+                    python_site_packages = None
+
+            bin_path = os.path.join(env_root, "bin")
+            if os.path.isdir(bin_path):
+                env["PATH"] = os.pathsep.join([bin_path, env.get("PATH", "")])
+
+            if python_site_packages:
+                env["PYTHONPATH"] = python_site_packages
+            else:
+                logger.warning(f"未能在 {lib_dir} 中找到 site-packages; 将不设置 PYTHONPATH")
+        else:
+            logger.warning("未指定 llamafactory 环境路径，使用系统 PATH 中的 llamafactory-cli")
+
+        env["PYTHONNOUSERSITE"] = "True"
+        if _config_uses_deepspeed(config_path):
+            env["FORCE_TORCHRUN"] = "1"
+            logger.info("检测到 deepspeed 配置，已设置 FORCE_TORCHRUN=1")
+
+        # 根据环境路径构建命令
+        if env_root and bin_path:
+            cli_path = os.path.join(bin_path, "llamafactory-cli")
+            if os.path.exists(cli_path):
+                cmd = [cli_path, "train", config_path]
+                logger.info(f"使用指定环境路径执行训练: {env_root}")
+            else:
+                cmd = ["llamafactory-cli", "train", config_path]
+                logger.info("指定环境路径中未找到 llamafactory-cli，使用系统默认的 llamafactory-cli")
+        else:
+            cmd = ["llamafactory-cli", "train", config_path]
+            logger.info("使用系统默认的llamafactory-cli执行训练")
+
+        logger.info(f"训练命令: {' '.join(cmd)}")
+
+        # 启动训练进程
+        with open(log_path, 'w', encoding='utf-8') as log_file:
+            process = subprocess.Popen(
+                cmd,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                cwd=self.llamafactory_dir,
+                env=env,
+                start_new_session=(os.name == "posix"),
+            )
+
+            task_info['process'] = process
+            if os.name == "posix":
+                # start_new_session=True makes the launcher the leader of a
+                # dedicated process group. torchrun and all ranks inherit it.
+                task_info['process_group_id'] = process.pid
+
+            if task_info.get('cancel_requested'):
+                self._terminate_task_process(task_info)
+                return
+
+            try:
+                log_parser.start_monitoring()
+            except Exception as e:
+                logger.error(f"启动日志监控失败: {e}")
+
+            return_code = process.wait()
+
+            if task_info.get('cancel_requested'):
+                return
+            if return_code == 0:
+                task_info['status'] = TaskStatus.COMPLETED
+            else:
+                task_info['status'] = TaskStatus.FAILED
+                task_info['error_message'] = f"Training process exited with code {return_code}"
+
+    def _run_verl_training(self, task_info: dict, config_path: str, log_path: str, log_parser: RealTimeLogParser) -> None:
+        """执行 verl 训练"""
+        suffix = os.path.splitext(config_path)[1].lower()
+        if suffix in {".yaml", ".yml"}:
+            cmd, cwd, env = build_verl_launch(config_path, self.app_config)
+            logger.info(
+                f"Verl GRPO 命令已由审批 YAML 安全生成: {' '.join(cmd[:3])} "
+                f"({len(cmd) - 3} 个 Hydra overrides)"
+            )
+        elif suffix == ".sh":
+            # Compatibility for historical tasks. New Trainer-generated configs
+            # always use the shell-free YAML path above.
+            script_text = Path(config_path).read_text(encoding="utf-8", errors="ignore")
+            if contains_retired_tracking_reference(script_text):
+                raise ValueError(
+                    "legacy Verl shell config references the retired experiment tracker; "
+                    "prepare a new YAML config before training"
+                )
+            env = self._get_safe_env()
+            env["PYTHONNOUSERSITE"] = "True"
+            cmd = ["bash", config_path]
+            cwd = self.verl_dir
+            logger.warning("正在执行旧版 Verl shell 配置；新任务应使用审批后的 YAML")
+        else:
+            raise ValueError(f"Unsupported Verl config format: {config_path}")
+
+        with open(log_path, 'w', encoding='utf-8') as log_file:
+            process = subprocess.Popen(
+                cmd,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                cwd=cwd,
+                env=env,
+                start_new_session=(os.name == "posix"),
+            )
+
+            task_info['process'] = process
+            if os.name == "posix":
+                task_info['process_group_id'] = process.pid
+
+            if task_info.get('cancel_requested'):
+                self._terminate_task_process(task_info)
+                return
+
+            try:
+                log_parser.start_monitoring()
+            except Exception as exc:
+                logger.error(f"启动 Verl 日志监控失败: {exc}")
+
+            return_code = process.wait()
+
+            if task_info.get('cancel_requested'):
+                return
+            if return_code == 0:
+                task_info['status'] = TaskStatus.COMPLETED
+            else:
+                task_info['status'] = TaskStatus.FAILED
+                task_info['error_message'] = f"Training process exited with code {return_code}"
+
+    def get_task_status(self, task_id: str) -> Optional[Dict]:
+        """获取任务状态"""
+        return self.tasks.get(task_id)
+
+    def get_all_tasks(self) -> Dict[str, Dict]:
+        """获取所有任务"""
+        return self.tasks.copy()
+
+    def wait_for_completion(self, task_id: str) -> Optional[Dict]:
+        """同步等待后台训练线程完成并返回最终任务状态。"""
+        task_info = self.tasks.get(task_id)
+        if not task_info:
+            return None
+
+        future = task_info.get('future')
+        if future is not None:
+            future.result()
+        return task_info
+
+    @staticmethod
+    def _terminate_task_process(task_info: Dict, timeout: float = 10.0) -> None:
+        """终止训练 launcher 及其 torchrun/rank 子进程。"""
+        process = task_info.get('process')
+        if process is None or process.poll() is not None:
+            return
+
+        process_group_id = task_info.get('process_group_id')
+        try:
+            if os.name == "posix" and process_group_id:
+                os.killpg(process_group_id, signal.SIGTERM)
+            else:
+                process.terminate()
+
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                if os.name == "posix" and process_group_id:
+                    os.killpg(process_group_id, signal.SIGKILL)
+                else:
+                    process.kill()
+                process.wait()
+        except ProcessLookupError:
+            # The launcher or its process group has already exited.
+            return
+
+    def cancel_task(self, task_id: str, reason: str = "Task cancelled by user") -> bool:
+        """取消训练任务"""
+        if task_id not in self.tasks:
+            return False
+
+        task_info = self.tasks[task_id]
+
+        if task_info['status'] == TaskStatus.RUNNING:
+            task_info['cancel_requested'] = True
+            try:
+                self._terminate_task_process(task_info)
+            except Exception as e:
+                logger.error(f"Error terminating training process group: {e}")
+
+            task_info['status'] = TaskStatus.CANCELLED
+            task_info['completed_at'] = get_current_timestamp()
+            task_info['error_message'] = reason
+            return True
+
+        return False
+
+    def cleanup_completed_tasks(self, max_keep: int = 100) -> None:
+        """清理已完成的任务（保留最近的max_keep个）"""
+        completed_tasks = [
+            (task_id, task_info) for task_id, task_info in self.tasks.items()
+            if task_info['status'] in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]
+        ]
+
+        if len(completed_tasks) > max_keep:
+            completed_tasks.sort(key=lambda x: x[1].get('completed_at', ''))
+            tasks_to_remove = completed_tasks[:-max_keep]
+
+            for task_id, _ in tasks_to_remove:
+                del self.tasks[task_id]
+
+    def get_task_metrics(self, task_id: str, count: int = 100) -> Optional[Dict]:
+        """获取任务的训练指标数据"""
+        if task_id not in self.log_parsers:
+            metrics_file = os.path.join(self.metrics_dir, f"{task_id}_metrics.json")
+            if os.path.exists(metrics_file):
+                try:
+                    with open(metrics_file, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                except Exception as e:
+                    logger.error(f"读取指标文件失败: {e}")
+                    return None
+            return None
+
+        try:
+            latest_metrics = self.log_parsers[task_id].get_latest_metrics(count)
+            summary = self.log_parsers[task_id].get_metrics_summary()
+
+            return {
+                "task_id": task_id,
+                "summary": summary,
+                "latest_metrics": latest_metrics
+            }
+        except Exception as e:
+            logger.error(f"获取任务指标失败: {e}")
+            return None
+
+    def get_task_metrics_file_path(self, task_id: str) -> Optional[str]:
+        """获取任务指标文件路径"""
+        metrics_file = os.path.join(self.metrics_dir, f"{task_id}_metrics.json")
+        return metrics_file if os.path.exists(metrics_file) else None
+
+    def cleanup_task_metrics(self, task_id: str) -> bool:
+        """清理任务的指标数据"""
+        try:
+            if task_id in self.log_parsers:
+                self.log_parsers[task_id].stop_monitoring()
+                del self.log_parsers[task_id]
+
+            metrics_file = os.path.join(self.metrics_dir, f"{task_id}_metrics.json")
+            if os.path.exists(metrics_file):
+                os.remove(metrics_file)
+
+            return True
+        except Exception as e:
+            logger.error(f"清理任务指标失败: {e}")
+            return False
+
+    def get_log_path(self, task_id: str) -> str:
+        """获取指定任务的日志文件路径"""
+        return os.path.join(self.logs_dir, f"{task_id}.log")

@@ -1,0 +1,79 @@
+pipeline:
+  name: webpage_l1_to_initial_sft_l3
+  source:
+    dataset: webpage_demo_l1
+    filter: quality_level = 'L1'
+  operators:
+    - name: webpage_to_pt
+      args:
+        engine: mineru
+        min_chars: 300
+        max_chars: 120000
+        # Reuse the persistent service instead of loading a second model in
+        # every pipeline process. Override with MINERU_HTML_URL when remote.
+        mineru_transport: http
+        mineru_url: http://127.0.0.1:7986
+        mineru_batch_size: 1
+        mineru_timeout: 900
+        fallback: legacy
+
+    - name: dataflow
+      args:
+        op: WordNumberFilter
+        input_key: text
+        output_key: dataflow_word_count
+        kind: filter
+        min_words: 40
+        max_words: 60000
+
+    # Per-item LLM domain judgement.  The campaign injects its exploration
+    # keywords into focus_keywords (--focus-keywords ...): the model only
+    # admits items directly related to that focus and emits grounded
+    # semantic_signals as evidence, so the chain follows whatever topic the
+    # WebAgent explored instead of a hard-wired vertical (e.g. finance).
+    # Batching records here can let an LLM cite one item's evidence for
+    # another item, so keep chunk_size=1.
+    - name: domain_classify
+      args:
+        model: qwen3-14b-fp8
+        focus_keywords: []
+        chunk_size: 1
+        max_concurrency: 4
+        max_input_chars: 12000
+        max_tokens: 2048
+
+    # Deterministic admission on the LLM evidence: focus relevance, classifier
+    # confidence and grounded semantic signals.  No finance-specific types.
+    - name: topic_quality_filter
+      args:
+        min_semantic_signals: 2
+        min_classifier_confidence: 0.8
+        min_signal_confidence: 0.7
+      output:
+        dataset: webpage_demo_l2_pt
+        quality_level: L2
+        stage: pretrain
+        modality: text
+        processing_level: webpage_preprocessed
+        description: PT text with per-record grounded LLM quality proof matching the campaign focus.
+
+    - name: pt_to_sft_qa
+      args:
+        model: qwen3-14b-fp8
+        chunk_size: 2
+        max_concurrency: 4
+        max_input_chars: 12000
+        max_tokens: 4096
+        max_retries: 2
+
+    - name: sft_validate
+      args:
+        mode: filter
+      output:
+        dataset: webpage_demo_l3_sft
+        quality_level: L3
+        stage: sft
+        modality: text
+        task_type: grounded_qa
+        processing_level: initial_sft
+        description: Initial grounded SFT QA pairs generated from L2 webpage PT data.

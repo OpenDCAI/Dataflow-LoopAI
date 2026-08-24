@@ -1,5 +1,8 @@
 <template>
-    <div class="value-preview-row-item">
+    <div
+        class="value-preview-row-item"
+        :class="{ expanded: ['editor', 'bench_list'].includes(computedUIType) }"
+    >
         <div class="not-overflow"></div>
         <p v-if="computedUIType === 'none'" class="none-value">None</p>
         <span v-if="computedUIType === 'default'" class="none-value" @click="copyText">{{
@@ -10,6 +13,18 @@
             :model-value="thisValue"
             :language="editorLanguage"
         ></editor-preview>
+        <looper-command-preview
+            v-if="computedUIType === 'looper_command'"
+            :model-value="thisValue"
+        ></looper-command-preview>
+        <msg-item v-if="computedUIType === 'msg_item'" :model-value="thisValue"></msg-item>
+        <msg-list v-if="computedUIType === 'msg_list'" :model-value="thisValue"></msg-list>
+        <bench-list-preview
+            v-if="computedUIType === 'bench_list'"
+            :model-value="thisValue"
+            :nested-allowed-values="schemaNestedAllowedValues"
+            :foreground="foreground"
+        ></bench-list-preview>
         <fv-text-box
             v-if="computedUIType === 'text'"
             v-model="thisValue"
@@ -127,10 +142,22 @@ import { useTheme } from '@/stores/theme'
 
 import resPreviewPanel from './resPreviewPanel.vue'
 import editorPreview from './editorPreview.vue'
+import looperCommandPreview from './looperCommandPreview.vue'
+import msgItem from './msgPreview/msgItem.vue'
+import msgList from './msgPreview/msgList.vue'
+import benchListPreview from './benchListPreview.vue'
 import directorySelector from '@/components/general/directorySelector.vue'
 
 export default {
-    components: { resPreviewPanel, directorySelector, editorPreview },
+    components: {
+        resPreviewPanel,
+        directorySelector,
+        editorPreview,
+        looperCommandPreview,
+        msgItem,
+        msgList,
+        benchListPreview
+    },
     props: {
         modelValue: { default: () => ({}) },
         modelKey: { default: '' },
@@ -171,9 +198,13 @@ export default {
             const listChoices = this.schemaModel.allowed_values || this.schemaModel.options
             if (this.schemaModel.ui_type === 'list' && listChoices && listChoices.length)
                 return 'list'
+            if (this.schemaModel.ui_type === 'bench_list') return 'bench_list'
             if (this.thisValue === null || this.thisValue === undefined) return 'none'
             if (this.schemaModel.ui_type === 'file_path') return 'dir'
             if (this.schemaModel.ui_type === 'textarea') return 'editor'
+            if (this.schemaModel.ui_type === 'looper_command') return 'looper_command'
+            if (this.schemaModel.ui_type === 'msg_item') return 'msg_item'
+            if (this.schemaModel.ui_type === 'msg_list') return 'msg_list'
             if (this.schemaModel.ui_type === 'text' || this.schemaModel.ui_type === 'password')
                 return 'text'
             if (
@@ -203,6 +234,9 @@ export default {
             const raw = this.schemaModel.allowed_values || this.schemaModel.options
             if (!raw || !raw.length) return []
             return raw.map((item) => ({ key: item, text: item }))
+        },
+        schemaNestedAllowedValues() {
+            return this.schemaModel?.nested_allowed_values || this.schemaModel?.json_schema_extra?.nested_allowed_values || {}
         },
         dirModel: {
             get() {
@@ -262,6 +296,10 @@ export default {
     display: flex;
     align-items: center;
     overflow: visible;
+
+    &.expanded {
+        align-items: flex-start;
+    }
 
     .none-value {
         @include HcenterVcenter;

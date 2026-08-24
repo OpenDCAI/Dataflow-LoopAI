@@ -1,38 +1,74 @@
 system:
   api_port: 8855
-  starter_api_key: "sk-..."
-  starter_model_path: "gpt-4o-mini"
-  starter_model_name: "gpt-4o-mini"
-  starter_base_url: "http://123.129.219.111:3000/v1"
-  llamafactory_dir: "/mnt/paper2any/xbr/gitpush/loopai/Dataflow-LoopAI/"
-  llamafactory_env_path: "/mnt/paper2any/xbr/commit/debug1205/.venv/bin/"
-  CUDA_VISIBLE_DEVICES: "0,1"
-  swanlab_api_key: ""
-  tavily_api_key: ""
-  kaggle_username: "binrxu"
-  kaggle_key: ""
+  model:
+    proxy_base_url: "http://127.0.0.1:8855/responseProxy/v1"
+    proxy_api_key: "loopai-local-proxy"
+    default_model: "medium"
+    codex_model: "A"
+    looper_model: "B"
+    default_tier: "medium"
+    pool:
+      - tier: "high"
+        name: "A"
+        api_key: "env:LOOPAI_HIGH_MODEL_API_KEY"
+        base_url: "http://123.129.219.111:3000/v1"
+        model_name: "gpt-4o-mini"
+        maxworker: 2
+        wire_api: "responses"
+        response_format: ""
+        enabled: true
+      - tier: "medium"
+        name: "B"
+        api_key: "env:LOOPAI_MEDIUM_MODEL_API_KEY"
+        base_url: "http://123.129.219.111:3000/v1"
+        model_name: "gpt-4o-mini"
+        maxworker: 4
+        wire_api: "chat"
+        response_format: ""
+        enabled: true
+      - tier: "low"
+        name: "C"
+        api_key: "env:LOOPAI_LOW_MODEL_API_KEY"
+        base_url: "http://123.129.219.111:3000/v1"
+        model_name: "gpt-4o-mini"
+        maxworker: 8
+        wire_api: "chat"
+        response_format: ""
+        enabled: true
+  integrations:
+    tavily:
+      api_key: "env:TAVILY_API_KEY"
+    kaggle:
+      username: "env:KAGGLE_USERNAME"
+      key: "env:KAGGLE_KEY"
+    rag:
+      base_url: ""
+      api_key: "env:RAG_API_KEY"
+  codex_workspace: "/home/lpc/repos/Dataflow-LoopAI"
+  codex_home: "/home/lpc/repos/Dataflow-LoopAI/codex_home"
+  codex_run_timeout_ms: 300000
+  codex_use_project_config: false
 
 default_states:
   task_id: "default"
   language: "en"
   prompt_template_dir: "./loopai/common/prompts"
   output_dir: "./outputs"
+  enable_looper: false
 
   judger:
     eval_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
-    eval_base_url: "http://127.0.0.1:8911/v1"
-    eval_api_key: "EMPTY"
     eval_temperature: 0
     eval_top_p: 0.95
-    eval_test_case_path: "./outputs/test.json"
-    eval_problem_path: "./data/human-eval-v2-20210705-format.jsonl"
-    eval_result_path: "./outputs/result.json"
-    eval_batch_size: 10
+    eval_batch_size: 20
+    eval_case_num: 10
+    eval_vllm_tensor_parallel_size: 1
+    eval_vllm_gpu_memory_utilization: 0.9
+    cuda_visible_devices: "0"
+    benchlist: []
+    extra_benchlist: []
 
   analyzer:
-    analyze_model_path: "/home/lpc/models/Qwen2.5-14B-Instruct/"
-    analyze_base_url: "http://127.0.0.1:8911/v1"
-    analyze_api_key: "EMPTY"
     analyze_temperature: 0
     analyze_top_p: 0.95
     output_brief: true
@@ -41,11 +77,10 @@ default_states:
     output_suggestion: true
     analyze_batch_size: 20
 
-  # Obtainer agent configuration (nested structure for ObtainerAgent)
+  # ObtainerCLI/DataMixer context for acquisition, processing, and final export.
   obtainer:
     model_path: "gpt-4o-mini" # if empty, will use starter model
     base_url: "http://123.129.219.111:3000/v1" # if empty, will use starter base_url
-    api_key: "sk-..." # if empty, will use starter api_key
     temperature: 0.7
     search_engine: "tavily" # tavily, duckduckgo, jina
     max_urls: 6
@@ -60,72 +95,41 @@ default_states:
     max_records_per_page: 20 # Maximum dataset records to generate per webpage (default: 10)
     min_relevance_score: 0.7 # Minimum relevance score for records (0.0-1.0, default: 0.7)
 
-  webcrawler:
-    # API 配置
-    deepseek_api_key: "" # 从 starter.api_key_path 读取
-    tavily_api_key: "" # 从 starter.tavily_api_key 读取
-    deepseek_api_base: "http://123.129.219.111:3000/v1"
-    # 模型配置
-    model: "gpt-4o-mini"
-    temperature: 0.7
-    # 查询生成配置
-    num_queries: 5
-    # 爬取策略配置
-    max_pages: 10000
-    crawl_depth: 3
-    max_links_per_page: 5
-    concurrent_pages: 3
-    # 内容过滤配置
-    min_text_length: 500
-    min_code_length: 50
-    min_relevance_score: 6
-    url_patterns: null
-    # 运行时配置
-    request_delay: 2.0
-    timeout: 30
-    max_retries: 3
-    # 输出配置
-    output_format: "jsonl"
-    save_html: false
-    output_dir: ""
-    # 数据集生成配置
-    max_records_per_page: 10
-    dataset_concurrent_limit: 5
-    max_content_length: 50000
-    debug: false
-    # 数据集映射配置
-    sft_mapping_format: "jsonl_sft"
-    pt_mapping_format: "jsonl_pt"
-
-  # Constructor：后处理 / 清洗 / 映射（未填的字段由 API 用 schema 默认值补齐）
-  constructor:
-    postprocess_version: "agent_v2"
-    benchmark_source_dir: ""
-    benchmark_pool_path: "outputs/benchmark_load/benchmark_pool.jsonl"
-    benchmark_pool_size: 500
-    default_mapping_format: "alpaca"
-    max_samples_before_cleaning: 300
-    llm_timeout: 300.0
-    max_retries: 3
-    max_concurrent_mapping: 10
-    debug: false
-    category: ""
-    user_query: ""
-    datasets_background: ""
-    download_dir: ""
-    output_dir: ""
-    prompt_template_dir: ""
-
   # Obtainer debug flag (not nested in obtainer dict)
   obtainer_debug: false
 
   trainer:
+    # 默认使用 LLaMA-Factory SFT。启用 Verl GRPO 时，将下面两项改为
+    # train_framework: "verl" / train_stage: "grpo"，并填写 Parquet 数据路径。
     train_framework: "llamafactory"
-    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory/
+    llamafactory_dir: "/home/lpc/repos/LLaMA-Factory"
     llamafactory_env_path: "/home/lpc/miniconda3/envs/lmf/bin/"
     CUDA_VISIBLE_DEVICES: "0,1"
-    swanlab_api_key: ""
     train_input_dataset_path: "/home/lpc/repos/Dataflow-LoopAI/data/alpaca_en_demo.json" # to defined the path of training dataset (json/jsonl format)
     train_input_task_description: "训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务" # to defined the task description for training
-    train_input_config_template_path: "/home/lpc/repos/Dataflow-LoopAI/api/examples/bird.yaml" # to defined the path of llamafactory config template
+    train_input_config_template_path: "" # 留空时按 framework/stage 自动选择内置 SFT 或 GRPO 模板
     train_input_model_name: "/home/lpc/models/Qwen2.5-0.5B-Instruct/" # to defined the base model name for training
+
+    # Verl GRPO（仅在 train_framework=verl、train_stage=grpo 时使用）
+    verl_dir: "" # 本地 Verl 仓库根目录，例如 /path/to/verl
+    verl_env_path: "verl" # Conda 环境名，也可填写环境根目录或 bin 目录
+    verl_algorithm: "grpo"
+    verl_rollout_backend: "vllm" # vllm 或 sglang
+    verl_model_backend: "fsdp"
+    # 可直接填原生 Verl Parquet；留空时 Trainer 兼容读取历史 constructor.mapping_results 或当前 Obtainer 输出。
+    verl_source_dataset_path: ""
+    verl_source_eval_dataset_path: ""
+    verl_data_adapter: "auto" # auto、native、messages、alpaca 或 qa
+    verl_validation_ratio: 0.05 # 没有验证集时确定性切分
+    verl_split_seed: 42
+    verl_reuse_previous_validation: true
+    train_input_eval_dataset_path: "" # 可选；上一轮验证 Parquet 默认复用
+    verl_reward_mode: "auto" # 明确指定 preset/custom 时优先，否则 Trainer 对生成数据给出保守建议
+    verl_reward_preset: "auto"
+    verl_reward_kwargs: {}
+    verl_selection_metric: "val-core/*/acc/mean@*"
+    verl_selection_mode: "max"
+    verl_max_actor_ckpt_to_keep: 10
+    verl_inherit_previous_config: true
+    verl_use_previous_best_model: true
+    verl_multi_round_enabled: true

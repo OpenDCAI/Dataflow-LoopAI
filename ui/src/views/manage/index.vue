@@ -41,6 +41,7 @@ import logo from '@/assets/logo/logo.svg'
 import loopai from '@/assets/logo/LoopAI_logo.svg'
 import dataflow from '@/assets/nav/dataflow.svg'
 import serving from '@/assets/nav/serving.svg'
+import datalake from '@/assets/nav/datalake.svg'
 
 export default {
     data() {
@@ -73,6 +74,13 @@ export default {
                     route: '/m/config'
                 },
                 {
+                    key: 2,
+                    name: () => this.local('DataMixer'),
+                    icon: 'Database',
+                    img: datalake,
+                    route: '/m/datamixer'
+                },
+                {
                     key: -1,
                     name: () => this.local('Home'),
                     icon: 'Home',
@@ -81,7 +89,8 @@ export default {
             ],
             img: {
                 logo: logo,
-                loopai: loopai
+                loopai: loopai,
+                datalake: datalake
             }
         }
     },
@@ -95,9 +104,17 @@ export default {
         ...mapState(useTheme, ['color', 'gradient', 'theme'])
     },
     mounted() {
+        this.syncNavForViewport()
         this.routeFormat()
+        window.addEventListener('resize', this.syncNavForViewport)
+    },
+    beforeUnmount() {
+        window.removeEventListener('resize', this.syncNavForViewport)
     },
     methods: {
+        syncNavForViewport() {
+            this.isExpand = window.innerWidth >= 1024
+        },
         handleItemClick(item) {
             this.$Go(`${item.route}`)
         },
@@ -120,6 +137,7 @@ export default {
 .manage-container {
     @include app;
 
+    background: rgba(243, 243, 243, 1);
     display: flex;
     flex-direction: column;
 

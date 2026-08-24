@@ -11,26 +11,22 @@
     </a>
   </p>
 
-  <h4><i>✨ An Intelligent System with Self-Optimization Capabilities ✨</i></h4>
+  <h4><i>✨ An Intelligent System with Self-Evolving Capabilities ✨</i></h4>
 </div>
 
 <br>
 
 English | [简体中文](./docs/README_zh.md)
 
-LoopAI is an intelligent system designed for **self-optimization of LLMs in domain-specific scenarios**. It automatically detects and evaluates generation deficiencies, and continuously improves model performance through **dialog-driven data acquisition and closed-loop optimization**.
+LoopAI is an intelligent system designed for **self-evolving LLMs in domain-specific scenarios**. It automatically detects and evaluates generation deficiencies, and continuously improves model performance through **dialog-driven data acquisition and closed-loop optimization**.
 
 ```text
-User  ⇄  Starter (Supervisor)  ⇄  Sub-Agent
+User  ⇄  Starter (Codex SDK)  ⇄  Node (Skill)
                   │
                   ├── Common Question → Direct Response
-                  └── Complex Task → Graph Execution
+                  └── Complex Task → Closed-loop Execution
                                  (Evaluation → Data Collection → Training)
 ```
-
-<p align="center">
-  <img src="docs/assets/workflow.svg" alt="LoopAI Workflow" width="90%"/>
-</p>
 
 ---
 
@@ -53,7 +49,7 @@ Traditional LLM optimization workflows require users to manually:
 
 **LoopAI redefines this paradigm**:
 
-> 🚀 *Everything that can be automated is handled by Agents.*
+> 🚀 *Everything that can be automated is handled by the system runtime.*
 
 From evaluation to retraining, LoopAI provides a **seamless, interactive, and fully automated optimization experience**.
 
@@ -61,7 +57,7 @@ From evaluation to retraining, LoopAI provides a **seamless, interactive, and fu
 
 ## 🔍 3. Overview
 
-LoopAI reformulates the LLM optimization pipeline into a **graph-based execution framework (Graph / Node / State)**, enabling a new generation of interactive optimization systems:
+LoopAI reformulates the LLM optimization pipeline into a **node-based execution framework (Graph / Node / State)**, enabling a new generation of interactive optimization systems:
 
 * 🗣️ **NL2Optimize**
   Simply describe your goal in natural language (e.g., *“Improve my model's code generation ability”*), and LoopAI will automatically plan the optimization workflow.
@@ -73,7 +69,10 @@ LoopAI reformulates the LLM optimization pipeline into a **graph-based execution
   Supports manual intervention at critical steps (e.g., reviewing evaluation results, selecting data), allowing flexible strategy adjustment.
 
 * 📊 **Scalable Architecture**
-  Built on LangGraph state management, easily integrates private datasets and custom evaluation metrics.
+  Uses composable nodes, persistent task state, and Codex-driven orchestration to integrate private datasets, evaluation services, and training workflows.
+
+* 🧭 **Codex-powered Starter**
+  The starter is implemented around `codex-sdk`, acting as the interactive entry point that interprets user intent and dispatches the right nodes or skills.
 
 ---
 
@@ -89,6 +88,62 @@ pip install uv
 uv pip install -e .
 ```
 
+To use the starter built on `codex-sdk`, first install Codex itself; if it is already installed on your machine, you can skip that step.
+
+Choose the official Codex installation method that fits your environment:
+
+```bash
+# Official install script for macOS / Linux
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+
+# Or install globally with npm
+npm install -g @openai/codex
+```
+
+On macOS, you can also install it with Homebrew:
+
+```bash
+brew install --cask codex
+```
+
+On Windows, the official install script is:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+```
+
+After installation, it is a good idea to verify it first:
+
+```bash
+which codex
+codex --version
+```
+
+Then run it once:
+
+```bash
+codex
+```
+
+On first launch, follow the prompt to sign in. The official docs currently describe two common options:
+
+* Sign in with your ChatGPT account
+* Sign in with an OpenAI API key
+
+Once `codex` is working, install the `codex-runner` dependencies:
+
+```bash
+cd codex-runner
+yarn
+```
+
+You can also do a quick `codex-runner` build check:
+
+```bash
+cd codex-runner
+yarn build
+```
+
 ---
 
 ### 4.2 Configure LoopAI
@@ -101,22 +156,43 @@ All run modes require a root-level `starter.yaml`.
 cp examples/config/starter.yaml ./starter.yaml
 ```
 
-2. Edit `starter.yaml` and fill at least the following `system` fields:
+2. Edit `starter.yaml`. A minimal configuration that is usually enough to boot the backend is:
 
 ```yaml
 system:
-  starter_api_key: ""
-  starter_model_path: ""
-  starter_model_name: ""
-  starter_base_url: ""
+  api_port: 8855
   tavily_api_key: ""
-  kaggle_username: ""
-  kaggle_key: ""
+  codex_workspace: "<current project directory>"
+  codex_home: "<current project directory>/codex_home"
+
+model:
+  proxy_base_url: "http://127.0.0.1:{same as api_port}/responseProxy/v1"
+  proxy_api_key: "loopai-local-proxy"
+  default_model: "default"
+  codex_model: "default"
+  looper_model: "default"
+  default_tier: "medium"
+  pool:
+    - tier: "medium"
+      name: "default"
+      api_key: "xxx"
+      base_url: "https://api.deepseek.com"
+      model_name: "deepseek-v4-flash"
+      maxworker: 1
+      wire_api: "chat"
+      response_format: ""
+      enabled: true
 ```
 
-These values configure the Starter model provider and the external data-search credentials used by LoopAI.
+After the service starts, most other settings can be completed or adjusted from the WebUI Configer flow. In practice, the most important bootstrap items are the API port and a working default model-pool entry. `codex_workspace` should point to the current project directory, and `codex_home` should usually point to `<current project directory>/codex_home`.
 
-For where to obtain `tavily_api_key`, `kaggle_username`, and `kaggle_key`, see [docs/API_KEYS.md](./docs/API_KEYS.md). Do not commit real credentials to the repository.
+Configuration notes:
+
+* `proxy_base_url` is useful when you need to convert an OpenAI-compatible Chat Completions endpoint into a Responses-style endpoint for models such as `deepseek-v4-flash`.
+* `default_model` points to the `name` field of an entry in `model.pool`, and is usually the default API model used by nodes.
+* `codex_model` is the model used by the starter.
+
+For where to obtain `tavily_api_key` and other optional third-party credentials, see [docs/API_KEYS.md](./docs/API_KEYS.md). Do not commit real credentials to the repository.
 
 ---
 
@@ -144,13 +220,13 @@ python api/start.py
 
 The WebUI and API will be available at:
 
-```
+```text
 http://localhost:8855
 ```
 
 API docs are available at:
 
-```
+```text
 http://localhost:8855/docs
 ```
 
@@ -166,17 +242,34 @@ Frontend source setup, Vite proxy configuration, and UI release publishing are c
 
 #### ✅ Option B: Terminal Mode
 
-Start LoopAI:
+The terminal UI is intended for machines where a browser is unavailable or inconvenient. It currently supports task management and launching node execution from the main conversation view, but does not yet cover data-lake operations, manual configuration editing, or the more complex state-inspection flows available in the WebUI.
+
+Build the terminal UI once, then start it with:
 
 ```bash
-python examples/scripts/run_starter.py
+cd tui
+yarn build
+yarn start
+```
+
+If you already built it before, starting it is simply:
+
+```bash
+cd tui
+yarn start
+```
+
+By default, the TUI connects to:
+
+```text
+http://127.0.0.1:8855
 ```
 
 ---
 
 ### 4.4 Optional Runtime Dependencies
 
-`pip install -e .` installs the core LoopAI package, API service, graph orchestration, and common data-processing dependencies. Some Agents call heavy ML runtimes that are easier to keep in separate Conda environments because their CUDA, PyTorch, and serving requirements may conflict.
+`pip install -e .` installs the core LoopAI package, API service, orchestration runtime, and common data-processing dependencies. Some nodes and skills call heavy ML runtimes that are easier to keep in separate Conda environments because their CUDA, PyTorch, and serving requirements may conflict.
 
 Recommended layout:
 
@@ -196,58 +289,58 @@ conda create -n loopai-verl python=3.10
 
 Install `vllm`, `LLaMA-Factory`, and `verl` according to their upstream instructions and your CUDA/PyTorch version. They are not pinned in LoopAI because GPU environments are usually machine-specific.
 
-Agent-specific notes:
+Skill-specific notes:
 
-* **JudgerAgent**: for local model evaluation, install `vllm` in a separate environment and set `judger.eval_vllm_env_path` to the Python executable, for example `/path/to/miniconda3/envs/loopai-vllm/bin/python`. When `judger.eval_base_url` is empty, Judger uses this interpreter to start a local vLLM OpenAI-compatible API server in a subprocess, with parameters such as `eval_vllm_port`, `eval_vllm_tensor_parallel_size`, `eval_vllm_gpu_memory_utilization`, and `eval_env_configs`. If you already run a compatible service yourself, set `judger.eval_base_url` and Judger will use that service instead.
-* **AnalyzerAgent**: Analyzer calls an OpenAI-compatible chat endpoint through `analyzer.analyze_base_url`, `analyzer.analyze_model_path`, and `analyzer.analyze_api_key`. For local analysis, you can serve the analysis model with vLLM in the same vLLM environment and point `analyze_base_url` to it. Analyzer does not currently start vLLM by itself.
-* **ObtainerAgent**: data search, RAG, Hugging Face/Kaggle downloads, and webpage collection use the core LoopAI environment installed by `pip install -e .`. For webpage and Kaggle flows, run `playwright install` once in that environment. Obtainer calls an OpenAI-compatible chat endpoint through `obtainer.model_path`, `obtainer.base_url`, and `obtainer.api_key`; RAG embeddings can use `obtainer.rag_api_base_url`, `obtainer.rag_api_key`, and `obtainer.rag_embed_model`. Web search normally needs `obtainer.tavily_api_key` or `TAVILY_API_KEY`, and Kaggle downloads need `obtainer.kaggle_username` / `obtainer.kaggle_key` or `KAGGLE_USERNAME` / `KAGGLE_KEY`.
-* **ConstructorAgent**: post-processing, cleaning, and format mapping use the core LoopAI environment installed by `pip install -e .`. Constructor calls an OpenAI-compatible chat endpoint through `constructor.model_path`, `constructor.base_url`, and `constructor.api_key`; if these are empty, several paths fall back to the Analyzer model settings. Benchmark-aware cleaning can additionally use `constructor.benchmark_source_dir` or benchmark pool fields, and the postprocess v2 path may use `TAVILY_API_KEY` for source reference search.
-* **TrainerAgent**: local training normally requires `LLaMA-Factory` or `verl`. Set `trainer.train_framework` to `llamafactory` or `verl`. For LlamaFactory, set `trainer.llamafactory_dir` to the LLaMA-Factory repository and `trainer.llamafactory_env_path` to the environment root or `bin` directory, for example `/path/to/miniconda3/envs/loopai-llamafactory/bin`. For verl, provide `verl_dir` and `verl_env_path` in the trainer or system config. Trainer starts training asynchronously through an internal task manager, which launches the selected framework as a subprocess and streams logs back to LoopAI.
+* **Judger Skill**: for local model evaluation, install `vllm` in a separate environment and set `judger.eval_vllm_env_path` to the Python executable, for example `/path/to/miniconda3/envs/loopai-vllm/bin/python`. When `judger.eval_base_url` is empty, Judger uses this interpreter to start a local vLLM OpenAI-compatible API server in a subprocess, with parameters such as `eval_vllm_port`, `eval_vllm_tensor_parallel_size`, `eval_vllm_gpu_memory_utilization`, and `eval_env_configs`. If you already run a compatible service yourself, set `judger.eval_base_url` and Judger will use that service instead.
+* **Analyzer Skill**: Analyzer calls an OpenAI-compatible chat endpoint through `analyzer.analyze_base_url`, `analyzer.analyze_model_path`, and `analyzer.analyze_api_key`. For local analysis, you can serve the analysis model with vLLM in the same vLLM environment and point `analyze_base_url` to it. Analyzer does not currently start vLLM by itself.
+* **ObtainerCLI/DataMixer**: this is the only supported data workflow. Use `skills/obtainer/SKILL.md`, `docs/OBTAINERCLI_USAGE.md`, and `python -m loopai.skills.ObtainerCLI.cli` for hosted-dataset and webpage acquisition, download, normalization, lake ingest, cleaning, deduplication, quality processing, schema mapping, recipe planning, and final training-data export. Retired standalone data agents must not be scheduled. Managed workers resolve model endpoints from the warehouse model pool, `CODEX_*`/`DEEPSEEK_*` environment variables, or the starter system config.
+* **Trainer Skill**: local training normally requires `LLaMA-Factory` or `verl`. Set `trainer.train_framework` to `llamafactory` or `verl`. For LlamaFactory, set `trainer.llamafactory_dir` to the LLaMA-Factory repository and `trainer.llamafactory_env_path` to the environment root or `bin` directory, for example `/path/to/miniconda3/envs/loopai-llamafactory/bin`. For verl, provide `verl_dir` and `verl_env_path` in the trainer or system config. Trainer launches the selected framework as a managed subprocess, streams logs back to LoopAI, and keeps the Skill call in the foreground until training completes, fails, or is cancelled.
 
-These fields can be provided through the WebUI Configer flow, in Agent state, or in `starter.yaml` under the corresponding `judger`, `analyzer`, `obtainer`, `constructor`, `trainer`, or `system` sections.
+These fields can be provided through the WebUI Configer flow, in node state, or in `starter.yaml` under the corresponding `judger`, `analyzer`, `obtainer`, `trainer`, or `system` sections.
 
 ---
 
-## 🧠 5. Core Agents
+## 🧠 5. Core Nodes
 
-Each Agent in LoopAI is implemented as an **independent and composable subgraph**.
+LoopAI organizes its main runtime around **independent and composable nodes**, with the starter coordinating execution and the skills providing reusable capability surfaces.
 
-### 🤖 StarterAgent (Supervisor)
+### 🤖 Starter
 
 * Handles user interaction and intent parsing
-* Dynamically orchestrates downstream Agents
+* Uses `codex-sdk` to coordinate downstream skills and nodes
 * Manages the overall execution workflow
 
-### 🤖 JudgerAgent
+### 🔁 Looper Node
+
+* Acts as the continuity layer between the user conversation and the starter
+* Automatically maintains the chat flow, summarizes recent conversation context, and fills in follow-up parameters when possible
+* Talks to the starter on the user's behalf so the loop can continue without manual turn-by-turn intervention
+* Helps keep long-running closed-loop workflows from being interrupted when the next step is already implied by the conversation
+
+### 🤖 Judger Node
 
 * Automatically generates evaluation cases (LLM-based)
 * Integrates external evaluation systems
 * Collects structured results and logs
 
-### 🤖 AnalyzerAgent
+### 🤖 Analyzer Node
 
 * Performs statistical analysis on evaluation results
 * Identifies failure patterns and error types
 * Generates interpretable diagnostic reports
 
-### 🤖 ObtainerAgent & WebCrawlerAgent
+### 🤖 ObtainerCLI/DataMixer
 
-* Derives data acquisition strategies
-* Retrieves datasets and knowledge sources
-* Cleans and structures data for training
-* Supports extensible web data crawling
+* Discovers hosted datasets and collects domain webpages through managed acquisition workers
+* Downloads, normalizes, and ingests data into the DataMixer warehouse with dataset cards and lineage
+* Cleans, deduplicates, validates, and maps heterogeneous data
+* Plans DataMixer recipes and exports final training-ready datasets
 
-### 🤖 TrainerAgent
+### 🛠️ Trainer Node
 
 * Performs incremental training with new data
 * Supports continual learning to prevent forgetting
 * Enables closed-loop model improvement
-
-### 🤖 ConfigerAgent
-
-* Interacts with users for system configuration
-* Supports dynamic parameter updates
-* Handles missing information and workflow recovery
 
 ---
 
@@ -256,9 +349,10 @@ Each Agent in LoopAI is implemented as an **independent and composable subgraph*
 We will continue improving LoopAI in the following directions:
 
 * 💻 **Broader Domain Support**
-* 🤖 **Stronger Agent Autonomy**
-* 🌐 **Online Platform & Community**
-* 📊 **Advanced Visualization Tools**
+* 🧪 **Training Strategy and Data Selection Optimization**
+* 🛡️ **Stronger Starter Boundary Capabilities and Safety Constraints**
+* 📏 **Vertical-domain Evaluation Optimization**
+* 🧩 **Plugin-based Nodes**
 
 ---
 

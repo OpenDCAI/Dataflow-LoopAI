@@ -1,21 +1,23 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from tortoise.contrib.fastapi import register_tortoise
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 from pathlib import Path
-
-from .utils.starter.starter import starter_process
+from loopai.schema.system_runtime import (
+    export_system_integrations_to_env,
+    load_runtime_system_config,
+)
+from .utils.config.credential_migration import migrate_persisted_credentials
 
 from .controllers.config import router as config_router
+from .controllers.response_proxy import router as response_proxy_router
 from .controllers.starter import router as starter_router
 from .controllers.task import router as task_router
-from .controllers.train import router as train_router
 from .controllers.resource import router as resource_router
+from .controllers.obtainer import router as obtainer_router
 
 import os
-import signal
 
 # 配置目录
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,21 +29,11 @@ DIST_DIR = Path(BASE_DIR) / "dist"
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    yield  # 在 yield 前的代码会在应用 启动时执行，在 yield 后的代码会在应用 关闭时执行。
-    for p in starter_process:
-        print(f"terminate process {p.pid}")
-        if p.is_alive():
-            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-
 # 创建FastAPI应用
 app = FastAPI(
-    title="LLaMA Factory Remote Training Service",
-    description="远程训练服务，支持通过API触发LLaMA Factory训练任务",
+    title="LoopAI Server",
+    description="LoopAI server with APIs for managing training tasks",
     version="1.0.0",
-    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -52,6 +44,12 @@ app.add_middleware(
     allow_headers=["*"],  # 允许的请求头
 )
 
+
+@app.on_event("startup")
+async def load_system_integrations() -> None:
+    migrate_persisted_credentials(DB_PATH)
+    export_system_integrations_to_env(load_runtime_system_config())
+
 register_tortoise(
     app,
     db_url=f"sqlite://{DB_PATH}",
@@ -61,10 +59,11 @@ register_tortoise(
 )
 
 app.include_router(config_router, prefix="/config", tags=["config"])
+app.include_router(response_proxy_router, prefix="/responseProxy", tags=["responseProxy"])
 app.include_router(starter_router, prefix="/starter", tags=["starter"])
 app.include_router(task_router, prefix="/task", tags=["task"])
-app.include_router(train_router, prefix="/train", tags=["train"])
 app.include_router(resource_router, prefix="/resource", tags=["resource"])
+app.include_router(obtainer_router, prefix="/obtainer", tags=["obtainer"])
 
 app.mount(
     "/assets",
@@ -77,21 +76,22 @@ app.mount(
 async def root():
     """根路径"""
     return {
-        "message": "LLaMA Factory Remote Training Service",
+        "message": "LoopAI Server",
         "version": "1.0.0",
         "endpoints": {
-            "train": "POST /train - 启动训练任务",
-            "status": "GET /train/status/{task_id} - 查询任务状态",
-            "logs": "GET /train/logs/{task_id} - 获取任务日志",
-            "tasks": "GET /train/tasks - 获取所有任务列表",
-            "swanlab-logs-task": "GET /train/swanlab-logs/{task_id} - 获取指定任务的SwanLab日志文件夹路径",
-            "swanlab-logs-all": "GET /train/swanlab-logs - 获取所有SwanLab日志文件夹"
+            "task-train-status": "GET /task/train_status - 获取 Trainer 指标文件",
+            "codex-submit": "POST /starter/codex/stream - 提交 Codex SDK 任务",
+            "codex-session": "GET /starter/codex/session/{session_id} - 获取 Codex 会话状态"
         }
     }
 
 
 @app.get("/", include_in_schema=False)
 async def frontend_root():
+    return _frontend_index_response()
+
+
+def _frontend_index_response():
     index_path = DIST_DIR / "index.html"
     if index_path.is_file():
         return FileResponse(index_path)
@@ -116,6 +116,13 @@ async def health_check():
             "runs": os.path.exists(RUNS_DIR)
         }
     }
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def frontend_fallback(full_path: str):
+    if full_path == "m" or full_path.startswith("m/"):
+        return RedirectResponse(url=f"/#/{full_path}", status_code=307)
+    return _frontend_index_response()
 
 
 if __name__ == "__main__":

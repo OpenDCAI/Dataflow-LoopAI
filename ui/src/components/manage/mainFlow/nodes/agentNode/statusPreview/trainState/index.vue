@@ -68,14 +68,26 @@ export default {
             return this.statusList.map((item) => item.step)
         },
         chartDataAttrs() {
-            let arr = []
-            for (let key in this.statusList[0]) {
-                if (key === 'step') continue
-                if (typeof this.statusList[0][key] === 'number') {
-                    arr.push(key)
-                }
-            }
-            return arr
+            if (!this.statusList.length) return []
+            const keys = new Set()
+            this.statusList.forEach((item) => {
+                Object.keys(item).forEach((key) => {
+                    if (key !== 'step' && typeof item[key] === 'number') keys.add(key)
+                })
+            })
+            const preferred = [
+                'loss',
+                'eval_loss',
+                'reward',
+                'val_score',
+                'policy_loss',
+                'accuracy',
+                'learning_rate'
+            ]
+            return [
+                ...preferred.filter((key) => keys.has(key)),
+                ...Array.from(keys).filter((key) => !preferred.includes(key))
+            ].slice(0, 8)
         }
     },
     mounted() {
@@ -97,8 +109,18 @@ export default {
             try {
                 let task_id = this.state.task_id
                 let output_dir = this.state.output_dir
+                let trainerState = this.state.trainer || {}
+                let trainerRuntime = (this.taskStatus.node_status || []).find(
+                    (item) => item.node_name === 'trainer'
+                )
                 let trainer_task_id =
-                    this.custom_info['TrainerAgent.training_execution_node_wrapper'].data.task_id
+                    trainerRuntime?.version ||
+                    trainerState.trainer_version_id ||
+                    trainerState.trainer_task_id ||
+                    trainerState.trainer_training_task_id ||
+                    this.custom_info['trainer.trainer.run']?.version_id ||
+                    ''
+                if (!trainer_task_id) return
                 this.$api.task
                     .getTrainStatus(output_dir, task_id, trainer_task_id)
                     .then((res) => {
@@ -120,7 +142,10 @@ export default {
                 if (item.log_line) {
                     this.loglines.push(item.log_line)
                 }
-                if (item.loss != undefined && item.step != undefined) {
+                const hasNumericMetric = Object.keys(item).some(
+                    (key) => key !== 'step' && typeof item[key] === 'number'
+                )
+                if (item.step != undefined && hasNumericMetric) {
                     this.statusList.push(item)
                 }
             })

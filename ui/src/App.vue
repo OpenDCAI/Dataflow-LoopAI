@@ -7,7 +7,7 @@
 <script>
 import i18n from '@/js/i18n.js'
 import { mapActions } from 'pinia'
-import { useAppConfig } from '@/stores/appConfig'
+import { useAppConfig, getStoredLanguage } from '@/stores/appConfig'
 import { useLoopAI } from '@/stores/loopAI'
 
 export default {
@@ -38,6 +38,14 @@ export default {
             await this.refreshLanguage()
         },
         async refreshLanguage() {
+            // A language picked via the in-app switcher wins over the backend config.
+            const storedLanguage = getStoredLanguage()
+            if (storedLanguage) {
+                this.reviseConfig({
+                    language: storedLanguage
+                })
+                return
+            }
             await this.getConfigs()
                 .then((res) => {
                     let language = 'en'

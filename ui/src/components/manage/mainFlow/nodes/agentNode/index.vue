@@ -1,6 +1,12 @@
 <template>
-    <base-node v-bind="props" :data="thisData" :running="runningMe" :rowLayoutContent="true">
-        <div class="col-wrapper" style="width: 250px">
+    <base-node
+        v-bind="props"
+        :class="{ 'obtainer-node': isObtainerNode }"
+        :data="thisData"
+        :running="displayRunning"
+        :rowLayoutContent="true"
+    >
+        <div v-if="showGenericState" class="col-wrapper" style="width: 250px">
             <div class="fv-loading-block">
                 <fv-progress-ring
                     v-if="loading"
@@ -41,29 +47,38 @@
             </div>
         </div>
 
-        <div v-if="customInfoFiltered.length > 0" class="col-wrapper" style="width: 250px">
+        <div
+            v-if="showCustomInfoPanel"
+            class="col-wrapper"
+            :class="{ 'obtainer-panel-wrapper': isObtainerNode }"
+            :style="{ width: isObtainerNode ? '980px' : '250px', flexShrink: 0 }"
+        >
             <!-- Agent 的通用 CustomInfo 展示 -->
-            <template v-if="customInfoFiltered.length > 0">
+            <template v-if="showCustomInfoPanel">
                 <div class="node-row-item">
                     <span
                         class="info-title"
                         style="font-size: 13px"
                         :style="{ color: thisData.iconColor }"
-                        >{{ appConfig.local('Custom Info') }}</span
+                        >{{ customStatusTitle }}</span
                     >
                 </div>
                 <div
-                    v-if="customInfoFiltered.length > 0"
+                    v-if="showCustomInfoPanel"
                     class="node-group-item scroll-list"
                     @wheel.stop
                 >
                     <!-- 自定义 Node CustomInfo展示 -->
                     <component
+                        v-if="customStatusPanel"
                         :is="customStatusPanel"
                         :foreground="thisData.iconColor"
                         :graphClsPrefix="thisData.graphClsPrefix"
+                        :running="runtimeRunning"
+                        @active-change="setCustomPanelActive"
                     />
                     <div
+                        v-if="showGenericCustomInfo"
                         v-for="(custom_info, c_index) in customInfoFiltered"
                         :key="`custom_${c_index}`"
                         class="node-row-item col"
@@ -139,8 +154,8 @@ import { useLoopAI } from '@/stores/loopAI'
 import baseNode from '@/components/manage/mainFlow/nodes/baseNode.vue'
 import valuePreview from './valuePreview/index.vue'
 import trainState from './statusPreview/trainState/index.vue'
-import WebcrawlerStatusPannel from './custom/webcrawlerStatusPannel.vue'
 import ObtainerStatusPannel from './custom/obtainerStatusPannel.vue'
+import LooperStatusPanel from './custom/LooperStatusPanel.vue'
 
 const { $api } = useGlobal()
 
@@ -232,6 +247,13 @@ const stateFiltered = computed(() => {
     return loopAIStateFiltered.value
 })
 
+const normalizedGraphPrefix = computed(() => String(thisData.value.graphClsPrefix || '').toLowerCase())
+const isObtainerNode = computed(() => normalizedGraphPrefix.value.includes('obtainer'))
+const isLooperNode = computed(() => normalizedGraphPrefix.value.includes('looper'))
+const showGenericState = computed(() => {
+    return Boolean(loopAIState.value) && !isObtainerNode.value
+})
+
 const customInfo = computed(() => {
     return loopAI.taskStatus.custom_info
 })
@@ -257,27 +279,58 @@ const customInfoFiltered = computed(() => {
     return filter_list
 })
 
+const showGenericCustomInfo = computed(() => !isObtainerNode.value && !isLooperNode.value)
+
 // 自定义节点信息展示
 const customStatusPanel = computed(() => {
-    const { graphClsPrefix } = thisData.value || {}
-    if (graphClsPrefix === 'WebCrawlerAgent') {
-        return WebcrawlerStatusPannel
-    }
-    if (graphClsPrefix === 'ObtainerAgent') {
+    if (isObtainerNode.value) {
         return ObtainerStatusPannel
+    }
+    if (isLooperNode.value) {
+        return LooperStatusPanel
     }
     return null
 })
 
-const runningMe = computed(() => {
+const showCustomInfoPanel = computed(() => {
+    return Boolean(customStatusPanel.value) || customInfoFiltered.value.length > 0
+})
+
+const customStatusTitle = computed(() => {
+    if (isObtainerNode.value) return 'Obtainer Status'
+    if (isLooperNode.value) return 'Looper Status'
+    return appConfig.local('Custom Info')
+})
+
+const runtimeRunning = computed(() => {
     try {
-        return loopAI.taskStatus.running_tasks.some((task) => {
-            return thisData.value.include_nodes.includes(task)
+        return loopAI.taskStatus.node_status.some((node) => {
+            const nodeName = String(node.node_name || '').toLowerCase()
+            const includedNodes = thisData.value.include_nodes.map((item) =>
+                String(item || '').toLowerCase()
+            )
+            const matchesObtainerCli = isObtainerNode.value && nodeName === 'obtainercli'
+            return (
+                (includedNodes.includes(nodeName) || matchesObtainerCli) &&
+                ['queued', 'running'].includes(String(node.status || '').toLowerCase())
+            )
         })
     } catch (e) {
         return false
     }
 })
+const customPanelActive = ref(null)
+const displayRunning = computed(() => {
+    if (isObtainerNode.value && customPanelActive.value !== null) {
+        return customPanelActive.value
+    }
+    return runtimeRunning.value
+})
+const runningMe = displayRunning
+
+const setCustomPanelActive = (active) => {
+    customPanelActive.value = Boolean(active)
+}
 
 const loading = ref(false)
 
@@ -294,6 +347,18 @@ const emitUpdateRunValue = (item) => {}
 
     .scroll-list {
         overflow-y: overlay;
+    }
+
+    .obtainer-panel-wrapper {
+        min-width: 860px;
+
+        .node-group-item {
+            padding: 4px;
+        }
+    }
+
+    &.obtainer-node .lp-flow-node-container {
+        max-height: 640px;
     }
 }
 </style>

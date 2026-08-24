@@ -1,6 +1,14 @@
-from .BaseAgent import BaseAgent
-from .Starter.starter_agent import StarterAgent
-from .Judger.judger_agent import JudgerAgent
-from .Analyzer.analyzer_agent import AnalyzerAgent
-from .Obtainer.obtainer_agent import ObtainerAgent
-from .Trainer.trainer_agent import TrainerAgent
+__all__ = [
+    "BaseAgent",
+    "ObtainerAgent",
+]
+
+
+def __getattr__(name):
+    if name == "BaseAgent":
+        from .BaseAgent.base_agent import BaseAgent
+        return BaseAgent
+    if name == "ObtainerAgent":
+        from .Obtainer.obtainer_agent import ObtainerAgent
+        return ObtainerAgent
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

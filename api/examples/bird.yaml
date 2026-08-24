@@ -21,12 +21,11 @@ dataloader_num_workers: 4
 output_dir: /home/lpc/repos/LLaMA-Factory/output/
 logging_steps: 10
 save_steps: 100
+save_total_limit: 10
 plot_loss: true
 overwrite_output_dir: true
 save_only_model: false
-report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
-use_swanlab: true
-swanlab_mode: local
+report_to: none  # local Trainer metric files are used instead
 
 ### train
 per_device_train_batch_size: 1

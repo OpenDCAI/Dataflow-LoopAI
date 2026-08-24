@@ -8,6 +8,8 @@ export const useLoopAI = defineStore('useLoopAI', () => {
     const instance = getCurrentInstance()
     const proxy = instance.proxy
 
+    const currentTask = ref(null)
+
     const configId = ref(null)
     const config = ref({
         system: {},
@@ -61,36 +63,39 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         })
     }
 
-    const taskStatus = ref({
+    const emptyTaskStatus = () => ({
         started: false,
         running: false,
         waiting_llm: true,
         event_streaming: 'not_ready',
         current: null,
-        running_tasks: null,
+        node_status: null,
         interrupt_value: 'input the human query',
         state: null,
         custom_info: null,
         update_custom_info: null
     })
-    const getStatus = async () => {
+    const taskStatus = ref(emptyTaskStatus())
+    const getStatus = async (task_id = currentTask.value?.task_id) => {
+        if (!task_id) return
+        const requestedTaskId = task_id
         await proxy.$api.starter
-            .getAgentStatus()
+            .getAgentStatus(task_id)
             .then((res) => {
+                if (currentTask.value?.task_id !== requestedTaskId) return
                 if (res.code === 200) {
                     taskStatus.value.started = true
                     for (let key in taskStatus.value) {
                         if (res.data[key] !== undefined) taskStatus.value[key] = res.data[key]
                     }
-                    syncMessages()
-                    checkIfMsgStreamOnGoing()
+                    getMessages()
                 } else {
                     taskStatus.value.started = false
                     taskStatus.value.running = false
                     taskStatus.value.waiting_llm = false
                 }
             })
-            .catch((error) => {
+            .catch(() => {
                 taskStatus.value.running = false
                 taskStatus.value.waiting_llm = false
                 proxy.$barWarning('server connection error', {
@@ -98,93 +103,189 @@ export const useLoopAI = defineStore('useLoopAI', () => {
                 })
             })
     }
-    // sometimes when the llm call the tools, the msg stream will receive the finished status, but it actually still not finished.
-    // we should check if the msg stream is on going.
-    const checkIfMsgStreamOnGoing = async () => {
-        if (taskStatus.value.event_streaming === 'start' && !msgStreamModel.value.loading)
-            await getMsgStream()
-    }
     const taskMessages = ref([])
     const msgStreamModel = ref({
-        msg: null,
-        loading: false
+        msgs: [],
+        loading: false,
+        status: 'stale'
     })
+    const looperTakeover = ref({
+        timer: null,
+        seconds: 15,
+        duration: 15,
+        active: false
+    })
+    const clearLooperTakeoverCountdown = ({ resetSeconds = true, keepActive = false } = {}) => {
+        if (looperTakeover.value.timer) {
+            clearInterval(looperTakeover.value.timer)
+            looperTakeover.value.timer = null
+        }
+        looperTakeover.value.active = keepActive ? looperTakeover.value.active : false
+        if (resetSeconds) {
+            looperTakeover.value.seconds = looperTakeover.value.duration
+        }
+    }
+    const setLooperTakeoverCountdown = ({
+        seconds = looperTakeover.value.seconds,
+        duration = looperTakeover.value.duration,
+        active = looperTakeover.value.active
+    } = {}) => {
+        looperTakeover.value.duration = duration
+        looperTakeover.value.seconds = seconds
+        looperTakeover.value.active = active
+    }
+    
     const msgEventSource = ref(null)
+    const msgEventKeys = ref(new Set())
+
+
+    const setCurrentTask = async (task) => {
+        currentTask.value = task || null
+        taskStatus.value = emptyTaskStatus()
+        taskMessages.value = []
+        msgStreamModel.value.msgs = []
+        msgStreamModel.value.loading = false
+        msgStreamModel.value.status = 'stale'
+        closeMsgStream()
+        clearLooperTakeoverCountdown()
+        await getMessages()
+    }
     const getMessages = async () => {
-        const getMsg = async () => {
-            await proxy.$api.starter.getAgentMessages().then((res) => {
+        if (!currentTask.value?.task_id) return;
+        const normalizeConversationMessage = (item) => {
+
+            return {
+                type: item?.role,
+                data: {
+                    id: item?.id,
+                    role: item?.role,
+                    state: item?.state,
+                    content: item?.content || ''
+                }
+            }
+        }
+        await proxy.$api.starter.starterCodexSession(currentTask.value?.task_id)
+            .then((res) => {
                 if (res.code === 200) {
-                    taskMessages.value = res.data || []
-                } else {
-                    taskMessages.value = []
+                    taskMessages.value = (res.data?.conversation || []).map((item) =>
+                        normalizeConversationMessage(item)
+                    )
+                    const streamStatus = res?.data?.status || 'stale'
+                    const shouldStream = ['submitted', 'running', 'finishing'].includes(streamStatus)
+                    msgStreamModel.value.status = streamStatus
+                    msgStreamModel.value.loading = shouldStream
+                    if (shouldStream && !msgEventSource.value) {
+                        getMsgStream()
+                    }
                 }
             })
-        }
-        if (taskStatus.value.waiting_llm)
-            try {
-                taskMessages.value = taskStatus.value.custom_info.llm_node.data.history
-            } catch (e) {
-                await getMsg()
-            }
-        else {
-            await getMsg()
-        }
+            .catch(() => {
+                msgStreamModel.value.loading = false
+            })
     }
-    const syncMessages = () => {
-        const getMsg = () => {
-            try {
-                let _messages = []
-                taskStatus.value.state.messages.forEach((item, index) => {
-                    _messages.push({
-                        type: item.type,
-                        data: item
-                    })
-                })
-                taskMessages.value = _messages
-            } catch (e) {
-                taskMessages.value = []
-            }
-        }
-        if (taskStatus.value.waiting_llm)
-            try {
-                taskMessages.value = taskStatus.value.custom_info.llm_node.data.history
-            } catch (e) {
-                getMsg()
-            }
-        else getMsg()
+
+    const resetStarterCodexSession = async () => {
+        if (!currentTask.value?.task_id) return null
+        closeMsgStream()
+        const resp = await proxy.$api.starter
+            .starterCodexSessionReset(currentTask.value.task_id)
+            .then(async (res) => {
+                if (res.code === 200) {
+                    taskMessages.value = []
+                    msgStreamModel.value.status = 'stale'
+                    msgStreamModel.value.loading = false
+                    msgStreamModel.value.msgs = []
+                    msgEventKeys.value = new Set()
+                    await getMessages()
+                }
+                return res
+            })
+            .catch((error) => {
+                msgStreamModel.value.loading = false
+                throw error
+            })
+        return resp
     }
-    const getMsgStream = async () => {
+
+    const terminateStarterCodexSession = async () => {
+        if (!currentTask.value?.task_id) return null
+        const resp = await proxy.$api.starter.starterCodexSessionTerminate(currentTask.value.task_id).then(async res => {
+            if (res.code === 200) {
+                closeMsgStream()
+            }
+            return res
+        })
+        return resp;
+    }
+
+    const closeMsgStream = ({ keepMessage = false } = {}) => {
         if (msgEventSource.value) {
             msgEventSource.value.close()
+            msgEventSource.value = null
         }
+        msgStreamModel.value.loading = false
+        if (!keepMessage) {
+            msgStreamModel.value.msgs = []
+            msgEventKeys.value = new Set()
+        }
+    }
+    const buildStreamEventKey = (data, event) => {
+        const sessionId = data?.session_id || currentTask.value?.task_id || ''
+        const eventIndex = data?._event_index ?? event?.lastEventId
+        if (eventIndex !== undefined && eventIndex !== null && String(eventIndex) !== '') {
+            return `${sessionId}:event-index:${eventIndex}`
+        }
+        const codexEvent = data?.event || {}
+        const item = codexEvent?.item || {}
+        const itemId = item?.id || item?.call_id || item?.thread_id
+        if (data?.type === 'event' && codexEvent?.type && itemId) {
+            return `${sessionId}:item:${codexEvent.type}:${itemId}`
+        }
+        if (data?.type === 'event' && codexEvent?.type && item?.type === 'command_execution' && item?.command) {
+            return `${sessionId}:command:${codexEvent.type}:${item.command}`
+        }
+        if (data?.type && data?.message) return `${sessionId}:message:${data.type}:${data.message}`
+        return null
+    }
+    const getMsgStream = async () => {
+        if (!currentTask.value?.task_id) return
+        closeMsgStream()
         let baseURL = getBaseURL()
-        msgEventSource.value = new EventSource(baseURL + '/starter/agent/message/stream')
+        msgStreamModel.value.loading = true
+        msgEventSource.value = new EventSource(
+            `${baseURL}/starter/codex/session/${currentTask.value.task_id}/stream`
+        )
         msgEventSource.value.onmessage = async (event) => {
             let resData = JSON.parse(event.data)
-            if (resData.code === 200) {
-                if (resData.status === 'loading') {
-                    msgStreamModel.value.loading = true
-                    msgStreamModel.value.msg = resData.data
-                } else if (resData.status === 'success') {
-                    msgStreamModel.value.loading = false
-                    msgStreamModel.value.msg = null
-                    await getStatus()
-                }
-            } else if (resData.code === 400) {
+            if (resData.code !== 200) {
                 msgStreamModel.value.loading = false
-                msgStreamModel.value.msg = null
+                msgStreamModel.value.msgs = []
                 proxy.$barWarning(resData.message, {
                     status: 'warning'
                 })
+                return
             }
+            const eventKey = buildStreamEventKey(resData.data, event)
+            if (eventKey) {
+                if (msgEventKeys.value.has(eventKey)) return
+                msgEventKeys.value.add(eventKey)
+            }
+            msgStreamModel.value.msgs.push(resData.data)
         }
-        msgEventSource.value.onerror = (error) => {
-            // console.error(error)
-            msgEventSource.value.close()
-            msgStreamModel.value.loading = false
-            msgStreamModel.value.msg = null
+        msgEventSource.value.onerror = () => {
+            closeMsgStream()
         }
     }
+    const currentMsg = computed(() => {
+        let lastIdx = msgStreamModel.value.msgs.length - 1
+        for (let i = lastIdx; i >= 0; i--) {
+            if (msgStreamModel.value.msgs[i].type === 'submitted') {
+                lastIdx = i
+                break
+            }
+        }
+        return msgStreamModel.value.msgs.slice(lastIdx)
+    })
 
     const stateSchema = ref(null)
     const getStateSchema = async () => {
@@ -197,10 +298,23 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         })
     }
 
+    const getTaskStateConfig = async (task_id = currentTask.value?.task_id) => {
+        if (!task_id) return null
+        const resp = await proxy.$api.task.getTaskStateConfig(task_id)
+        return resp
+    }
+    const updateTaskStateConfig = async (payload, task_id = currentTask.value?.task_id) => {
+        if (!task_id) return null
+        const resp = await proxy.$api.task.updateTaskStateConfig(task_id, payload)
+        return resp
+    }
+
     return {
         configId,
         config,
         getConfigs,
+        currentTask,
+        setCurrentTask,
         resources,
         getResources,
         tasks,
@@ -209,9 +323,17 @@ export const useLoopAI = defineStore('useLoopAI', () => {
         getStatus,
         taskMessages,
         msgStreamModel,
+        looperTakeover,
+        currentMsg,
         getMessages,
+        resetStarterCodexSession,
+        terminateStarterCodexSession,
         getMsgStream,
+        clearLooperTakeoverCountdown,
+        setLooperTakeoverCountdown,
         stateSchema,
-        getStateSchema
+        getStateSchema,
+        getTaskStateConfig,
+        updateTaskStateConfig
     }
 })

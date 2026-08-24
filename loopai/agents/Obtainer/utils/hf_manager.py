@@ -29,11 +29,26 @@ class HuggingFaceManager:
         temp_base_dir: Optional[str] = None,
     ):
         """Initialize HuggingFace Manager"""
-        self.hf_endpoint = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
+        from loopai.utils.hf_endpoints import (
+            apply_hf_endpoint,
+            endpoint_reachable,
+            hf_endpoint_chain,
+        )
+
+        self.endpoint_chain = hf_endpoint_chain()
+        self._endpoint_index = 0
+        self.hf_endpoint = ""
+        for candidate in self.endpoint_chain:
+            if endpoint_reachable(candidate):
+                self.hf_endpoint = candidate
+                break
+        if not self.hf_endpoint:
+            self.hf_endpoint = self.endpoint_chain[0]
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.disable_cache = disable_cache
-        os.environ["HF_ENDPOINT"] = self.hf_endpoint
+        apply_hf_endpoint(self.hf_endpoint)
+        os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
         # Set up temp directory
         self.temp_base_dir = os.getenv("DF_TEMP_DIR") or temp_base_dir
@@ -143,6 +158,29 @@ class HuggingFaceManager:
             logger.info(f"[HuggingFace] Non-retryable error: {e}")
             raise e
 
+    def _next_endpoint(self) -> Optional[str]:
+        """Advance to the next mirror in the fallback chain and rebuild the API.
+
+        Returns ``None`` once every endpoint has been tried, so callers can
+        stop retrying instead of looping forever.
+        """
+        if self._endpoint_index + 1 >= len(self.endpoint_chain):
+            return None
+        self._endpoint_index += 1
+        endpoint = self.endpoint_chain[self._endpoint_index]
+        self.hf_endpoint = endpoint
+        from loopai.utils.hf_endpoints import apply_hf_endpoint
+
+        apply_hf_endpoint(endpoint)
+        try:
+            from huggingface_hub import HfApi
+
+            self.hf_api = HfApi(endpoint=endpoint)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error(f"[HuggingFace] Failed to rebuild API for {endpoint}: {exc}")
+            self.hf_api = None
+        return endpoint
+
     async def search_datasets(
         self, keywords: List[str], max_results: int = 5
     ) -> Dict[str, List[Dict]]:
@@ -153,13 +191,23 @@ class HuggingFaceManager:
 
         results = {}
         for keyword in keywords:
-            try:
-                logger.info(f"[HuggingFace] Searching keyword: '{keyword}'")
-                datasets = await self._retry_async_thread(
-                    self.hf_api.list_datasets, search=keyword, limit=max_results
-                )
+            found = False
+            for _ in range(len(self.endpoint_chain)):
+                try:
+                    logger.info(f"[HuggingFace] Searching keyword: '{keyword}'")
+                    datasets = await self._retry_async_thread(
+                        self.hf_api.list_datasets, search=keyword, limit=max_results
+                    )
 
-                results[keyword] = []
+                    results[keyword] = []
+                except Exception as exc:
+                    logger.info(
+                        f"[HuggingFace] Error searching '{keyword}' via "
+                        f"{self.hf_endpoint}: {exc}"
+                    )
+                    if self._next_endpoint() is None:
+                        break
+                    continue
                 for dataset in datasets:
                     dataset_size = None
                     try:
@@ -185,64 +233,71 @@ class HuggingFaceManager:
                     })
 
                 logger.info(f"[HuggingFace] Found {len(results[keyword])} datasets")
-            except Exception as e:
-                logger.info(f"[HuggingFace] Error searching '{keyword}': {e}")
+                found = True
+                break
+            if not found:
                 results[keyword] = []
 
         return results
 
     async def download_dataset(self, dataset_id: str, save_dir: str) -> Optional[str]:
-        """Download HuggingFace dataset"""
+        """Download HuggingFace dataset with multi-level endpoint fallback."""
         if not self._snapshot_download:
             logger.error("[HuggingFace] Snapshot download not available")
             return None
 
-        try:
-            logger.info(f"[HuggingFace] Starting download: {dataset_id}")
-            dataset_dir = os.path.join(save_dir, dataset_id.replace("/", "_"))
-            os.makedirs(dataset_dir, exist_ok=True)
-
-            config_to_load = None
+        for _ in range(len(self.endpoint_chain)):
             try:
-                logger.info(f"[HuggingFace] Checking configs for {dataset_id}...")
-                if self._get_dataset_config_names:
-                    configs = await self._retry_async_thread(
-                        self._get_dataset_config_names, path=dataset_id
-                    )
-                    if configs:
-                        config_to_load = configs[0]
-                        logger.info(
-                            f"[HuggingFace] Dataset {dataset_id} has {len(configs)} configs. "
-                            f"Auto-selecting first: {config_to_load}"
-                        )
-            except Exception as e:
-                logger.info(f"[HuggingFace] Error checking configs: {e}")
+                logger.info(f"[HuggingFace] Starting download: {dataset_id}")
+                dataset_dir = os.path.join(save_dir, dataset_id.replace("/", "_"))
+                os.makedirs(dataset_dir, exist_ok=True)
 
-            logger.info(f"[HuggingFace] Starting download of all files for {dataset_id}...")
-            returned_path = await self._retry_async_thread(
-                self._snapshot_download,
-                repo_id=dataset_id,
-                local_dir=dataset_dir,
-                repo_type="dataset",
-                force_download=True,
-                endpoint=self.hf_endpoint,
-            )
-
-            # Clean up temp cache if disabled
-            if self.disable_cache and hasattr(self, "_temp_cache_dir") and self._temp_cache_dir:
+                config_to_load = None
                 try:
-                    if os.path.exists(self._temp_cache_dir):
-                        shutil.rmtree(self._temp_cache_dir, ignore_errors=True)
-                        logger.info(f"[HuggingFace] Cleaned temp cache: {self._temp_cache_dir}")
+                    logger.info(f"[HuggingFace] Checking configs for {dataset_id}...")
+                    if self._get_dataset_config_names:
+                        configs = await self._retry_async_thread(
+                            self._get_dataset_config_names, path=dataset_id
+                        )
+                        if configs:
+                            config_to_load = configs[0]
+                            logger.info(
+                                f"[HuggingFace] Dataset {dataset_id} has {len(configs)} configs. "
+                                f"Auto-selecting first: {config_to_load}"
+                            )
                 except Exception as e:
-                    logger.info(f"[HuggingFace] Error cleaning cache: {e}")
+                    logger.info(f"[HuggingFace] Error checking configs: {e}")
 
-            config_str = f"(config: {config_to_load})" if config_to_load else "(default config)"
-            logger.info(
-                f"[HuggingFace] Dataset {dataset_id} {config_str} downloaded successfully to {returned_path}"
-            )
-            return returned_path
-        except Exception as e:
-            logger.info(f"[HuggingFace] Download failed for {dataset_id}: {e}")
-            return None
+                logger.info(f"[HuggingFace] Starting download of all files for {dataset_id}...")
+                returned_path = await self._retry_async_thread(
+                    self._snapshot_download,
+                    repo_id=dataset_id,
+                    local_dir=dataset_dir,
+                    repo_type="dataset",
+                    force_download=True,
+                    endpoint=self.hf_endpoint,
+                )
+
+                # Clean up temp cache if disabled
+                if self.disable_cache and hasattr(self, "_temp_cache_dir") and self._temp_cache_dir:
+                    try:
+                        if os.path.exists(self._temp_cache_dir):
+                            shutil.rmtree(self._temp_cache_dir, ignore_errors=True)
+                            logger.info(f"[HuggingFace] Cleaned temp cache: {self._temp_cache_dir}")
+                    except Exception as e:
+                        logger.info(f"[HuggingFace] Error cleaning cache: {e}")
+
+                config_str = f"(config: {config_to_load})" if config_to_load else "(default config)"
+                logger.info(
+                    f"[HuggingFace] Dataset {dataset_id} {config_str} downloaded successfully to {returned_path}"
+                )
+                return returned_path
+            except Exception as e:
+                logger.info(
+                    f"[HuggingFace] Download failed for {dataset_id} via "
+                    f"{self.hf_endpoint}: {e}"
+                )
+                if self._next_endpoint() is None:
+                    break
+        return None
 

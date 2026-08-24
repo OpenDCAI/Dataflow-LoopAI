@@ -1,33 +1,34 @@
 <template>
     <div class="msg-block" :class="[{ dark: theme === 'dark' }]">
         <div class="msg-wrapper">
-            <div class="msg-role-block">
-                <p class="msg-guid">
-                    {{ getRoleName }}
-                </p>
-            </div>
             <div class="msg-content-block">
-                <div
-                    v-if="thisValue.type === 'human'"
-                    class="msg-role-block"
-                    :style="{ background: gradient }"
-                >
-                    <img class="agent-logo" :src="img.user" draggable="false" alt="" />
+                <div class="row-block">
+                    <div
+                        v-if="thisValue.type === 'user'"
+                        class="msg-role-block"
+                        :style="{ background: gradient }"
+                    >
+                        <img class="agent-logo" :src="img.user" draggable="false" alt="" />
+                    </div>
+                    <div
+                        v-if="thisValue.type === 'assistant'"
+                        class="msg-role-block"
+                        :style="{ background: 'rgba(245, 245, 245, 1)' }"
+                    >
+                        <img class="agent-logo" :src="img.agent" draggable="false" alt="" />
+                    </div>
+                    <div
+                        v-if="thisValue.type === 'tool'"
+                        class="msg-role-block"
+                        :style="{ background: 'rgba(245, 245, 245, 1)' }"
+                    >
+                        <img class="agent-logo" :src="img.tool" draggable="false" alt="" />
+                    </div>
+                    <p class="msg-role-text">
+                        {{ getRoleName }}
+                    </p>
                 </div>
-                <div
-                    v-if="thisValue.type === 'ai'"
-                    class="msg-role-block"
-                    :style="{ background: 'rgba(245, 245, 245, 1)' }"
-                >
-                    <img class="agent-logo" :src="img.agent" draggable="false" alt="" />
-                </div>
-                <div
-                    v-if="thisValue.type === 'tool'"
-                    class="msg-role-block"
-                    :style="{ background: 'rgba(245, 245, 245, 1)' }"
-                >
-                    <img class="agent-logo" :src="img.tool" draggable="false" alt="" />
-                </div>
+
                 <div
                     v-if="!editable && thisValue.type !== 'tool'"
                     v-html="mdHTML"
@@ -82,13 +83,13 @@
             <div v-show="thisValue.type !== 'tool'" class="msg-control-block">
                 <div class="msg-control-right-block">
                     <fv-button
-                        v-show="thisValue.type === 'human' && false"
+                        v-show="thisValue.type === 'user' && false"
                         :theme="theme"
                         :background="
                             theme === 'dark' ? 'rgba(50, 58, 71, 1)' : 'rgba(255, 255, 255, 1)'
                         "
                         :border-radius="50"
-                        style="width: 30px; height: 30px; flex-shrink: 0"
+                        style="width: 25px; height: 25px; flex-shrink: 0"
                         @click="editable = !editable"
                     >
                         <i
@@ -103,7 +104,7 @@
                         :background="
                             theme === 'dark' ? 'rgba(50, 58, 71, 1)' : 'rgba(255, 255, 255, 1)'
                         "
-                        style="width: 30px; height: 30px; margin-left: 5px; flex-shrink: 0"
+                        style="width: 25px; height: 25px; margin-left: 5px; flex-shrink: 0"
                         :title="local('Copy')"
                         @click="copyText"
                     >
@@ -212,8 +213,8 @@ export default {
         ...mapState(useAppConfig, ['local']),
         ...mapState(useTheme, ['color', 'gradient']),
         getRoleName() {
-            if (this.thisValue.type === 'human') return this.local('You')
-            if (this.thisValue.type === 'ai') return this.local('AI')
+            if (this.thisValue.type === 'user') return this.local('You')
+            if (this.thisValue.type === 'assistant') return this.local('AI')
             return this.thisValue.type[0].toUpperCase() + this.thisValue.type.slice(1)
         },
         computedContent() {
@@ -327,6 +328,12 @@ export default {
     display: flex;
     overflow: hidden;
 
+    * {
+        td {
+            overflow: overlay;
+        }
+    }
+
     &:last-child {
         margin-bottom: 100px;
     }
@@ -366,7 +373,7 @@ export default {
         width: 100%;
         max-width: 900px;
         height: auto;
-        padding: 10px 0px;
+        padding: 5px 0px;
         background: rgba(255, 255, 255, 0.3);
         border: rgba(160, 160, 160, 0.2) solid thin;
         border-radius: 12px;
@@ -380,27 +387,6 @@ export default {
         }
     }
 
-    .msg-role-block {
-        @include Vcenter;
-
-        position: relative;
-        width: 100%;
-        max-width: 900px;
-        height: auto;
-        flex-shrink: 0;
-        padding: 5px 15px;
-        border-radius: 8px;
-
-        .msg-guid {
-            @include nowrap;
-
-            font-size: 13px;
-            font-weight: bold;
-            color: rgba(13, 13, 13, 1);
-            user-select: none;
-        }
-    }
-
     .msg-control-block {
         @include Vstart;
 
@@ -409,7 +395,7 @@ export default {
         max-width: 900px;
         height: auto;
         flex-shrink: 0;
-        padding: 5px 15px;
+        padding: 2px 15px;
         border-radius: 8px;
 
         .msg-control-left-block {
@@ -444,26 +430,41 @@ export default {
         height: auto;
         flex-shrink: 0;
         padding: 5px 15px;
+        gap: 10px;
         display: flex;
+        flex-direction: column;
 
-        .msg-role-block {
-            @include HcenterVcenter;
+        .row-block {
+            @include Vcenter;
 
-            width: 35px;
-            height: 35px;
-            border-radius: 50%;
-            user-select: none;
-            overflow: hidden;
+            gap: 5px;
 
-            .agent-logo {
-                width: 20px;
-                height: 20px;
+            .msg-role-text {
+                font-size: 12px;
+                font-weight: bold;
+                color: rgba(13, 13, 13, 1);
+                user-select: none;
             }
 
-            .model-avatar {
-                width: 35px;
-                height: 35px;
-                object-fit: cover;
+            .msg-role-block {
+                @include HcenterVcenter;
+
+                width: 25px;
+                height: 25px;
+                border-radius: 50%;
+                user-select: none;
+                overflow: hidden;
+
+                .agent-logo {
+                    width: 15px;
+                    height: 15px;
+                }
+
+                .model-avatar {
+                    width: 25px;
+                    height: 25px;
+                    object-fit: cover;
+                }
             }
         }
 
@@ -471,9 +472,9 @@ export default {
             @include VcenterC;
 
             position: relative;
-            width: 10px;
+            width: 100%;
             flex: 1;
-            padding: 0px 15px;
+            padding: 0px 5px;
             font-size: 0.8rem;
             color: rgba(55, 65, 81, 1);
             line-height: 1.6;
@@ -634,20 +635,18 @@ export default {
         .tool-msg-info {
             @include Vcenter;
 
-            width: 1px;
+            width: 100%;
             max-width: 100%;
-            padding-left: 15px;
             gap: 5px;
-            flex: 1;
             flex-wrap: wrap;
             user-select: none;
             cursor: default;
+            overflow: hidden;
 
             .tool-msg-item {
                 @include HbetweenVcenter;
 
-                width: auto;
-                max-width: 100%;
+                width: 100%;
                 height: auto;
                 gap: 5px;
                 padding: 5px;
@@ -664,6 +663,7 @@ export default {
                     overflow-x: overlay;
 
                     .tool-msg-value {
+                        width: 100%;
                         border-radius: 8px;
                     }
                 }
@@ -671,7 +671,9 @@ export default {
                 .tool-msg-key {
                     @include Vcenter;
 
+                    width: auto;
                     height: 100%;
+                    flex-shrink: 0;
                 }
 
                 .tool-msg-value {

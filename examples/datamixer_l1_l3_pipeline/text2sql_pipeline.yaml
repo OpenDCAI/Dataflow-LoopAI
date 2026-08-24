@@ -1,0 +1,111 @@
+pipeline:
+  name: webpage_text2sql_l1_to_executable_sft_l3
+  source:
+    dataset: webpage_text2sql_l1
+    filter: quality_level = 'L1'
+  operators:
+    - name: webpage_to_pt
+      args:
+        engine: mineru
+        min_chars: 300
+        max_chars: 120000
+        mineru_transport: http
+        mineru_url: http://127.0.0.1:7986
+        mineru_batch_size: 1
+        mineru_timeout: 900
+        fallback: legacy
+
+    - name: dataflow
+      args:
+        op: WordNumberFilter
+        input_key: text
+        output_key: native_word_count
+        kind: filter
+        min_words: 40
+        max_words: 60000
+
+    - name: domain_classify
+      args:
+        model: qwen3-14b-fp8
+        labels: [text2sql]
+        chunk_size: 1
+        max_concurrency: 4
+        max_input_chars: 12000
+        max_tokens: 2048
+
+    - name: domain_quality_filter
+      args:
+        target_domain: text2sql
+        min_classifier_confidence: 0.8
+        min_chars: 300
+      output:
+        dataset: webpage_text2sql_l2_pt
+        quality_level: L2
+        stage: pretrain
+        modality: text
+        processing_level: text2sql_source_admitted
+        description: PT containing Qwen-confirmed Text2SQL DDL and query evidence.
+
+    - name: pt_to_sft_text2sql
+      args:
+        model: qwen3-14b-fp8
+        chunk_size: 1
+        max_concurrency: 4
+        max_input_chars: 12000
+        max_tokens: 4096
+        max_retries: 2
+
+    # Local materialization only: creates the SQLite DB consumed by native
+    # DataFlow Text2SQL operators; it does not assign a quality score.
+    - name: text2sql_sqlite_prepare
+      args:
+        database_root: runtime/text2sql_databases
+
+    - name: dataflow
+      args:
+        op: SQLExecutionFilter
+        kind: filter
+        database_manager:
+          db_type: sqlite
+          config:
+            root_path: runtime/text2sql_databases
+        run_kwargs:
+          input_sql_key: SQL
+          input_db_id_key: db_id
+        runtime:
+          refresh_database_manager: true
+
+    - name: dataflow
+      args:
+        op: Text2SQLPromptGenerator
+        kind: map
+        database_manager:
+          db_type: sqlite
+          config:
+            root_path: runtime/text2sql_databases
+        run_kwargs:
+          input_question_key: question
+          input_db_id_key: db_id
+          output_prompt_key: text2sql_prompt
+        runtime:
+          refresh_database_manager: true
+
+    - name: dataflow
+      args:
+        op: SQLComponentClassifier
+        kind: map
+        difficulty_thresholds: [2, 4, 6]
+        difficulty_labels: [easy, medium, hard, extra]
+        run_kwargs:
+          input_sql_key: SQL
+          output_difficulty_key: sql_component_difficulty
+
+    - name: text2sql_sft_validate
+      output:
+        dataset: webpage_text2sql_l3_sft
+        quality_level: L3
+        stage: sft
+        modality: text
+        task_type: text2sql
+        processing_level: executable_grounded_sft
+        description: Grounded Text2SQL SFT accepted by native execution and difficulty operators.

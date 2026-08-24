@@ -1,7 +1,7 @@
 # %%
 """
-TrainerAgent 测试脚本
-演示如何使用 TrainerAgent 进行模型训练
+Trainer Skill 测试脚本
+演示如何使用 Trainer Skill 进行模型训练
 
 功能特性：
 1. 配置生成：直接生成YAML格式的配置文件，基于qwen2.5-coder模板
@@ -14,8 +14,8 @@ TrainerAgent 测试脚本
 - 训练任务通过本地 TaskManager 执行
 """
 
-from loopai.agents import TrainerAgent
 from loopai.memory import checkpointer, store
+from loopai.skills.Trainer.trainer_agent import TrainerAgent
 from rich.console import Console
 from rich.live import Live
 from rich.text import Text
@@ -41,13 +41,9 @@ training_state = {
         'llamafactory_dir': '/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/',
         'train_input_dataset_path': "/jizhicfs/hymiezhao/lpc/repos/LLaMA-Factory/data/alpaca_en_demo.json",  # 使用 JSON 格式数据集
         'train_input_task_description': '训练一个能够回答简单问题和进行对话的AI助手模型，主要用于日常对话和基础问答任务',
-        'train_input_config_template_path': "loopai/agents/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
+        'train_input_config_template_path': "loopai/skills/Trainer/templates/qwen2_5_coder_bird_full_sft.yaml",
         'train_input_model_name': '/jizhicfs/hymiezhao/models/Qwen2.5-1.5B',
         'output_dir': './output/training_test',
-
-        # 可选字段（如果不提供将使用默认值）
-        'train_input_use_swanlab': True,
-        'train_input_swanlab_project': 'test_llamafactory_training',
     }
 }
 
@@ -95,14 +91,11 @@ try:
         elif stage_name == 'training_execution' and status:
             task_id = stage_info.get('task_id')
             final_status = stage_info.get('final_status')
-            train_output_swanlab_log_path = stage_info.get('train_output_swanlab_log_path')
             if task_id:
                 console.print(f"    🆔 训练任务ID: {task_id}")
             if final_status:
                 status_text = final_status.get('status', '未知')
                 console.print(f"    📊 最终状态: {status_text}")
-            if train_output_swanlab_log_path:
-                console.print(f"    📜 SwanLab 日志: {train_output_swanlab_log_path}")
 
         if stage_info.get('error'):
             console.print(f"    ❌ 错误: {stage_info['error']}")
@@ -124,10 +117,6 @@ try:
         # 如果训练失败，显示日志路径
         if training_info.get('log_path'):
             console.print(f"  📋 训练日志: {training_info['log_path']}")
-    
-    # 显示 SwanLab 链接（如果有）
-    if result.get('swanlab_url'):
-        console.print(f"\n[bold cyan]📊 SwanLab 监控: {result['swanlab_url']}[/bold cyan]")
     
 except Exception as e:
     console.print(f"[bold red]❌ 训练流程执行失败: {str(e)}[/bold red]")
