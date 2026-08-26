@@ -17,6 +17,7 @@ import math
 import os
 import random
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -88,33 +89,19 @@ def parse_llm_scalar_score(value: Any, *, minimum: int = 1, maximum: int = 5) ->
     return score
 
 
-def dataflow_skills_root() -> Path | None:
-    candidates = [
-        os.environ.get("DATAFLOW_SKILLS_ROOT"),
-        Path.cwd() / ".cache_codex" / "external" / "DataFlow-Skills",
-        Path(__file__).resolve().parents[4] / ".cache_codex" / "external" / "DataFlow-Skills",
-    ]
-    for cand in candidates:
-        if cand and (Path(cand) / "generating-dataflow-pipeline" / "SKILL.md").exists():
-            return Path(cand)
-    return None
+def dataflow_pipeline_skill_asset() -> Path:
+    """Return the repository-owned DataFlow pipeline skill asset."""
+    return Path(__file__).resolve().parent / "assets" / "generating-dataflow-pipeline"
 
 
 def dataflow_pipeline_skill_text() -> str:
-    root = dataflow_skills_root()
-    if root:
-        skill = root / "generating-dataflow-pipeline" / "SKILL.md"
-        return skill.read_text(encoding="utf-8")
-    return (
-        "# DataFlow Pipeline Code Generator\n"
-        "Given a target and JSONL sample file, inspect fields, choose an ordered "
-        "DataFlow operator chain, emit an operator decision JSON, generate a "
-        "standard FileStorage-based Python pipeline, run it on the provided "
-        "JSONL, and report the processed JSONL path. Prefer specialized "
-        "operators over generic prompted operators. Validate field dependencies "
-        "before every step. Use sample_id as the join key and do not overwrite "
-        "DataMixer content."
-    )
+    return (dataflow_pipeline_skill_asset() / "SKILL.md").read_text(encoding="utf-8")
+
+
+def dataflow_agents_template() -> str:
+    """Read the reviewed, repository-owned DataFlow agent instructions."""
+    path = Path(__file__).resolve().parent / "assets" / "dataflow-agent-AGENTS.md"
+    return path.read_text(encoding="utf-8")
 
 
 def _project_root() -> Path | None:
@@ -133,6 +120,100 @@ def dataflow_codex_home() -> Path:
 
 DATAFLOW_AGENTS_MD = """# LoopAI DataMixer DataFlow Agent
 
+## Task-specific benchmark and pipeline contract
+
+Given a downstream task, first infer the capabilities measured by the target
+benchmark, then design training-side content for instruction-following
+post-training that develops those capabilities. The objective is not to
+mechanically imitate the benchmark's evaluation prompt or completion shape.
+Content style means what is written inside each post-training record: how a
+standalone user-facing problem or instruction is phrased, what information and
+constraints it includes, how context or examples are presented, how the
+assistant answer responds, and how reasoning, code, derivations, formatting,
+and level of detail are expressed. It does not mean only the schema, field
+layout, empty-field pattern, benchmark interaction format, completion shape,
+or the presence of `instruction` / `input` / `output`.
+
+The benchmark's native evaluation format and the desired post-training format
+are distinct. Unless the downstream request explicitly asks to preserve the
+native evaluation format, construct self-contained instruction-following
+records with a clear user task and a high-quality assistant response. When a
+source instruction or answer does not fit the current post-training objective,
+prefer generating an improved training field.
+
+When the query names or implies a benchmark:
+
+1. Search the DataMixer warehouse for the registered
+   benchmark/contamination-guard set corresponding to the target benchmark.
+2. Read that set's metadata and its associated DataMixer benchmark dataset
+   records to determine its native
+   evaluation format and measured capabilities. Infer the concrete problem
+   types, required knowledge and reasoning, constraints, answer correctness
+   criteria, and expected code/derivation behavior. Translate those requirements
+   into an instruction-following post-training contract with separate standalone
+   user question/instruction and assistant answer formats. Schema and
+   evaluator-facing shape are supporting evidence, not the desired training
+   content itself. When a source instruction or answer is evaluator-facing,
+   semantically inadequate, or does not fit the current post-training objective,
+   prefer generating an improved training field.
+3. If the benchmark is not yet registered in any benchmark/contamination-guard
+   set, download it from the network, register it in the current DataMixer
+   warehouse, and then run the decontamination operator.
+
+Keep this workflow generic across benchmark names, paths, schemas, and task
+formats; do not hard-code any benchmark name or file layout.
+
+Read the `generating-dataflow-pipeline` skill on demand when the task requires
+pipeline generation: if it is available in the Codex skills directory, first
+read its complete `SKILL.md` and any directly referenced template or example
+needed for the task. Use it together with the built-in rules as a reference for
+operator selection, field flow, pipeline structure, and trial validation, and
+try to satisfy both where they apply. If it is unavailable, state that
+limitation and continue with the built-in rules.
+
+Required pipeline behavior:
+
+1. Infer the capabilities measured by the target benchmark, then define an
+   instruction-following post-training content contract that develops those
+   capabilities: a standalone user problem/question format, assistant answer
+   method and presentation, reasoning/code format, required information and
+   constraints, examples, tone, formatting, and detail level. Separately record
+   the benchmark's native evaluation format and supporting schema, and identify
+   source instructions or answers that are evaluator-facing, semantically
+   inadequate, or need improved training counterparts. Do not treat imitation of the
+   benchmark prompt/completion shape as the training objective unless explicitly
+   requested.
+2. Treat the original L3 data as low-quality and untrusted by default. Before
+   selecting operators, directly read and compare the full original content of
+   several representative pending-data records and several records from the
+   DataMixer benchmark dataset associated with the registered benchmark/
+   contamination guard. Guard metadata,
+   schemas, field names, non-empty rates, length statistics, and the mere
+   presence of `instruction`, `input`, or `output` fields are not sufficient
+   evidence of data quality or instruction-following readiness. Judge semantic
+   quality, task completeness, field roles, style differences, and cross-field
+   consistency from the record text itself. Build the pipeline around the
+   concrete defects found in this comparison, using multiple stages of quality
+   filtering and the necessary benchmark-aligned style rewriting or field
+   generation. Do not decide that
+   generation or rewriting is unnecessary until this direct record-level
+   comparison has been completed and cited in the operator decision.
+3. Use multiple filtering operators for an initial screening pass.
+4. When source instructions or answers do not fit the current post-training
+   objective, prefer field-generation operators to produce improved training
+   fields.
+5. Decide from the task requirements whether to use a native reasoning/COT
+   generation operator to create a reasoning field.
+6. Apply another quality-filtering pass after generation.
+7. Keep `sample_id` as the join key, preserve input order, and never write
+   directly to DataMixer catalog/blob files.
+8. Generate a standard DataFlow pipeline, trial-run it on the given sample data,
+   and report exact input/output row counts from the written JSONL files, along
+   with artifact quality, supported data shape, vertical domain, and benchmark.
+
+Deliver a complete pipeline `.py` file, the trial output JSONL, the trial input
+JSONL, and a summary `.md` file.
+
 你是 DataMixer 的 **DataFlow 后处理 agent**（dataflow agent），负责把 L1 -> L2
 -> L3 链路上的数据通过 DataFlow operator 链处理成 **L4**（质量过滤、去重、
 规范化、安全、SFT 有效性），默认情况下 L4 是生产出湖的数据源；若用户明确
@@ -147,7 +228,7 @@ DATAFLOW_AGENTS_MD = """# LoopAI DataMixer DataFlow Agent
 
 ## 核心工作流：试跑成功 -> 交付 pipeline -> 上层跑 chunk 全量 -> L4
 
-1. 先用样例 JSONL 检查字段，规划 operator 链，生成标准 DataFlow FileStorage
+1. 先用样例 JSONL 检查代表性记录原文，规划 operator 链，生成标准 DataFlow FileStorage
    pipeline，并完成试跑。
 2. **试跑成功即交付，全量由上层执行。** 你不需要（也不允许）在同一会话内自己
    启动全量处理或写 `full_processed.jsonl`：
@@ -178,11 +259,11 @@ DATAFLOW_AGENTS_MD = """# LoopAI DataMixer DataFlow Agent
 - **质量评估必须使用 DataFlow 的 LLM 评估算子**（如 `PromptedEvaluator` /
   `PromptedFilter` 等 LLM 打分/过滤算子），不得因耗时或成本而退化成纯启发式
   规则打分；只有任务本身没有 LLM 打分语义、或 LLM serving 不可用时才允许
-  规则算子兜底，且必须在 summary 里说明具体原因。**禁止 LLM 逐条重写或改写
-  文本内容**，LLM 只做打分与筛选。
+  规则算子兜底，且必须在 summary 里说明具体原因。当源数据的指令或答案不符合
+  当前后训练目标时，鼓励使用生成算子构造更合适的训练字段，再使用评估/过滤
+  算子验证生成内容。
 
-- `sample_id` 是唯一 join key，必须原样保留；每个保留行必须逐字保留所有
-  原始字段与值，只允许新增算子字段；输出顺序必须与输入一致。
+- `sample_id` 是唯一 join key，必须原样保留；输出顺序必须与输入一致。
 - DataFlow 的 LLM 算子必须使用清单里的 DataFlow serving 配置
   （`DF_API_KEY`），不得用 Codex 规划模型当算子模型。
 - LLM 打分解析只取最终整数答案（去掉完整 `<think>` 块，或读取显式
@@ -202,8 +283,26 @@ def ensure_dataflow_codex_home() -> Path:
     home = dataflow_codex_home()
     home.mkdir(parents=True, exist_ok=True)
     agents_path = home / "AGENTS.md"
+    # A reviewed AGENTS.md is authoritative. Preserve it verbatim when present;
+    # only bootstrap the file from the built-in template on a fresh workspace.
     if not agents_path.exists():
-        agents_path.write_text(DATAFLOW_AGENTS_MD, encoding="utf-8")
+        agents_path.write_text(dataflow_agents_template(), encoding="utf-8")
+    skills_dir = home / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    source = dataflow_pipeline_skill_asset()
+    target = skills_dir / "generating-dataflow-pipeline"
+    if target.is_symlink():
+        target.unlink()
+    shutil.copytree(source, target, dirs_exist_ok=True)
+    system_skill = Path(__file__).resolve().parent / "assets" / "skill-creator"
+    system_target = skills_dir / "skill-creator"
+    if system_target.is_symlink() and not system_target.exists():
+        system_target.unlink()
+    if system_skill and (system_skill / "SKILL.md").exists() and not system_target.exists():
+        try:
+            system_target.symlink_to(system_skill, target_is_directory=True)
+        except FileExistsError:
+            pass
     return home
 
 
@@ -491,12 +590,6 @@ def build_dataflow_agent_prompt(
     full_jsonl: Path | None = None,
     bucket_plan: list[dict[str, Any]] | None = None,
 ) -> str:
-    skill_text = dataflow_pipeline_skill_text()
-    skill_root = dataflow_skills_root()
-    skill_source = str(skill_root.resolve()) if skill_root else "embedded fallback"
-    expected = expected_outputs or (
-        "Fields needed to satisfy the target; preserve sample_id for merge-back."
-    )
     op_llm = operator_llm or {}
     op_llm_block = (
         "For DataFlow LLM-based operators, instantiate APILLMServing_request with:\n"
@@ -505,81 +598,21 @@ def build_dataflow_agent_prompt(
         f'- key_name_of_api_key="{op_llm.get("api_key_env", "DF_API_KEY")}"\n'
         "Do not use the Codex planning model as the DataFlow operator model.\n"
     )
-    bucket_block = ""
-    if bucket_plan:
-        lines = "\n".join(
-            f"  - {b.get('name')}: target={b.get('target_records')}, "
-            f"exported={b.get('export_rows')}, scope={b.get('where')}"
-            for b in bucket_plan
-        )
-        bucket_block = (
-            "The full input is a **1.5x bucket buffer export**, NOT the whole "
-            "lake: it was sampled per downstream export bucket to "
-            "ceil(bucket_target * 1.5) rows so post-processing keeps enough "
-            "redundancy for the final recipe mix. The upper-layer starter will "
-            "run it with the chunked scaffold; you do not touch it.\n"
-            f"Bucket export plan:\n{lines}\n"
-        )
-    deliver_block = (
-        "After the trial succeeds you DELIVER the pipeline - you do NOT launch "
-        "the full processing yourself:\n"
-        f"- Full input JSONL (already exported for the upper layer): {full_jsonl}\n"
-        f"- Your deliverables: {work_dir}/pipeline.py + trial processed JSONL.\n"
-        f"{bucket_block}"
-        "- The upper-layer starter will run the full input through the outer "
-        "scaffold `python -m loopai.agents.Obtainer.datamixer."
-        "dataflow_chunked_runner --input <full input> --pipeline <your "
-        "pipeline.py> --output <full output> --chunk-size 10000`, which slices "
-        "the input into 10k-row chunks, launches this same pipeline per chunk "
-        "(DATAFLOW_INPUT / DATAFLOW_CACHE_DIR / DATAFLOW_PREFIX), merges "
-        "outputs in input order, and validates byte-for-byte field "
-        "preservation.\n"
-        "- Your generated pipeline MUST follow that env-var convention and keep "
-        "the operator chain/config identical to the trial. Never rewrite row "
-        "text; score/filter only.\n"
-    )
     return f"""You are the DataMixer DataFlow planning agent.
 
-Use the DataFlow-Skills `generating-dataflow-pipeline` rules below. You may
-delegate planning/code-review/trial-run work to sub-agents if this Codex SDK
-surface supports them. If sub-agents are unavailable, do the same steps yourself.
+Use the installed `generating-dataflow-pipeline` skill from the Codex skills
+directory. Read it on demand and use it as a reference for this task.
 
 Task:
 - Downstream target: {target}
 - Sample JSONL file: {trial_jsonl}
 - Text/input field: {field}
-- Expected outputs: {expected}
 - Work directory: {work_dir}
-- DataFlow-Skills root: {skill_source}
+- Full input JSONL reserved for the upper layer: {full_jsonl}
 
 {op_llm_block}
 
-Required behavior:
-1. Inspect the JSONL sample before choosing operators.
-2. Produce an intermediate operator decision JSON with `ops`, `field_flow`, and
-   `reason`.
-3. Generate a standard DataFlow FileStorage pipeline Python file in the work
-   directory. Do not write DataMixer catalog/blob files directly.
-4. Trial-run the generated pipeline on the sample JSONL when dependencies allow.
-5. Locate or create the trial processed JSONL. Every retained row must preserve
-   every original input field and value exactly, including timestamp strings and
-   nested metadata; only new operator fields may be added. DataFrame type
-   inference is not an excuse for rewriting input values. Preserve input order
-   for retained rows and keep `sample_id` as the join key.
-6. {deliver_block}
-7. For LLM scalar scores, keep the raw model verdict auditable while developing
-   the pipeline. Parse only the final answer after removing complete `<think>`
-   blocks (or the content of an explicit `<answer>` block). Never parse the first
-   number from chain-of-thought, clamp a value, or silently default a parse
-   failure to a score. A missing, ambiguous, or out-of-range score must fail the
-   trial. Prefer importing `parse_llm_scalar_score` from
-   `loopai.agents.Obtainer.datamixer.dataflow_agent`, and test it against a
-   synthetic response whose reasoning contains other 1-5 numbers before
-   accepting the output.
-8. Compute every count, range, and example mentioned in the final summary from
-   the processed files after they are written. Do not rely on remembered model
-   output.
-9. Return only one final JSON object with:
+Return one final JSON object with:
    - ok: boolean
    - mode: "trial_run" | "planned_only"   (trial_run = pipeline delivered)
    - operator_decision: object
@@ -594,14 +627,6 @@ Required behavior:
    - errors: list[string]
    - summary: string
 
-Do not claim success if the trial did not run. A successful final result means
-the trial ran and the pipeline was delivered for the upper layer to execute on
-the full input; you must NOT launch the full processing yourself. If DataFlow
-dependencies are missing, return planned_only with ok=false and the exact
-blocker in errors.
-
---- DataFlow-Skills generating-dataflow-pipeline/SKILL.md ---
-{skill_text}
 """
 
 
@@ -800,25 +825,6 @@ def validate_dataflow_agent_result(
     return result
 
 
-def _continuation_prompt(validation_error: str, *, run_dir: Path) -> str:
-    return f"""Your previous turn ended before returning a valid final result.
-
-Validation error: {validation_error}
-Work directory: {run_dir.resolve()}
-
-Continue from the work already completed in this same thread. Do not search the
-filesystem for skills, reread broad documentation, or repeat sample inspection.
-Finish the operator decision, standard DataFlow pipeline, and trial run now.
-Deliver the trial-verified pipeline (mode=trial_run); do NOT launch the full
-processing yourself - the upper layer runs it through the chunked scaffold.
-Then return only the final JSON object required by the original task. Verify
-all artifact paths exist, trial row counts match the files, and every processed
-row preserves a unique input sample_id plus every original input field and
-value. For LLM scalar scoring, strip complete think blocks and parse the final
-answer; never silently replace a parse failure with a score.
-"""
-
-
 def run_dataflow_agent(
     store,
     *,
@@ -969,7 +975,10 @@ def run_dataflow_agent(
                     )
                     if attempt == 2 or not thread_id:
                         break
-                    current_prompt = _continuation_prompt(str(exc), run_dir=run_dir)
+                    current_prompt = (
+                        f"{prompt}\nThe previous result failed validation: {exc}\n"
+                        "Correct the result and return the required final JSON object."
+                    )
         finally:
             if previous_codex_home is None:
                 os.environ.pop("CODEX_HOME", None)

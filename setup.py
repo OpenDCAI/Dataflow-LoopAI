@@ -4,6 +4,12 @@ setup(
     name="loopai",
     version="0.0.1",
     packages=find_packages(),
+    package_data={
+        "loopai": [
+            "agents/Obtainer/datamixer/assets/**/*",
+        ],
+    },
+    include_package_data=False,
     install_requires=[
         "langgraph>=0.6.7",
         "langgraph-checkpoint-sqlite>=3.0.0",
