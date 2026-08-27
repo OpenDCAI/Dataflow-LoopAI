@@ -34,7 +34,20 @@ setup(
         "tenacity>=8.2.0",
         "requests>=2.31.0",
         "transformers>=4.30.0",
-        "pyarrow>=20.0.0",
+        # Keep these aligned with open-dataflow==1.0.10.
+        "numpy<2.0.0",
+        "pyarrow==20.0.0",
+        # DataFlow API serving and Google/Vertex response proxy backends.
+        "google-api-python-client",
+        "google-cloud-aiplatform",
+        "google-cloud-bigquery",
+        "google-genai",
+        # Reasoning math, benchmark evaluation, and Text2SQL operators.
+        "word2number==1.1",
+        "math-verify>=0.9.0",
+        "json5>=0.15.0",
+        "pymysql>=1.2.0",
+        "sqlglot>=30.0.0",
         "mcp[cli]>=0.1.0",
         "tomlkit>=0.13.2",
         "aiosqlite>=0.21.0",
@@ -66,7 +79,7 @@ setup(
         "tree-sitter-markdown>=0.5.1",
         "one-eval @ git+https://github.com/OpenDCAI/One-Eval.git@main",
         "open-dataflow==1.0.10",
-        "vllm>=0.4.0"
+        "vllm>=0.4.0",
     ],
     entry_points={
         "console_scripts": [

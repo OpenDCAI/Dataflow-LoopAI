@@ -118,6 +118,14 @@ field presence as evidence of quality. The goal is to reduce generation load
 while retaining enough valid and diverse source records for the downstream
 target.
 
+For vertical domains whose target capability inherently requires reasoning,
+the pipeline MUST use operators to distinguish records that contain suitable
+chain-of-thought (CoT) content from those that do not. For a record without
+suitable CoT, assess the problem's difficulty and either retain it by routing
+that branch through an appropriate reasoning-generation operator to construct
+CoT, or filter it out when generating useful reasoning is unwarranted or
+unreliable.
+
 ## Prompted Operator Usage Policy (MANDATORY)
 
 - Don't mechanically create one prompted operator per tiny requirement. If one operator can handle multiple related transformations, prefer that over splitting.
@@ -404,5 +412,19 @@ See `examples/` folder for complete workflows:
 2. **`examples/multifield_scoring.md`** — `FormatStrPromptedGenerator` with multi-field scoring
 3. **`examples/multi_stage_pipeline.md`** — Multiple `PromptedGenerator` stages + `GeneralFilter`
 4. **`examples/kbc_pdf_to_qa.md`** — KBC trio (`FileOrURLToMarkdownConverterFlash` + `KBCChunkGenerator` + `KBCTextCleaner`) + `Text2MultiHopQAGenerator` + `PromptedFilter` (scores nested QA_pairs column per chunk)
+5. **`examples/reasoning_math_pipeline.md`** — High-quality math reasoning workflow using native question screening/synthesis, difficulty and category evaluation, `ReasoningAnswerGenerator`, and format/length/ground-truth/ngram validation
+6. **`examples/reasoning_general_pipeline.md`** — General or mixed-domain reasoning generation with reference-aware model judging and n-gram filtering
+7. **`examples/reasoning_math_fusion_pipeline.md`** — Embedding-grounded sequential, parallel, and condition fusion for synthesizing harder math questions, followed by solvability evaluation
+8. **`examples/reasoning_pretrain_pipeline.md`** — Math reasoning generation and filtering followed by explicit SFT-to-pretraining `text` conversion
+9. **`examples/reasoning_diy_pipeline.md`** — Native reasoning operators with custom vertical-domain filter, synthesis, and answer prompt contracts
+10. **`examples/reasoning_cpu_clean_pipeline.md`** — CPU-only format, mathematical ground-truth, and n-gram cleaning for existing reasoning answers
+11. **`examples/agentic_rag_text_pipeline.md`** — Atomic and verified multi-hop QA over retrieved text, including grounding, shortcut, reasoning, and final-answer checks
+12. **`examples/code_text_pipelines.md`** — Code-to-SFT and seed-to-code generation with quality scoring and sandbox execution, plus CPU code-text cleaning
+13. **`examples/chemistry_smiles_text_pipeline.md`** — Chemistry-text SMILES extraction followed by molecular-equivalence evaluation
+14. **`examples/function_call_text_pipeline.md`** — Scenario, task, function-schema, multi-turn tool-conversation synthesis and evaluation
+15. **`examples/text2qa_pipeline.md`** — Diversity-aware text selection, QA generation, and multidimensional QA evaluation
+16. **`examples/text2sql_text_pipelines.md`** — Executable Text-to-SQL generation, refinement, VectorSQL construction, CoT voting, and difficulty classification
+17. **`examples/text_synthesis_and_quality_pipelines.md`** — Conversation, SFT, and PT text synthesis plus deterministic and learned quality-filtering chains
+18. **`examples/text_benchmark_eval_pipelines.md`** — Direct and question-aware semantic or deterministic answer evaluation
 
 These are strategy guidance, not templates to copy blindly. Generated code must follow standard pipeline structure.
