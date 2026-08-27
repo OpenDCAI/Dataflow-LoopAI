@@ -120,6 +120,8 @@ def run_analyzer_standalone(
     checkpoint_path: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
     analyze_batch_size: Optional[int] = None,
+    version_id: Optional[str] = None,
+    force_new_version: bool = False,
     emit_status: bool = True,
     **kwargs: Any,
 ) -> Dict[str, Any]:
@@ -129,15 +131,24 @@ def run_analyzer_standalone(
     Runtime config is resolved in the skill layer so Codex/CLI can inject
     environment values before executing or resuming Analyzer steps.
     """
+    runtime_kwargs = dict(kwargs)
+    for control_key in ("version_id", "run_id", "new_version", "force_new_version"):
+        runtime_kwargs.pop(control_key, None)
     runtime = resolve_analyzer_runtime_config(
         state,
         thread_id=thread_id,
         checkpoint_path=checkpoint_path,
-        **kwargs,
+        version_id=version_id,
+        **runtime_kwargs,
     )
+    # A CLI checkpoint path is authoritative.  In particular, resume may
+    # provide a version_id from the environment; do not replace the explicit
+    # SQLite path with the default output-derived path in that case.
+    explicit_checkpoint_path = bool(checkpoint_path)
 
     explicit_version = (
-        kwargs.get("version_id")
+        version_id
+        or kwargs.get("version_id")
         or kwargs.get("run_id")
         or os.getenv("ANALYZER_VERSION_ID")
         or os.getenv("VERSION_ID")
@@ -145,7 +156,9 @@ def run_analyzer_standalone(
         or ((state.get("analyzer") or {}).get("version_id") if isinstance(state, dict) else None)
     )
     force_new_version = bool(
-        kwargs.get("new_version") or kwargs.get("force_new_version")
+        force_new_version
+        or kwargs.get("new_version")
+        or kwargs.get("force_new_version")
     )
 
     if not force_new_version and not runtime.get("version_id"):
@@ -171,9 +184,10 @@ def run_analyzer_standalone(
         runtime["version_id"] = ""
 
     if not force_new_version and runtime.get("version_id"):
-        runtime["checkpoint_path"] = get_version_checkpoint_path(
-            runtime["output_dir"], runtime["thread_id"], runtime["version_id"]
-        )
+        if not explicit_checkpoint_path:
+            runtime["checkpoint_path"] = get_version_checkpoint_path(
+                runtime["output_dir"], runtime["thread_id"], runtime["version_id"]
+            )
         if os.path.exists(runtime["checkpoint_path"]):
             candidate_state = load_analyzer_checkpoint(
                 runtime["thread_id"],
@@ -198,13 +212,17 @@ def run_analyzer_standalone(
             runtime["checkpoint_path"],
             version_id=runtime["version_id"],
         )
-        resolve_analyzer_runtime_config(
-            state,
+        # Merge runtime values once so a caller-provided version_id cannot be
+        # passed twice through the explicit arguments and **kwargs.
+        resume_runtime_kwargs = dict(kwargs)
+        for control_key in ("version_id", "run_id", "new_version", "force_new_version"):
+            resume_runtime_kwargs.pop(control_key, None)
+        resume_runtime_kwargs.update(
             thread_id=runtime["thread_id"],
             checkpoint_path=runtime["checkpoint_path"],
             version_id=runtime["version_id"],
-            **kwargs,
         )
+        resolve_analyzer_runtime_config(state, **resume_runtime_kwargs)
         if start_node is None:
             start_node = _resume_step_from_state(state)
 
@@ -248,11 +266,12 @@ def run_analyzer_standalone(
             runtime["thread_id"],
             runtime["version_id"],
         )
-        runtime["checkpoint_path"] = get_version_checkpoint_path(
-            output_dir,
-            runtime["thread_id"],
-            runtime["version_id"],
-        )
+        if not explicit_checkpoint_path:
+            runtime["checkpoint_path"] = get_version_checkpoint_path(
+                output_dir,
+                runtime["thread_id"],
+                runtime["version_id"],
+            )
         state["version_id"] = runtime["version_id"]
         state.setdefault("analyzer", {})["version_id"] = runtime["version_id"]
         state["analyzer"]["checkpoint_path"] = runtime["checkpoint_path"]
