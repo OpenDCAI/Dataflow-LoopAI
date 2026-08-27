@@ -73,6 +73,17 @@ def corepack_path() -> str | None:
     return shutil.which("corepack")
 
 
+def _direct_runner_command(runner: Path) -> list[str] | None:
+    """Use the installed runner directly when Corepack itself is broken."""
+    node = shutil.which("node")
+    loader = runner / "node_modules" / "tsx" / "dist" / "loader.mjs"
+    entrypoint = runner / "src" / "index.ts"
+    sdk = runner / "node_modules" / "@openai" / "codex-sdk" / "package.json"
+    if node and loader.is_file() and entrypoint.is_file() and sdk.is_file():
+        return [node, "--import", str(loader), str(entrypoint)]
+    return None
+
+
 def loopai_python_executable() -> str:
     explicit = os.environ.get("LOOPAI_PYTHON_EXECUTABLE")
     if explicit and os.access(explicit, os.X_OK):
@@ -122,19 +133,22 @@ def sdk_available() -> bool:
     """True iff LoopAI's shared codex-runner can be launched."""
     runner = runner_dir()
     corepack = corepack_path()
-    if not runner or not corepack:
+    if not runner:
         return False
-    try:
-        r = subprocess.run(
-            [corepack, "yarn", "--version"],
-            cwd=runner,
-            env={**os.environ, "PATH": runner_process_path()},
-            capture_output=True,
-            timeout=20,
-        )
-        return r.returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+    if corepack:
+        try:
+            r = subprocess.run(
+                [corepack, "yarn", "--version"],
+                cwd=runner,
+                env={**os.environ, "PATH": runner_process_path()},
+                capture_output=True,
+                timeout=20,
+            )
+            if r.returncode == 0:
+                return True
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return _direct_runner_command(runner) is not None
 
 
 def runtime_status() -> dict:
@@ -376,11 +390,8 @@ def _run_loopai_codex_runner(
     on_stdout_payload: Callable[[dict], None] | None = None,
 ) -> tuple[int, str, str]:
     runner = runner_dir()
-    corepack = corepack_path()
     if not runner:
         raise CodexError("LoopAI codex-runner not found")
-    if not corepack:
-        raise CodexError("corepack not found; install Node.js with Corepack to use the Codex engine")
     # Prompt is delivered via a temp file (runner reads CODEX_PROMPT_FILE) to
     # avoid execve ARG_MAX limits when the prompt is large; stdin is unreliable
     # through corepack/yarn's nested process spawns.
@@ -394,7 +405,26 @@ def _run_loopai_codex_runner(
         except OSError:
             pass
         raise
-    cmd = [corepack, "yarn", "dev", "-"]
+    corepack = corepack_path()
+    cmd: list[str] | None = None
+    if corepack:
+        try:
+            check = subprocess.run(
+                [corepack, "yarn", "--version"], cwd=runner,
+                env={**os.environ, "PATH": runner_process_path()},
+                capture_output=True, timeout=20,
+            )
+            if check.returncode == 0:
+                cmd = [corepack, "yarn", "dev", "-"]
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if cmd is None:
+        cmd = _direct_runner_command(runner)
+    if cmd is None:
+        raise CodexError(
+            "codex-runner is unavailable: Corepack failed and the direct Node runner "
+            "dependencies are missing"
+        )
     merged_env = {**os.environ, **env}
     merged_env["CODEX_PROMPT_FILE"] = prompt_path
     python_executable = loopai_python_executable()

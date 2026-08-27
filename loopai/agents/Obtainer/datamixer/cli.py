@@ -985,11 +985,20 @@ def cmd_contam_add(args) -> int:
     s = _open(args)
     try:
         workers = max(1, int(args.workers or _default_decontam_workers()))
+        benchmark_dataset = None
+        benchmark_dataset_arg = getattr(args, "benchmark_dataset", None)
+        if benchmark_dataset_arg:
+            dataset_id = s.catalog.resolve_dataset(benchmark_dataset_arg)
+            if not dataset_id:
+                raise ValueError(f"benchmark dataset not found: {benchmark_dataset_arg}")
+            dataset = s.catalog.get_dataset(dataset_id)
+            benchmark_dataset = {"id": dataset_id, "name": dataset["name"]}
         meta = contam.register(s.root, args.name,
                                _load_texts(args.file, args.text_field),
                                ngram=args.ngram,
                                workers=workers,
-                               batch_size=args.batch_size)
+                               batch_size=args.batch_size,
+                               benchmark_dataset=benchmark_dataset)
         audit = _decontaminate_catalog(
             s,
             against=[args.name],
@@ -2340,6 +2349,8 @@ def build_parser() -> argparse.ArgumentParser:
     a = ct.add_parser("add", help="register a benchmark set from a file")
     a.add_argument("--name", required=True)
     a.add_argument("--file", required=True, help="JSONL (text field) or one text/line")
+    a.add_argument("--benchmark-dataset", default=None,
+                   help="associated DataMixer benchmark dataset name or ID")
     a.add_argument("--text-field", dest="text_field", default="text")
     a.add_argument("--ngram", type=int, default=13)
     a.add_argument("--threshold", type=float, default=0.8,
