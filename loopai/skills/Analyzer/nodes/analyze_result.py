@@ -58,6 +58,8 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
         base_url=cfg['analyze_base_url'],
         temperature=cfg.get('analyze_temperature', 0.0),
         top_p=cfg.get('analyze_top_p', 0.95),
+        timeout=float(cfg.get('analyze_request_timeout_seconds', 300)),
+        max_retries=int(cfg.get('analyze_request_max_retries', 0)),
     )
     return model
 
@@ -80,15 +82,28 @@ def _batch_one_with_heartbeat(
         )
 
     def _compact_prompt(value: str) -> str:
-        max_chars = 12000
+        max_chars = int((data or {}).get("retry_prompt_max_chars") or 12000)
         if len(value) <= max_chars:
             return value + "\n\nPlease answer concisely and keep the required output format."
         head = max_chars * 2 // 3
         tail = max_chars - head
         return value[:head] + "\n...[Analyzer compact retry: middle evidence omitted]...\n" + value[-tail:]
 
+    def _chunk_text(chunk: Any) -> str:
+        content = getattr(chunk, "content", chunk)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                str(item.get("text", "")) if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        return str(content or "")
+
     def _run_once(request_prompt: str) -> str:
         stop_event = threading.Event()
+        started_at = time.monotonic()
+        first_chunk_seconds = None
         resume_progress = get_analyzer_resume_progress()
         request_start = max(start_progress, min(resume_progress, end_progress)) if resume_progress else start_progress
 
@@ -105,7 +120,33 @@ def _batch_one_with_heartbeat(
         heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
         heartbeat_thread.start()
         try:
-            return llm.batch([request_prompt])[0].content
+            chunks = []
+            for chunk in llm.stream(request_prompt):
+                if first_chunk_seconds is None:
+                    first_chunk_seconds = round(time.monotonic() - started_at, 3)
+                chunks.append(_chunk_text(chunk))
+            response = "".join(chunks)
+            emit("模型响应接收完成", progress=end_progress, data={
+                **(data or {}),
+                "prompt_chars": len(request_prompt),
+                "response_chars": len(response),
+                "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                "first_chunk_seconds": first_chunk_seconds,
+                "streaming": True,
+            })
+            return response
+        except Exception as exc:
+            text = f"{type(exc).__name__}: {exc}".lower()
+            emit("模型请求失败", progress=start_progress, data={
+                **(data or {}),
+                "prompt_chars": len(request_prompt),
+                "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                "first_chunk_seconds": first_chunk_seconds,
+                "error_type": type(exc).__name__,
+                "timeout_scope": "upstream_gateway" if "524" in text else "client_or_provider",
+                "streaming": True,
+            })
+            raise
         finally:
             stop_event.set()
             heartbeat_thread.join(timeout=0.2)
@@ -115,9 +156,20 @@ def _batch_one_with_heartbeat(
     except Exception as exc:
         if not _is_timeout(exc):
             raise
-        emit("模型请求超时，压缩输入后重试", progress=start_progress, data={
-            **(data or {}), "retry": True, "input_compacted": True,
-        })
+        error_text = f"{type(exc).__name__}: {exc}".lower()
+        emit(
+            "上游代理 524 超时，压缩输入后重试"
+            if "524" in error_text
+            else "模型请求超时，压缩输入后重试",
+            progress=start_progress,
+            data={
+                **(data or {}),
+                "retry": True,
+                "input_compacted": True,
+                "original_prompt_chars": len(prompt),
+                "timeout_scope": "upstream_gateway" if "524" in error_text else "client_or_provider",
+            },
+        )
         return _run_once(_compact_prompt(prompt))
 
 

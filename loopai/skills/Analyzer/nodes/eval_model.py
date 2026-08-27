@@ -22,6 +22,7 @@ from loopai.skills.Analyzer.utils.stream import (
     get_analyzer_resume_progress,
     get_safe_stream_writer,
 )
+from loopai.skills.Analyzer.bench_inputs import resolve_eval_result_sources
 # ===== PromptLoader 单例 & 模板缓存 =====
 _PROMPT_LOADER: PromptLoader | None = None
 _TEMPLATE_CACHE: dict[tuple[str, str], str] = {}
@@ -276,6 +277,7 @@ def init_model(state: LoopAIState) -> BaseChatModel:
         max_tokens=cfg.get("analyze_max_tokens", 512),   
         temperature=cfg.get("analyze_temperature", 0.0), 
         top_p=cfg.get("analyze_top_p", 0.95),           
+        request_timeout=float(cfg.get("analyze_request_timeout_seconds", 300)),
     )
 
 def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
@@ -514,7 +516,13 @@ def build_evidence_for_record(rec: Dict[str, Any], task_type: str) -> Dict[str, 
         return build_evidence_for_record_sql(rec)
     return build_evidence_for_record_code(rec)
 
-def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: str, task_type: str = "code"):
+def _build_and_write_summary(
+    rows: List[Dict[str, Any]],
+    outdir: Path,
+    run_ts: str,
+    task_type: str = "code",
+    eval_result_sources: Optional[List[Dict[str, str]]] = None,
+):
     """
     根据 rows 生成 summary 的函数
     Args:
@@ -539,6 +547,9 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
 
     task_pass_map = defaultdict(bool)
     task_ids = set()
+    bench_stats: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {"total_samples": 0, "passed_samples": 0, "failure_stage_distribution": Counter()}
+    )
 
     def bin_loc(n: int) -> str:
         """
@@ -564,11 +575,15 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
 
     for rec in rows:
         total_samples += 1
+        bench_name = str(rec.get("bench_name") or "default")
+        bench_stats[bench_name]["total_samples"] += 1
         if rec.get("passed"):
             passed_samples += 1
+            bench_stats[bench_name]["passed_samples"] += 1
         else:
             stg = (rec.get("judge") or {}).get("stage", "other")
             stage_counter[stg] += 1
+            bench_stats[bench_name]["failure_stage_distribution"][stg] += 1
             tags = (rec.get("judge") or {}).get("tags") or []
             for t in tags:
                 tag_counter[t] += 1
@@ -608,6 +623,7 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
 
         tid = rec.get("task_id")
         if tid is not None:
+            tid = f"{bench_name}::{tid}"
             task_ids.add(tid)
             if rec.get("passed"):
                 task_pass_map[tid] = True
@@ -621,8 +637,20 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
     else:
         pass_at_k_task = {}
 
+    bench_summaries = {}
+    for bench_name, values in sorted(bench_stats.items()):
+        bench_total = int(values["total_samples"])
+        bench_passed = int(values["passed_samples"])
+        bench_summaries[bench_name] = {
+            "total_samples": bench_total,
+            "passed_samples": bench_passed,
+            "pass_rate_samples": round(bench_passed / max(bench_total, 1), 4),
+            "failure_stage_distribution": dict(values["failure_stage_distribution"]),
+        }
+
     summary = {
         "run_ts": run_ts,
+        "task_type": task_type,
         "results_file": None,
         "total_samples": total_samples,
         "passed_samples": passed_samples,
@@ -638,6 +666,8 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
             "expected_top10": expected_top.most_common(10),
         },
         "tag_top10": tag_counter.most_common(10),
+        "bench_summaries": bench_summaries,
+        "eval_result_sources": eval_result_sources or [],
     }
 
     os.makedirs(outdir, exist_ok=True)
@@ -649,6 +679,13 @@ def _build_and_write_summary(rows: List[Dict[str, Any]], outdir: Path, run_ts: s
     lines = []
     lines.append(f"评测时间：{run_ts}")
     lines.append(f"样本正确率：{passed_samples}/{total_samples}（{summary['pass_rate_samples'] * 100:.2f}%）")
+    if len(bench_summaries) > 1:
+        lines.append("分 Bench 结果：")
+        for bench_name, values in bench_summaries.items():
+            lines.append(
+                f"  - {bench_name}: {values['passed_samples']}/{values['total_samples']} "
+                f"（{values['pass_rate_samples'] * 100:.2f}%）"
+            )
     if pass_at_k_task:
         lines.append("Pass@k(任务口径)： " + ", ".join([f"Pass@{k}={v * 100:.2f}%" for k, v in pass_at_k_task.items()]))
     lines.append("主要错因(stage)分布：")
@@ -834,29 +871,47 @@ def eval_model_node(state: LoopAIState):
     
     judge = LLMJudge(task=task_type)
 
-    # 读取评测结果（JSONL）
-    judger_cfg = state.get("judger") or {}
+    # 读取一个或多个同类型 Bench 结果。单个字符串路径保持兼容。
     analyzer_cfg = state.get("analyzer") or {}
-    eval_result_path = judger_cfg.get("output_result_path")
-    if not eval_result_path:
-       eval_result_path = analyzer_cfg.get("eval_result_path")
-
-    if not eval_result_path:
+    eval_result_sources = resolve_eval_result_sources(state, task_type)
+    if not eval_result_sources:
         raise ValueError(
-        "Missing analyzer.eval_result_path. "
-        "Please provide analyzer.eval_result_path "
-        "or run judger to generate output_result_path."
+        f"No Analyzer-compatible result file found for task_type={task_type}. "
+        "Please provide analyzer.eval_result_path(s) or run Judger with at least "
+        "one bench of the same task_type."
        )
 
     state.setdefault("analyzer", {})
-    state["analyzer"]["eval_result_path"] = eval_result_path
+    state["analyzer"]["eval_result_path"] = eval_result_sources[0]["path"]
+    state["analyzer"]["eval_result_paths"] = [item["path"] for item in eval_result_sources]
+    state["analyzer"]["eval_result_sources"] = eval_result_sources
 
-    with open(eval_result_path, 'r', encoding='utf-8') as f:
-        lines = [ln for ln in f if ln.strip()]
-    result_content = [json.loads(ln) for ln in lines]
+    result_content = []
+    for source in eval_result_sources:
+        source_path = source["path"]
+        with open(source_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                record = json.loads(line)
+                if isinstance(record, dict):
+                    record.setdefault("bench_name", source["bench_name"])
+                    result_content.append(record)
+    if writer:
+        writer(StreamEvent(
+            current="analyzer.eval_model",
+            progress=0.03,
+            message=f"已读取 {len(eval_result_sources)} 个 Bench",
+            data={
+                "bench_count": len(eval_result_sources),
+                "bench_names": [item["bench_name"] for item in eval_result_sources],
+                "total_samples": len(result_content),
+            },
+        ).json())
 
     # 仅失败样本做判因
-    failed_results = [r for r in result_content if not r.get("passed")]
+    failed_positions = [index for index, record in enumerate(result_content) if not record.get("passed")]
+    failed_results = [result_content[index] for index in failed_positions]
     total_failed = len(failed_results)
     batch_checkpoint_path = _batch_checkpoint_path(state)
     # 初始化 LLM
@@ -1104,13 +1159,19 @@ def eval_model_node(state: LoopAIState):
                data=None
                ).json())
 
-    logger.info(f" 判因完成：共 {len(failed_results)} 条")
+    for index, position in enumerate(failed_positions):
+        result_content[position] = failed_results[index]
+
+    logger.info(
+        f" 判因完成：失败样本 {len(failed_results)} 条，完整样本 {len(result_content)} 条，"
+        f"Bench {len(eval_result_sources)} 个"
+    )
     ts = time.strftime("%Y%m%d_%H%M%S")
     out_dir = _ensure_analyzer_outdir(state)
 
     out_jsonl_path = out_dir / f"oj_records_enriched_{ts}.jsonl"
     with open(out_jsonl_path, "w", encoding="utf-8") as f:
-        for r in failed_results:
+        for r in result_content:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     state.setdefault("analyzer", {})
     state["analyzer"]["analyze_output_result_path"] = str(out_jsonl_path.resolve())
@@ -1125,7 +1186,11 @@ def eval_model_node(state: LoopAIState):
        ).json())
     try:
         summary_json_path, summary_txt_path = _build_and_write_summary(
-              failed_results, _ensure_analyzer_outdir(state), ts, task_type=task_type
+              result_content,
+              _ensure_analyzer_outdir(state),
+              ts,
+              task_type=task_type,
+              eval_result_sources=eval_result_sources,
         )
         with open(summary_json_path, "r", encoding="utf-8") as f:
             sdata = json.load(f)

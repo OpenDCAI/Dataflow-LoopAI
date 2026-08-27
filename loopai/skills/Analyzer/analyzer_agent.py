@@ -71,6 +71,9 @@ class AnalyzerAgent(BaseAgent):
 
                 has_result_path = (
                     bool(judger_cfg.get("output_result_path"))
+                    or bool(judger_cfg.get("bench_result"))
+                    or bool(judger_cfg.get("extra_bench_result"))
+                    or bool(analyzer_cfg.get("eval_result_paths"))
                     or bool(analyzer_cfg.get("eval_result_path"))
                 )
                 if not has_result_path:
@@ -82,6 +85,9 @@ class AnalyzerAgent(BaseAgent):
                     bool(judger_cfg.get("output_result_path"))
                     or bool(judger_cfg.get("out_result_path"))
                     or bool(judger_cfg.get("eval_result_path"))
+                    or bool(judger_cfg.get("bench_result"))
+                    or bool(judger_cfg.get("extra_bench_result"))
+                    or bool(analyzer_cfg.get("eval_result_paths"))
                     or bool(analyzer_cfg.get("eval_result_path"))
                 )
                 if (not has_bench) and (not has_result_path):
