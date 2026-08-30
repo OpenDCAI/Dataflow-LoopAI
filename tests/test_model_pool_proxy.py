@@ -144,6 +144,35 @@ def test_response_proxy_request_base_url_overrides_system_fallbacks():
     assert upstream_v1 == "http://request.example/v1"
 
 
+def test_responses_to_chat_preserves_reasoning_content_for_follow_up():
+    service = ResponseProxyService(_system("http://upstream.example/v1", "chat"))
+
+    payload = service.responses_to_chat_request({
+        "model": "medium",
+        "input": [
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "prior thought"}],
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "prior answer"}],
+            },
+            {"type": "message", "role": "user", "content": "continue"},
+        ],
+    })
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": "prior answer",
+            "reasoning_content": "prior thought",
+        },
+        {"role": "user", "content": "continue"},
+    ]
+
+
 def test_responses_endpoint_routes_to_chat_upstream_through_pool():
     server, base_url = _start_server()
     try:

@@ -55,6 +55,18 @@ MAX_ACCEPTANCE_REVISIONS = 3
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OBTAINER_SKILL_PATH = REPO_ROOT / "skills" / "obtainer" / "SKILL.md"
 
+
+def _worker_codex_home(run_dir: Path) -> Path:
+    """Keep each orchestrator run out of interactive and peer worker homes."""
+    return (
+        _workspace()
+        / "outputs"
+        / "obtainer"
+        / ".codex"
+        / "orchestrator"
+        / run_dir.resolve().name
+    )
+
 # Overall progress anchors per phase; sub-agent metrics refine within a phase.
 PHASE_BASE_PROGRESS = {
     "bootstrap": 0.05,
@@ -820,6 +832,8 @@ def _spawn_background(
         "DEEPSEEK_MODEL",
     ):
         env.pop(key, None)
+    env["CODEX_HOME"] = str(_worker_codex_home(run_dir))
+    env["LOOPAI_WORKER_KIND"] = "obtainer-orchestrator"
     python_executable = codex.loopai_python_executable()
     env["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
     env["PATH"] = codex.runner_process_path(python_executable, env.get("PATH"))
@@ -964,6 +978,7 @@ def _run_worker(
                 cwd=str(_workspace()),
                 timeout=timeout,
                 thread_id=current_thread_id,
+                codex_home_override=str(_worker_codex_home(run_dir)),
             )
         except Exception as exc:  # noqa: BLE001 - surface runner failures in status
             _write_phase(

@@ -23,6 +23,18 @@ STATUS_FILE = "status.json"
 FORBIDDEN_OUTPUT_SOURCES = {"text", "raw_content", "content"}
 
 
+def _worker_codex_home(run_dir: Path) -> Path:
+    """Keep each SFT export run out of interactive and peer worker homes."""
+    return (
+        _workspace()
+        / "outputs"
+        / "obtainer"
+        / ".codex"
+        / "sft"
+        / run_dir.resolve().name
+    )
+
+
 def _json_write(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
@@ -508,6 +520,8 @@ def _spawn_background(
         "DEEPSEEK_MODEL",
     ):
         env.pop(key, None)
+    env["CODEX_HOME"] = str(_worker_codex_home(run_dir))
+    env["LOOPAI_WORKER_KIND"] = "sft-export-agent"
     python_executable = codex.loopai_python_executable()
     env["LOOPAI_PYTHON_EXECUTABLE"] = python_executable
     env["PATH"] = codex.runner_process_path(python_executable, env.get("PATH"))
@@ -1030,6 +1044,7 @@ def _run_worker(
                 cwd=str(_workspace()),
                 timeout=timeout,
                 thread_id=current_thread_id,
+                codex_home_override=str(_worker_codex_home(run_dir)),
             )
         except Exception as exc:
             _json_write(run_dir / STATUS_FILE, {

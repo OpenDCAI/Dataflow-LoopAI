@@ -10,7 +10,7 @@ Canonical layout (the only two places obtainer data lives):
       runs/<run_id>/                 orchestrator/acquisition/dataflow/sft-export runs
       dataflow_work/                 dataflow chunked runner work
       events/<task_id>/obtainercli/  obtainercli event stream
-      .codex/worker/  .codex/dataflow/   obtainer agent codex homes
+      .codex/{worker,dataflow,orchestrator,sft}/  obtainer agent Codex homes
 
 ``codex_home`` (starter) stays at the repository root and is never bundled.
 """

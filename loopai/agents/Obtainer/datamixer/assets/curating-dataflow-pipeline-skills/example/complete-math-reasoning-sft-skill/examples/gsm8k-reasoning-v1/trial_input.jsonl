@@ -1,0 +1,6 @@
+{"sample_id":"math-a-001","dataset_id":"source-a","question":"Lina has 12 pencils and gives 5 away. How many remain?","answer":"7"}
+{"sample_id":"math-a-002","dataset_id":"source-a","question":"A box has 4 rows of 6 markers. How many markers are there?","answer":"24"}
+{"sample_id":"math-a-003","dataset_id":"source-a","question":"A 30 dollar item is discounted by 20 percent. What is the sale price?","answer":"24"}
+{"sample_id":"math-b-001","dataset_id":"source-b","problem":"Kai reads 18 pages on Monday and twice as many Tuesday. How many total?","final_answer":"54"}
+{"sample_id":"math-b-002","dataset_id":"source-b","problem":"Three buses each carry 27 students. Nine students leave. How many remain?","final_answer":"72"}
+{"sample_id":"math-b-003","dataset_id":"source-b","problem":"A tank is 3/5 full with 48 liters. What is its capacity?","final_answer":"80"}

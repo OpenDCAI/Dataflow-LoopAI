@@ -46,6 +46,11 @@ def test_dataflow_prompt_does_not_inject_expected_output_fields(tmp_path):
     assert "instruction,input,output" not in prompt
     assert "DataFlow-Skills root" not in prompt
     assert ".cache_codex" not in prompt
+    assert "reviewing-dataflow-pipeline" in prompt
+    assert "six rubric dimensions to independent subagents" in prompt
+    assert "do not return `mode=trial_run` unless" in prompt
+    assert "curating-dataflow-pipeline-skills" in prompt
+    assert "installed\n`skill-creator`" in prompt
 
 
 def test_dataflow_home_installs_repository_owned_skill_and_agents(tmp_path, monkeypatch):
@@ -59,6 +64,20 @@ def test_dataflow_home_installs_repository_owned_skill_and_agents(tmp_path, monk
     assert (installed_skill / "SKILL.md").read_bytes() == (
         dataflow_agent.dataflow_pipeline_skill_asset() / "SKILL.md"
     ).read_bytes()
+    review_skill = generated / "skills" / "reviewing-dataflow-pipeline"
+    assert not review_skill.is_symlink()
+    assert (review_skill / "SKILL.md").read_bytes() == (
+        dataflow_agent.dataflow_pipeline_review_skill_asset() / "SKILL.md"
+    ).read_bytes()
+    assert (review_skill / "references" / "rubric.md").is_file()
+    curation_skill = generated / "skills" / "curating-dataflow-pipeline-skills"
+    assert (curation_skill / "SKILL.md").read_bytes() == (
+        dataflow_agent.dataflow_pipeline_curation_skill_asset() / "SKILL.md"
+    ).read_bytes()
+    example = curation_skill / "example" / "complete-math-reasoning-sft-skill"
+    assert (example / "SKILL.md").is_file()
+    assert (example / "examples" / "gsm8k-reasoning-v1" / "pipeline.py").is_file()
+    assert (generated / "skills" / "skill-creator" / "SKILL.md").is_file()
     assert (generated / "AGENTS.md").read_text(encoding="utf-8") == (
         dataflow_agent.dataflow_agents_template()
     )

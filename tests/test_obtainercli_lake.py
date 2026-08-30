@@ -2020,6 +2020,23 @@ def test_dataflow_operator_llm_uses_default_qwen_not_codex_model(
         "api_key": "proxy-key",
     }
 
+
+def test_dataflow_operator_llm_supports_process_local_override(monkeypatch) -> None:
+    from loopai.agents.Obtainer.datamixer.dataflow_agent import (
+        operator_llm_config_from_starter,
+    )
+
+    monkeypatch.setenv("DF_API_URL", "http://127.0.0.1:8001/v1")
+    monkeypatch.setenv("DF_MODEL_NAME", "Qwen3.6-27B")
+    monkeypatch.setenv("DF_API_KEY", "local-vllm")
+
+    assert operator_llm_config_from_starter() == {
+        "api_url": "http://127.0.0.1:8001/v1/chat/completions",
+        "model_name": "Qwen3.6-27B",
+        "api_key_env": "DF_API_KEY",
+        "api_key": "local-vllm",
+    }
+
 def test_dataflow_agent_rejects_incomplete_intermediate_response(
     tmp_path: Path,
     monkeypatch,
@@ -3336,7 +3353,7 @@ def test_dataset_acquisition_worker_env_isolates_outer_task_context(
     assert "DB_PATH" not in env
     assert "CODEX_THREAD_ID" not in env
     assert "CODEX_USE_PROJECT_CONFIG" not in env
-    assert env["CODEX_HOME"].endswith("codex_home_worker")
+    assert env["CODEX_HOME"].endswith("outputs/obtainer/.codex/worker")
     assert env["LOOPAI_WORKER_KIND"] == "dataset-acquisition-agent"
     python_executable = codex.loopai_python_executable()
     assert env["LOOPAI_PYTHON_EXECUTABLE"] == python_executable
