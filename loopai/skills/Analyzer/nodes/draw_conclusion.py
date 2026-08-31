@@ -22,6 +22,7 @@ from loopai.skills.Analyzer.history_compare import (
     build_historical_comparison,
     render_historical_comparison_text,
 )
+from loopai.skills.Analyzer.bucket_strategy import build_training_bucket_strategy
 logger = get_logger()
 from collections import defaultdict
 from typing import List, Dict, Any
@@ -131,6 +132,10 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
         base_url=cfg['analyze_base_url'],
         temperature=cfg.get('analyze_temperature', 0.0),
         top_p=cfg.get('analyze_top_p', 0.95),
+        timeout=float(cfg.get('analyze_request_timeout_seconds', 300)),
+        # The adaptive retry below owns the retry policy so the same long
+        # prompt is not silently retried several times by the SDK first.
+        max_retries=int(cfg.get('analyze_request_max_retries', 0)),
     )
     return model
 
@@ -145,7 +150,7 @@ def _batch_one_with_heartbeat(
     end_progress: float,
     data: Dict[str, Any] | None = None,
 ) -> str:
-    """Run normally, then retry once with a compact prompt after timeout."""
+    """Stream one normal request, then compact and retry once on timeout."""
     def _is_timeout(exc: Exception) -> bool:
         text = f"{type(exc).__name__}: {exc}".lower()
         return isinstance(exc, TimeoutError) or any(
@@ -153,15 +158,28 @@ def _batch_one_with_heartbeat(
         )
 
     def _compact_prompt(value: str) -> str:
-        max_chars = 12000
+        max_chars = int((data or {}).get("retry_prompt_max_chars") or 12000)
         if len(value) <= max_chars:
             return value + "\n\nPlease answer concisely and keep the required output format."
         head = max_chars * 2 // 3
         tail = max_chars - head
         return value[:head] + "\n...[Analyzer compact retry: middle evidence omitted]...\n" + value[-tail:]
 
+    def _chunk_text(chunk: Any) -> str:
+        content = getattr(chunk, "content", chunk)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                str(item.get("text", "")) if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        return str(content or "")
+
     def _run_once(request_prompt: str) -> str:
         stop_event = threading.Event()
+        started_at = time.monotonic()
+        first_chunk_seconds = None
 
         def heartbeat() -> None:
             tick = 0
@@ -175,7 +193,33 @@ def _batch_one_with_heartbeat(
         thread = threading.Thread(target=heartbeat, daemon=True)
         thread.start()
         try:
-            return llm.batch([request_prompt])[0].content
+            chunks = []
+            for chunk in llm.stream(request_prompt):
+                if first_chunk_seconds is None:
+                    first_chunk_seconds = round(time.monotonic() - started_at, 3)
+                chunks.append(_chunk_text(chunk))
+            response = "".join(chunks)
+            emit("模型响应接收完成", progress=end_progress, data={
+                **(data or {}),
+                "prompt_chars": len(request_prompt),
+                "response_chars": len(response),
+                "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                "first_chunk_seconds": first_chunk_seconds,
+                "streaming": True,
+            })
+            return response
+        except Exception as exc:
+            text = f"{type(exc).__name__}: {exc}".lower()
+            emit("模型请求失败", progress=start_progress, data={
+                **(data or {}),
+                "prompt_chars": len(request_prompt),
+                "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                "first_chunk_seconds": first_chunk_seconds,
+                "error_type": type(exc).__name__,
+                "timeout_scope": "upstream_gateway" if "524" in text else "client_or_provider",
+                "streaming": True,
+            })
+            raise
         finally:
             stop_event.set()
             thread.join(timeout=0.2)
@@ -185,8 +229,16 @@ def _batch_one_with_heartbeat(
     except Exception as exc:
         if not _is_timeout(exc):
             raise
-        emit("模型请求超时，压缩输入后重试", progress=start_progress, data={
+        error_text = f"{type(exc).__name__}: {exc}".lower()
+        emit(
+            "上游代理 524 超时，压缩输入后重试"
+            if "524" in error_text
+            else "模型请求超时，压缩输入后重试",
+            progress=start_progress,
+            data={
             **(data or {}), "retry": True, "input_compacted": True,
+            "original_prompt_chars": len(prompt),
+            "timeout_scope": "upstream_gateway" if "524" in error_text else "client_or_provider",
         })
         return _run_once(_compact_prompt(prompt))
 
@@ -300,7 +352,12 @@ def enhance_stats_with_oj(records):
     return extras
 
 
-def build_obtainer_stats(summary: dict, oj_records: list, final_json: dict) -> dict:
+def build_obtainer_stats(
+    summary: dict,
+    oj_records: list,
+    final_json: dict,
+    strategy_config: dict | None = None,
+) -> dict:
     """
     为 obtainer 提供更细粒度的数据缺口统计
     """
@@ -328,7 +385,8 @@ def build_obtainer_stats(summary: dict, oj_records: list, final_json: dict) -> d
             fail_tags.update([str(t) for t in tags if t])
 
         domain = (
-            rec.get("domain")
+            rec.get("bench_name")
+            or rec.get("domain")
             or judge.get("domain")
             or rec.get("subset")
             or rec.get("source")
@@ -374,6 +432,20 @@ def build_obtainer_stats(summary: dict, oj_records: list, final_json: dict) -> d
             "actual": ap.get("actual"),
         })
 
+    strategy_config = strategy_config or {}
+    task_type = str(
+        strategy_config.get("analyze_task_type")
+        or summary.get("task_type")
+        or "code"
+    )
+    allocation_plan = build_training_bucket_strategy(
+        oj_records or [],
+        task_type=task_type,
+        alpha=float(strategy_config.get("bucket_power_alpha", 1.0)),
+        min_share=float(strategy_config.get("bucket_min_share", 0.05)),
+        max_share=float(strategy_config.get("bucket_max_share", 0.50)),
+    )
+
     return {
         "failed_total": len(failed),
         "passed_total": len(passed),
@@ -382,6 +454,11 @@ def build_obtainer_stats(summary: dict, oj_records: list, final_json: dict) -> d
         "domain_top": domain_counter.most_common(20),
         "fail_bias_tags": fail_bias_tags[:15],
         "representative_failure_samples": sample_briefs,
+        "actionable_bucket_top": [
+            [row["label"], row["count"]]
+            for row in allocation_plan.get("buckets", [])
+        ],
+        "allocation_plan": allocation_plan,
     }
 
 
@@ -490,11 +567,19 @@ def build_obtainer_prompt(final_json: dict, obtainer_stats: dict) -> str:
     summary_json = json.dumps(final_json.get("summary", {}), ensure_ascii=False, indent=2)
     obtainer_stats_json = json.dumps(obtainer_stats, ensure_ascii=False, indent=2)
 
-    return tpl.format(
+    prompt = tpl.format(
         dataset_json=dataset_json,
         summary_json=summary_json,
         obtainer_stats_json=obtainer_stats_json,
     )
+    return prompt + """
+
+【分桶预算约束】
+1. 优先使用细粒度统计中的 allocation_plan，而不是直接按 failure_stage_top 等比例分桶。
+2. other/待诊断样本不进入训练预算；只能建议补日志、重分类或人工复核。
+3. recommended_percent 是第一轮先验预算，不是永久比例；需说明小规模试训后按单位样本收益更新。
+4. 不得因为某类错误出现得多，就默认它需要同比例训练数据。
+"""
 def build_background_prompt(final_json: dict) -> str:
     """
     构建背景介绍的提示文本：只介绍数据集本身
@@ -549,7 +634,10 @@ def make_human_text(final_json: dict, background: str = None) -> str:
 
     lines.append(f"本次评测共 {t} 个样本，其中通过 {p} 个，样本正确率 {pass_rate_str}。")
     if top_cnt > 0:
-        lines.append(f"最主要的失败类型是 “{top_name}”，共有 {top_cnt} 次。")
+        if top_name == "other" and (final_json.get("obtainer_stats") or {}).get("allocation_plan"):
+            lines.append(f"原始聚合中 “other” 共有 {top_cnt} 次；该标签仅表示尚未归因，不能直接作为训练分桶。")
+        else:
+            lines.append(f"最主要的失败类型是 “{top_name}”，共有 {top_cnt} 次。")
     task_type = final_json.get("dataset", {}).get("task_type", "code")
 
     if task_type == "text2sql":
@@ -566,7 +654,25 @@ def make_human_text(final_json: dict, background: str = None) -> str:
             tags_str = ", ".join([f"{k}:{v}" for k, v in list(tags.items())[:8]])
             lines.append(f"常见标签 Top：{tags_str}。")
 
-    lines.append("整体来看，建议优先修复最常见错误并优化边界测试。")
+    allocation_plan = (final_json.get("obtainer_stats") or {}).get("allocation_plan") or {}
+    bucket_rows = allocation_plan.get("buckets") or []
+    if bucket_rows:
+        lines.append("")
+        lines.append("【训练数据分桶建议】")
+        lines.append("错误占比仅作为需求信号，以下比例同时考虑归因置信度、迁移价值和学习效率先验：")
+        for row in sorted(bucket_rows, key=lambda item: -item.get("recommended_share", 0)):
+            lines.append(
+                f"- {row.get('label')}：{row.get('recommended_percent', 0):.2f}% "
+                f"（观察到 {row.get('count', 0)} 条）"
+            )
+        other_impact = allocation_plan.get("other_impact") or {}
+        lines.append(
+            f"- 待诊断/other：0.00%（原始 {other_impact.get('original_other_count', 0)} 条，"
+            f"重分类后仍未解决 {other_impact.get('unresolved_count', 0)} 条）"
+        )
+        lines.append(f"- 更新规则：{allocation_plan.get('pilot_update_rule', '')}")
+
+    lines.append("整体来看，应先修复阻断后续评测的前置能力，再通过小规模试训的单位样本收益动态调整分桶，而不是直接照搬错误占比。")
     comparison = final_json.get("historical_comparison")
     if comparison:
         lines.append(render_historical_comparison_text(comparison))
@@ -604,6 +710,30 @@ def make_obtainer_human_text(obtainer_stats: dict, llm_text: str = "") -> str:
             lines.append(
                 f"- {item['tag']}（失败 {item['fail_count']} / 通过 {item['pass_count']} / 偏差 {item['bias']}）"
             )
+        lines.append("")
+
+    allocation_plan = obtainer_stats.get("allocation_plan") or {}
+    bucket_rows = allocation_plan.get("buckets") or []
+    if bucket_rows:
+        lines.append("建议训练数据分桶（第一轮先验）：")
+        for row in sorted(bucket_rows, key=lambda item: -item.get("recommended_share", 0)):
+            basis = (
+                "观察证据"
+                if row.get("allocation_basis") == "observed_failure_and_priors"
+                else "下游能力被前置失败遮蔽，预留探索预算"
+            )
+            lines.append(
+                f"- {row.get('label')}：{row.get('recommended_percent', 0):.2f}% "
+                f"（观察 {row.get('count', 0)} 条，置信度 {row.get('classification_confidence', 0):.2f}，{basis}）"
+            )
+            lines.append(f"  样本方向：{row.get('sample_direction')}")
+        other_impact = allocation_plan.get("other_impact") or {}
+        lines.append(
+            "- 待诊断样本：0.00% 训练预算"
+            f"（原始 other {other_impact.get('original_other_count', 0)} 条，"
+            f"重分类后未解决 {other_impact.get('unresolved_count', 0)} 条）"
+        )
+        lines.append(f"动态更新：{allocation_plan.get('pilot_update_rule', '')}")
         lines.append("")
 
     if llm_text:
@@ -744,6 +874,7 @@ def draw_conclusion_node(state: LoopAIState):
         "field_schema": field_schema,
         "example": example,
         "total_samples": final_json["totals"]["total_samples"],
+        "benches": summary.get("bench_summaries") or {},
     }
     final_json["samples"] = samples  
 
@@ -766,8 +897,14 @@ def draw_conclusion_node(state: LoopAIState):
     final_json["background"] = background_text
     _emit("背景介绍生成完成", progress=0.38)
 
-    obtainer_stats = build_obtainer_stats(summary, oj_records, final_json)
+    obtainer_stats = build_obtainer_stats(
+        summary,
+        oj_records,
+        final_json,
+        strategy_config=_analyzer(state),
+    )
     final_json["obtainer_stats"] = obtainer_stats
+    state.setdefault("analyzer", {})["allocation_plan"] = obtainer_stats.get("allocation_plan", {})
 
     baseline_result_path = _analyzer(state).get("baseline_result_path")
     if baseline_result_path:
@@ -778,6 +915,7 @@ def draw_conclusion_node(state: LoopAIState):
 
     # ===== 写入 JSON 报告 =====
     final_json_path = os.path.join(outdir, f"final_report_{run_ts}.json")
+    state["analyzer"]["analyze_output_final_report_json_path"] = final_json_path
     _emit("写入最终 JSON 报告", progress=0.4 , data={"path": final_json_path})
     with open(final_json_path, "w", encoding="utf-8") as f:
         f.write(json.dumps(final_json, ensure_ascii=False, indent=2))
@@ -788,6 +926,7 @@ def draw_conclusion_node(state: LoopAIState):
 
     # ===== 写入文本报告（包含背景介绍）=====
     final_txt_path = os.path.join(outdir, f"final_report_{run_ts}.txt")
+    state["analyzer"]["analyze_output_final_report_text_path"] = final_txt_path
     _emit("写入文本报告", progress=0.5 , data={"path": final_txt_path})
     with open(final_txt_path, "w", encoding="utf-8") as f:
         f.write(make_human_text(final_json, background=background_text))

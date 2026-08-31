@@ -68,6 +68,7 @@ Supported options:
 - `--print-result`
 - `--list-nodes`
 - `--stream-stdout`
+- `--request-timeout-seconds` (default: `300`)
 
 ## Environment Variables
 Runtime configuration should come from environment/system runtime where possible:
@@ -79,6 +80,7 @@ Runtime configuration should come from environment/system runtime where possible
 - `DB_PATH`
 - `ANALYZER_CHECKPOINT_PATH`
 - `ANALYZER_VERSION_ID` / `VERSION_ID`
+- `ANALYZER_REQUEST_TIMEOUT_SECONDS`
 
 Config JSON should not store API keys. Runtime API key/model/base URL should be placed under the task/system config when available:
 
@@ -135,9 +137,13 @@ Analyzer output files and event files are version-scoped:
 <output_dir>/<task_id>/analyzer/<version_id>/
 ```
 
-Standalone function pipeline remains:
+Standalone selects the pipeline from `analyzer.analyze_task_type`:
 
 `eval_model -> analyze_result -> draw_conclusion -> finish`
+
+General text uses its existing metric pipeline:
+
+`metric_recommend -> metric_score -> analyze_metric_report -> finish`
 
 The in-memory state still carries:
 
@@ -151,17 +157,76 @@ Set `baseline_result_path` to enable Historical Comparison. Current results come
 
 Analyzer preserves the `historical_comparison` field and appends a `Historical Comparison` section to report/final_report outputs when available. Missing or unreadable baseline files produce a warning instead of failing the main flow.
 
+## Multiple Benches
+
+Analyzer can consume two or more Judger results from `judger.bench_result` and
+`judger.extra_bench_result`. Results with the same `task_type` are merged into
+one analysis run while `summary["bench_summaries"]` preserves per-bench sample
+counts, pass rates, and failure distributions. A single string
+`analyzer.eval_result_path` remains supported. Standalone callers may also use:
+
+```json
+{
+  "analyzer": {
+    "analyze_task_type": "code",
+    "eval_result_path": ["humaneval.jsonl", "mbpp.jsonl"]
+  }
+}
+```
+
+Do not combine `code`, `text2sql`, and general-text results in one Analyzer
+route; each task type keeps its own analysis rules.
+
+## Data Bucket Strategy
+
+The final report includes `obtainer_stats.allocation_plan`. Analyzer first
+reclassifies fallback `other` records with runtime/parser evidence, then
+computes a first-round data budget from observed need, classification
+confidence, severity, transfer value, learnability prior, and data cost.
+`other`/unresolved records receive zero training allocation and enter a
+diagnostic queue. Each actionable bucket is capped by default at 50%, and the
+plan explicitly requires pilot-training gains to update later rounds.
+
+Analyzer keeps three independent bucket routes:
+
+- Code: output contract, syntax/completion, interface/scope, semantic logic,
+  boundary robustness, and runtime efficiency.
+- Text2SQL: SQL output contract, syntax, schema linking, semantic correctness,
+  type/value handling, and runtime efficiency.
+- General Text: instruction/format following, relevance/intent, factuality and
+  grounding, reasoning consistency, completeness/coverage, language quality,
+  and safety/refusal boundaries.
+
+General Text uses structured evaluator labels and reasons first. Empty answers,
+verifiable format violations, and obvious refusal patterns provide deterministic
+fallback evidence. Generic exact-match failures are not guessed into factuality
+or reasoning; unresolved samples enter the zero-budget diagnostic queue. The
+plan allocates by capability first and reports the observed domain distribution
+inside each capability bucket.
+
+The General Text design follows these established ideas without claiming to
+reimplement the full paper algorithms:
+
+- [HELM](https://arxiv.org/abs/2211.09110) (TMLR 2023): multi-dimensional model evaluation.
+- [InstructGPT](https://proceedings.neurips.cc/paper_files/paper/2022/hash/b1efde53be364a73914f58805a001731-Abstract.html) (NeurIPS 2022): user intent and instruction following.
+- [TruthfulQA](https://aclanthology.org/2022.acl-long.229/) (ACL 2022): truthfulness separated from informativeness.
+- [Skill-It!](https://proceedings.neurips.cc/paper_files/paper/2023/hash/70b8505ac79e3e131756f793cd80eb8d-Abstract-Conference.html) (NeurIPS 2023): prerequisite and ordered skill acquisition.
+- [DoReMi](https://proceedings.neurips.cc/paper_files/paper/2023/hash/dcba6be91359358c2355cd920da3fcbd-Abstract-Conference.html) (NeurIPS 2023): adaptive data mixtures instead of raw-frequency mixing.
+- [LESS](https://proceedings.mlr.press/v235/xia24c.html) (ICML 2024): targeted data selection and empirical influence/utility.
+
+## Model Request Timeout
+
+Analyzer model requests use a 300-second client timeout by default. Conclusion
+requests stream response chunks so long output does not need to wait for the
+entire completion before the connection becomes active. A provider/proxy `524`
+may still enforce its own shorter gateway limit; in that case Analyzer records
+the elapsed time and prompt length, then retries once with compact evidence.
+
 ## Stream Runtime
 Analyzer standalone follows the same base event writer style as Judger:
 
 ```python
 from loopai.common.event_tool import StreamEvent, get_event_writer
-```
-
-Analyzer-specific stdout/state-message/redaction helpers live in:
-
-```text
-loopai/skills/Analyzer/event_tool.py
 ```
 
 Events are written to:

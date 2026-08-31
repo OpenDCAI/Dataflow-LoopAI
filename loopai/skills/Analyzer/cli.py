@@ -50,6 +50,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-path", default=None)
     parser.add_argument("--baseline-result-path", default=None)
     parser.add_argument("--analyze-batch-size", type=int, default=None)
+    parser.add_argument("--request-timeout-seconds", type=float, default=None)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--new-version", action="store_true")
     parser.add_argument("--from-node", default=None)
@@ -78,6 +79,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             checkpoint_path=args.checkpoint_path,
             baseline_result_path=args.baseline_result_path,
             analyze_batch_size=args.analyze_batch_size,
+            analyze_request_timeout_seconds=args.request_timeout_seconds,
             version_id=args.version_id,
             force_new_version=args.new_version,
             emit_status=False,

@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Tuple
 from loopai.common.event_tool import StreamEvent
 from loopai.skills.Analyzer.utils.stream import get_safe_stream_writer
 from loopai.common.prompts.prompt_loader import PromptLoader
+from loopai.skills.Analyzer.bucket_strategy import build_training_bucket_strategy
 from langchain_openai import ChatOpenAI
 from loopai.schema.states import LoopAIState
 from loopai.logger import get_logger
@@ -74,6 +75,7 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
         base_url=cfg.get("analyze_base_url"),
         temperature=cfg.get("analyze_temperature", 0.0),
         top_p=cfg.get("analyze_top_p", 0.95),
+        timeout=float(cfg.get("analyze_request_timeout_seconds", 300)),
     )
     return model
 
@@ -365,6 +367,7 @@ def _build_obtainer_stats(
     match_type_pass_counter = {}
     domain_counter = {}
     field_presence_counter = {}
+    bucket_records = []
 
     for idx, detail in enumerate(details):
         score = _normalize_detail_score(detail)
@@ -383,6 +386,14 @@ def _build_obtainer_stats(
             "target": rec.get("target") or rec.get("ground_truth") or rec.get("label"),
             "generated_ans": rec.get("generated_ans") or rec.get("completion") or rec.get("prediction"),
         }
+
+        bucket_record = dict(rec)
+        bucket_record["passed"] = score != 0.0
+        bucket_record["metric_detail"] = detail
+        bucket_record["primary_metric"] = primary_metric_name
+        bucket_record.setdefault("generated_ans", sample["generated_ans"])
+        bucket_record.setdefault("domain", domain)
+        bucket_records.append(bucket_record)
 
         if isinstance(detail, dict):
             sample["match_type"] = detail.get("match_type")
@@ -433,6 +444,14 @@ def _build_obtainer_stats(
 
     top_fields = sorted(field_presence_counter.items(), key=lambda x: x[1], reverse=True)[:20]
     top_domains = sorted(domain_counter.items(), key=lambda x: x[1], reverse=True)[:20]
+    analyzer_cfg = _analyzer(state)
+    allocation_plan = build_training_bucket_strategy(
+        bucket_records,
+        task_type="general",
+        alpha=float(analyzer_cfg.get("bucket_power_alpha", 1.0)),
+        min_share=float(analyzer_cfg.get("bucket_min_share", 0.05)),
+        max_share=float(analyzer_cfg.get("bucket_max_share", 0.50)),
+    )
 
     return {
         "primary_metric": primary_metric_name,
@@ -443,6 +462,11 @@ def _build_obtainer_stats(
         "field_presence_top": top_fields,
         "fail_bias_match_type": fail_bias_match_type[:15],
         "representative_failure_samples": representative_failure_samples,
+        "actionable_bucket_top": [
+            [row["label"], row["count"]]
+            for row in allocation_plan.get("buckets", [])
+        ],
+        "allocation_plan": allocation_plan,
     }
 
 
@@ -479,7 +503,7 @@ def build_prompt_for_data_plan(summary: Dict[str, Any]) -> str:
     loader = PromptLoader()
     template = loader("analyze_metric_report", "data_plan_user")
 
-    return template.format(
+    prompt = template.format(
         bench_name=summary["bench_name"],
         eval_type=summary["eval_type"],
         task_domain=summary["task_domain"],
@@ -493,6 +517,16 @@ def build_prompt_for_data_plan(summary: Dict[str, Any]) -> str:
         quick_samples_json=json.dumps(summary["quick_samples"], ensure_ascii=False),
         summary_json=json.dumps(summary["summary_json"], ensure_ascii=False),
     )
+    allocation_json = json.dumps(summary.get("allocation_plan") or {}, ensure_ascii=False)
+    return prompt + f"""
+
+【General Text 分桶约束】
+1. 必须优先使用 summary 中的 allocation_plan，不得直接按 primary metric 失败比例分配训练数据。
+2. 指令遵循、相关性、事实性、推理、完整性、语言质量和安全拒答是相互独立的能力桶。
+3. other/待诊断样本不进入训练预算，只能建议补充评测证据或人工复核。
+4. recommended_percent 仅表示第一轮先验预算；小规模试训后应按单位样本指标收益更新。
+allocation_plan={allocation_json}
+"""
 
 def build_prompt_for_obtainer(summary: Dict[str, Any], obtainer_stats: Dict[str, Any]) -> str:
     """
@@ -502,7 +536,7 @@ def build_prompt_for_obtainer(summary: Dict[str, Any], obtainer_stats: Dict[str,
     loader = PromptLoader()
     template = loader("data_obtainer", "suggest_obtainer")
 
-    return template.format(
+    prompt = template.format(
         dataset_json=json.dumps({
             "bench_name": summary["bench_name"],
             "eval_type": summary["eval_type"],
@@ -514,6 +548,42 @@ def build_prompt_for_obtainer(summary: Dict[str, Any], obtainer_stats: Dict[str,
         summary_json=json.dumps(summary["summary_json"], ensure_ascii=False),
         obtainer_stats_json=json.dumps(obtainer_stats, ensure_ascii=False),
     )
+    return prompt + """
+
+【General Text 数据获取约束】
+1. 使用 allocation_plan.recommended_percent 生成能力级数据预算，再参考 domain_breakdown 选择内容领域。
+2. 不得把 primary_metric_failure、unknown 或 other 直接当作可采集的数据类型。
+3. 每个能力桶的数据建议必须对应 sample_direction，并说明验证该能力提升的指标。
+"""
+
+
+def _render_allocation_plan(allocation_plan: Dict[str, Any]) -> str:
+    rows = allocation_plan.get("buckets") or []
+    if not rows:
+        return ""
+    lines = [
+        "【General Text 训练数据分桶建议】",
+        "错误出现频率只作为需求信号；以下比例同时考虑归因置信度、严重性、迁移价值、学习效率和数据成本。",
+    ]
+    for row in sorted(rows, key=lambda item: -item.get("recommended_share", 0.0)):
+        lines.append(
+            f"- {row.get('label')}：{row.get('recommended_percent', 0):.2f}% "
+            f"（观察 {row.get('count', 0)} 条，置信度 {row.get('classification_confidence', 0):.2f}）"
+        )
+        lines.append(f"  样本方向：{row.get('sample_direction', '')}")
+        domains = row.get("domain_breakdown") or []
+        if domains:
+            domain_text = "、".join(
+                f"{item.get('domain')} {item.get('count')} 条" for item in domains[:5]
+            )
+            lines.append(f"  领域分布：{domain_text}")
+    other_impact = allocation_plan.get("other_impact") or {}
+    lines.append(
+        "- 待诊断样本：0.00% 训练预算"
+        f"（重分类后仍未解决 {other_impact.get('unresolved_count', 0)} 条）"
+    )
+    lines.append(f"- 动态更新：{allocation_plan.get('pilot_update_rule', '')}")
+    return "\n".join(lines)
 
 def _invoke_prompt(llm, prompt):
     """
@@ -567,6 +637,9 @@ def analyze_metric_report_node(state: LoopAIState):
     records = _load_records_from_alignment(metric_result)
     summary = _build_summary(state, metric_result, records)
     obtainer_stats = _build_obtainer_stats(state, metric_result, records, summary)
+    allocation_plan = obtainer_stats.get("allocation_plan") or {}
+    summary["allocation_plan"] = allocation_plan
+    _analyzer(state)["allocation_plan"] = allocation_plan
 
     _emit(
         "已构建 metric 摘要",
@@ -606,6 +679,11 @@ def analyze_metric_report_node(state: LoopAIState):
         data={"prompt_chars": len(obtainer_prompt or "")},
     )
     obtainer_text = _invoke_prompt(llm, obtainer_prompt)
+    allocation_text = _render_allocation_plan(allocation_plan)
+    if allocation_text:
+        report_text = f"{report_text.rstrip()}\n\n{allocation_text}\n"
+        data_plan_text = f"{data_plan_text.rstrip()}\n\n{allocation_text}\n"
+        obtainer_text = f"{obtainer_text.rstrip()}\n\n{allocation_text}\n"
 
     ts = time.strftime("%Y%m%d_%H%M%S")
     outdir = _ensure_analyzer_outdir(state)
