@@ -18,10 +18,24 @@ ANALYZER_PIPELINE_STEPS = (
     "finish",
 )
 
+GENERAL_ANALYZER_PIPELINE_STEPS = (
+    "metric_recommend",
+    "metric_score",
+    "analyze_metric_report",
+    "finish",
+)
+
+_ALL_ANALYZER_PIPELINE_STEPS = tuple(dict.fromkeys(
+    ANALYZER_PIPELINE_STEPS + GENERAL_ANALYZER_PIPELINE_STEPS
+))
+
 _STEP_PROGRESS_RANGES = {
     "eval_model": (0.00, 0.45),
     "analyze_result": (0.45, 0.75),
     "draw_conclusion": (0.75, 0.95),
+    "metric_recommend": (0.00, 0.15),
+    "metric_score": (0.15, 0.55),
+    "analyze_metric_report": (0.55, 0.95),
     "finish": (0.95, 1.00),
 }
 
@@ -33,6 +47,12 @@ _STEP_ALIASES = {
     "AnalyzerAgent.analyze_result_node": "analyze_result",
     "draw_conclusion_node": "draw_conclusion",
     "AnalyzerAgent.draw_conclusion_node": "draw_conclusion",
+    "metric_recommend_node": "metric_recommend",
+    "AnalyzerAgent.metric_recommend_node": "metric_recommend",
+    "metric_score_node": "metric_score",
+    "AnalyzerAgent.metric_score_node": "metric_score",
+    "analyze_metric_report_node": "analyze_metric_report",
+    "AnalyzerAgent.analyze_metric_report_node": "analyze_metric_report",
     "finish_node": "finish",
     "AnalyzerAgent.finish_node": "finish",
 }
@@ -42,14 +62,14 @@ def normalize_analyzer_step(step_name: Optional[str]) -> Optional[str]:
     if not step_name:
         return None
     step_name = str(step_name)
-    if step_name in ANALYZER_PIPELINE_STEPS:
+    if step_name in _ALL_ANALYZER_PIPELINE_STEPS:
         return step_name
     if step_name in _STEP_ALIASES:
         return _STEP_ALIASES[step_name]
     for alias, step in _STEP_ALIASES.items():
         if alias in step_name:
             return step
-    for step in ANALYZER_PIPELINE_STEPS:
+    for step in _ALL_ANALYZER_PIPELINE_STEPS:
         if step in step_name:
             return step
     return step_name
@@ -365,25 +385,33 @@ def load_analyzer_checkpoint(
     return load_analyzer_state_from_configer(task_id=thread_id)
 
 
-def _start_index(step_name: str) -> int:
+def _pipeline_steps_for_state(state: Dict[str, Any]) -> tuple[str, ...]:
+    task_type = str((state.get("analyzer") or {}).get("analyze_task_type") or "code").lower()
+    if task_type in {"code", "coding", "programming", "python", "text2sql", "text_to_sql", "sql"}:
+        return ANALYZER_PIPELINE_STEPS
+    return GENERAL_ANALYZER_PIPELINE_STEPS
+
+
+def _start_index(step_name: str, pipeline_steps: tuple[str, ...] = ANALYZER_PIPELINE_STEPS) -> int:
     step_name = normalize_analyzer_step(step_name)
-    if step_name not in ANALYZER_PIPELINE_STEPS:
-        available = ", ".join(ANALYZER_PIPELINE_STEPS)
+    if step_name not in pipeline_steps:
+        available = ", ".join(pipeline_steps)
         raise ValueError(f"Unknown Analyzer step: {step_name}. Available steps: {available}")
-    return ANALYZER_PIPELINE_STEPS.index(step_name)
+    return pipeline_steps.index(step_name)
 
 
 def _resume_step_from_state(state: Dict[str, Any]) -> str:
+    pipeline_steps = _pipeline_steps_for_state(state)
     current = normalize_analyzer_step(state.get("current"))
     last_completed = normalize_analyzer_step(state.get("last_completed"))
 
-    if last_completed in ANALYZER_PIPELINE_STEPS:
-        if current == last_completed or current not in ANALYZER_PIPELINE_STEPS:
-            next_index = min(_start_index(last_completed) + 1, len(ANALYZER_PIPELINE_STEPS) - 1)
-            return ANALYZER_PIPELINE_STEPS[next_index]
-    if current in ANALYZER_PIPELINE_STEPS:
+    if last_completed in pipeline_steps:
+        if current == last_completed or current not in pipeline_steps:
+            next_index = min(_start_index(last_completed, pipeline_steps) + 1, len(pipeline_steps) - 1)
+            return pipeline_steps[next_index]
+    if current in pipeline_steps:
         return current
-    return ANALYZER_PIPELINE_STEPS[0]
+    return pipeline_steps[0]
 
 
 def _is_finished(state: Dict[str, Any]) -> bool:
@@ -420,6 +448,15 @@ def _run_step(
         if step_name == "draw_conclusion":
             from loopai.skills.Analyzer.nodes.draw_conclusion import draw_conclusion_node
             return draw_conclusion_node(state)
+        if step_name == "metric_recommend":
+            from loopai.skills.Analyzer.nodes.metric_recommend_node import metric_recommend_node
+            return metric_recommend_node(state)
+        if step_name == "metric_score":
+            from loopai.skills.Analyzer.nodes.metric_score_node import metric_score_node
+            return metric_score_node(state)
+        if step_name == "analyze_metric_report":
+            from loopai.skills.Analyzer.nodes.analyze_metric_report_node import analyze_metric_report_node
+            return analyze_metric_report_node(state)
         raise ValueError(f"Unknown executable Analyzer step: {step_name}")
     finally:
         reset_analyzer_stream_writer(token)
@@ -451,16 +488,18 @@ def run_analyzer_pipeline(
     if baseline_result_path:
         state.setdefault("analyzer", {})["baseline_result_path"] = baseline_result_path
 
+    pipeline_steps = _pipeline_steps_for_state(state)
+
     if from_node is not None:
         start_step = normalize_analyzer_step(from_node)
     elif resume:
         start_step = _resume_step_from_state(state)
     else:
-        start_step = ANALYZER_PIPELINE_STEPS[0]
+        start_step = pipeline_steps[0]
 
     if start_step is None:
-        start_step = ANALYZER_PIPELINE_STEPS[0]
-    start_at = _start_index(start_step)
+        start_step = pipeline_steps[0]
+    start_at = _start_index(start_step, pipeline_steps)
     initial_resume_progress = (
         resume_progress if resume and from_node is None else 0.0
     )
@@ -512,7 +551,7 @@ def run_analyzer_pipeline(
                 )
             return state
 
-        for step_name in ANALYZER_PIPELINE_STEPS[start_at:]:
+        for step_name in pipeline_steps[start_at:]:
             state["current"] = step_name
             step_resume_progress = (
                 resume_progress

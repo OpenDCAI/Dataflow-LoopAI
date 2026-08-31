@@ -228,6 +228,14 @@ def resolve_analyzer_runtime_config(
         state.get("output_dir") if isinstance(state, dict) else None,
         "./outputs",
     )
+    request_timeout_seconds = float(_first_non_empty(
+        kwargs.get("analyze_request_timeout_seconds"),
+        os.getenv("ANALYZER_REQUEST_TIMEOUT_SECONDS"),
+        analyzer.get("analyze_request_timeout_seconds"),
+        300,
+    ))
+    if request_timeout_seconds <= 0:
+        raise ValueError("analyze_request_timeout_seconds must be greater than 0")
 
     require_api_key = kwargs.get("require_api_key")
     needs_llm = bool(require_api_key) if require_api_key is not None else bool(model or base_url)
@@ -260,6 +268,7 @@ def resolve_analyzer_runtime_config(
         analyzer["db_path"] = db_path
     if output_dir:
         analyzer["output_dir"] = output_dir
+    analyzer["analyze_request_timeout_seconds"] = request_timeout_seconds
     if task_id and version_id and output_dir:
         analyzer["runtime_output_dir"] = str(
             Path(str(output_dir))
@@ -278,6 +287,7 @@ def resolve_analyzer_runtime_config(
         "db_path": db_path,
         "analyzer_model": model,
         "analyzer_base_url": base_url,
+        "analyze_request_timeout_seconds": request_timeout_seconds,
         "has_analyzer_api_key": bool(api_key),
         "api_key_source": (
             "kwargs"

@@ -32,6 +32,7 @@ class OpenAICompatChat(BaseChatModel):
     max_tokens: int = 512
     temperature: float = 0.0
     top_p: float = 0.95
+    request_timeout: float = 300.0
 
     @property
     def _llm_type(self) -> str:
@@ -92,7 +93,7 @@ class OpenAICompatChat(BaseChatModel):
             self.base_url.rstrip("/") + "/chat/completions",
             json=payload,
             headers=headers,
-            timeout=120,
+            timeout=self.request_timeout,
         )
         resp.raise_for_status()
         data = resp.json()

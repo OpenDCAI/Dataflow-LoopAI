@@ -93,6 +93,12 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Number of failed samples per Analyzer model batch. Default: 20.",
     )
+    parser.add_argument(
+        "--request-timeout-seconds",
+        type=float,
+        default=None,
+        help="Analyzer model client timeout. Default: 300 seconds.",
+    )
     parser.add_argument("--resume", action="store_true", help="Resume using Configer/external runtime state.")
     parser.add_argument("--from-node", default=None, help="Force Analyzer to resume from a specific step.")
     parser.add_argument("--list-nodes", action="store_true", help="List standalone Analyzer steps and exit.")
@@ -135,6 +141,7 @@ def main() -> None:
             version_id=args.version_id,
             baseline_result_path=args.baseline_result_path,
             analyze_batch_size=args.analyze_batch_size,
+            analyze_request_timeout_seconds=args.request_timeout_seconds,
             force_new_version=args.new_version,
             stream_stdout=args.stream_stdout,
             emit_status=False,
