@@ -167,6 +167,65 @@ _GENERAL_BUCKET_META = {
     },
 }
 
+_MATH_BUCKET_META = {
+    "math_output_contract": {
+        "label": "答案提取与格式遵循",
+        "severity": 1.10,
+        "transfer": 1.20,
+        "learnability_prior": 1.30,
+        "cost": 0.80,
+        "sample_direction": "题目与推理过程 -> 按要求输出可提取的最终答案，覆盖 boxed、数值、选项和多问格式",
+    },
+    "math_arithmetic_calculation": {
+        "label": "基础计算与数值精度",
+        "severity": 1.10,
+        "transfer": 1.20,
+        "learnability_prior": 1.20,
+        "cost": 0.85,
+        "sample_direction": "分数、小数、比例、符号、单位和代入计算的短步骤纠错与验算样本",
+    },
+    "math_algebra_symbolic": {
+        "label": "代数与符号变换",
+        "severity": 1.15,
+        "transfer": 1.20,
+        "learnability_prior": 0.90,
+        "cost": 1.05,
+        "sample_direction": "方程求解、展开、因式分解、恒等变形和符号化简的逐步等价变换样本",
+    },
+    "math_modeling": {
+        "label": "题意理解与数学建模",
+        "severity": 1.25,
+        "transfer": 1.20,
+        "learnability_prior": 0.70,
+        "cost": 1.20,
+        "sample_direction": "自然语言条件 -> 变量、方程、约束和目标函数的显式建模对比样本",
+    },
+    "math_strategy_theorem": {
+        "label": "解题策略与定理选择",
+        "severity": 1.25,
+        "transfer": 1.15,
+        "learnability_prior": 0.65,
+        "cost": 1.30,
+        "sample_direction": "同题多策略、公式或定理适用条件辨析，以及错误路线到正确路线的修正样本",
+    },
+    "math_reasoning_consistency": {
+        "label": "多步推理与过程一致性",
+        "severity": 1.20,
+        "transfer": 1.20,
+        "learnability_prior": 0.70,
+        "cost": 1.20,
+        "sample_direction": "逐步推导、局部结论校验、反例检查和答案与过程一致性训练样本",
+    },
+    "math_verification_completeness": {
+        "label": "验证、约束与解答完整性",
+        "severity": 1.05,
+        "transfer": 1.10,
+        "learnability_prior": 1.00,
+        "cost": 0.95,
+        "sample_direction": "定义域、边界条件、增根漏解、单位、证明闭合和多问完整作答样本",
+    },
+}
+
 _GENERAL_METHOD_REFERENCES = [
     {
         "paper": "Holistic Evaluation of Language Models (HELM)",
@@ -203,6 +262,33 @@ _GENERAL_METHOD_REFERENCES = [
         "venue": "ICML 2024",
         "applied_to": "后续以小规模试训的目标能力收益替代静态学习效率先验",
         "url": "https://proceedings.mlr.press/v235/xia24c.html",
+    },
+]
+
+_MATH_METHOD_REFERENCES = [
+    {
+        "paper": "Measuring Mathematical Problem Solving With the MATH Dataset",
+        "venue": "NeurIPS 2021",
+        "applied_to": "将数学主题作为二级领域标签，并保留完整解题过程用于错误定位",
+        "url": "https://arxiv.org/abs/2103.03874",
+    },
+    {
+        "paper": "Training Verifiers to Solve Math Word Problems",
+        "venue": "arXiv 2021",
+        "applied_to": "区分最终答案判定与过程能力诊断，优先使用可验证信号",
+        "url": "https://arxiv.org/abs/2110.14168",
+    },
+    {
+        "paper": "Let's Verify Step by Step",
+        "venue": "ICLR 2024",
+        "applied_to": "使用步骤级反馈定位局部推理错误，而非仅按最终答案失败分桶",
+        "url": "https://arxiv.org/abs/2305.20050",
+    },
+    {
+        "paper": "Skill-It! A Data-Driven Skills Framework for Understanding and Training Language Models",
+        "venue": "NeurIPS 2023",
+        "applied_to": "按可训练能力组织数据，并为被前置错误遮蔽的能力保留探索预算",
+        "url": "https://proceedings.neurips.cc/paper_files/paper/2023/hash/70b8505ac79e3e131756f793cd80eb8d-Abstract-Conference.html",
     },
 ]
 
@@ -264,6 +350,11 @@ def _normalize_task_type(task_type: Any) -> str:
         return "text2sql"
     if normalized in {"code", "coding", "programming", "python"}:
         return "code"
+    if normalized in {
+        "math", "mathematics", "mathematical", "math_reasoning", "math_qa",
+        "数学", "数学推理",
+    }:
+        return "math"
     return "general"
 
 
@@ -306,6 +397,164 @@ def _general_evidence(record: Dict[str, Any]) -> Tuple[str, str, str, str]:
     )
     evidence = " ".join((result, tags, judge_text, judge_extra, top_level, detail_text)).strip().lower()
     return question, reference, completion, evidence
+
+
+def _structured_math_error_labels(record: Dict[str, Any]) -> List[str]:
+    """Collect structured Math labels without treating free-form answers as labels."""
+    labels: List[str] = []
+    judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
+    detail = record.get("metric_detail") if isinstance(record.get("metric_detail"), dict) else {}
+
+    def _append(value: Any) -> None:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                labels.append(stripped)
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                _append(item)
+
+    for container in (record, judge, detail):
+        for key in (
+            "error_type", "errors", "primary_error", "secondary_error", "labels",
+            "failure_type",
+        ):
+            _append(container.get(key))
+
+    # Judger predictions are preferred. Gold/manual step labels are only a
+    # compatibility fallback for files that do not contain pred_steps.
+    steps = record.get("pred_steps")
+    if not isinstance(steps, list):
+        steps = record.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            for key in ("errors", "error_type", "primary_error", "secondary_error", "labels"):
+                _append(step.get(key))
+
+    ignored = {
+        "步骤正确", "正确", "无错误", "none", "no error", "passed", "pass", "matched",
+    }
+    return [label for label in labels if label.strip().lower() not in ignored]
+
+
+def _math_label_bucket(label: str) -> str | None:
+    normalized = label.strip().lower().replace("_", " ")
+    mappings = (
+        ("math_output_contract", (
+            "输出格式", "答案格式", "格式错误", "无法提取", "提取失败", "未输出答案",
+            "空答案", "answer format", "output format", "extraction", "missing answer",
+        )),
+        ("math_modeling", (
+            "题意理解", "建模", "列式", "变量定义", "条件理解", "关系式错误",
+            "problem understanding", "modeling", "equation setup", "translate the problem",
+        )),
+        ("math_algebra_symbolic", (
+            "代数", "符号变换", "符号错误", "化简", "方程求解", "解方程", "展开错误",
+            "因式分解", "等价变形", "algebra", "symbolic", "simplification",
+            "equation solving", "factorization", "transformation",
+        )),
+        ("math_arithmetic_calculation", (
+            "计算错误", "算术错误", "数值错误", "代入后算错", "代入错误", "小数错误",
+            "分数错误", "正负号", "单位换算", "arithmetic", "calculation", "numeric error",
+            "sign error", "rounding error",
+        )),
+        ("math_strategy_theorem", (
+            "解题思路混乱", "公式使用错误或遗漏", "公式错误", "定理使用", "定理选择",
+            "方法错误", "策略错误", "概念错误", "wrong formula", "wrong theorem",
+            "wrong strategy", "conceptual error", "incorrect approach",
+        )),
+        ("math_reasoning_consistency", (
+            "答案与过程不符", "推理错误", "逻辑错误", "前后矛盾", "结论不一致",
+            "invalid inference", "reasoning error", "logical error", "contradiction",
+            "answer process mismatch", "inconsistent",
+        )),
+        ("math_verification_completeness", (
+            "答题步骤不完整", "步骤不完整", "遗漏步骤", "漏解", "增根", "定义域",
+            "边界条件", "未验证", "证明不完整", "条件遗漏", "incomplete", "missing step",
+            "extraneous root", "domain restriction", "boundary condition", "verification",
+        )),
+    )
+    for bucket, tokens in mappings:
+        if any(token in normalized for token in tokens):
+            return bucket
+    return None
+
+
+def _math_evidence(record: Dict[str, Any]) -> Tuple[str, str, str, str, List[str]]:
+    judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
+    detail = record.get("metric_detail") if isinstance(record.get("metric_detail"), dict) else {}
+    metric_details = record.get("metric_details") if isinstance(record.get("metric_details"), dict) else {}
+    question = _first_text(record, ("question", "prompt", "input", "query", "instruction"))
+    reference = _first_text(record, (
+        "target", "reference", "ground_truth", "answer", "correct_answer", "gold", "solution",
+    ))
+    completion, result, tags, judge_text = _record_text(record)
+    if not completion:
+        steps = record.get("steps") if isinstance(record.get("steps"), list) else []
+        completion = "\n".join(
+            _text(step.get("response")).strip()
+            for step in steps
+            if isinstance(step, dict) and _text(step.get("response")).strip()
+        )
+    labels = _structured_math_error_labels(record)
+    top_level = " ".join(
+        _text(record.get(key))
+        for key in ("reason", "feedback", "critique", "analysis_reason", "failure_reason")
+        if record.get(key) not in (None, "", [], {})
+    )
+    judge_extra = " ".join(
+        _text(judge.get(key))
+        for key in ("reason", "feedback", "critique", "advice")
+        if judge.get(key) not in (None, "", [], {})
+    )
+    detail_text = " ".join(
+        _text(detail.get(key))
+        for key in ("match_type", "reason", "feedback", "analysis")
+        if detail.get(key) not in (None, "", [], {})
+    )
+    metric_detail_text = " ".join(
+        f"{name}:{_text(value)}" for name, value in metric_details.items()
+    )
+    evidence = " ".join(
+        (result, tags, judge_text, judge_extra, top_level, detail_text, metric_detail_text, " ".join(labels))
+    ).strip().lower()
+    return question, reference, completion, evidence, labels
+
+
+def _math_extraction_failed(record: Dict[str, Any], completion: str, evidence: str) -> bool:
+    if not completion.strip():
+        return True
+    metric_details = record.get("metric_details") if isinstance(record.get("metric_details"), dict) else {}
+    extraction_detail = metric_details.get("extraction_rate")
+    if isinstance(extraction_detail, (int, float)) and float(extraction_detail) == 0.0:
+        return True
+    if isinstance(extraction_detail, dict) and float(extraction_detail.get("score", 0.0)) == 0.0:
+        return True
+    return _contains_any(evidence, (
+        "extraction failed", "answer extraction failed", "无法提取答案", "答案提取失败", "未输出最终答案",
+    ))
+
+
+def _infer_math_domain(record: Dict[str, Any]) -> str:
+    explicit = _first_text(record, ("domain", "subset", "subject", "math_domain", "category"))
+    if explicit and explicit.strip().lower() not in {"math", "mathematics", "数学", "unknown", "general"}:
+        return explicit
+    question = _first_text(record, ("question", "prompt", "input", "query", "instruction")).lower()
+    domain_tokens = (
+        ("geometry", ("geometry", "triangle", "circle", "angle", "ellipse", "parabola", "hyperbola", "几何", "三角形", "圆", "角", "椭圆", "抛物线", "双曲线", "向量")),
+        ("probability_statistics", ("probability", "statistics", "random variable", "distribution", "expectation", "variance", "概率", "统计", "随机变量", "分布", "期望", "方差", "抽样", "卡方")),
+        ("calculus_analysis", ("derivative", "integral", "limit", "continuity", "monotonic", "导数", "积分", "极限", "连续", "单调", "微分")),
+        ("number_theory", ("prime", "divisibility", "congruence", "integer solution", "质数", "素数", "整除", "同余", "整数解")),
+        ("combinatorics", ("permutation", "combination", "counting", "排列", "组合", "计数", "容斥")),
+        ("algebra", ("equation", "polynomial", "sequence", "matrix", "function", "方程", "多项式", "数列", "矩阵", "函数", "不等式")),
+        ("arithmetic", ("ratio", "percentage", "fraction", "比例", "百分比", "分数", "算术")),
+    )
+    for domain, tokens in domain_tokens:
+        if any(token in question for token in tokens):
+            return domain
+    return "other_math"
 
 
 def _contains_any(text: str, tokens: Tuple[str, ...]) -> bool:
@@ -379,6 +628,7 @@ def classify_failure_bucket(
     """
     judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
     metric_detail = record.get("metric_detail") if isinstance(record.get("metric_detail"), dict) else {}
+    task_route = _normalize_task_type(task_type)
     original_stage = _text(
         judge.get("stage")
         or record.get("error_type")
@@ -389,7 +639,69 @@ def classify_failure_bucket(
     completion, result, tags, judge_text = _record_text(record)
     evidence = f"{result} {tags} {judge_text}".lower()
     failed = not bool(record.get("passed", False))
-    task_route = _normalize_task_type(task_type)
+
+    if task_route == "math":
+        question, reference, completion, evidence, labels = _math_evidence(record)
+        label_bucket_counts = Counter(
+            bucket for bucket in (_math_label_bucket(label) for label in labels) if bucket
+        )
+        if labels:
+            original_stage = Counter(label.strip().lower() for label in labels).most_common(1)[0][0]
+        if label_bucket_counts:
+            bucket, count = label_bucket_counts.most_common(1)[0]
+            signal_labels = [label for label in labels if _math_label_bucket(label) == bucket]
+            result_item = _classification(
+                bucket,
+                original_stage,
+                min(0.97, 0.86 + 0.03 * count),
+                f"结构化数学错因中“{signal_labels[0]}”等信号出现 {count} 次",
+            )
+            result_item["math_error_signals"] = dict(label_bucket_counts)
+            return result_item
+        if _math_extraction_failed(record, completion, evidence):
+            return _classification(
+                "math_output_contract", original_stage, 0.96, "答案为空或诊断指标确认最终答案提取失败"
+            )
+        if _contains_any(evidence, (
+            "题意理解", "建模", "列式", "变量定义", "条件理解", "problem understanding",
+            "modeling", "equation setup",
+        )):
+            return _classification("math_modeling", original_stage, 0.88, "诊断证据指向题意理解或数学建模错误")
+        if _contains_any(evidence, (
+            "代数", "符号变换", "化简", "方程求解", "因式分解", "algebra", "symbolic",
+            "simplification", "equation solving", "factorization",
+        )):
+            return _classification("math_algebra_symbolic", original_stage, 0.88, "诊断证据指向代数或符号变换错误")
+        if _contains_any(evidence, (
+            "计算错误", "算术错误", "数值错误", "代入错误", "正负号", "arithmetic",
+            "calculation", "numeric error", "sign error",
+        )):
+            return _classification("math_arithmetic_calculation", original_stage, 0.88, "诊断证据指向基础计算或数值错误")
+        if _contains_any(evidence, (
+            "解题思路", "公式使用", "定理", "策略", "概念错误", "wrong formula",
+            "wrong theorem", "wrong strategy", "incorrect approach",
+        )) or _contains_any(completion.lower(), ("不知道如何", "无法继续", "只能猜测", "i don't know how")):
+            return _classification("math_strategy_theorem", original_stage, 0.86, "诊断证据指向解题策略、公式或定理选择错误")
+        if _contains_any(evidence, (
+            "答案与过程不符", "推理错误", "逻辑错误", "前后矛盾", "invalid inference",
+            "reasoning error", "logical error", "contradiction", "inconsistent",
+        )):
+            return _classification("math_reasoning_consistency", original_stage, 0.86, "诊断证据指向多步推理或过程一致性错误")
+        if _contains_any(evidence, (
+            "步骤不完整", "漏解", "增根", "定义域", "边界条件", "未验证", "incomplete",
+            "missing step", "extraneous root", "domain restriction", "verification",
+        )):
+            return _classification("math_verification_completeness", original_stage, 0.86, "诊断证据指向约束检查、验证或作答完整性")
+        if failed and reference and len(reference) >= 160 and len(completion) < max(24, int(len(reference) * 0.12)):
+            return _classification(
+                "math_verification_completeness", original_stage, 0.58, "解答显著短于参考过程，疑似多问或关键推导未完成"
+            )
+        return _classification(
+            _UNKNOWN_BUCKET,
+            original_stage,
+            0.25,
+            "最终答案未通过数学指标，但缺少可靠的步骤级错因，不能据此猜测训练能力桶",
+        )
 
     if task_route == "general":
         question, reference, completion, evidence = _general_evidence(record)
@@ -518,6 +830,7 @@ def _classification(bucket: str, original_stage: str, confidence: float, reason:
         _CODE_BUCKET_META.get(bucket)
         or _SQL_BUCKET_META.get(bucket)
         or _GENERAL_BUCKET_META.get(bucket)
+        or _MATH_BUCKET_META.get(bucket)
         or _UNKNOWN_META
     )
     return {
@@ -597,7 +910,10 @@ def build_training_bucket_strategy(
         confidence_sum[item["bucket"]] += item["confidence"]
         if item["original_stage"] == "other":
             original_other += 1
-        domain = _first_text(record, ("domain", "subset", "source", "subject", "category"))
+        if task_route == "math":
+            domain = _infer_math_domain(record)
+        else:
+            domain = _first_text(record, ("domain", "subset", "source", "subject", "category"))
         if not domain:
             judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
             domain = _text(judge.get("domain") or "unknown")
@@ -615,6 +931,8 @@ def build_training_bucket_strategy(
     total_failed = len(failed)
     if task_route == "text2sql":
         meta_map = _SQL_BUCKET_META
+    elif task_route == "math":
+        meta_map = _MATH_BUCKET_META
     elif task_route == "general":
         meta_map = _GENERAL_BUCKET_META
     else:
@@ -651,6 +969,13 @@ def build_training_bucket_strategy(
                     "general_factuality_grounding": 0.12,
                     "general_reasoning_consistency": 0.08,
                 }
+        elif task_route == "math" and counts.get("math_output_contract", 0) / total_failed >= 0.50:
+            exploration_priors = {
+                "math_arithmetic_calculation": 0.12,
+                "math_algebra_symbolic": 0.10,
+                "math_modeling": 0.08,
+                "math_reasoning_consistency": 0.08,
+            }
     for key in exploration_priors:
         candidate_counts.setdefault(key, 0)
 
@@ -758,6 +1083,10 @@ def build_training_bucket_strategy(
             "每轮小规模补数后，以该桶目标指标增量/新增样本数更新 learnability，"
             "下一轮按边际收益重新分配；不把当前错误占比永久固化为训练占比。"
         ),
-        "methodology_references": _GENERAL_METHOD_REFERENCES if task_route == "general" else [],
+        "methodology_references": (
+            _GENERAL_METHOD_REFERENCES if task_route == "general"
+            else _MATH_METHOD_REFERENCES if task_route == "math"
+            else []
+        ),
         "warnings": warnings,
     }

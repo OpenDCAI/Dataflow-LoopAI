@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import json
+import re
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
@@ -297,6 +298,40 @@ def _infer_task_domain(state: LoopAIState) -> str:
     return "general"
 
 
+def _infer_bucket_task_type(state: LoopAIState, summary: Dict[str, Any]) -> str:
+    """Select the capability taxonomy without changing the metric pipeline."""
+    analyzer = _analyzer(state)
+    configured = str(analyzer.get("analyze_task_type") or "").strip().lower().replace("-", "_")
+    if configured in {"code", "coding", "programming", "python"}:
+        return "code"
+    if configured in {"text2sql", "text_to_sql", "sql"}:
+        return "text2sql"
+    if configured in {
+        "math", "mathematics", "mathematical", "math_reasoning", "math_qa", "数学", "数学推理",
+    }:
+        return "math"
+    if configured in {"general", "general_text", "text", "qa"}:
+        return "general"
+
+    primary_metric = str(summary.get("primary_metric") or "").strip().lower()
+    if primary_metric in {"math_verify", "numerical_match"}:
+        return "math"
+
+    hints = " ".join(
+        str(value or "").lower().replace("-", "_")
+        for value in (
+            summary.get("bench_name"), summary.get("task_domain"), analyzer.get("task_domain"),
+        )
+    )
+    math_hints = (
+        "gsm8k", "svamp", "ape210k", "mawps", "asdiv", "competition_math", "math_500",
+        "hendrycks_math", "aqua_rat", "gaokao_mathqa", "math_qa", "omni_math", "数学",
+    )
+    if any(token in hints for token in math_hints) or re.search(r"(?:^|\s)math(?:$|\s|_)", hints):
+        return "math"
+    return "general"
+
+
 def _build_summary(
     state: LoopAIState,
     metric_result: Dict[str, Any],
@@ -330,7 +365,7 @@ def _build_summary(
     failure_patterns = _build_failure_patterns(primary_metric_name, primary_metric_item)
     top_err = failure_patterns[0]["name"] if failure_patterns else "none"
 
-    return {
+    summary = {
         "bench_name": bench_name,
         "eval_type": eval_type,
         "task_domain": task_domain,
@@ -346,6 +381,8 @@ def _build_summary(
         "by_stage": {},
         "summary_json": metric_result,
     }
+    summary["bucket_task_type"] = _infer_bucket_task_type(state, summary)
+    return summary
 
 
 def _build_obtainer_stats(
@@ -368,6 +405,7 @@ def _build_obtainer_stats(
     domain_counter = {}
     field_presence_counter = {}
     bucket_records = []
+    all_metrics = metric_result.get("metrics", {}) or {}
 
     for idx, detail in enumerate(details):
         score = _normalize_detail_score(detail)
@@ -390,6 +428,13 @@ def _build_obtainer_stats(
         bucket_record = dict(rec)
         bucket_record["passed"] = score != 0.0
         bucket_record["metric_detail"] = detail
+        bucket_record["metric_details"] = {
+            metric_name: metric_item.get("details", [])[idx]
+            for metric_name, metric_item in all_metrics.items()
+            if isinstance(metric_item, dict)
+            and isinstance(metric_item.get("details"), list)
+            and idx < len(metric_item.get("details", []))
+        }
         bucket_record["primary_metric"] = primary_metric_name
         bucket_record.setdefault("generated_ans", sample["generated_ans"])
         bucket_record.setdefault("domain", domain)
@@ -447,7 +492,7 @@ def _build_obtainer_stats(
     analyzer_cfg = _analyzer(state)
     allocation_plan = build_training_bucket_strategy(
         bucket_records,
-        task_type="general",
+        task_type=summary.get("bucket_task_type") or "general",
         alpha=float(analyzer_cfg.get("bucket_power_alpha", 1.0)),
         min_share=float(analyzer_cfg.get("bucket_min_share", 0.05)),
         max_share=float(analyzer_cfg.get("bucket_max_share", 0.50)),
@@ -478,7 +523,7 @@ def build_prompt_for_report(summary: Dict[str, Any]) -> str:
     loader = PromptLoader()
     template = loader("analyze_metric_report", "report_user")
 
-    return template.format(
+    prompt = template.format(
         bench_name=summary["bench_name"],
         eval_type=summary["eval_type"],
         task_domain=summary["task_domain"],
@@ -493,6 +538,18 @@ def build_prompt_for_report(summary: Dict[str, Any]) -> str:
         quick_samples_json=json.dumps(summary["quick_samples"], ensure_ascii=False),
         summary_json=json.dumps(summary["summary_json"], ensure_ascii=False),
     )
+    if summary.get("bucket_task_type") == "math":
+        allocation_json = json.dumps(summary.get("allocation_plan") or {}, ensure_ascii=False)
+        prompt += f"""
+
+【Math 报告约束】
+1. 最终答案指标只说明是否匹配，不得单凭失败结果猜测具体数学错因。
+2. 优先引用步骤级结构化错因；能力分桶与代数、几何、概率统计等题目领域必须分开描述。
+3. 明确区分答案提取、基础计算、符号变换、数学建模、策略定理、过程一致性和验证完整性。
+4. 待诊断样本只报告证据缺口，不得进入训练预算。
+allocation_plan={allocation_json}
+"""
+    return prompt
 
 
 def build_prompt_for_data_plan(summary: Dict[str, Any]) -> str:
@@ -518,6 +575,16 @@ def build_prompt_for_data_plan(summary: Dict[str, Any]) -> str:
         summary_json=json.dumps(summary["summary_json"], ensure_ascii=False),
     )
     allocation_json = json.dumps(summary.get("allocation_plan") or {}, ensure_ascii=False)
+    if summary.get("bucket_task_type") == "math":
+        return prompt + f"""
+
+【Math 分桶约束】
+1. 必须优先使用 allocation_plan，不得把最终答案失败率直接当作训练数据比例。
+2. 主预算按数学能力桶分配；代数、几何、概率统计等 domain_breakdown 只决定桶内题目来源。
+3. 每项建议必须对应 sample_direction，并说明可验证的目标指标或步骤级正确率。
+4. other/待诊断样本为 0 训练预算；recommended_percent 是首轮先验，试训后按单位样本收益更新。
+allocation_plan={allocation_json}
+"""
     return prompt + f"""
 
 【General Text 分桶约束】
@@ -548,6 +615,15 @@ def build_prompt_for_obtainer(summary: Dict[str, Any], obtainer_stats: Dict[str,
         summary_json=json.dumps(summary["summary_json"], ensure_ascii=False),
         obtainer_stats_json=json.dumps(obtainer_stats, ensure_ascii=False),
     )
+    if summary.get("bucket_task_type") == "math":
+        return prompt + """
+
+【Math 数据获取约束】
+1. 使用 allocation_plan.recommended_percent 生成能力级预算，再用 domain_breakdown 选择代数、几何、概率统计等题目来源。
+2. 数据必须保留题目、标准过程、最终答案和可定位的关键步骤，不能只采集答案对。
+3. 不得把 primary_metric_failure、unknown 或 other 直接当作可采集的数据类型。
+4. 每个能力桶必须对应 sample_direction，并给出该能力的验证指标。
+"""
     return prompt + """
 
 【General Text 数据获取约束】
@@ -561,8 +637,10 @@ def _render_allocation_plan(allocation_plan: Dict[str, Any]) -> str:
     rows = allocation_plan.get("buckets") or []
     if not rows:
         return ""
+    task_type = allocation_plan.get("task_type") or "general"
+    title = "Math" if task_type == "math" else "General Text"
     lines = [
-        "【General Text 训练数据分桶建议】",
+        f"【{title} 训练数据分桶建议】",
         "错误出现频率只作为需求信号；以下比例同时考虑归因置信度、严重性、迁移价值、学习效率和数据成本。",
     ]
     for row in sorted(rows, key=lambda item: -item.get("recommended_share", 0.0)):

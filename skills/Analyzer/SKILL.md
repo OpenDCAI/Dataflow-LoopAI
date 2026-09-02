@@ -141,9 +141,14 @@ Standalone selects the pipeline from `analyzer.analyze_task_type`:
 
 `eval_model -> analyze_result -> draw_conclusion -> finish`
 
-General text uses its existing metric pipeline:
+General text and Math use the metric pipeline:
 
 `metric_recommend -> metric_score -> analyze_metric_report -> finish`
+
+Math does not reuse the Code/Text2SQL OJ evidence parser. It uses
+`numerical_match`, `math_verify`, or `choice_accuracy` for deterministic answer
+scoring, then applies a Math-specific capability taxonomy to structured
+step-level error evidence.
 
 The in-memory state still carries:
 
@@ -174,7 +179,7 @@ counts, pass rates, and failure distributions. A single string
 }
 ```
 
-Do not combine `code`, `text2sql`, and general-text results in one Analyzer
+Do not combine `code`, `text2sql`, `math`, and general-text results in one Analyzer
 route; each task type keeps its own analysis rules.
 
 ## Data Bucket Strategy
@@ -187,7 +192,7 @@ confidence, severity, transfer value, learnability prior, and data cost.
 diagnostic queue. Each actionable bucket is capped by default at 50%, and the
 plan explicitly requires pilot-training gains to update later rounds.
 
-Analyzer keeps three independent bucket routes:
+Analyzer keeps four independent bucket routes:
 
 - Code: output contract, syntax/completion, interface/scope, semantic logic,
   boundary robustness, and runtime efficiency.
@@ -196,6 +201,16 @@ Analyzer keeps three independent bucket routes:
 - General Text: instruction/format following, relevance/intent, factuality and
   grounding, reasoning consistency, completeness/coverage, language quality,
   and safety/refusal boundaries.
+- Math: answer extraction/format, arithmetic, algebra/symbolic manipulation,
+  problem modeling, strategy/theorem selection, multi-step consistency, and
+  verification/completeness.
+
+Math uses a two-level structure. Capability buckets determine the recommended
+training allocation; algebra, geometry, probability/statistics, calculus,
+number theory, and combinatorics are reported as `domain_breakdown` values
+inside each capability. A final-answer mismatch without trustworthy step-level
+evidence stays in the zero-budget diagnostic queue instead of being guessed
+into a Math capability bucket.
 
 General Text uses structured evaluator labels and reasons first. Empty answers,
 verifiable format violations, and obvious refusal patterns provide deterministic
