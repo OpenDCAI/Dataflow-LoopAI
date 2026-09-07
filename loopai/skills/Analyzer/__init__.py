@@ -15,6 +15,7 @@ def run(
     from_node: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
     analyze_batch_size: Optional[int] = None,
+    critique_samples_per_tag: Optional[Any] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Run Analyzer skill (Codex / subprocess entry point).
@@ -172,6 +173,7 @@ def run(
             from_node=from_node,
             baseline_result_path=baseline_result_path,
             analyze_batch_size=analyze_batch_size,
+            critique_samples_per_tag=critique_samples_per_tag,
             writer=writer,
             emit_status=False,
             **runner_kwargs,
@@ -269,6 +271,7 @@ def resume_run(
     from_node: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
     analyze_batch_size: Optional[int] = None,
+    critique_samples_per_tag: Optional[Any] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Explicit continuation entry point; always resumes the latest checkpoint."""
@@ -280,6 +283,7 @@ def resume_run(
         from_node=from_node,
         baseline_result_path=baseline_result_path,
         analyze_batch_size=analyze_batch_size,
+        critique_samples_per_tag=critique_samples_per_tag,
         **kwargs,
     )
 

@@ -455,7 +455,7 @@ def build_obtainer_stats(
         "fail_bias_tags": fail_bias_tags[:15],
         "representative_failure_samples": sample_briefs,
         "actionable_bucket_top": [
-            [row["label"], row["count"]]
+            [row["label"], row.get("actionable_count", row["count"])]
             for row in allocation_plan.get("buckets", [])
         ],
         "allocation_plan": allocation_plan,

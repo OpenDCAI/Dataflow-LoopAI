@@ -50,7 +50,7 @@ metric_recommend -> metric_score -> analyze_metric_report -> finish
 | 历史报告无法比较 | Analyzer 只能分析单轮结果 | 没有 baseline 输入及样本匹配逻辑 | 支持 `baseline_result_path`，输出 `historical_comparison` 和报告小节 |
 | 大数据量分析超时 | `analyze_result` 或结论阶段长时间等待，代理出现 524/timeout | Prompt 证据过长，代理网关时间限制较短 | 默认延长请求 timeout；首次失败后压缩证据重试，并按阶段保存 checkpoint |
 | 多 benchmark 输入不明确 | HumanEval、MBPP 等结果只能分开分析或路径被覆盖 | 仅支持单个 `eval_result_path` | 同任务类型 benchmark 可合并分析，同时保留每个 benchmark 的独立统计 |
-| `other` 占比过高 | 数据分桶把大量预算给不可操作的 `other` | 只按 Judger 原始错误标签和比例分配 | 根据执行证据重分类；无法归因的样本进入诊断池，不占训练预算 |
+| `other` 占比过高 | 数据分桶把大量预算给不可操作的 `other` | 只按 Judger 原始错误标签和比例分配 | 根据执行证据重分类；Math 必须归入具体模型错因或评测异常，其他路线无法归因的样本进入零预算诊断池 |
 | 错误比例不等于训练收益 | 高频错误被分配大量数据，但实际学习效率可能较低 | 原始策略把观察频率近似当成数据需求 | 同时考虑置信度、严重性、迁移价值、学习效率先验和成本，并预留小规模试训后的动态更新 |
 
 ## 1. 独立运行与 Skill 接入
@@ -201,7 +201,9 @@ token
 数据获取与训练成本
 ```
 
-Code、Text2SQL 和 General Text 使用独立能力桶。原始 `other` 会先根据执行结果、解析信息和错误证据重新分类；仍无法解释的样本进入诊断池，训练预算为 0。
+Code、Text2SQL、General Text 和 Math 使用独立能力桶。原始 `other` 会先根据执行结果、解析信息和错误证据重新分类。Math 的每条 Metric 失败必须归入具体模型错因或“评测异常”：前者按证据强弱分别进入步骤级修复或整题级对比构造，后者只进入 Metric 回归，模型训练预算为 0。重试后仍无法判因时停止生成报告，并在同一 `version_id` 上续跑，不输出“待诊断”或“暂缓”。
+
+分桶中的 `count`/`observed_count` 统计每一条失败样本；`actionable_count` 只统计通过质量门控、可直接进入构造阶段的失败样本。`critique_samples_per_tag`（默认 5）只限制每个标签送入错误画像归纳的短评数量，不会改变分桶统计。
 
 当前 `learnability` 仍以先验为主。更理想的闭环是：每轮先进行小规模试训，再根据“目标指标增量/新增样本数”更新下一轮分配比例。
 
@@ -228,15 +230,23 @@ PY
 <output_dir>/<task_id>/analyzer/<version_id>/
 ```
 
-重点查看：
+Math 重点查看：
 
 ```text
 analyzer.pkl
 state_checkpoint.sqlite
-summary_*.json / .txt
-report_*.json / .txt
-final_report_*.json / .txt
+oj_records_enriched_*.json / .jsonl
+数学评测最终报告/
+  总览.txt
+  <数据集名>/
+    01_数据集背景与评测概览.txt
+    02_完整分析与审计报告.txt
+    03_最终报告.txt
+    04_模型改进建议.txt
+    05_数据爬取与构造建议.txt
 ```
+
+其中 `01` 是数据集背景与指标概览；`02` 包含全量错误审计，以及与 Code/Text2SQL 一致的“失败模式画像—数据爬取与构造—训练数据配方—评测改进—下一轮路线图”五段式分析；`03` 只保留便于阅读的背景、结果、主要失败模式和建议分桶；`04` 和 `05` 分别承载模型改进建议和细粒度补数方案。Math 默认完整生成五份文件，不受 Code/Text2SQL 可选报告开关影响。所有报告均为人类可读文本且不得包含原始 JSON。`oj_records_enriched_*` 保持 Judger 记录原字段和值不变，只为失败样本增加 `overall_error_tag` 和 `short_critique`。内部置信度、证据、复核状态和构造 action 只保存在 state/checkpoint 中。
 
 ### resume 前检查
 
@@ -263,4 +273,3 @@ final_report_*.json / .txt
 - `skills/Analyzer/SKILL.md`：Analyzer Skill 接口与能力说明。
 - `skills/Analyzer/BUCKET_STRATEGY.md`：Code、Text2SQL、General Text 分桶策略。
 - `loopai/skills/Analyzer/`：Analyzer Python 实现。
-

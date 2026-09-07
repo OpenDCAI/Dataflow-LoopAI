@@ -293,6 +293,7 @@ _MATH_METHOD_REFERENCES = [
 ]
 
 _UNKNOWN_BUCKET = "diagnostic_unknown"
+_METRIC_ANOMALY_BUCKET = "math_metric_anomaly"
 _UNKNOWN_META = {
     "label": "待诊断样本",
     "severity": 0.0,
@@ -417,7 +418,7 @@ def _structured_math_error_labels(record: Dict[str, Any]) -> List[str]:
     for container in (record, judge, detail):
         for key in (
             "error_type", "errors", "primary_error", "secondary_error", "labels",
-            "failure_type",
+            "failure_type", "tags", "overall_error_tag",
         ):
             _append(container.get(key))
 
@@ -442,6 +443,10 @@ def _structured_math_error_labels(record: Dict[str, Any]) -> List[str]:
 def _math_label_bucket(label: str) -> str | None:
     normalized = label.strip().lower().replace("_", " ")
     mappings = (
+        ("math_metric_anomaly", (
+            "评测异常", "评测误判", "指标误判", "等价判定异常", "metric anomaly",
+            "metric error", "evaluation error",
+        )),
         ("math_output_contract", (
             "输出格式", "答案格式", "格式错误", "无法提取", "提取失败", "未输出答案",
             "空答案", "answer format", "output format", "extraction", "missing answer",
@@ -486,7 +491,7 @@ def _math_evidence(record: Dict[str, Any]) -> Tuple[str, str, str, str, List[str
     judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
     detail = record.get("metric_detail") if isinstance(record.get("metric_detail"), dict) else {}
     metric_details = record.get("metric_details") if isinstance(record.get("metric_details"), dict) else {}
-    question = _first_text(record, ("question", "prompt", "input", "query", "instruction"))
+    question = _first_text(record, ("question", "problem", "prompt", "input", "query", "instruction"))
     reference = _first_text(record, (
         "target", "reference", "ground_truth", "answer", "correct_answer", "gold", "solution",
     ))
@@ -541,7 +546,7 @@ def _infer_math_domain(record: Dict[str, Any]) -> str:
     explicit = _first_text(record, ("domain", "subset", "subject", "math_domain", "category"))
     if explicit and explicit.strip().lower() not in {"math", "mathematics", "数学", "unknown", "general"}:
         return explicit
-    question = _first_text(record, ("question", "prompt", "input", "query", "instruction")).lower()
+    question = _first_text(record, ("question", "problem", "prompt", "input", "query", "instruction")).lower()
     domain_tokens = (
         ("geometry", ("geometry", "triangle", "circle", "angle", "ellipse", "parabola", "hyperbola", "几何", "三角形", "圆", "角", "椭圆", "抛物线", "双曲线", "向量")),
         ("probability_statistics", ("probability", "statistics", "random variable", "distribution", "expectation", "variance", "概率", "统计", "随机变量", "分布", "期望", "方差", "抽样", "卡方")),
@@ -619,12 +624,16 @@ def _looks_like_prose_or_wrapped_code(completion: str, *, sql: bool = False) -> 
 def classify_failure_bucket(
     record: Dict[str, Any],
     task_type: str = "code",
+    *,
+    require_actionable: bool = True,
 ) -> Dict[str, Any]:
     """Map one failed record to an actionable capability bucket.
 
     Runtime/parser evidence is intentionally preferred over the model's
     fallback ``other`` label. The original label remains in the result for
-    auditability.
+    auditability. ``require_actionable=False`` is used only for population
+    statistics: it keeps a tentative Math label in its observed bucket while
+    the default still sends non-actionable cases to the diagnostic pool.
     """
     judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
     metric_detail = record.get("metric_detail") if isinstance(record.get("metric_detail"), dict) else {}
@@ -647,6 +656,22 @@ def classify_failure_bucket(
         )
         if labels:
             original_stage = Counter(label.strip().lower() for label in labels).most_common(1)[0][0]
+        if label_bucket_counts.get("math_metric_anomaly"):
+            return _classification(
+                "math_metric_anomaly",
+                original_stage,
+                0.98,
+                "Analyzer 复核认为模型作答正确，失败来自答案提取或等价判定异常",
+            )
+        # The runtime resolves weak step evidence to whole-case construction.
+        # Keep this guard for externally supplied legacy records.
+        if require_actionable and "actionable" in judge and not bool(judge.get("actionable")):
+            return _classification(
+                _UNKNOWN_BUCKET,
+                original_stage,
+                0.55,
+                "外部数学判因记录尚未完成构造路由",
+            )
         if label_bucket_counts:
             bucket, count = label_bucket_counts.most_common(1)[0]
             signal_labels = [label for label in labels if _math_label_bucket(label) == bucket]
@@ -899,15 +924,24 @@ def build_training_bucket_strategy(
     """
     task_route = _normalize_task_type(task_type)
     failed = [record for record in records if isinstance(record, dict) and not record.get("passed", False)]
-    classifications = [classify_failure_bucket(record, task_route) for record in failed]
-    counts = Counter(item["bucket"] for item in classifications)
-    confidence_sum: Dict[str, float] = defaultdict(float)
+    observed_classifications = [
+        classify_failure_bucket(record, task_route, require_actionable=False)
+        for record in failed
+    ]
+    observed_counts = Counter(item["bucket"] for item in observed_classifications)
+    actionable_counts: Counter = Counter()
+    observed_confidence_sum: Dict[str, float] = defaultdict(float)
+    actionable_confidence_sum: Dict[str, float] = defaultdict(float)
     examples: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     domains: Dict[str, Counter] = defaultdict(Counter)
+    actionable_domains: Dict[str, Counter] = defaultdict(Counter)
+    step_construction_counts: Counter = Counter()
+    whole_case_construction_counts: Counter = Counter()
     original_other = 0
 
-    for record, item in zip(failed, classifications):
-        confidence_sum[item["bucket"]] += item["confidence"]
+    for record, item in zip(failed, observed_classifications):
+        bucket = item["bucket"]
+        observed_confidence_sum[bucket] += item["confidence"]
         if item["original_stage"] == "other":
             original_other += 1
         if task_route == "math":
@@ -917,13 +951,30 @@ def build_training_bucket_strategy(
         if not domain:
             judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
             domain = _text(judge.get("domain") or "unknown")
-        domains[item["bucket"]][domain] += 1
-        if len(examples[item["bucket"]]) < 3:
+        domains[bucket][domain] += 1
+
+        judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
+        is_actionable = bucket not in {_UNKNOWN_BUCKET, _METRIC_ANOMALY_BUCKET}
+        if task_route == "math" and "actionable" in judge:
+            is_actionable = is_actionable and bool(judge.get("actionable"))
+        if is_actionable:
+            actionable_counts[bucket] += 1
+            actionable_confidence_sum[bucket] += item["confidence"]
+            actionable_domains[bucket][domain] += 1
+            if task_route == "math":
+                scope = str(judge.get("construction_scope") or "").strip()
+                if scope == "step" or (not scope and judge.get("evidence_valid")):
+                    step_construction_counts[bucket] += 1
+                else:
+                    whole_case_construction_counts[bucket] += 1
+
+        if len(examples[bucket]) < 3:
             completion, result, _, _ = _record_text(record)
-            examples[item["bucket"]].append({
+            examples[bucket].append({
                 "task_id": record.get("task_id") or record.get("id") or record.get("sample_id"),
                 "original_stage": item["original_stage"],
                 "reason": item["reason"],
+                "actionable": is_actionable,
                 "result_head": result[:180],
                 "completion_head": completion.replace("\n", " ")[:180],
             })
@@ -937,21 +988,29 @@ def build_training_bucket_strategy(
         meta_map = _GENERAL_BUCKET_META
     else:
         meta_map = _CODE_BUCKET_META
-    actionable_counts = {key: count for key, count in counts.items() if key != _UNKNOWN_BUCKET}
-    candidate_counts = dict(actionable_counts)
+    excluded_training_buckets = {_UNKNOWN_BUCKET}
+    if task_route == "math":
+        excluded_training_buckets.add(_METRIC_ANOMALY_BUCKET)
+    candidate_buckets = {
+        key for key in observed_counts if key not in excluded_training_buckets
+    }
+    metric_anomaly_count = (
+        observed_counts.get(_METRIC_ANOMALY_BUCKET, 0) if task_route == "math" else 0
+    )
+    training_failure_total = max(0, total_failed - metric_anomaly_count)
     exploration_priors: Dict[str, float] = {}
     # When almost every sample fails before executable code/SQL is produced,
     # downstream semantic ability is censored rather than proven healthy.
     # Reserve a small first-round exploration budget instead of allocating
     # 100% to the visible prerequisite failure.
-    if total_failed:
-        if task_route == "text2sql" and counts.get("sql_output_contract", 0) / total_failed >= 0.50:
+    if training_failure_total:
+        if task_route == "text2sql" and observed_counts.get("sql_output_contract", 0) / training_failure_total >= 0.50:
             exploration_priors = {
                 "sql_syntax": 0.25,
                 "sql_schema_linking": 0.15,
                 "sql_semantic_logic": 0.15,
             }
-        elif task_route == "code" and counts.get("code_output_contract", 0) / total_failed >= 0.50:
+        elif task_route == "code" and observed_counts.get("code_output_contract", 0) / training_failure_total >= 0.50:
             exploration_priors = {
                 "code_syntax_completion": 0.25,
                 "code_interface_scope": 0.15,
@@ -959,17 +1018,17 @@ def build_training_bucket_strategy(
             }
         elif task_route == "general":
             prerequisite_count = max(
-                counts.get("general_instruction_following", 0),
-                counts.get("general_completeness_coverage", 0),
-                counts.get("general_safety_refusal", 0),
+                observed_counts.get("general_instruction_following", 0),
+                observed_counts.get("general_completeness_coverage", 0),
+                observed_counts.get("general_safety_refusal", 0),
             )
-            if prerequisite_count / total_failed >= 0.50:
+            if prerequisite_count / training_failure_total >= 0.50:
                 exploration_priors = {
                     "general_relevance_intent": 0.15,
                     "general_factuality_grounding": 0.12,
                     "general_reasoning_consistency": 0.08,
                 }
-        elif task_route == "math" and counts.get("math_output_contract", 0) / total_failed >= 0.50:
+        elif task_route == "math" and observed_counts.get("math_output_contract", 0) / training_failure_total >= 0.50:
             exploration_priors = {
                 "math_arithmetic_calculation": 0.12,
                 "math_algebra_symbolic": 0.10,
@@ -977,19 +1036,32 @@ def build_training_bucket_strategy(
                 "math_reasoning_consistency": 0.08,
             }
     for key in exploration_priors:
-        candidate_counts.setdefault(key, 0)
+        candidate_buckets.add(key)
 
-    power_denominator = sum(float(count) ** float(alpha) for count in actionable_counts.values())
+    actionable_power_denominator = sum(
+        float(count) ** float(alpha) for count in actionable_counts.values()
+    )
+    observed_power_denominator = sum(
+        float(count) ** float(alpha)
+        for key, count in observed_counts.items()
+        if key not in excluded_training_buckets
+    )
     utility_weights: Dict[str, float] = {}
     bucket_rows = []
 
-    for key, count in sorted(candidate_counts.items(), key=lambda item: (-item[1], item[0])):
+    for key in sorted(candidate_buckets, key=lambda item: (-observed_counts.get(item, 0), item)):
         meta = meta_map.get(key, _UNKNOWN_META)
-        observed_share = count / max(total_failed, 1)
-        confidence = confidence_sum[key] / count if count else 0.55
-        if count:
+        observed_count = observed_counts.get(key, 0)
+        actionable_count = actionable_counts.get(key, 0)
+        observed_share = observed_count / max(training_failure_total, 1)
+        actionable_share = actionable_count / max(training_failure_total, 1)
+        if observed_count:
+            confidence = observed_confidence_sum[key] / observed_count
+        else:
+            confidence = 0.55
+        if observed_count:
             need_signal = (observed_share + 1e-9) ** float(alpha)
-            allocation_basis = "observed_failure_and_priors"
+            allocation_basis = "all_resolved_model_failures_and_priors"
         else:
             need_signal = exploration_priors.get(key, 0.0)
             allocation_basis = "censored_capability_exploration"
@@ -1005,26 +1077,52 @@ def build_training_bucket_strategy(
         bucket_rows.append({
             "bucket": key,
             "label": meta["label"],
-            "count": count,
+            # ``count`` is intentionally the full observed population count.
+            # Keep the explicit alias so report consumers cannot confuse it
+            # with the quality-gated construction count.
+            "count": observed_count,
+            "observed_count": observed_count,
+            "actionable_count": actionable_count,
+            "excluded_from_direct_construction_count": max(0, observed_count - actionable_count),
+            "step_construction_count": step_construction_counts.get(key, 0),
+            "whole_case_construction_count": whole_case_construction_counts.get(key, 0),
             "observed_share": round(observed_share, 4),
-            "power_adjusted_share": round((count ** float(alpha)) / power_denominator, 4)
-            if power_denominator else 0.0,
+            "actionable_share": round(actionable_share, 4),
+            "observed_power_adjusted_share": round(
+                (observed_count ** float(alpha)) / observed_power_denominator, 4
+            ) if observed_power_denominator else 0.0,
+            "actionable_power_adjusted_share": round(
+                (actionable_count ** float(alpha)) / actionable_power_denominator, 4
+            ) if actionable_power_denominator else 0.0,
+            "power_adjusted_share": round(
+                (observed_count ** float(alpha)) / observed_power_denominator, 4
+            ) if observed_power_denominator else 0.0,
             "classification_confidence": round(confidence, 4),
             "severity": meta["severity"],
             "transfer_value": meta["transfer"],
             "learnability_prior": meta["learnability_prior"],
             "data_cost": meta["cost"],
             "allocation_basis": allocation_basis,
-            "censored_by_upstream_failure": count == 0 and key in exploration_priors,
+            "censored_by_upstream_failure": observed_count == 0 and key in exploration_priors,
             "sample_direction": meta["sample_direction"],
             "examples": examples[key],
             "domain_breakdown": [
                 {
                     "domain": domain,
                     "count": domain_count,
-                    "share_within_bucket": round(domain_count / max(count, 1), 4),
+                    "share_within_bucket": round(domain_count / max(observed_count, 1), 4),
                 }
                 for domain, domain_count in domains[key].most_common(10)
+            ],
+            "actionable_domain_breakdown": [
+                {
+                    "domain": domain,
+                    "count": domain_count,
+                    "share_within_actionable_bucket": round(
+                        domain_count / max(actionable_count, 1), 4
+                    ),
+                }
+                for domain, domain_count in actionable_domains[key].most_common(10)
             ],
         })
 
@@ -1033,9 +1131,9 @@ def build_training_bucket_strategy(
         row["recommended_share"] = allocation.get(row["bucket"], 0.0)
         row["recommended_percent"] = round(row["recommended_share"] * 100, 2)
 
-    unresolved = counts.get(_UNKNOWN_BUCKET, 0)
+    unresolved = observed_counts.get(_UNKNOWN_BUCKET, 0)
     naive_alpha = 2.0
-    original_stage_counts = Counter(item["original_stage"] for item in classifications)
+    original_stage_counts = Counter(item["original_stage"] for item in observed_classifications)
     naive_denominator = sum(float(count) ** naive_alpha for count in original_stage_counts.values())
     naive_other_share = (
         (float(original_stage_counts.get("other", 0)) ** naive_alpha) / naive_denominator
@@ -1044,15 +1142,42 @@ def build_training_bucket_strategy(
     unresolved_share = unresolved / max(total_failed, 1)
     warnings = []
     if unresolved_share > 0.10:
-        warnings.append("待诊断样本超过失败样本的 10%，分桶预算置信度不足，应先补充执行证据或人工复核。")
+        warnings.append("存在未完成判因的样本；Math 正式报告应停止生成并续跑判因节点。")
     if original_other:
-        warnings.append("原始 other 不参与训练预算；先用执行证据重分类，仍无法归因的样本进入诊断池。")
+        warnings.append("原始 other 已使用结构化错因和整题复核重新分类，不直接作为训练能力桶。")
+
+    known_observed_total = sum(
+        count for key, count in observed_counts.items() if key not in excluded_training_buckets
+    )
+    actionable_total = sum(actionable_counts.values())
+    counted_total = known_observed_total + unresolved + metric_anomaly_count
 
     return {
         "strategy": "confidence_and_marginal_gain_aware",
         "task_type": task_route,
         "requested_task_type": str(task_type),
         "failed_total": total_failed,
+        "count_coverage": {
+            "failed_total": total_failed,
+            "model_failure_total": known_observed_total,
+            "metric_anomaly_count": metric_anomaly_count,
+            "known_bucket_count": known_observed_total,
+            "diagnostic_bucket_count": unresolved,
+            "counted_total": counted_total,
+            "all_failures_counted": counted_total == total_failed,
+            "actionable_total": actionable_total,
+            "step_construction_total": sum(step_construction_counts.values()),
+            "whole_case_construction_total": sum(whole_case_construction_counts.values()),
+            "non_actionable_total": max(
+                0, known_observed_total - actionable_total
+            ),
+            "count_definition": "all_failed_cases_observed_once",
+            "actionable_count_definition": (
+                "all_resolved_model_failures_step_or_whole_case"
+                if task_route == "math"
+                else "quality_gated_direct_construction_cases"
+            ),
+        },
         "parameters": {
             "power_alpha": float(alpha),
             "min_bucket_share": float(min_share),
@@ -1064,7 +1189,7 @@ def build_training_bucket_strategy(
             "original_other_share": round(original_other / max(total_failed, 1), 4),
             "naive_alpha_2_other_share": round(naive_other_share, 4),
             "reclassified_from_other_count": sum(
-                1 for item in classifications if item["reclassified_from_other"]
+                1 for item in observed_classifications if item["reclassified_from_other"]
             ),
             "unresolved_count": unresolved,
             "unresolved_share": round(unresolved_share, 4),
@@ -1075,9 +1200,21 @@ def build_training_bucket_strategy(
             "bucket": _UNKNOWN_BUCKET,
             "label": _UNKNOWN_META["label"],
             "count": unresolved,
+            "observed_count": unresolved,
+            "actionable_count": 0,
             "recommended_share": 0.0,
             "sample_direction": _UNKNOWN_META["sample_direction"],
             "examples": examples[_UNKNOWN_BUCKET],
+        },
+        "metric_audit_bucket": {
+            "bucket": _METRIC_ANOMALY_BUCKET,
+            "label": "评测异常",
+            "count": metric_anomaly_count,
+            "observed_count": metric_anomaly_count,
+            "actionable_count": 0,
+            "recommended_share": 0.0,
+            "sample_direction": "修复答案提取、表达式归一化和数学等价判定，不生成模型训练样本",
+            "examples": examples[_METRIC_ANOMALY_BUCKET],
         },
         "pilot_update_rule": (
             "每轮小规模补数后，以该桶目标指标增量/新增样本数更新 learnability，"

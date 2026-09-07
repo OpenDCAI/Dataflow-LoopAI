@@ -34,6 +34,19 @@ from .state_bridge import load_analyzer_state_from_configer
 ANALYZER_NODE_NAMES = ANALYZER_PIPELINE_STEPS
 
 
+def _normalize_critique_samples_per_tag(value: Any) -> Any:
+    text = str(value).strip().lower()
+    if text == "full":
+        return "full"
+    try:
+        limit = int(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("critique_samples_per_tag must be a positive integer or 'full'") from exc
+    if limit < 1:
+        raise ValueError("critique_samples_per_tag must be at least 1 or 'full'")
+    return limit
+
+
 def _latest_runtime_version(task_id: str, node_name: str = "analyzer") -> Optional[str]:
     try:
         import os
@@ -120,6 +133,7 @@ def run_analyzer_standalone(
     checkpoint_path: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
     analyze_batch_size: Optional[int] = None,
+    critique_samples_per_tag: Optional[Any] = None,
     version_id: Optional[str] = None,
     force_new_version: bool = False,
     emit_status: bool = True,
@@ -232,6 +246,10 @@ def run_analyzer_standalone(
         if int(analyze_batch_size) < 1:
             raise ValueError("analyze_batch_size must be at least 1")
         state.setdefault("analyzer", {})["analyze_batch_size"] = int(analyze_batch_size)
+    if critique_samples_per_tag is not None:
+        state.setdefault("analyzer", {})["critique_samples_per_tag"] = (
+            _normalize_critique_samples_per_tag(critique_samples_per_tag)
+        )
 
     writer = kwargs.get("writer")
     if writer is None:
@@ -341,6 +359,7 @@ def run_analyzer_standalone_payload(
     checkpoint_path: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
     analyze_batch_size: Optional[int] = None,
+    critique_samples_per_tag: Optional[Any] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Run Analyzer and return the unified success/error payload."""
@@ -353,6 +372,7 @@ def run_analyzer_standalone_payload(
             checkpoint_path=checkpoint_path,
             baseline_result_path=baseline_result_path,
             analyze_batch_size=analyze_batch_size,
+            critique_samples_per_tag=critique_samples_per_tag,
             **kwargs,
         )
     except (ValueError, TypeError) as exc:
@@ -403,6 +423,7 @@ def resume_analyzer_standalone(
     checkpoint_path: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
     analyze_batch_size: Optional[int] = None,
+    critique_samples_per_tag: Optional[Any] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Explicit in-process continuation entry point."""
@@ -415,5 +436,6 @@ def resume_analyzer_standalone(
         checkpoint_path=checkpoint_path,
         baseline_result_path=baseline_result_path,
         analyze_batch_size=analyze_batch_size,
+        critique_samples_per_tag=critique_samples_per_tag,
         **kwargs,
     )

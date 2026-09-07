@@ -528,11 +528,11 @@ class AnalyzerState(BaseModel):
     analyze_task_type: str = Field(
         default="code",
         title="分析任务类型",
-        description="分析任务类型, 支持代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text)",
+        description="分析任务类型, 支持代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text), 数学(math)",
         json_schema_extra={
             "ui_type": "list",
             "ui_group": "分析模型",
-            "allowed_values": ["code", "text2sql", "general_text"]
+            "allowed_values": ["code", "text2sql", "general_text", "math"]
         }
     )
 
@@ -731,6 +731,30 @@ class AnalyzerState(BaseModel):
         default="",
         title="数据构造建议路径",
         description="analyze_metric_report_node 生成的数据构造/优化建议文本路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_bundle_root: str = Field(
+        default="",
+        title="Math 报告总目录",
+        description="可选；留空时在当前 version_id 输出目录下创建数学评测最终报告目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_bundle_dir: str = Field(
+        default="",
+        title="Math 报告实际总目录",
+        description="Math 报告节点实际生成的总目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_dataset_dir: str = Field(
+        default="",
+        title="Math 数据集报告目录",
+        description="当前数学数据集五份人类可读报告所在目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_overview_path: str = Field(
+        default="",
+        title="Math 报告总览路径",
+        description="数学评测最终报告目录中的人类可读总览文件",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
 
