@@ -34,8 +34,10 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 | 字段 | 默认值 | 说明 |
 |---|---|---|
 | `eval_model_path` | 无 | 模型路径（必填） |
-| `eval_temperature` | `0` | 采样温度 |
-| `eval_top_p` | `0.95` | Top-P 采样 |
+| `eval_temperature` | `0` | 采样温度，bench 可覆盖 |
+| `eval_top_p` | `0.95` | Top-P 采样，bench 可覆盖 |
+| `eval_max_tokens` | `16384` | 最大输出 token 数（含思考推理），bench 可覆盖 |
+| `eval_enable_thinking` | 不设置 | 思考模式开关（None 跟随模型默认 / True 开 / False 关），bench 可覆盖 |
 | `eval_batch_size` | `10` | 批处理大小，bench 可覆盖 |
 | `eval_case_num` | `10` | 每问题样本数，bench 可覆盖 |
 | `eval_vllm_tensor_parallel_size` | `1` | vLLM 张量并行数 |
@@ -91,10 +93,37 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 | `problem_path` | ✅ 必填 | ✅ 必填 | ✅ 必填 | 问题文件路径 |
 | `case_num` | 可选 10 | 可选 10 | — | 每问题样本数，bench 设了覆盖全局 |
 | `batch_size` | 可选 10 | 可选 10 | — | 批处理大小，bench 设了覆盖全局 |
+| `temperature` | 可选 | 可选 | 可选 | 覆盖全局 `eval_temperature` |
+| `top_p` | 可选 | 可选 | 可选 | 覆盖全局 `eval_top_p` |
+| `max_tokens` | 可选 | 可选 | 可选 | 覆盖全局 `eval_max_tokens` |
+| `enable_thinking` | 可选 | 可选 | 可选 | 覆盖全局 `eval_enable_thinking`，`false` 强制关闭思考 |
 | `format_type` | 可选 | — | — | `human-eval` / `mbpp`，不设走默认 |
 | `text2sql_dir` | — | ✅ 必填 | — | SQLite 数据库目录 |
 | `eval_type` | — | — | ✅ 必填 | `key2_qa` / `key1_text_score` 等 |
 | `key_mapping` | — | — | 可选 | 字段映射，可自动推断 |
+
+**Per-bench 可选覆盖（重要）：** `case_num` / `batch_size` / `temperature` / `top_p` / `max_tokens` / `enable_thinking` 这 6 个字段**既可在全局设置，也可在单个 bench 里设置**。bench 里设置了就覆盖全局值，没设置就回落全局默认——用于「某个评测集需要特殊生成参数」的场景（例如某个 code 评测集需要更低温度、或某个 text2sql 评测集要关闭思考模式）。
+
+```json
+{
+  "benchlist": [
+    {
+      "name": "human_eval",
+      "task_type": "code",
+      "problem_path": "/data/humaneval.jsonl",
+      "temperature": 0.3,
+      "enable_thinking": false
+    },
+    {
+      "name": "human_eval_high",
+      "task_type": "code",
+      "problem_path": "/data/humaneval.jsonl",
+      "temperature": 0.8,
+      "max_tokens": 4096
+    }
+  ]
+}
+```
 
 **主/附加区别：**
 

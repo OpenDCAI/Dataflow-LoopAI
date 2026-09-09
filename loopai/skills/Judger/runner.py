@@ -503,30 +503,58 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
     )
 
 
+# bench 字段 -> judger 字段的「可选覆盖」映射。
+# bench 里设置这些字段会覆盖全局默认值；未设置时回落到全局默认（避免多 bench 之间值泄漏）。
+_BENCH_OVERRIDE_MAP = {
+    "case_num": "eval_case_num",
+    "batch_size": "eval_batch_size",
+    "temperature": "eval_temperature",
+    "top_p": "eval_top_p",
+    "max_tokens": "eval_max_tokens",
+    "enable_thinking": "eval_enable_thinking",
+}
+
+
 def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
-    """将 bench entry 的字段注入到 state["judger"]，使标准 pipeline 可直接运行。"""
+    """将 bench entry 的字段注入到 state["judger"]，使标准 pipeline 可直接运行。
+
+    支持 per-bench 可选覆盖：case_num / batch_size / temperature / top_p /
+    max_tokens / enable_thinking 在 bench 里设置时覆盖全局默认值，方便单个
+    bench 的特殊需求（例如某个评测集需要更低的 temperature 或关闭思考模式）。
+    """
     judger = state.setdefault("judger", {})
-    # 清除上一个 bench 的字段，避免残留
+
+    # 1. 重置可覆盖字段到全局默认值（避免上一个 bench 的值残留到下一个）
+    defaults = state.get("_judger_override_defaults") or {}
+    for _, judger_key in _BENCH_OVERRIDE_MAP.items():
+        default_val = defaults.get(judger_key)
+        if default_val is not None:
+            judger[judger_key] = default_val
+        else:
+            judger.pop(judger_key, None)
+
+    # 2. 清除 bench 特有字段，避免残留
     for k in ("eval_format_type", "eval_text2sql_dir",
               "bench_dataflow_eval_type", "key_mapping"):
         judger.pop(k, None)
+
+    # 3. 必填字段（每个 bench 都必须有）
     judger["eval_task_type"] = bench.get("task_type", "code")
     judger["eval_problem_path"] = bench.get("problem_path", "")
     judger["bench_name"] = bench.get("name", "")
-    if bench.get("case_num") is not None:
-        judger["eval_case_num"] = bench["case_num"]
-    else:
-        judger.setdefault("eval_case_num", 10)
-    if bench.get("batch_size") is not None:
-        judger["eval_batch_size"] = bench["batch_size"]
-    else:
-        judger.setdefault("eval_batch_size", 10)
+
+    # 4. bench 特有字段（可选）
     if bench.get("text2sql_dir"):
         judger["eval_text2sql_dir"] = bench["text2sql_dir"]
     if bench.get("eval_type"):
         judger["bench_dataflow_eval_type"] = bench["eval_type"]
     if bench.get("key_mapping"):
         judger["key_mapping"] = bench["key_mapping"]
+
+    # 5. 可选覆盖字段（bench 里设置则覆盖全局，未设置保持全局默认）
+    for bench_key, judger_key in _BENCH_OVERRIDE_MAP.items():
+        if bench_key in bench and bench[bench_key] is not None:
+            judger[judger_key] = bench[bench_key]
 
 
 def _run_single_bench(
@@ -654,6 +682,12 @@ def run_judger_pipeline(
 
     state.setdefault("judger", {})
     resolve_judger_runtime_config(state, task_id=task_id)
+
+    # 捕获全局默认值，供每个 bench 重置可覆盖字段（见 _apply_bench_to_state）
+    state["_judger_override_defaults"] = {
+        judger_key: state.get("judger", {}).get(judger_key)
+        for _, judger_key in _BENCH_OVERRIDE_MAP.items()
+    }
 
     # task_id 优先用 state["task_id"]，回退到显式传参
     task_id = state.get("task_id") or task_id or ""
