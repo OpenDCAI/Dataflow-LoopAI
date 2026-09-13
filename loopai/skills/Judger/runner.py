@@ -508,6 +508,36 @@ def _step_kill_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     return state
 
 
+def _cleanup_vllm(state: Dict[str, Any]) -> None:
+    """无条件收掉本次运行启动的 vLLM（成功、失败、emit_error 退出都要走到）。
+
+    ``kill_vllm_cleanup`` 只是流水线里的一个普通步骤，异常一抛就再也轮不到它，
+    vLLM 于是变成孤儿：占着 GPU 显存和 8911 端口，直到下一次运行开头的
+    ``kill_vllm`` 才被顺手清掉。这里把 ``_vllm_handle`` 用起来，在 finally 里收。
+    """
+    from loopai.skills.Judger.utils.vllm_killer import kill_vllm_openai_api_server
+    from loopai.skills.Judger.utils.vllm_starter import (
+        DEFAULT_VLLM_PORT, is_port_open, stop_vllm_server,
+    )
+
+    handle = state.pop("_vllm_handle", None)
+    if handle is None:
+        # 本次运行没起过 vLLM，8911 上可能是别人（或上一轮手动）起的服务，不能碰。
+        return
+
+    proc, stop_event = handle
+    try:
+        stop_vllm_server(proc, stop_event)
+    except Exception:
+        logger.exception("[Judger] 按进程句柄关闭 vLLM 失败，改用按进程名清理")
+
+    # vLLM 是用 shell=True 起的，terminate 打到的可能是那层 shell；端口还开着
+    # 就说明真身没死，退回按进程名清理。
+    if is_port_open("localhost", DEFAULT_VLLM_PORT):
+        logger.warning(f"[Judger] 端口 {DEFAULT_VLLM_PORT} 仍被占用，按进程名强制清理")
+        kill_vllm_openai_api_server(DEFAULT_VLLM_PORT)
+
+
 def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     """启动本地 vLLM 服务。"""
     from loopai.skills.Judger.utils.vllm_starter import (
@@ -548,7 +578,7 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
               "tensor_parallel_size": tensor_parallel_size,
               "vllm_log_path": str(vllm_log_path)}))
     try:
-        start_vllm_openai_api_server(
+        proc, stop_event = start_vllm_openai_api_server(
             tensor_parallel_size, gpu_memory_utilization, model_path,
             vllm_served_model_name=served_model_name, log_path=vllm_log_path)
     except Exception as exc:
@@ -559,6 +589,9 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
             stream_writer=writer,
             message=f"vLLM startup failed: model={model_path}, tp_size={tensor_parallel_size}",
         )
+    # 存下进程句柄。异常路径下没人持有它，vLLM 就成了孤儿进程，一直占着 GPU
+    # 和 8911 端口，只能等下一次运行开头的 kill_vllm 顺手清（见 _cleanup_vllm）。
+    state["_vllm_handle"] = (proc, stop_event)
     state["judger"]["eval_base_url"] = f"http://localhost:{DEFAULT_VLLM_PORT}/v1"
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="vLLM 服务已启动",
@@ -1015,47 +1048,53 @@ def run_judger_pipeline(
     state["judger"]["bench_result"] = bench_results
     state["judger"]["extra_bench_result"] = secondary_results
 
-    # 主任务（失败记录后退出）
-    for bench in benchlist:
-        try:
-            result = _run_single_bench(state, bench, writer)
-            bench_results.append(result)
-            _save_task_progress(state, task_id)
-        except SystemExit:
-            bench_results.append({
-                "bench_name": bench.get("name", "unknown"),
-                "eval_status": "failed",
-                "meta": {"error": "Bench evaluation failed"},
-            })
-            _save_task_progress(state, task_id)
-            raise
-        except Exception as exc:
-            bench_results.append({
-                "bench_name": bench.get("name", "unknown"),
-                "eval_status": "failed",
-                "meta": {"error": str(exc)},
-            })
-            _save_task_progress(state, task_id)
-            raise
+    # vLLM 的清理放在 finally：异常会一路 raise 出去（主任务失败）或直接被
+    # emit_error 带出进程，两种情况下 _MATH_STEPS 里的 kill_vllm_cleanup 都轮不到，
+    # vLLM 就留在那儿占着 GPU 和端口。
+    try:
+        # 主任务（失败记录后退出）
+        for bench in benchlist:
+            try:
+                result = _run_single_bench(state, bench, writer)
+                bench_results.append(result)
+                _save_task_progress(state, task_id)
+            except SystemExit:
+                bench_results.append({
+                    "bench_name": bench.get("name", "unknown"),
+                    "eval_status": "failed",
+                    "meta": {"error": "Bench evaluation failed"},
+                })
+                _save_task_progress(state, task_id)
+                raise
+            except Exception as exc:
+                bench_results.append({
+                    "bench_name": bench.get("name", "unknown"),
+                    "eval_status": "failed",
+                    "meta": {"error": str(exc)},
+                })
+                _save_task_progress(state, task_id)
+                raise
 
-    # 附加任务（失败记录后继续）
-    for bench in extra_benchlist:
-        try:
-            result = _run_single_bench(state, bench, writer)
-            secondary_results.append(result)
-            _save_task_progress(state, task_id)
-        except SystemExit:
-            secondary_results.append({
-                "bench_name": bench.get("name", "unknown"),
-                "eval_status": "failed",
-                "meta": {"error": "Bench evaluation failed"},
-            })
-        except Exception as exc:
-            secondary_results.append({
-                "bench_name": bench.get("name", "unknown"),
-                "eval_status": "failed",
-                "meta": {"error": str(exc)},
-            })
+        # 附加任务（失败记录后继续）
+        for bench in extra_benchlist:
+            try:
+                result = _run_single_bench(state, bench, writer)
+                secondary_results.append(result)
+                _save_task_progress(state, task_id)
+            except SystemExit:
+                secondary_results.append({
+                    "bench_name": bench.get("name", "unknown"),
+                    "eval_status": "failed",
+                    "meta": {"error": "Bench evaluation failed"},
+                })
+            except Exception as exc:
+                secondary_results.append({
+                    "bench_name": bench.get("name", "unknown"),
+                    "eval_status": "failed",
+                    "meta": {"error": str(exc)},
+                })
+    finally:
+        _cleanup_vllm(state)
 
     state["last_completed"] = "finish"
     _save_task_progress(state, task_id)

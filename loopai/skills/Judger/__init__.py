@@ -6,7 +6,11 @@ from typing import Any, Dict, List, Optional
 
 from loopai.common.event_tool import get_event_writer
 from loopai.common.exception import emit_error, emit_success, ErrorCode
+from loopai.logger import get_logger
 from loopai.skills.Judger.runner import _load_task_state, run_judger_pipeline
+
+
+logger = get_logger()
 
 
 def run(
@@ -54,13 +58,27 @@ def run(
 
     writer = get_event_writer(name="judger", context_id=task_id, log_file_path=output_dir, version_id=version_id)
 
-    result = run_judger_pipeline(
-        state=state,
-        task_id=task_id,
-        resume=resume,
-        from_step=from_step,
-        writer=writer,
-    )
+    try:
+        result = run_judger_pipeline(
+            state=state,
+            task_id=task_id,
+            resume=resume,
+            from_step=from_step,
+            writer=writer,
+        )
+    except Exception as exc:
+        # 只有「显式调用 emit_error」的失败才有结构化输出（例如 validate 阶段）。
+        # 容器 / 子进程抛上来的异常原本会直接穿到进程外，前端只看到一坨 traceback、
+        # 拿不到失败原因；这里兜住，转成和别处一致的错误 payload。
+        # 注意不要捕获 SystemExit —— emit_error 内部靠它退出，捕了就变成重复上报。
+        logger.exception("[Judger] pipeline failed")
+        emit_error(
+            exc,
+            code=ErrorCode.UNHANDLED_EXCEPTION,
+            recoverable=True,
+            stream_writer=writer,
+            message="Judger pipeline failed.",
+        )
 
     # 成功——标准 payload 输出到 stdout（Codex 消费）
     judger = result.get("judger", {})
