@@ -325,6 +325,62 @@ def _load_local_aime(path_str: str, label: str):
     return dataset, key_mapping
 
 
+def _dump_json_atomic(path: Path, payload: dict) -> None:
+    """先写 .tmp 再 os.replace —— 读取方任何时刻拿到的都是完整的合法 JSON。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def _write_summary(
+    output_file,
+    *,
+    config: dict,
+    results: list,
+    num_problems: int,
+    pass_at_n: int,
+    total_correct_per_problem: int,
+    majority_vote_correct_count: int,
+    formatted_count: int,
+    truncated_count: int,
+    total: int,
+) -> None:
+    """把当前进度原子写盘，同时产出两份文件。
+
+    - ``<output_file>``：完整结果，含每题的全文生成（几十 MB）
+    - 同目录 ``summary.json``：只有汇总指标，不含 ``results``
+
+    想看个指标不该被迫解析几十 MB 的生成文本，所以汇总单独一份。
+
+    每道题跑完写一次。评测动辄几小时，以前是全部跑完后才写一次 —— 中途任何
+    失败（某道题的请求超时、被 Judger 杀掉、容器 OOM）都会让已经算出来的结果
+    全部丢失。部分结果里 ``completed_problems`` 记录实际跑完了几题。
+    """
+    if not output_file:
+        return
+    path = Path(output_file)
+    summary = {
+        **config,
+        "num_problems": num_problems,
+        "completed_problems": len(results),
+        "total_solutions": total,
+        "pass_at_n": pass_at_n,
+        "pass_at_n_pct": pass_at_n / num_problems * 100 if num_problems else 0.0,
+        "average_at_n": total_correct_per_problem,
+        "average_at_n_pct": total_correct_per_problem / total * 100 if total else 0.0,
+        "majority_vote_at_n": majority_vote_correct_count,
+        "majority_vote_at_n_pct": majority_vote_correct_count / num_problems * 100 if num_problems else 0.0,
+        "formatted_count": formatted_count,
+        "format_rate": formatted_count / total * 100 if total else 0.0,
+        "truncated_count": truncated_count,
+        "truncation_rate": truncated_count / total * 100 if total else 0.0,
+    }
+    _dump_json_atomic(path, {**summary, "results": results})
+    _dump_json_atomic(path.with_name("summary.json"), summary)
+
+
 def evaluate_math500(
     llm,
     tokenizer,
@@ -444,6 +500,39 @@ def evaluate_math500(
     # Metrics for val_n > 1
     pass_at_n = 0  # At least one correct
     total_correct_per_problem = 0  # Sum of correct solutions across all problems
+    majority_vote_correct_count = 0
+
+    # 静态配置项，每次落盘都带上（见 _write_summary）
+    summary_config = {
+        "base_model": base_model_name,
+        "dataset": dataset_name,
+        "enable_thinking": enable_thinking,
+        "temperature": temperature,
+        "top_p": top_p,
+        "top_k": top_k,
+        "min_p": min_p,
+        "presence_penalty": presence_penalty,
+        "max_new_tokens": max_new_tokens,
+        "max_model_len": max_model_len,
+        "checkpoint_dir": checkpoint_dir,
+        "key_mapping": key_mapping,
+        "val_n": val_n,
+    }
+
+    def dump_progress() -> None:
+        """把当前进度写盘（每道题跑完调一次）。"""
+        _write_summary(
+            output_file,
+            config=summary_config,
+            results=results,
+            num_problems=len(dataset),
+            pass_at_n=pass_at_n,
+            total_correct_per_problem=total_correct_per_problem,
+            majority_vote_correct_count=majority_vote_correct_count,
+            formatted_count=formatted_count,
+            truncated_count=truncated_count,
+            total=total,
+        )
 
     # Prepare all prompts/messages for batch inference
     all_prompts = []
@@ -575,6 +664,8 @@ def evaluate_math500(
         # Update global metrics
         if has_correct:
             pass_at_n += 1
+        if majority_vote_correct:
+            majority_vote_correct_count += 1
         total_correct_per_problem += num_correct
         formatted_count += num_formatted
         truncated_count += sum(is_truncated_list)
@@ -618,6 +709,8 @@ def evaluate_math500(
             "formatted": is_formatted_list[0],
         }
         results.append(result)
+        # 每题落一次盘：中途挂掉也能留下已完成的部分，而不是一无所获。
+        dump_progress()
 
         # Print progress for each problem
         format_rate = formatted_count / total * 100
@@ -652,8 +745,7 @@ def evaluate_math500(
     pass_at_n_pct = pass_at_n / num_problems * 100
     average_at_n_pct = total_correct_per_problem / total * 100
 
-    # Calculate majority vote accuracy
-    majority_vote_correct_count = sum(1 for r in results if r["majority_vote_correct"])
+    # Calculate majority vote accuracy（计数在循环里累加，见 dump_progress）
     majority_vote_at_n_pct = majority_vote_correct_count / num_problems * 100
 
     print("\n" + "=" * 70)
@@ -677,44 +769,12 @@ def evaluate_math500(
     print(f"  Truncation rate: {truncation_rate:.2f}%")
     print("=" * 70)
 
-    # Save detailed results if output file specified
+    # Save detailed results if output file specified（每道题已经落过盘，
+    # 这里再写一次，覆盖掉数据集为空、循环一次都没进的情况）
     if output_file:
-        output_path = Path(output_file)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        summary = {
-            "base_model": base_model_name,
-            "dataset": dataset_name,
-            "enable_thinking": enable_thinking,
-            "temperature": temperature,
-            "top_p": top_p,
-            "top_k": top_k,
-            "min_p": min_p,
-            "presence_penalty": presence_penalty,
-            "max_new_tokens": max_new_tokens,
-            "max_model_len": max_model_len,
-            "checkpoint_dir": checkpoint_dir,
-            "key_mapping": key_mapping,
-            "val_n": val_n,
-            "num_problems": num_problems,
-            "total_solutions": total,
-            "pass_at_n": pass_at_n,
-            "pass_at_n_pct": pass_at_n_pct,
-            "average_at_n": total_correct_per_problem,
-            "average_at_n_pct": average_at_n_pct,
-            "majority_vote_at_n": majority_vote_correct_count,
-            "majority_vote_at_n_pct": majority_vote_at_n_pct,
-            "formatted_count": formatted_count,
-            "format_rate": format_rate,
-            "truncated_count": truncated_count,
-            "truncation_rate": truncation_rate,
-            "results": results,
-        }
-
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(summary, f, indent=2, ensure_ascii=False)
-
+        dump_progress()
         print(f"\nDetailed results saved to: {output_file}")
+        print(f"Metrics summary saved to: {Path(output_file).with_name('summary.json')}")
 
     return average_at_n_pct, results
 

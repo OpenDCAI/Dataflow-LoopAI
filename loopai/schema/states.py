@@ -397,7 +397,6 @@ class JudgerState(BaseModel):
     eval_model_path: str = Field(
         default=None,
         title="评估模型路径",
-        description="评估模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
     eval_api_key: str = Field(
@@ -408,13 +407,11 @@ class JudgerState(BaseModel):
     eval_temperature: float = Field(
         default=0,
         title="评估模型温度",
-        description="评估模型温度",
         json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
     eval_top_p: float = Field(
         default=0.95,
         title="评估模型 Top P",
-        description="评估模型 Top P",
         json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
     eval_enable_thinking: Optional[bool] = Field(
@@ -423,13 +420,6 @@ class JudgerState(BaseModel):
         description="是否开启评估模型的思考模式（如 Qwen3 的 enable_thinking）。不设置时跟随模型默认；设为 True/False 会通过 chat_template_kwargs 显式开启/关闭。",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
     )
-    # eval_format_type: str = Field(
-    #    default=None,
-    #    title="评估模型问题格式化类型",
-    #    description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"和\"mbpp\"，格式化后的文件将存至output_dir定义的目录下",
-    #    json_schema_extra={"ui_type": "list",
-    #                       "ui_group": "评估模型", "allowed_values": ["human-eval"]}
-    # )
     eval_batch_size: int = Field(
         default=10,
         title="评估模型批量大小",
@@ -458,7 +448,7 @@ class JudgerState(BaseModel):
     eval_presence_penalty: float = Field(default=0.0, title="评估模型 Presence Penalty",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"})
     eval_vllm_tensor_parallel_size: int = Field(
-        default=2,
+        default=1,
         title="vllm本地启动参数——tensor_parallel_size",
         description="vllm本地启动参数——tensor_parallel_size，用于本地启动vllm服务",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
@@ -469,13 +459,6 @@ class JudgerState(BaseModel):
         description="vllm本地启动参数——gpu_memory_utilization，用于本地启动vllm服务",
         json_schema_extra={"ui_type": "slider", "ui_group": "评估模型"}
     )
-    # 统一vllm配置删除 默认使用本地解释器
-    # eval_vllm_env_path: str = Field(
-    #    default="",
-    #    title="vllm本地启动参数——启动环境",
-    #    description="vllm本地启动参数——启动环境；为空时默认为当前环境启动。参数需要具体到python目录，格式应为<path>/miniconda3/envs/<env_name>/bin/python",
-    #    json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    # )
     benchlist: List[Dict[str, Any]] = Field(
         default_factory=list,
         title="主任务评测集",
@@ -518,14 +501,6 @@ class JudgerState(BaseModel):
         description="评测任务指定运行GPU",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
-    # ===== 通用文本 / DataFlow Eval =====
-
-    # is_api: bool = Field(
-    #    default=False,
-    #    title="是否 API 模式",
-    #    description="是否通过 API 调用模型",
-    #    json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
-    # )
 
 
 class AnalyzerState(BaseModel):

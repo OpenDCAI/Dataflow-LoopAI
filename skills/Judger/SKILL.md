@@ -26,30 +26,8 @@ python -c "from loopai.skills.Judger import run; run()"
 DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 ```
 
-math 可使用 helper 一次完成配置注入和 CLI 启动：
-
-```bash
-conda activate loopai
-DB_PATH=api/db/api.db TASK_ID=aime26-eval \
-python examples/scripts/run_math_judger.py \
-  --config-path examples/config/math_bench.json
-```
-
-仅注入配置时使用 `--inject-only`；断点恢复和指定起始步骤分别使用
-`--resume`、`--from-step evaluate_math`。
-
-推荐使用 shell 入口（Configer 和 Judger 均通过 CLI）：
-
-```bash
-conda activate loopai
-export DB_PATH=api/db/api.db
-export TASK_ID=aime26-eval
-bash examples/scripts/run_math_judger.sh examples/config/math_bench.json
-```
-
-该脚本先调用 `loopai-configer update-task` 写入 `judger` 配置，再调用
-`loopai-judger` 启动评测。首次修改 `setup.py` 后需重新安装项目以生成
-`loopai-configer` 命令；开发环境也可将脚本中的命令替换为
+首次修改 `setup.py` 后需重新安装项目才会生成 `loopai-configer` /
+`loopai-judger` 命令；开发环境也可直接用
 `python -m loopai.skills.Configer.cli` 和 `python -m loopai.skills.Judger.cli`。
 
 ## Configuration
@@ -65,7 +43,7 @@ bash examples/scripts/run_math_judger.sh examples/config/math_bench.json
 | `eval_top_p` | `0.95` | Top-P 采样，bench 可覆盖 |
 | `eval_max_tokens` | `16384` | 最大输出 token 数（含思考推理），bench 可覆盖 |
 | `eval_enable_thinking` | 不设置 | 思考模式开关（None 跟随模型默认 / True 开 / False 关），bench 可覆盖 |
-| `eval_batch_size` | `10` | 批处理大小，bench 可覆盖 |
+| `eval_batch_size` | `10` | 生成阶段每批并发多少条 prompt，仅 code/text2sql 用，bench 可覆盖 |
 | `eval_case_num` | `10` | 每问题样本数，bench 可覆盖 |
 | `eval_vllm_tensor_parallel_size` | `1` | vLLM 张量并行数 |
 | `eval_vllm_gpu_memory_utilization` | `0.9` | vLLM GPU 显存利用率 |
@@ -77,10 +55,6 @@ bash examples/scripts/run_math_judger.sh examples/config/math_bench.json
 ### Bench 配置（state["judger"]）
 
 所有评测集通过 `benchlist` 和 `extra_benchlist` 列表配置。**格式必须是 JSON 数组**（`[{...},{...}]`），**不是** JSONL（每行一个对象）：
-
-```json
-[{"name":"gsm8k","task_type":"general_text","problem_path":"/data/gsm8k/test.jsonl","eval_type":"key2_qa"},{"name":"human_eval","task_type":"code","problem_path":"/data/humaneval.jsonl","case_num":10}]
-```
 
 ```json
 {
@@ -127,38 +101,19 @@ bash examples/scripts/run_math_judger.sh examples/config/math_bench.json
 | `task_type` | ✅ 必填 | ✅ 必填 | ✅ 必填 | ✅ 必填 | `code` / `text2sql` / `general_text` / `math` |
 | `problem_path` | ✅ 必填 | ✅ 必填 | ✅ 必填 | ✅ 必填 | 问题文件路径 |
 | `case_num` | 可选 10 | 可选 10 | — | 可选 10 | 每问题样本数；math 同时作为 val_n |
-| `batch_size` | 可选 10 | 可选 10 | — | — | 批处理大小，bench 设了覆盖全局 |
+| `batch_size` | 可选 10 | 可选 10 | — | — | 生成阶段每批并发多少条 prompt（仅 code/text2sql），bench 设了覆盖全局 |
 | `temperature` | 可选 | 可选 | 可选 | 可选 | 覆盖全局 `eval_temperature` |
 | `top_p` | 可选 | 可选 | 可选 | 可选 | 覆盖全局 `eval_top_p` |
+| `top_k` | — | — | — | 可选 | 覆盖全局 `eval_top_k`，math 请求采样参数 |
+| `min_p` | — | — | — | 可选 | 覆盖全局 `eval_min_p`，math 请求采样参数 |
 | `max_tokens` | 可选 | 可选 | 可选 | 可选 | 覆盖全局 `eval_max_tokens` |
 | `enable_thinking` | 可选 | 可选 | 可选 | 可选 | 覆盖全局 `eval_enable_thinking`，`false` 强制关闭思考 |
-| `format_type` | 可选 | — | — | `human-eval` / `mbpp`，不设走默认 |
-| `text2sql_dir` | — | ✅ 必填 | — | SQLite 数据库目录 |
-| `eval_type` | — | — | ✅ 必填 | `key2_qa` / `key1_text_score` 等 |
-| `key_mapping` | — | — | 可选 | 字段映射，可自动推断 |
+| `format_type` | 可选 | — | — | — | `human-eval` / `mbpp`，不设走默认 |
+| `text2sql_dir` | — | ✅ 必填 | — | — | SQLite 数据库目录 |
+| `eval_type` | — | — | ✅ 必填 | — | `key2_qa` / `key1_text_score` 等 |
+| `key_mapping` | — | — | 可选 | — | 字段映射，可自动推断 |
 
-**Per-bench 可选覆盖（重要）：** `case_num` / `batch_size` / `temperature` / `top_p` / `max_tokens` / `enable_thinking` 这 6 个字段**既可在全局设置，也可在单个 bench 里设置**。bench 里设置了就覆盖全局值，没设置就回落全局默认——用于「某个评测集需要特殊生成参数」的场景（例如某个 code 评测集需要更低温度、或某个 text2sql 评测集要关闭思考模式）。
-
-```json
-{
-  "benchlist": [
-    {
-      "name": "human_eval",
-      "task_type": "code",
-      "problem_path": "/data/humaneval.jsonl",
-      "temperature": 0.3,
-      "enable_thinking": false
-    },
-    {
-      "name": "human_eval_high",
-      "task_type": "code",
-      "problem_path": "/data/humaneval.jsonl",
-      "temperature": 0.8,
-      "max_tokens": 4096
-    }
-  ]
-}
-```
+**Per-bench 可选覆盖：** 上表里标注「可选」的字段既能设在全局，也能设在单个 bench 里。bench 里设了就覆盖全局值，没设就回落全局默认 —— 用于「某个评测集需要特殊生成参数」的场景（例如某个 code 评测集需要更低温度、或某个 text2sql 评测集要关闭思考模式）。
 
 **主/附加区别：**
 
@@ -214,17 +169,20 @@ bash examples/scripts/run_math_judger.sh examples/config/math_bench.json
 
 ```
 outputs/<task_id>/
-├── judger/
-│   └── <version_id>/
-│       ├── gsm8k/                      ← bench_name 子目录
-│       │   ├── text_eval_summary_*.json
-│       │   └── gsm8k_*_steps/
-│       ├── human_eval/
-│       │   ├── human_eval_sample.jsonl
-│       │   ├── human_eval_result.jsonl
-│       │   └── log.txt
-│       └── bird_dev/
-└── judger.pkl
+└── judger/
+    └── <version_id>/
+        ├── judger.pkl                  ← 事件流，load_events() 读取
+        ├── vllm.log                    ← 本次运行的 vLLM 输出，排查崩溃/OOM 看这里
+        ├── gsm8k/                      ← bench_name 子目录
+        │   ├── text_eval_summary_*.json
+        │   └── gsm8k_*_steps/
+        ├── human_eval/
+        │   ├── human_eval_sample.jsonl
+        │   ├── human_eval_result.jsonl
+        │   └── log.txt
+        ├── aime26/                     ← math bench
+        │   └── aime26_result.json
+        └── bird_dev/
 ```
 
 ### Configer 持久化
@@ -278,12 +236,19 @@ loopai-judger \
 
 ## Error Handling
 
-每个步骤 `emit_error(exc, stream_writer=writer)`：
-- stdout 输出 `{"ok": false, ...}` 
+失败统一由 `emit_error(exc, stream_writer=writer)` 收口：配置错误等可预期的失败由
+各步骤显式调用；其余异常由 `loopai.skills.Judger.run` 兜底，同样转成结构化 payload。
+两种路径都会：
+
+- stdout 输出 `{"ok": false, ...}`
 - judger.pkl 写入 `status=failed`
 - taskruntime 表标记失败
 
 所有 error `recoverable=true`，Codex 可引导用户修复后重试。
+
+vLLM 的清理不依赖流水线步骤：无论评测成功、失败，还是 `emit_error` 直接退出进程，
+`run_judger_pipeline` 都会在 `finally` 里收掉**本次运行启动的** vLLM，不留占着 GPU
+和 8911 端口的孤儿进程（没启动过则不会碰该端口）。
 
 ## Environment Variables
 

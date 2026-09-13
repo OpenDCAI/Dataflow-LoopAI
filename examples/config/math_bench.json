@@ -9,9 +9,9 @@
     "eval_max_tokens": 38912,
     "eval_case_num": 2,
     "eval_enable_thinking": true,
-    "eval_vllm_tensor_parallel_size": 1,
+    "eval_vllm_tensor_parallel_size": 2,
     "eval_vllm_gpu_memory_utilization": 0.9,
-    "cuda_visible_devices": "7",
+    "cuda_visible_devices": "6,7",
     "benchlist": [
       {
         "name": "aime26",

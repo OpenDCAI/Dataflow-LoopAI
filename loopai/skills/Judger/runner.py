@@ -762,8 +762,8 @@ def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
     """将 bench entry 的字段注入到 state["judger"]，使标准 pipeline 可直接运行。
 
     支持 per-bench 可选覆盖：case_num / batch_size / temperature / top_p /
-    max_tokens / enable_thinking 在 bench 里设置时覆盖全局默认值，方便单个
-    bench 的特殊需求（例如某个评测集需要更低的 temperature 或关闭思考模式）。
+    top_k / min_p / max_tokens / enable_thinking 在 bench 里设置时覆盖全局默认值，
+    方便单个 bench 的特殊需求（例如某个评测集需要更低的 temperature 或关闭思考模式）。
     """
     judger = state.setdefault("judger", {})
 
