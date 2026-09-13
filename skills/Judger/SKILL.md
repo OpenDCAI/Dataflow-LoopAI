@@ -229,10 +229,27 @@ loopai-judger \
 `default_states.judger` 结构。`task_id` 可从命令行、环境变量或配置文件读取，
 优先级依次为命令行、环境变量、配置文件。
 
-支持的覆盖项包括 `--temperature`、`--top-p`、`--top-k`、`--min-p`、
-`--presence-penalty`、`--batch-size`、`--tensor-parallel-size`、
-`--gpu-memory-utilization`、`--enable-thinking`/`--no-thinking` 和
-`--output-dir`。`--resume` 与 `--from-step` 仍用于断点控制。
+全部参数：
+
+| 参数 | 作用 | 持久化 |
+|---|---|---|
+| `--db-path` | SQLite 数据库路径 | 否（写入 `DB_PATH`） |
+| `--task-id` | 任务 id；优先级高于 `TASK_ID` 环境变量 | 否 |
+| `--config-path` | JSON/YAML 配置，**先写库再运行** | **是** |
+| `--output-dir` | 覆盖输出根目录 | 否 |
+| `--problem-path` / `--dataset-path` | 覆盖评测数据集路径（两个名字是同一个参数） | 否 |
+| `--model-path` | vLLM 模型路径 | 否 |
+| `--model-name` | vLLM 对外模型名；留空取模型路径末段 | 否 |
+| `--temperature` / `--top-p` / `--top-k` / `--min-p` / `--presence-penalty` | 采样参数 | 否 |
+| `--batch-size` | 生成阶段批大小（仅 code/text2sql） | 否 |
+| `--case-num` | 每问题样本数；math 即 `val_n` | 否 |
+| `--max-tokens` | 最大生成 token 数 | 否 |
+| `--tensor-parallel-size` / `--gpu-memory-utilization` | vLLM 启动参数 | 否 |
+| `--cuda-visible-devices` | 可见 GPU 编号 | 否 |
+| `--enable-thinking` / `--no-thinking` | 思考模式开关（互斥） | 否 |
+| `--resume` / `--from-step` | 断点恢复 / 强制从指定步骤开始 | 否 |
+
+除 `--config-path` 外都是**只影响本次运行**的环境变量覆盖（`JUDGER_*` / `CUDA_VISIBLE_DEVICES`），不写数据库。
 
 ## Error Handling
 
