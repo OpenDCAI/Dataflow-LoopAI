@@ -75,7 +75,7 @@ def _write(tmp_path, *, results, num_problems, **overrides):
     )
     kwargs.update(overrides)
     path = tmp_path / "result.json"
-    container._write_summary(
+    container._write_result(
         str(path), config=_CONFIG, results=results, num_problems=num_problems, **kwargs)
     return path
 
@@ -130,44 +130,7 @@ def test_rewrite_replaces_previous_partial(tmp_path):
 def test_no_temp_file_left_behind(tmp_path):
     _write(tmp_path, results=[_problem(0, True)], num_problems=30)
 
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["result.json", "summary.json"]
-
-
-# ---------------------------------------------------------------------------
-# 只有指标的 summary.json
-# ---------------------------------------------------------------------------
-
-def test_summary_file_has_metrics_without_generations(tmp_path):
-    """result.json 带着每题全文（几十 MB），看指标不该被迫解析它。"""
-    _write(tmp_path, results=[_problem(0, True), _problem(1, False)], num_problems=30)
-
-    summary = json.loads((tmp_path / "summary.json").read_text("utf-8"))
-    full = json.loads((tmp_path / "result.json").read_text("utf-8"))
-
-    assert "results" not in summary
-    assert len(full["results"]) == 2
-    # 两份文件的指标部分必须一致，不能各算各的
-    assert {k: v for k, v in full.items() if k != "results"} == summary
-
-
-def test_summary_file_tracks_partial_progress(tmp_path):
-    """崩在第 2 题时，summary.json 也要能看出跑到哪了。"""
-    _write(tmp_path, results=[_problem(0, True), _problem(1, True)], num_problems=30)
-
-    summary = json.loads((tmp_path / "summary.json").read_text("utf-8"))
-
-    assert summary["completed_problems"] == 2
-    assert summary["num_problems"] == 30
-    assert summary["pass_at_n"] == 2
-
-
-def test_both_files_are_rewritten_together(tmp_path):
-    _write(tmp_path, results=[_problem(0, True)], num_problems=30)
-    assert json.loads((tmp_path / "summary.json").read_text("utf-8"))["completed_problems"] == 1
-
-    _write(tmp_path, results=[_problem(0, True), _problem(1, True)], num_problems=30)
-    assert json.loads((tmp_path / "summary.json").read_text("utf-8"))["completed_problems"] == 2
-    assert len(json.loads((tmp_path / "result.json").read_text("utf-8"))["results"]) == 2
+    assert [p.name for p in tmp_path.iterdir()] == ["result.json"]
 
 
 # ---------------------------------------------------------------------------
@@ -181,8 +144,8 @@ class _Writer:
         pass
 
 
-def test_host_renames_both_files_into_bench_dir(monkeypatch, tmp_path):
-    """容器把两份文件写到挂载点 /outputs；宿主侧两个都要跟着改成带 bench 名的。"""
+def test_host_renames_result_into_bench_dir(monkeypatch, tmp_path):
+    """容器把结果写到挂载点 /outputs/result.json；宿主侧要改成带 bench 名的。"""
     from loopai.skills.Judger.utils import evaluate_math as host
 
     dataset = tmp_path / "aime26.jsonl"
@@ -194,9 +157,8 @@ def test_host_renames_both_files_into_bench_dir(monkeypatch, tmp_path):
 
     def _fake_docker(command, check=False):
         mount = next(str(a).split(":")[0] for a in command if str(a).endswith(":/outputs"))
-        body = json.dumps({"pass_at_n_pct": 50.0})
-        Path(mount, "result.json").write_text(body, encoding="utf-8")
-        Path(mount, "summary.json").write_text(body, encoding="utf-8")
+        Path(mount, "result.json").write_text(
+            json.dumps({"pass_at_n_pct": 50.0}), encoding="utf-8")
 
     monkeypatch.setattr(host.subprocess, "run", _fake_docker)
 
@@ -215,16 +177,14 @@ def test_host_renames_both_files_into_bench_dir(monkeypatch, tmp_path):
 
     bench_dir = out_root / "t1" / "judger" / "v1" / "aime26"
     assert (bench_dir / "aime26_result.json").is_file()
-    assert (bench_dir / "aime26_summary.json").is_file()
     # 通用名不该残留
     assert not (bench_dir / "result.json").exists()
-    assert not (bench_dir / "summary.json").exists()
 
 
 def test_creates_parent_directories(tmp_path):
     path = tmp_path / "a" / "b" / "result.json"
 
-    container._write_summary(
+    container._write_result(
         str(path), config=_CONFIG, results=[], num_problems=3,
         pass_at_n=0, total_correct_per_problem=0, majority_vote_correct_count=0,
         formatted_count=0, truncated_count=0, total=0)
@@ -243,7 +203,7 @@ def test_empty_results_do_not_divide_by_zero(tmp_path):
 
 
 def test_no_output_file_is_a_noop(tmp_path):
-    container._write_summary(
+    container._write_result(
         None, config=_CONFIG, results=[], num_problems=3,
         pass_at_n=0, total_correct_per_problem=0, majority_vote_correct_count=0,
         formatted_count=0, truncated_count=0, total=0)  # 不应抛错

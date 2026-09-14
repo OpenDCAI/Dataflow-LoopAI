@@ -143,11 +143,6 @@ def run_evaluate_math(state: Dict[str, Any], writer=None) -> Dict[str, Any]:
     if not container_result.is_file():
         raise RuntimeError(f"Math evaluator completed without result file: {container_result}")
     container_result.replace(host_result)
-    # 容器另外写了一份只有指标的 summary.json，跟着一起改名，免得输出目录里
-    # 出现 aime26_result.json 和通用的 summary.json 混在一起。
-    container_summary = output_dir / "summary.json"
-    if container_summary.is_file():
-        container_summary.replace(output_dir / f"{bench_name}_summary.json")
     payload = json.loads(host_result.read_text(encoding="utf-8"))
     val_n = int(judger.get("eval_case_num", 1))
     metrics = {

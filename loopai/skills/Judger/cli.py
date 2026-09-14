@@ -59,6 +59,18 @@ def _config_sections(config: dict[str, Any]) -> tuple[dict[str, Any], Any]:
     return _unwrap_config_values(judger), output_dir
 
 
+def _fail(exc: BaseException, message: str) -> None:
+    """CLI 层校验失败的统一出口。
+
+    这里直接 raise 的话，调用方（Codex / 前端）拿到的是裸 traceback，和流水线
+    里其它失败的 ``{"ok": false, ...}`` 对不上。emit_error 内部会 sys.exit，
+    所以调用之后的代码不可达。
+    """
+    from loopai.common.exception import ErrorCode, emit_error
+
+    emit_error(exc, code=ErrorCode.CONFIG_ERROR, recoverable=True, message=message)
+
+
 def _apply_config_to_task(db_path: str, task_id: str, config: dict[str, Any]) -> Any:
     """Persist config-file overrides into taskmodel.state before running Judger."""
     judger_overrides, output_dir = _config_sections(config)
@@ -147,10 +159,15 @@ def main():
     if config:
         db_path = os.getenv("DB_PATH")
         if not db_path:
-            raise ValueError("--config-path requires --db-path or DB_PATH")
+            _fail(ValueError("--config-path requires --db-path or DB_PATH"),
+                  "--config-path 需要同时提供 --db-path，或设置 DB_PATH 环境变量。")
         if not task_id:
-            raise ValueError("--config-path requires --task-id, TASK_ID, or task_id in the config")
-        result = _apply_config_to_task(db_path, str(task_id), config)
+            _fail(ValueError("--config-path requires --task-id, TASK_ID, or task_id in the config"),
+                  "--config-path 需要 --task-id，或 TASK_ID 环境变量，或配置文件里的 task_id。")
+        try:
+            result = _apply_config_to_task(db_path, str(task_id), config)
+        except Exception as exc:
+            _fail(exc, f"无法把配置写入任务 {task_id}：{exc}")
         if result["output_dir"] is not None and not args.output_dir:
             os.environ["OUTPUT_DIR"] = str(result["output_dir"])
     if args.output_dir:

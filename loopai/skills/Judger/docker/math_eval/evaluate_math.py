@@ -334,7 +334,7 @@ def _dump_json_atomic(path: Path, payload: dict) -> None:
     os.replace(tmp, path)
 
 
-def _write_summary(
+def _write_result(
     output_file,
     *,
     config: dict,
@@ -347,12 +347,7 @@ def _write_summary(
     truncated_count: int,
     total: int,
 ) -> None:
-    """把当前进度原子写盘，同时产出两份文件。
-
-    - ``<output_file>``：完整结果，含每题的全文生成（几十 MB）
-    - 同目录 ``summary.json``：只有汇总指标，不含 ``results``
-
-    想看个指标不该被迫解析几十 MB 的生成文本，所以汇总单独一份。
+    """把当前进度原子写盘。
 
     每道题跑完写一次。评测动辄几小时，以前是全部跑完后才写一次 —— 中途任何
     失败（某道题的请求超时、被 Judger 杀掉、容器 OOM）都会让已经算出来的结果
@@ -360,8 +355,7 @@ def _write_summary(
     """
     if not output_file:
         return
-    path = Path(output_file)
-    summary = {
+    payload = {
         **config,
         "num_problems": num_problems,
         "completed_problems": len(results),
@@ -376,9 +370,9 @@ def _write_summary(
         "format_rate": formatted_count / total * 100 if total else 0.0,
         "truncated_count": truncated_count,
         "truncation_rate": truncated_count / total * 100 if total else 0.0,
+        "results": results,
     }
-    _dump_json_atomic(path, {**summary, "results": results})
-    _dump_json_atomic(path.with_name("summary.json"), summary)
+    _dump_json_atomic(Path(output_file), payload)
 
 
 def evaluate_math500(
@@ -502,7 +496,7 @@ def evaluate_math500(
     total_correct_per_problem = 0  # Sum of correct solutions across all problems
     majority_vote_correct_count = 0
 
-    # 静态配置项，每次落盘都带上（见 _write_summary）
+    # 静态配置项，每次落盘都带上（见 _write_result）
     summary_config = {
         "base_model": base_model_name,
         "dataset": dataset_name,
@@ -521,7 +515,7 @@ def evaluate_math500(
 
     def dump_progress() -> None:
         """把当前进度写盘（每道题跑完调一次）。"""
-        _write_summary(
+        _write_result(
             output_file,
             config=summary_config,
             results=results,
@@ -774,7 +768,6 @@ def evaluate_math500(
     if output_file:
         dump_progress()
         print(f"\nDetailed results saved to: {output_file}")
-        print(f"Metrics summary saved to: {Path(output_file).with_name('summary.json')}")
 
     return average_at_n_pct, results
 
