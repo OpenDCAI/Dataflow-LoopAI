@@ -71,7 +71,13 @@ def _preprocess_json_file(
     output_path: str,
     line_processor: Optional[Callable[[dict], Optional[dict]]],
     writer,
+    current: str = "judger",
 ) -> None:
+    """逐行处理 JSONL。
+
+    ``current`` 是事件流里的节点名，由调用方传入 —— 这个函数拿不到 state，
+    以前在三处写成 ``state.get("current", ...)``，直接 NameError 崩掉。
+    """
     use_temp_file = input_path == output_path
     temp_file = None
     total_lines = 0
@@ -117,7 +123,7 @@ def _preprocess_json_file(
                     success_lines += 1
 
                 writer(StreamEvent(
-                    current=state.get("current", "judger"),
+                    current=current,
                     progress=round(cnt_lines / total_lines, 1),
                     message="任务数据格式化中",
                     data={"success": success_lines, "filtered": filtered_lines,
@@ -131,17 +137,20 @@ def _preprocess_json_file(
         logger.info(f"预处理完成 total={total_lines} success={success_lines} "
                     f"error={error_lines} filtered={filtered_lines} -> {output_path}")
 
-    except FileNotFoundError:
-        logger.error(f"文件不存在: {input_path}")
+    except FileNotFoundError as exc:
+        # 输入和输出的 open() 都会抛 FileNotFoundError；一律说"输入不存在"会把
+        # 人带偏（实际更常见的是输出目录不存在）。报 OSError 自己记的那个路径。
+        missing = getattr(exc, "filename", None) or input_path
+        logger.error(f"文件不存在: {missing}")
         writer(StreamEvent(
-            current=state.get("current", "judger"), progress=1.0, message="任务数据格式化出错",
-            data={"msg": f"文件不存在: {input_path}"}))
+            current=current, progress=1.0, message="任务数据格式化出错",
+            data={"msg": f"文件不存在: {missing}"}))
     except Exception as e:
         if use_temp_file and temp_file and os.path.exists(temp_file.name):
             os.remove(temp_file.name)
         logger.error(f"格式化意外错误: {e}")
         writer(StreamEvent(
-            current=state.get("current", "judger"), progress=1.0, message="任务数据格式化出错",
+            current=current, progress=1.0, message="任务数据格式化出错",
             data={"msg": str(e)}))
     finally:
         if temp_file:
@@ -159,9 +168,13 @@ def run_format_data(state: Dict[str, Any], writer):
     target_format_path = str(
         output_dir / str(state_task_id) / "judger" / f"{problem_file_name}_format.jsonl"
     )
+    # 自己把输出目录建出来。以前靠 PickleEventWriter 每次写事件时顺带 mkdir 出
+    # .../judger/<version_id>/ 才碰巧能写 —— 那是别人的副作用，不该依赖。
+    Path(target_format_path).parent.mkdir(parents=True, exist_ok=True)
 
     formatter = {"human-eval": _human_eval_format, "mbpp": _mbpp_format}.get(
         method, _human_eval_format
     )
-    _preprocess_json_file(problem_path, target_format_path, formatter, writer)
+    _preprocess_json_file(problem_path, target_format_path, formatter, writer,
+                          state.get("current", "judger"))
     state["judger"]["eval_problem_path"] = target_format_path

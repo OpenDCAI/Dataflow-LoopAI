@@ -787,6 +787,11 @@ def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
     judger["bench_name"] = bench.get("name", "")
 
     # 4. bench 特有字段（可选）
+    if bench.get("format_type"):
+        # 校验和格式化都靠它选分支：validate 按它决定用哪套必填字段去检查**原始**
+        # 数据集，format_data 按它选转换器。漏了它，mbpp/human-eval 这类需要转换
+        # 的数据集会卡在 validate 的 else 分支上报「缺 prompt/entry_point」。
+        judger["eval_format_type"] = bench["format_type"]
     if bench.get("text2sql_dir"):
         judger["eval_text2sql_dir"] = bench["text2sql_dir"]
     if bench.get("eval_type"):
