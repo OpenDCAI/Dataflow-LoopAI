@@ -24,7 +24,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from loopai.skills.Judger import runtime_config
-from loopai.skills.Judger.utils import evaluate_math, vllm_starter
+from loopai.skills.Judger.utils import evaluate_math, generate, vllm_starter
 
 
 def _resolve_model_name(judger: dict) -> str:
@@ -142,3 +142,65 @@ def test_vllm_command_omits_flag_when_name_absent(monkeypatch):
     command = _capture_vllm_command(monkeypatch, None)
 
     assert "--served-model-name" not in command
+
+
+# ---------------------------------------------------------------------------
+# 名字的消费（code/text2sql 生成侧）
+# ---------------------------------------------------------------------------
+
+class _Writer:
+    version_id = "v1"
+
+    def __call__(self, event):
+        pass
+
+
+class _FakeModel:
+    def batch(self, prompts):
+        return [type("R", (), {"content": "SELECT 1"})() for _ in prompts]
+
+
+def _capture_generate_call(monkeypatch, tmp_path, runner_fn, judger) -> dict:
+    captured: dict = {}
+
+    def _fake_init(**kwargs):
+        captured.update(kwargs)
+        return _FakeModel()
+
+    monkeypatch.setattr(generate, "_init_model", _fake_init)
+    monkeypatch.setattr(generate, "read_problems", lambda path: {
+        "q1": {"prompt": "p", "db_id": "db", "question": "q", "ground_truth": "g"}})
+    monkeypatch.setattr(generate, "write_jsonl", lambda path, rows: None)
+
+    state = {"task_id": "t1", "output_dir": str(tmp_path), "judger": dict(judger)}
+    runner_fn(state, _Writer())
+    return captured
+
+
+_JUDGER = {
+    "eval_model_path": "/models/Qwen3-8B",
+    "eval_model_name": "Qwen3-8B",
+    "eval_base_url": "http://127.0.0.1:8911/v1",
+    "eval_temperature": 0.0,
+    "eval_top_p": 0.95,
+    "eval_problem_path": "/tmp/problems.jsonl",
+    "bench_name": "bird_dev",
+    "eval_task_type": "text2sql",
+    "eval_case_num": 1,
+    "eval_batch_size": 10,
+    "eval_text2sql_dir": "/tmp/dbs",
+}
+
+
+@pytest.mark.parametrize("runner_fn", [generate.run_generate_code, generate.run_generate_text2sql])
+def test_generate_sends_served_name_not_path(monkeypatch, tmp_path, runner_fn):
+    """生成侧必须发 vLLM 上架的名字。
+
+    vllm_starter 用 --served-model-name 把名字钉成 eval_model_name（默认取路径
+    最后一段），发完整路径会被 vLLM 判成 404。这个 bug 真的发生过：改成
+    --served-model-name 之后，math 路径跟着改了，code/text2sql 漏了。
+    """
+    captured = _capture_generate_call(monkeypatch, tmp_path, runner_fn, _JUDGER)
+
+    assert captured["model_name"] == "Qwen3-8B"
+    assert "/models/Qwen3-8B" not in captured["model_name"]
