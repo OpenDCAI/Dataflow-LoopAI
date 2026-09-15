@@ -37,6 +37,18 @@ def _write_jsonl(path: Path, *rows: dict) -> Path:
     return path
 
 
+class _Writer:
+    """产物路径依赖 writer.version_id（和 generate / evaluate 一致），所以不能传 lambda。"""
+
+    version_id = "v1"
+
+    def __init__(self):
+        self.events = []
+
+    def __call__(self, event):
+        self.events.append(event)
+
+
 def _state(tmp_path, *, make_output_dir: bool = True, **judger_overrides) -> dict:
     """造一个和 run_judger_pipeline 同构的 state：
     先有全局值，再按 _BENCH_OVERRIDE_MAP 捕获 override 默认值。
@@ -131,10 +143,14 @@ def test_run_format_data_converts_mbpp(tmp_path):
         "name": "mbpp", "task_type": "code",
         "problem_path": str(raw), "format_type": "mbpp"})
 
-    events = []
-    fmt.run_format_data(state, events.append)
+    writer = _Writer()
+    fmt.run_format_data(state, writer)
+    events = writer.events
 
     out = Path(state["judger"]["eval_problem_path"])
+    # 产物要落在 .../judger/<version_id>/<bench_name>/ 下，和 generate / evaluate 同层。
+    # 以前少了后两层，直接写在 .../judger/ 里，多个 bench 会互相混、也分不出哪次运行。
+    assert out.parent == tmp_path / "t" / "judger" / "v1" / "mbpp"
     assert out.name == "mbpp_format.jsonl"
     row = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
     assert row["entry_point"] == "add"
@@ -158,7 +174,7 @@ def test_run_format_data_converts_human_eval(tmp_path):
         "name": "human_eval", "task_type": "code",
         "problem_path": str(raw), "format_type": "human-eval"})
 
-    fmt.run_format_data(state, lambda event: None)
+    fmt.run_format_data(state, _Writer())
 
     row = json.loads(Path(state["judger"]["eval_problem_path"])
                      .read_text(encoding="utf-8").splitlines()[0])
@@ -182,7 +198,7 @@ def test_format_data_creates_its_own_output_dir(tmp_path):
         "name": "mbpp", "task_type": "code",
         "problem_path": str(raw), "format_type": "mbpp"})
 
-    fmt.run_format_data(state, lambda event: None)
+    fmt.run_format_data(state, _Writer())
 
     assert Path(state["judger"]["eval_problem_path"]).is_file()
 

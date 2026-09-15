@@ -164,12 +164,14 @@ def run_format_data(state: Dict[str, Any], writer):
     state_task_id = state.get("task_id")
     problem_path = judger_state["eval_problem_path"]
     output_dir = Path(state.get("output_dir", "."))
+    bench_name = judger_state.get("bench_name", Path(problem_path).stem)
     problem_file_name = Path(problem_path).stem
+    # 和其它步骤（generate / evaluate）保持同一层：.../judger/<version_id>/<bench_name>/。
+    # 以前少了后两层，产物直接落在 .../judger/ 下，和别的 bench 混在一起、也分不出是哪次运行。
     target_format_path = str(
-        output_dir / str(state_task_id) / "judger" / f"{problem_file_name}_format.jsonl"
+        output_dir / str(state_task_id) / "judger" / writer.version_id
+        / bench_name / f"{problem_file_name}_format.jsonl"
     )
-    # 自己把输出目录建出来。以前靠 PickleEventWriter 每次写事件时顺带 mkdir 出
-    # .../judger/<version_id>/ 才碰巧能写 —— 那是别人的副作用，不该依赖。
     Path(target_format_path).parent.mkdir(parents=True, exist_ok=True)
 
     formatter = {"human-eval": _human_eval_format, "mbpp": _mbpp_format}.get(

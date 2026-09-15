@@ -684,7 +684,11 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     state["judger"]["output_result_path"] = result.get("result_path", "")
     pass_at_k = result.get("pass_at_k", {})
-    state["judger"]["metrics"] = pass_at_k
+    metrics = dict(pass_at_k)
+    if result.get("invalid_code_rate") is not None:
+        # 只有 code 路径有：产出压根不是合法 Python 的样本占比
+        metrics["invalid_code_rate"] = result["invalid_code_rate"]
+    state["judger"]["metrics"] = metrics
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="评测完成",
         data={
