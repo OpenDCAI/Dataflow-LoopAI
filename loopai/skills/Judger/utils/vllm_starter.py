@@ -5,6 +5,7 @@ import socket
 import time
 import re
 import threading
+from datetime import datetime
 from loopai.schema.events import StreamEvent
 
 from loopai.schema.states import LoopAIState
@@ -58,11 +59,24 @@ def is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         return False
 
 # 后台线程持续消费缓冲区，避免阻塞 
-def _consume_subprocess_output(proc, stop_event):
+def _consume_subprocess_output(proc, stop_event, log_file=None):
     """
     后台线程持续读取子进程输出，消费缓冲区（解决卡死核心）
-    不落地文件，仅输出到logger，兼容shell=True的字符串命令
+    兼容shell=True的字符串命令；可选把每一行同步落盘。
+
+    落盘很关键：vLLM 的 stdout 是管道，Judger 进程一退出管道就读不到了，
+    日志彻底消失，事后连它崩没崩、有没有 OOM 都查不到。log_file 由调用方
+    以行缓冲打开，因此崩溃前写出的内容已经落盘。
     """
+    def _emit(raw_line: str) -> None:
+        text = raw_line.rstrip("\n")
+        logger.info(f"VLLM输出: {text}")
+        if log_file is not None:
+            try:
+                log_file.write(f"{datetime.now().isoformat(timespec='seconds')} {text}\n")
+            except (OSError, ValueError):
+                pass
+
     try:
         while not stop_event.is_set() and proc.poll() is None:
             # 非阻塞读取（避免readline()阻塞）
@@ -71,20 +85,36 @@ def _consume_subprocess_output(proc, stop_event):
             ready, _, _ = select.select([proc.stdout], [], [], 0.01)
             if ready:
                 line = proc.stdout.readline()
-                if line:
-                    logger.info(f"VLLM输出: {line.strip()}")
-    except Exception as e:     
+                if not line:
+                    break
+                _emit(line)
+        # 子进程已经退出：管道里可能还压着崩溃前的最后几行，读完再收工。
+        # 只有确认进程已退出才排空，否则在 stop_event 分支上会一直阻塞。
+        if proc.poll() is not None:
+            while True:
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                _emit(line)
+    except Exception as e:
         logger.warning(f"消费vllm输出时出现轻微异常（不影响运行）: {e}")
     finally:
         try:
             proc.stdout.close()
         except:
             pass
+        if log_file is not None:
+            try:
+                log_file.close()
+            except Exception:
+                pass
 
 def start_vllm_openai_api_server(
     vllm_tensor_parallel_size,
     vllm_gpu_memory_utilization,
     vllm_model,
+    vllm_served_model_name: str = None,
+    log_path=None,
     poll_interval: float = 2.0,
     max_timeout: float = 300.0
 ) -> tuple[subprocess.Popen, threading.Event]:
@@ -119,7 +149,12 @@ def start_vllm_openai_api_server(
             f"{' 错误: ' + err_text if err_text else ''}"
         )
     logger.info(f"使用解释器启动 vllm: {python_exec}")
-    vllm_command = f"{python_exec} -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {DEFAULT_VLLM_PORT} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes"
+    # 不传 --served-model-name 时 vLLM 会拿 --model 的原值当对外模型名
+    # （vllm/config.py: get_served_model_name），也就是一串绝对路径；调用方按
+    # 路径去猜名字必然对不上，请求会被判成 404。这里显式钉死一个名字。
+    served_name = (vllm_served_model_name or "").strip()
+    served_arg = f" --served-model-name {served_name}" if served_name else ""
+    vllm_command = f"{python_exec} -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {DEFAULT_VLLM_PORT} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes{served_arg}"
     port = parse_port_from_command_str(vllm_command)
     host = "localhost"
 
@@ -139,10 +174,26 @@ def start_vllm_openai_api_server(
     )
 
     # 启动后台线程消费缓冲区（卡死的核心解决方案）
+    # vLLM 的 stdout 走管道，进程结束后就再也读不到，顺手落盘一份供事后排查。
+    # 行缓冲（buffering=1）保证每一行立即刷盘，崩溃前的输出不会丢。
+    log_file = None
+    if log_path:
+        try:
+            os.makedirs(os.path.dirname(str(log_path)) or ".", exist_ok=True)
+            log_file = open(log_path, "a", encoding="utf-8", buffering=1)
+            log_file.write(
+                f"\n===== vLLM 启动 {datetime.now().isoformat(timespec='seconds')} "
+                f"served_model_name={vllm_served_model_name or '-'} =====\n"
+                f"$ {vllm_command}\n")
+            logger.info(f"vLLM 日志同步写入: {log_path}")
+        except OSError as exc:
+            logger.warning(f"vLLM 日志无法写入 {log_path}: {exc}")
+            log_file = None
+
     stop_event = threading.Event()
     consume_thread = threading.Thread(
         target=_consume_subprocess_output,
-        args=(proc, stop_event),
+        args=(proc, stop_event, log_file),
         daemon=True  # 守护线程，不影响主进程
     )
     consume_thread.start()

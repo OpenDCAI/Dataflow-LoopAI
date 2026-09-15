@@ -27,7 +27,8 @@ Usage:
 环境变量可覆盖配置文件中的值：
     JUDGER_MODEL_PATH, JUDGER_TASK_TYPE, JUDGER_TEMPERATURE,
     JUDGER_TOP_P, JUDGER_PROBLEM_PATH, JUDGER_BATCH_SIZE,
-    JUDGER_CASE_NUM, TASK_ID, OUTPUT_DIR, CUDA_VISIBLE_DEVICES,
+    JUDGER_CASE_NUM, JUDGER_BASE_URL, JUDGER_MODEL_NAME,
+    JUDGER_TOP_K, JUDGER_MIN_P, TASK_ID, OUTPUT_DIR, CUDA_VISIBLE_DEVICES,
     JUDGER_CHECKPOINT_PATH
 """
 
@@ -181,6 +182,9 @@ def _list_steps():
     print()
     print("general_text pipeline:")
     print("  validate -> eval_general_text -> finish")
+    print()
+    print("math pipeline:")
+    print("  validate -> kill_vllm -> start_vllm -> evaluate_math (Docker) -> kill_vllm_cleanup -> finish")
 
 
 def main():

@@ -28,6 +28,7 @@ JUDGER_PIPELINE_STEPS = (
     "evaluate",            # 评测样本并计算 pass@k
     "kill_vllm_cleanup",   # 评测完成后关闭 vLLM
     "eval_general_text",   # 通用文本评测（One-Eval DataFlow）
+    "evaluate_math",       # 数学评测 Docker runner
     "finish",              # 流水线结束
 )
 
@@ -42,6 +43,8 @@ _STEP_ALIASES = {
     "generate_code": "generate",
     "evaluate_node": "evaluate",
     "eval_general_text_node": "eval_general_text",
+    "eval_math": "evaluate_math",
+    "evaluate_math_node": "evaluate_math",
     "vllm_kill_node": "kill_vllm_cleanup",
     "finish_node": "finish",
 }
@@ -62,6 +65,15 @@ _CODE_TEXTSQL_STEPS = (
 _GENERAL_TEXT_STEPS = (
     "validate",
     "eval_general_text",
+    "finish",
+)
+
+_MATH_STEPS = (
+    "validate",
+    "kill_vllm",
+    "start_vllm",
+    "evaluate_math",
+    "kill_vllm_cleanup",
     "finish",
 )
 
@@ -127,6 +139,7 @@ def _load_task_state(task_id: str) -> Dict[str, Any]:
             "样本生成完成": "generate",
             "评测完成": "evaluate",
             "通用文本评测完成": "eval_general_text",
+            "数学评测完成": "evaluate_math",
             "流水线完成": "finish",
         }
         try:
@@ -189,7 +202,12 @@ def _resume_step_from_state(state: Dict[str, Any]) -> str:
     last_completed = normalize_judger_step(state.get("last_completed"))
 
     task_type = (state.get("judger") or {}).get("eval_task_type", "code")
-    steps = _GENERAL_TEXT_STEPS if task_type == "general_text" else _CODE_TEXTSQL_STEPS
+    if task_type == "general_text":
+        steps = _GENERAL_TEXT_STEPS
+    elif task_type == "math":
+        steps = _MATH_STEPS
+    else:
+        steps = _CODE_TEXTSQL_STEPS
 
     if last_completed and last_completed in steps and last_completed != "finish":
         next_index = min(_start_index(last_completed, steps) + 1, len(steps) - 1)
@@ -222,6 +240,92 @@ def _find_best_checkpoint(
     )
 
 
+# 支持的评测任务类型。bench 的 task_type 必须显式命中其中之一，否则会静默
+# 落到 code 分支（见 _apply_bench_to_state 的默认值），拿错的数据集评测却不报错。
+# 同步维护：loopai/schema/states.py 里 benchlist / extra_benchlist 的
+# nested_allowed_values["task_type"]（那是配置 UI 用的元数据，不适合当运行时白名单）。
+_JUDGER_TASK_TYPES = ("code", "text2sql", "general_text", "math")
+
+# 每个 bench entry 的必填字段。
+_BENCH_REQUIRED_FIELDS = ("name", "task_type", "problem_path")
+
+# 特定 task_type 额外需要的 bench 字段。
+_BENCH_TASK_TYPE_REQUIRED_FIELDS = {
+    "text2sql": ("text2sql_dir",),
+    "general_text": ("eval_type",),
+}
+
+
+def _bench_label(bench: Any, group: str, index: int) -> str:
+    """生成便于定位的 bench 标签，例如 ``benchlist[0] aime26``。"""
+    name = bench.get("name") if isinstance(bench, dict) else None
+    return f"{group}[{index}]" + (f" {name}" if name else "")
+
+
+def _collect_bench_problems(
+    bench: Any, label: str = "bench", *, check_problem_path: bool = False
+) -> List[str]:
+    """收集单个 bench entry 的配置问题，不抛错，便于一次性汇总所有 bench。"""
+    if not isinstance(bench, dict):
+        return [f"{label}: 应为 JSON 对象，实际是 {type(bench).__name__}"]
+
+    problems: List[str] = []
+    for field in _BENCH_REQUIRED_FIELDS:
+        value = bench.get(field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            problems.append(f"{label}: 缺少必填字段 {field}")
+
+    task_type = bench.get("task_type")
+    if isinstance(task_type, str) and task_type.strip() and task_type not in _JUDGER_TASK_TYPES:
+        problems.append(
+            f"{label}: 未知 task_type {task_type!r}，可选值: {', '.join(_JUDGER_TASK_TYPES)}")
+
+    for field in _BENCH_TASK_TYPE_REQUIRED_FIELDS.get(task_type, ()):
+        if not bench.get(field):
+            problems.append(f"{label}: task_type={task_type} 需要字段 {field}")
+
+    # 与 _step_validate 的落地检查保持一致：都用原始路径，不额外展开 ~，
+    # 否则预检放行而 validate 失败，反而更难排查。
+    problem_path = bench.get("problem_path")
+    if check_problem_path and isinstance(problem_path, str) and problem_path.strip():
+        if not os.path.exists(problem_path):
+            problems.append(f"{label}: problem_path 不存在: {problem_path}")
+
+    return problems
+
+
+def _emit_bench_config_error(problems: List[str], writer, message: str) -> None:
+    """bench 配置错误的统一出口，避免 code / recoverable 在多处漂移。"""
+    emit_error(
+        ValueError("; ".join(problems)),
+        code=ErrorCode.CONFIG_ERROR, recoverable=True,
+        stream_writer=writer, message=message,
+    )
+
+
+def _validate_bench(bench: Any, writer=None) -> None:
+    """校验单个 bench entry 的结构；有问题时 emit_error（会退出进程）。"""
+    problems = _collect_bench_problems(bench)
+    if problems:
+        _emit_bench_config_error(problems, writer, "评测集配置有误，请修正后重试。")
+
+
+def _preflight_benches(benches: Any, group: str) -> Tuple[List[Any], List[str]]:
+    """按组校验 bench entry，返回 (通过的 bench, 问题列表)。
+
+    连数据文件是否存在一起校验，让配置问题在启动任何 vLLM 之前全部暴露。
+    """
+    usable: List[Any] = []
+    problems: List[str] = []
+    for index, bench in enumerate(benches):
+        found = _collect_bench_problems(
+            bench, _bench_label(bench, group, index), check_problem_path=True)
+        problems.extend(found)
+        if not found:
+            usable.append(bench)
+    return usable, problems
+
+
 def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     """验证步骤：检查必填字段、文件存在性和 JSONL 字段结构。"""
     from loopai.schema.states import get_missing_fields
@@ -233,9 +337,12 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         current=state.get("current"), progress=0.0, message="开始校验配置参数"))
 
     # 1. 检查通用必填字段
+    # eval_problem_path 不在这里：它是 bench.problem_path 的派生字段（见
+    # _apply_bench_to_state），无论 bench 有没有配都会拿到一个值（哪怕是空串），
+    # 放进必填里查不到任何东西。它的落地检查放在步骤 4，由 bench 结构预检兜底。
     required_fields = {
         "judger": [
-            "eval_temperature", "eval_top_p", "eval_problem_path",
+            "eval_temperature", "eval_top_p",
             "eval_case_num", "eval_task_type",
         ],
         "default": ["output_dir", "task_id"],
@@ -260,15 +367,28 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
             else:
                 missing.setdefault("judger", []).append("eval_model_path")
 
-    # 3. 特定任务类型额外字段
-    if not missing and task_type == "text2sql":
-        missing = get_missing_fields({"judger": ["eval_text2sql_dir"]}, state)
-    if not missing and task_type == "general_text":
-        missing = get_missing_fields({"judger": ["bench_dataflow_eval_type"]}, state)
+    # 3. 特定任务类型的额外检查
+    # text2sql 的 text2sql_dir / general_text 的 eval_type 已由 bench 预检
+    # （_preflight_benches）按 bench entry 校验，且规则更强（空串也算缺失），
+    # 这里不再重复一份。
+    if not missing and task_type == "math":
+        checks = (
+            ("eval_case_num", lambda value: int(value) > 0),
+            ("eval_max_tokens", lambda value: int(value) > 0),
+            ("eval_temperature", lambda value: float(value) >= 0),
+            ("eval_top_p", lambda value: 0 < float(value) <= 1),
+        )
+        for key, predicate in checks:
+            try:
+                valid = predicate(judger.get(key))
+            except (TypeError, ValueError):
+                valid = False
+            if not valid:
+                missing.setdefault("judger", []).append(key)
 
-    # 4. 问题文件存在性
+    # 4. 问题文件：未配置与文件不存在分开报，避免「缺字段」掩盖真正原因
     problem_path = judger.get("eval_problem_path", "")
-    if not problem_path or not os.path.exists(problem_path):
+    if not problem_path:
         missing.setdefault("judger", []).append("eval_problem_path")
 
     if missing:
@@ -278,6 +398,16 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
             code=ErrorCode.CONFIG_ERROR, recoverable=True,
             message="Judger configuration is incomplete.",
             stream_writer=writer,
+        )
+
+    if not os.path.exists(problem_path):
+        bench_name = judger.get("bench_name", "")
+        prefix = f"评测集 {bench_name} 的" if bench_name else ""
+        emit_error(
+            FileNotFoundError(f"Problem file does not exist: {problem_path}"),
+            code=ErrorCode.INVALID_INPUT, recoverable=True,
+            stream_writer=writer,
+            message=f"{prefix}problem_path 不存在: {problem_path}",
         )
 
     # 5. JSONL 字段校验
@@ -309,6 +439,54 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
                 stream_writer=writer,
                 message=f"Problem file {problem_path} has invalid fields for task type {task_type}.",
             )
+    elif task_type == "math":
+        # AIME exports use problem/answer; MATH-style exports commonly use
+        # question/target or problem/solution. Validate aliases per row.
+        try:
+            suffix = os.path.splitext(problem_path)[1].lower()
+            if suffix == ".parquet":
+                import pyarrow.parquet as pq
+                columns = {name.lower() for name in pq.read_schema(problem_path).names}
+                rows = None
+            elif suffix in {".json", ".jsonl"}:
+                with open(problem_path, "r", encoding="utf-8") as handle:
+                    if suffix == ".json":
+                        payload = json.load(handle)
+                        if isinstance(payload, list):
+                            rows = payload
+                        elif isinstance(payload, dict) and isinstance(payload.get("data"), list):
+                            rows = payload["data"]
+                        elif isinstance(payload, dict):
+                            rows = [payload]
+                        else:
+                            raise ValueError("JSON dataset must be an array of objects")
+                    else:
+                        # 必须立即求值：惰性生成器会在 with 退出、文件关闭后才被迭代
+                        rows = [json.loads(line) for line in handle if line.strip()]
+                columns = None
+            else:
+                raise ValueError(f"unsupported math dataset file type: {suffix}")
+
+            if columns is not None:
+                if not columns.intersection({"problem", "question", "prompt", "query", "input"}):
+                    raise ValueError("dataset is missing problem/question/prompt/query/input")
+                if not columns.intersection({"answer", "target", "final_answer", "solution"}):
+                    raise ValueError("dataset is missing answer/target/final_answer/solution")
+            else:
+                for row_no, row in enumerate(rows, 1):
+                    if not isinstance(row, dict):
+                        raise ValueError(f"row {row_no} is not a JSON object")
+                    row_keys = {str(key).lower() for key in row}
+                    if not row_keys.intersection({"problem", "question", "prompt", "query", "input"}):
+                        raise ValueError(f"row {row_no} is missing problem/question/prompt/query/input")
+                    if not row_keys.intersection({"answer", "target", "final_answer", "solution"}):
+                        raise ValueError(f"row {row_no} is missing answer/target/final_answer/solution")
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            emit_error(
+                exc, code=ErrorCode.INVALID_INPUT, recoverable=True,
+                stream_writer=writer,
+                message=f"Problem file {problem_path} has invalid math JSONL fields.",
+            )
 
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="配置校验通过",
@@ -330,6 +508,36 @@ def _step_kill_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     return state
 
 
+def _cleanup_vllm(state: Dict[str, Any]) -> None:
+    """无条件收掉本次运行启动的 vLLM（成功、失败、emit_error 退出都要走到）。
+
+    ``kill_vllm_cleanup`` 只是流水线里的一个普通步骤，异常一抛就再也轮不到它，
+    vLLM 于是变成孤儿：占着 GPU 显存和 8911 端口，直到下一次运行开头的
+    ``kill_vllm`` 才被顺手清掉。这里把 ``_vllm_handle`` 用起来，在 finally 里收。
+    """
+    from loopai.skills.Judger.utils.vllm_killer import kill_vllm_openai_api_server
+    from loopai.skills.Judger.utils.vllm_starter import (
+        DEFAULT_VLLM_PORT, is_port_open, stop_vllm_server,
+    )
+
+    handle = state.pop("_vllm_handle", None)
+    if handle is None:
+        # 本次运行没起过 vLLM，8911 上可能是别人（或上一轮手动）起的服务，不能碰。
+        return
+
+    proc, stop_event = handle
+    try:
+        stop_vllm_server(proc, stop_event)
+    except Exception:
+        logger.exception("[Judger] 按进程句柄关闭 vLLM 失败，改用按进程名清理")
+
+    # vLLM 是用 shell=True 起的，terminate 打到的可能是那层 shell；端口还开着
+    # 就说明真身没死，退回按进程名清理。
+    if is_port_open("localhost", DEFAULT_VLLM_PORT):
+        logger.warning(f"[Judger] 端口 {DEFAULT_VLLM_PORT} 仍被占用，按进程名强制清理")
+        kill_vllm_openai_api_server(DEFAULT_VLLM_PORT)
+
+
 def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     """启动本地 vLLM 服务。"""
     from loopai.skills.Judger.utils.vllm_starter import (
@@ -342,6 +550,9 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     tensor_parallel_size = judger.get("eval_vllm_tensor_parallel_size", 1)
     gpu_memory_utilization = judger.get("eval_vllm_gpu_memory_utilization", 0.9)
     model_path = judger.get("eval_model_path")
+    # 与调用方约定的模型名（留空时由 runtime_config 取路径最后一段），
+    # 必须传给 vLLM，否则它会把整条路径当成对外模型名。
+    served_model_name = judger.get("eval_model_name")
 
     if not model_path:
         emit_error(
@@ -351,11 +562,25 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
             message="Missing eval_model_path for vLLM startup.",
         )
 
+    # vLLM 的 stdout 走管道，Judger 一退出就再也读不到（进程崩没崩、有没有 OOM
+    # 都查不到），所以同时落盘一份到本次运行的输出目录。
+    vllm_log_path = (
+        Path(str(state.get("output_dir") or "./outputs")).expanduser().resolve()
+        / str(state.get("task_id") or "task")
+        / "judger"
+        / str(getattr(writer, "version_id", None) or "run")
+        / "vllm.log"
+    )
+
     writer(StreamEvent(
         current=state.get("current"), progress=0.0, message="正在启动本地 vLLM 服务",
-        data={"model_path": model_path, "tensor_parallel_size": tensor_parallel_size}))
+        data={"model_path": model_path, "served_model_name": served_model_name,
+              "tensor_parallel_size": tensor_parallel_size,
+              "vllm_log_path": str(vllm_log_path)}))
     try:
-        start_vllm_openai_api_server(tensor_parallel_size, gpu_memory_utilization, model_path)
+        proc, stop_event = start_vllm_openai_api_server(
+            tensor_parallel_size, gpu_memory_utilization, model_path,
+            vllm_served_model_name=served_model_name, log_path=vllm_log_path)
     except Exception as exc:
         logger.exception(f"[Judger] vLLM 启动失败")
         emit_error(
@@ -364,6 +589,9 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
             stream_writer=writer,
             message=f"vLLM startup failed: model={model_path}, tp_size={tensor_parallel_size}",
         )
+    # 存下进程句柄。异常路径下没人持有它，vLLM 就成了孤儿进程，一直占着 GPU
+    # 和 8911 端口，只能等下一次运行开头的 kill_vllm 顺手清（见 _cleanup_vllm）。
+    state["_vllm_handle"] = (proc, stop_event)
     state["judger"]["eval_base_url"] = f"http://localhost:{DEFAULT_VLLM_PORT}/v1"
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="vLLM 服务已启动",
@@ -456,7 +684,11 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     state["judger"]["output_result_path"] = result.get("result_path", "")
     pass_at_k = result.get("pass_at_k", {})
-    state["judger"]["metrics"] = pass_at_k
+    metrics = dict(pass_at_k)
+    if result.get("invalid_code_rate") is not None:
+        # 只有 code 路径有：产出压根不是合法 Python 的样本占比
+        metrics["invalid_code_rate"] = result["invalid_code_rate"]
+    state["judger"]["metrics"] = metrics
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="评测完成",
         data={
@@ -478,6 +710,16 @@ def _step_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     return run_eval_general_text(state, writer)
 
 
+def _step_evaluate_math(state: Dict[str, Any], writer) -> Dict[str, Any]:
+    """Run the math evaluator container and publish its metrics."""
+    from loopai.skills.Judger.utils.evaluate_math import run_evaluate_math
+
+    result = run_evaluate_math(state, writer)
+    state["judger"]["output_result_path"] = result.get("result_path", "")
+    state["judger"]["metrics"] = result.get("metrics", {})
+    return state
+
+
 def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
     """分发执行单个流水线步骤。异常先写事件流再抛，确保错误不丢失。"""
     step = normalize_judger_step(step_name)
@@ -490,6 +732,7 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
         "evaluate": _step_evaluate,
         "kill_vllm_cleanup": _step_kill_vllm,
         "eval_general_text": _step_eval_general_text,
+        "evaluate_math": _step_evaluate_math,
     }
     if step in dispatch:
         return dispatch[step](state, writer)
@@ -503,30 +746,66 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
     )
 
 
+# bench 字段 -> judger 字段的「可选覆盖」映射。
+# bench 里设置这些字段会覆盖全局默认值；未设置时回落到全局默认（避免多 bench 之间值泄漏）。
+_BENCH_OVERRIDE_MAP = {
+    "case_num": "eval_case_num",
+    "batch_size": "eval_batch_size",
+    "temperature": "eval_temperature",
+    "top_p": "eval_top_p",
+    "max_tokens": "eval_max_tokens",
+    "enable_thinking": "eval_enable_thinking",
+    "top_k": "eval_top_k",
+    "min_p": "eval_min_p",
+    "presence_penalty": "eval_presence_penalty",
+    "model": "eval_model_name",
+}
+
+
 def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
-    """将 bench entry 的字段注入到 state["judger"]，使标准 pipeline 可直接运行。"""
+    """将 bench entry 的字段注入到 state["judger"]，使标准 pipeline 可直接运行。
+
+    支持 per-bench 可选覆盖：case_num / batch_size / temperature / top_p /
+    top_k / min_p / max_tokens / enable_thinking 在 bench 里设置时覆盖全局默认值，
+    方便单个 bench 的特殊需求（例如某个评测集需要更低的 temperature 或关闭思考模式）。
+    """
     judger = state.setdefault("judger", {})
-    # 清除上一个 bench 的字段，避免残留
+
+    # 1. 重置可覆盖字段到全局默认值（避免上一个 bench 的值残留到下一个）
+    defaults = state.get("_judger_override_defaults") or {}
+    for _, judger_key in _BENCH_OVERRIDE_MAP.items():
+        default_val = defaults.get(judger_key)
+        if default_val is not None:
+            judger[judger_key] = default_val
+        else:
+            judger.pop(judger_key, None)
+
+    # 2. 清除 bench 特有字段，避免残留
     for k in ("eval_format_type", "eval_text2sql_dir",
               "bench_dataflow_eval_type", "key_mapping"):
         judger.pop(k, None)
+
+    # 3. 必填字段（每个 bench 都必须有）
     judger["eval_task_type"] = bench.get("task_type", "code")
     judger["eval_problem_path"] = bench.get("problem_path", "")
     judger["bench_name"] = bench.get("name", "")
-    if bench.get("case_num") is not None:
-        judger["eval_case_num"] = bench["case_num"]
-    else:
-        judger.setdefault("eval_case_num", 10)
-    if bench.get("batch_size") is not None:
-        judger["eval_batch_size"] = bench["batch_size"]
-    else:
-        judger.setdefault("eval_batch_size", 10)
+
+    # 4. bench 特有字段（可选）
+    if bench.get("format_type"):
+        # 校验和格式化都靠它选分支：validate 按它决定用哪套必填字段去检查**原始**
+        # 数据集，format_data 按它选转换器。漏了它，mbpp/human-eval 这类需要转换
+        # 的数据集会卡在 validate 的 else 分支上报「缺 prompt/entry_point」。
+        judger["eval_format_type"] = bench["format_type"]
     if bench.get("text2sql_dir"):
         judger["eval_text2sql_dir"] = bench["text2sql_dir"]
     if bench.get("eval_type"):
         judger["bench_dataflow_eval_type"] = bench["eval_type"]
     if bench.get("key_mapping"):
         judger["key_mapping"] = bench["key_mapping"]
+    # 5. 可选覆盖字段（bench 里设置则覆盖全局，未设置保持全局默认）
+    for bench_key, judger_key in _BENCH_OVERRIDE_MAP.items():
+        if bench_key in bench and bench[bench_key] is not None:
+            judger[judger_key] = bench[bench_key]
 
 
 def _run_single_bench(
@@ -540,6 +819,8 @@ def _run_single_bench(
     task_type = bench["task_type"]
     if task_type == "general_text":
         steps = _GENERAL_TEXT_STEPS
+    elif task_type == "math":
+        steps = _MATH_STEPS
     else:
         steps = _CODE_TEXTSQL_STEPS
 
@@ -570,6 +851,14 @@ def _run_single_bench(
             "meta": bench_data.get("meta", {}),
             "key_mapping": bench_data.get("key_mapping", {}),
             "metrics": (bench_data.get("meta", {})).get("eval_result", {}),
+        }
+    elif task_type == "math":
+        result = {
+            "bench_name": bench_name,
+            "task_type": task_type,
+            "output_result_path": judger.get("output_result_path", ""),
+            "metrics": judger.get("metrics", {}),
+            "eval_status": "success",
         }
     else:
         result = {
@@ -602,7 +891,7 @@ def run_judger_pipeline(
 ) -> Dict[str, Any]:
     """执行 Judger 独立函数流水线（无需 LangGraph）。
 
-    根据 task_type 自动选择流水线路径（code/text2sql 或 general_text）。
+    根据 task_type 自动选择流水线路径（code/text2sql、general_text 或 math）。
 
     事件通过 ``loopai.common.event_tool.get_event_writer`` 持久化到
     ``<output_dir>/<task_id>/judger.pkl``，事后可用 ``load_events()`` 读取。
@@ -655,6 +944,12 @@ def run_judger_pipeline(
     state.setdefault("judger", {})
     resolve_judger_runtime_config(state, task_id=task_id)
 
+    # 捕获全局默认值，供每个 bench 重置可覆盖字段（见 _apply_bench_to_state）
+    state["_judger_override_defaults"] = {
+        judger_key: state.get("judger", {}).get(judger_key)
+        for _, judger_key in _BENCH_OVERRIDE_MAP.items()
+    }
+
     # task_id 优先用 state["task_id"]，回退到显式传参
     task_id = state.get("task_id") or task_id or ""
     if not task_id:
@@ -669,32 +964,59 @@ def run_judger_pipeline(
 
     judger_cfg = state.get("judger") or {}
 
-    def _parse_benchlist(val):
-        """textarea 可能返回 JSON 字符串（单行或多行），转为 list。"""
-        if isinstance(val, str):
-            # 尝试整体解析
-            try:
-                parsed = json.loads(val)
-                if isinstance(parsed, list):
-                    return parsed
-            except (json.JSONDecodeError, ValueError):
-                pass
-            # 尝试按行解析（每行一个 JSON 对象）
-            items = []
-            for line in val.strip().split("\n"):
-                line = line.strip()
-                if line:
-                    try:
-                        items.append(json.loads(line))
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-            if items:
-                return items
-            return []
-        return val if isinstance(val, list) else []
+    def _parse_benchlist(val, field_name):
+        """将 textarea 传来的 JSON 字符串（整体数组或每行一个对象）解析为 list。
 
-    benchlist = _parse_benchlist(judger_cfg.get("benchlist")) or []
-    extra_benchlist = _parse_benchlist(judger_cfg.get("extra_benchlist")) or []
+        解析失败一律报错：静默丢弃会让配错的行直接消失，最终表现为
+        「少跑了一个 bench」这种很难排查的问题。
+        """
+        def fail(technical: str, user_message: str) -> None:
+            emit_error(
+                ValueError(technical),
+                code=ErrorCode.CONFIG_ERROR, recoverable=True,
+                stream_writer=writer, message=user_message,
+            )
+
+        if val is None:
+            return []
+        if isinstance(val, list):
+            return val
+        if not isinstance(val, str):
+            fail(f"{field_name} must be a JSON array, got {type(val).__name__}",
+                 f"{field_name} 格式错误：应为 JSON 数组。")
+
+        text = val.strip()
+        if not text:
+            return []
+
+        try:
+            parsed = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            parsed = None
+
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict):
+            fail(f"{field_name} must be a JSON array, got a JSON object",
+                 f"{field_name} 格式错误：应为 JSON 数组（[{{...}}]），而不是单个对象。")
+
+        # 整体解析失败 → 按行解析（每行一个 JSON 对象）；解析失败的行要报出来
+        items: List[Any] = []
+        failures: List[str] = []
+        for lineno, line in enumerate(text.split("\n"), 1):
+            if not line.strip():
+                continue
+            try:
+                items.append(json.loads(line))
+            except (json.JSONDecodeError, ValueError) as exc:
+                failures.append(f"第 {lineno} 行 ({exc})")
+        if failures:
+            fail(f"{field_name} has unparsable lines: " + "; ".join(failures),
+                 f"{field_name} 有 {len(failures)} 行无法解析为 JSON，请检查格式。")
+        return items
+
+    benchlist = _parse_benchlist(judger_cfg.get("benchlist"), "benchlist")
+    extra_benchlist = _parse_benchlist(judger_cfg.get("extra_benchlist"), "extra_benchlist")
 
     if not benchlist and not extra_benchlist:
         emit_error(
@@ -703,6 +1025,24 @@ def run_judger_pipeline(
             stream_writer=writer,
             message="Both benchlist and extra_benchlist are empty. Please configure at least one bench.",
         )
+
+    # Bench 预检：在启动任何 vLLM 之前一次性发现所有配置问题，避免跑到第 N 个
+    # bench 才发现配错（每个 bench 都要起一次 vLLM 并生成，代价很高）。
+    # 主任务配置有误直接失败；附加任务按「失败只记录、不影响主任务」的既有约定，
+    # 降级为告警并跳过该 bench。
+    _, primary_problems = _preflight_benches(benchlist, "benchlist")
+    if primary_problems:
+        _emit_bench_config_error(
+            primary_problems, writer, "主任务评测集配置有误，请修正后重试。")
+
+    usable_extra, extra_problems = _preflight_benches(extra_benchlist, "extra_benchlist")
+    if extra_problems:
+        logger.warning(f"[Judger] 跳过配置有误的附加评测集: {extra_problems}")
+        writer(StreamEvent(
+            current="judger", progress=0.0,
+            message=f"跳过配置有误的附加评测集: {'; '.join(extra_problems)}",
+            data={"problems": extra_problems}))
+        extra_benchlist = usable_extra
 
     writer(StreamEvent(
         current="judger", progress=0.0, message="Judger pipeline started",
@@ -717,47 +1057,53 @@ def run_judger_pipeline(
     state["judger"]["bench_result"] = bench_results
     state["judger"]["extra_bench_result"] = secondary_results
 
-    # 主任务（失败记录后退出）
-    for bench in benchlist:
-        try:
-            result = _run_single_bench(state, bench, writer)
-            bench_results.append(result)
-            _save_task_progress(state, task_id)
-        except SystemExit:
-            bench_results.append({
-                "bench_name": bench.get("name", "unknown"),
-                "eval_status": "failed",
-                "meta": {"error": "Bench evaluation failed"},
-            })
-            _save_task_progress(state, task_id)
-            raise
-        except Exception as exc:
-            bench_results.append({
-                "bench_name": bench.get("name", "unknown"),
-                "eval_status": "failed",
-                "meta": {"error": str(exc)},
-            })
-            _save_task_progress(state, task_id)
-            raise
+    # vLLM 的清理放在 finally：异常会一路 raise 出去（主任务失败）或直接被
+    # emit_error 带出进程，两种情况下 _MATH_STEPS 里的 kill_vllm_cleanup 都轮不到，
+    # vLLM 就留在那儿占着 GPU 和端口。
+    try:
+        # 主任务（失败记录后退出）
+        for bench in benchlist:
+            try:
+                result = _run_single_bench(state, bench, writer)
+                bench_results.append(result)
+                _save_task_progress(state, task_id)
+            except SystemExit:
+                bench_results.append({
+                    "bench_name": bench.get("name", "unknown"),
+                    "eval_status": "failed",
+                    "meta": {"error": "Bench evaluation failed"},
+                })
+                _save_task_progress(state, task_id)
+                raise
+            except Exception as exc:
+                bench_results.append({
+                    "bench_name": bench.get("name", "unknown"),
+                    "eval_status": "failed",
+                    "meta": {"error": str(exc)},
+                })
+                _save_task_progress(state, task_id)
+                raise
 
-    # 附加任务（失败记录后继续）
-    for bench in extra_benchlist:
-        try:
-            result = _run_single_bench(state, bench, writer)
-            secondary_results.append(result)
-            _save_task_progress(state, task_id)
-        except SystemExit:
-            secondary_results.append({
-                "bench_name": bench.get("name", "unknown"),
-                "eval_status": "failed",
-                "meta": {"error": "Bench evaluation failed"},
-            })
-        except Exception as exc:
-            secondary_results.append({
-                "bench_name": bench.get("name", "unknown"),
-                "eval_status": "failed",
-                "meta": {"error": str(exc)},
-            })
+        # 附加任务（失败记录后继续）
+        for bench in extra_benchlist:
+            try:
+                result = _run_single_bench(state, bench, writer)
+                secondary_results.append(result)
+                _save_task_progress(state, task_id)
+            except SystemExit:
+                secondary_results.append({
+                    "bench_name": bench.get("name", "unknown"),
+                    "eval_status": "failed",
+                    "meta": {"error": "Bench evaluation failed"},
+                })
+            except Exception as exc:
+                secondary_results.append({
+                    "bench_name": bench.get("name", "unknown"),
+                    "eval_status": "failed",
+                    "meta": {"error": str(exc)},
+                })
+    finally:
+        _cleanup_vllm(state)
 
     state["last_completed"] = "finish"
     _save_task_progress(state, task_id)
