@@ -14,6 +14,9 @@ _SCHEMA_DEFAULTS: Dict[str, Any] = {
     "eval_vllm_gpu_memory_utilization": 0.9,
     "cuda_visible_devices": "0",
     "eval_max_tokens": 16384,
+    "eval_top_k": -1,
+    "eval_min_p": 0.0,
+    "eval_presence_penalty": 0.0,
 }
 
 
@@ -95,6 +98,14 @@ def resolve_judger_runtime_config(
         judger.get("eval_max_tokens"),
         _SCHEMA_DEFAULTS["eval_max_tokens"],
     )
+    model_name = _first_non_empty(os.getenv("JUDGER_MODEL_NAME"), judger.get("eval_model_name"))
+    if not model_name and model_path:
+        # vLLM 对外暴露的模型名默认就是 --model 的原值（vllm/config.py
+        # get_served_model_name），而调用方只拿得到模型路径，两边必然对不上，
+        # 请求会被 vLLM 判成 404。所以统一在这里取路径最后一段，
+        # vllm_starter 会用同一个值传 --served-model-name。
+        model_name = os.path.basename(str(model_path).rstrip("/\\")) or None
+    problem_path = _first_non_empty(os.getenv("JUDGER_PROBLEM_PATH"), judger.get("eval_problem_path"))
 
     # --- global ---
     resolved_task_id = _first_non_empty(
@@ -140,6 +151,15 @@ def resolve_judger_runtime_config(
         max_tokens = int(max_tokens) if max_tokens is not None else 16384
     except (TypeError, ValueError):
         max_tokens = 16384
+    try:
+        top_k = int(_first_non_empty(os.getenv("JUDGER_TOP_K"), judger.get("eval_top_k"), -1))
+    except (TypeError, ValueError):
+        top_k = -1
+    try:
+        min_p = float(_first_non_empty(os.getenv("JUDGER_MIN_P"), judger.get("eval_min_p"), 0.0))
+        presence_penalty = float(_first_non_empty(os.getenv("JUDGER_PRESENCE_PENALTY"), judger.get("eval_presence_penalty"), 0.0))
+    except (TypeError, ValueError):
+        min_p, presence_penalty = 0.0, 0.0
 
     # --- write resolved values back into state ---
     if is_state_dict:
@@ -158,11 +178,24 @@ def resolve_judger_runtime_config(
             ("cuda_visible_devices", cuda_visible_devices),
             ("eval_enable_thinking", enable_thinking),
             ("eval_max_tokens", max_tokens),
+            ("eval_model_name", model_name),
+            ("eval_problem_path", problem_path),
+            ("eval_top_k", top_k),
+            ("eval_min_p", min_p),
+            ("eval_presence_penalty", presence_penalty),
         ):
             if val is not None:
                 state["judger"][key] = val
         if db_path:
             state["DB_PATH"] = db_path
+        if os.getenv("JUDGER_PROBLEM_PATH"):
+            # Bench entries are applied after runtime resolution. Keep math
+            # bench paths aligned with the one-off CLI override.
+            for bench_group in (judger.get("benchlist"), judger.get("extra_benchlist")):
+                if isinstance(bench_group, list):
+                    for bench in bench_group:
+                        if isinstance(bench, dict) and bench.get("task_type") == "math":
+                            bench["problem_path"] = problem_path
 
     return {
         "task_id": str(resolved_task_id) if resolved_task_id else "",
@@ -178,4 +211,9 @@ def resolve_judger_runtime_config(
         "cuda_visible_devices": str(cuda_visible_devices),
         "enable_thinking": enable_thinking,
         "max_tokens": max_tokens,
+        "model_name": model_name,
+        "problem_path": problem_path,
+        "top_k": top_k,
+        "min_p": min_p,
+        "presence_penalty": presence_penalty,
     }

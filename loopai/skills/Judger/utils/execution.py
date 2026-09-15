@@ -7,22 +7,29 @@ import re
 import platform
 import signal
 import tempfile
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 from loopai.logger import get_logger
 
 logger = get_logger()
 
-"""提取python代码"""
-def filter_code(solution_str: str):
-    python_pattern = r'```python(.*?)```'
-    matches = list(re.finditer(python_pattern, solution_str, re.DOTALL))
-    
+# 模型输出里的 ```python 代码块。取最后一个：模型常在解释一遍之后再给最终版。
+_PYTHON_BLOCK_RE = re.compile(r"```python(.*?)```", re.DOTALL)
+
+
+def filter_code(solution_str: str) -> Tuple[str, bool]:
+    """从模型输出里取出 Python 代码。
+
+    返回 ``(code, has_python_fence)``。没有围栏时原样返回整个输出 —— 这**不必然**
+    判错：整段就是裸代码的话，下游 ``add_import`` 会把 prompt 前缀接回去、照样能跑；
+    只有「散文 + 代码」才会 exec 失败。所以这里不打日志：一条输出一行 error 的话，
+    几万条样本会把真正的错误淹掉。标记随样本落盘，由调用方汇总。
+    """
+    matches = list(_PYTHON_BLOCK_RE.finditer(solution_str))
+
     if not matches:
-        logger.error("[Error] No valid PYTHON tags found")
-        return solution_str
-    
-    # logger.info(f"[Parsed SQL]: {matches[-1].group(1).strip()}")
-    return matches[-1].group(1).strip()
+        return solution_str, False
+
+    return matches[-1].group(1).strip(), True
 
 """s1为生成代码，s2为提示词"""
 def add_import(s1, s2):
@@ -58,7 +65,9 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[
         """Disable functionalities that can make destructive changes to the test."""
         reliability_guard()
         """被测试代码"""
-        completion = filter_code(completion)
+        completion, has_python_fence = filter_code(completion)
+        # 先落盘：后面 exec 崩了、或进程被超时杀掉，这个标记也要留下
+        result.append({"has_python_fence": has_python_fence})
         test_script = f"{add_import(completion, problem['prompt'])}\n\n"
 
         """进入口"""
@@ -93,11 +102,21 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[
                     uncomment the following line and proceed at your own risk:
                     """
                     exec(check_program, exec_globals)
-            result.append("passed")
+            result.append({"outcome": "passed"})
         except TimeoutException:
-            result.append("timed out")
+            result.append({"outcome": "timed out", "error_type": "TimeoutException"})
         except BaseException as e:
-            result.append(f"failed: {e}")
+            # 记异常**类型**，不要靠消息字符串反推 —— 实测：
+            #   IndentationError → "failed: unexpected indent (<string>, line 3)"
+            #   SyntaxError      → "failed: invalid syntax (<string>, line 1)"
+            #   NameError        → "failed: name 'math' is not defined"
+            #   AssertionError   → "failed: "        ← 消息是空的，什么都看不出来
+            # IndentationError / TabError 都是 SyntaxError 的子类，一次 isinstance 全包。
+            result.append({
+                "outcome": f"failed: {e}",
+                "error_type": type(e).__name__,
+                "syntax_error": isinstance(e, SyntaxError),
+            })
 
         """Needed for cleaning up."""
         shutil.rmtree = rmtree
@@ -125,13 +144,18 @@ def check_correctness(
     if p.is_alive():
         p.kill()
 
-    if not result:
-        result.append("timed out")
+    # 进程被超时杀掉时可能只落了围栏标记、没落执行结果，所以按 key 取而不是按下标。
+    outcome_entry = next((e for e in result if "outcome" in e), {})
+    fence_entry = next((e for e in result if "has_python_fence" in e), {})
+    outcome = outcome_entry.get("outcome", "timed out")
 
     return dict(
         task_id=problem["task_id"],
-        passed=result[0] == "passed",
-        result=result[0],
+        passed=outcome == "passed",
+        result=outcome,
+        error_type=outcome_entry.get("error_type"),
+        syntax_error=outcome_entry.get("syntax_error", False),
+        has_python_fence=fence_entry.get("has_python_fence"),
         completion_id=completion_id,
     )
 

@@ -167,10 +167,13 @@ def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
         assert len(completion_id) == len(problems), "Some problems are not attempted."
 
         n_samples2 = 0
+        invalid_code_samples = 0
         logger.info("Running test suites...")
         for future in tqdm.tqdm(as_completed(futures), total=len(futures)):
             result = future.result()
             results[result["task_id"]].append((result["completion_id"], result))
+            if result.get("syntax_error"):
+                invalid_code_samples += 1
             n_samples2 += 1
             writer(StreamEvent(
                 current=state.get("current", "judger"),
@@ -180,12 +183,25 @@ def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     pass_at_k = _calculate_pass_at_k(k, results)
 
+    # 有多少样本压根不是可执行的 Python。低分时先看它：
+    #   invalid_code_rate 高 → 模型没交出合法代码（prompt / 截断 / 格式问题）
+    #   invalid_code_rate 低 → 代码都合法，是逻辑写错（模型能力问题，调 prompt 没用）
+    # 注意口径：只算语法类错误（SyntaxError/IndentationError/TabError）。
+    # NameError 之类**不算** —— 代码合法、只是有 bug，那是能力问题不是格式问题。
+    invalid_code_rate = invalid_code_samples / n_samples * 100 if n_samples else 0.0
+    if invalid_code_samples:
+        logger.warning(f"有 {invalid_code_samples}/{n_samples} 条样本不是可执行的 Python"
+                       f"（invalid_code_rate={invalid_code_rate:.2f}%）")
+
     def combine_results():
         for sample in stream_jsonl(test_case_path):
             task_id = sample["task_id"]
             r = results[task_id].pop(0)
             sample["result"] = r[1]["result"]
             sample["passed"] = r[1]["passed"]
+            sample["error_type"] = r[1]["error_type"]
+            sample["syntax_error"] = r[1]["syntax_error"]
+            sample["has_python_fence"] = r[1]["has_python_fence"]
             yield sample
 
     logger.info(f"Writing results to {result_path}...")
@@ -193,7 +209,8 @@ def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
     _write_evaluate_log(pass_at_k, result_path, test_case_path, problem_path)
     _check_eval_output_health(result_path, task_type, writer=writer)
 
-    return {"pass_at_k": pass_at_k, "result_path": result_path}
+    return {"pass_at_k": pass_at_k, "result_path": result_path,
+            "invalid_code_rate": invalid_code_rate}
 
 
 def run_evaluate_text2sql(state: Dict[str, Any], writer) -> Dict[str, Any]:
