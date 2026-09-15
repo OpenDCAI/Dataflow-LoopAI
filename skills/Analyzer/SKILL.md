@@ -143,12 +143,22 @@ Standalone selects the pipeline from `analyzer.analyze_task_type`:
 
 General text and Math use the metric pipeline:
 
-`metric_recommend -> metric_score -> analyze_metric_report -> finish`
+`metric_recommend -> metric_score -> math_llmaj_label -> analyze_metric_report -> finish`
 
 Math does not reuse the Code/Text2SQL OJ evidence parser. It uses
 `numerical_match`, `math_verify`, or `choice_accuracy` for deterministic answer
 scoring, then applies a Math-specific capability taxonomy to structured
 step-level error evidence.
+
+For evaluated Math JSON containing `eval[].results[].generations[]`, the metric
+nodes reuse each generation's explicit Judger `correct` verdict. The report
+adds five rollout bands and an evidence-based SFT/RL readiness assessment.
+The SFT stage decision is binary and scoped to configurable engineering gates,
+not a claim about training history. `08_training_plan.json` includes
+`sft_completed`, `is_sft` (continue SFT), `is_rl` (RL pilot), and collection
+domains with actual question-type tags, SFT/RL routing and source question IDs.
+It reads all failure critiques for these new sections, regardless of the normal
+per-tag sample limit. See [Math Rollout Input and Reports](MATH_ROLLOUT.md).
 
 The in-memory state still carries:
 

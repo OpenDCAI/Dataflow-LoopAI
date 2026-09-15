@@ -286,6 +286,9 @@ def _load_records(path: str) -> List[Dict[str, Any]]:
     if isinstance(data, list):
         return [x for x in data if isinstance(x, dict)]
     if isinstance(data, dict):
+        from loopai.skills.Analyzer.math_rollout import is_rollout_payload, normalize_rollouts
+        if is_rollout_payload(data):
+            return normalize_rollouts(data)[0]
         for key in ("rows", "records", "data", "examples", "items"):
             if isinstance(data.get(key), list):
                 return [x for x in data[key] if isinstance(x, dict)]
@@ -355,13 +358,9 @@ def _normalize_record_fields(rec: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(rec)
     if not out.get("question"):
         out["question"] = out.get("problem") or out.get("prompt") or out.get("input")
-    if not out.get("target"):
-        out["target"] = (
-            out.get("answer")
-            or out.get("ground_truth")
-            or out.get("reference")
-            or out.get("label")
-        )
+    if out.get("target") is None or out.get("target") == "":
+        out["target"] = next((out.get(key) for key in ("answer", "ground_truth", "reference", "label")
+                              if out.get(key) is not None and out.get(key) != ""), None)
     if not out.get("prediction"):
         out["prediction"] = (
             out.get("generated_ans")
@@ -726,13 +725,7 @@ def _label_config_fingerprint(state: Optional[LoopAIState] = None, cfg: Optional
             (cfg or {}).get("math_llmaj_max_input_tokens", DEFAULT_MAX_INPUT_TOKENS)
             or DEFAULT_MAX_INPUT_TOKENS
         ),
-        "max_output_tokens_per_case": int(
-            (cfg or {}).get(
-                "math_llmaj_max_output_tokens_per_case",
-                DEFAULT_MAX_OUTPUT_TOKENS_PER_CASE,
-            )
-            or DEFAULT_MAX_OUTPUT_TOKENS_PER_CASE
-        ),
+        "max_output_tokens_per_case": _per_case_output_budget(cfg or {}),
         "disable_thinking": bool(
             True
             if (cfg or {}).get("math_llmaj_disable_thinking") is None
@@ -861,7 +854,15 @@ repair_target, needs_review, context_truncated, domain
 """
 
 
-def _output_token_budget(batch_size: int, per_case: int) -> int:
+def _per_case_output_budget(cfg: Dict[str, Any]) -> Optional[int]:
+    value = cfg.get("math_llmaj_max_output_tokens_per_case", DEFAULT_MAX_OUTPUT_TOKENS_PER_CASE)
+    # Explicit null leaves reasoning and response budgets to the provider.
+    return None if value is None else int(value or DEFAULT_MAX_OUTPUT_TOKENS_PER_CASE)
+
+
+def _output_token_budget(batch_size: int, per_case: Optional[int]) -> Optional[int]:
+    if per_case is None:
+        return None
     return max(96, int(per_case) * max(1, batch_size) + 32)
 
 
@@ -1316,13 +1317,7 @@ def math_llmaj_label_node(state: LoopAIState):
         analyzer.get("math_llmaj_max_input_tokens", DEFAULT_MAX_INPUT_TOKENS)
         or DEFAULT_MAX_INPUT_TOKENS
     )
-    max_output_tokens_per_case = int(
-        analyzer.get(
-            "math_llmaj_max_output_tokens_per_case",
-            DEFAULT_MAX_OUTPUT_TOKENS_PER_CASE,
-        )
-        or DEFAULT_MAX_OUTPUT_TOKENS_PER_CASE
-    )
+    max_output_tokens_per_case = _per_case_output_budget(analyzer)
     max_retries_per_item = int(
         analyzer.get("math_llmaj_max_retries_per_item", DEFAULT_MAX_RETRIES_PER_ITEM)
         or DEFAULT_MAX_RETRIES_PER_ITEM
@@ -1391,7 +1386,7 @@ def math_llmaj_label_node(state: LoopAIState):
             "idx": idx,
             "sample_id": rec.get("id") or rec.get("unique_id") or idx,
             "question": rec.get("question") or rec.get("problem") or "",
-            "target": rec.get("target") or rec.get("answer") or "",
+            "target": rec.get("target") if rec.get("target") is not None else rec.get("answer", ""),
             "prediction": rec.get("generated_ans") or rec.get("prediction") or "",
             "extracted": extracted,
             "match_type": match_type,
@@ -1431,7 +1426,7 @@ def math_llmaj_label_node(state: LoopAIState):
             out_budget = _output_token_budget(len(batch), max_output_tokens_per_case)
             per_case = max_output_tokens_per_case
 
-            def _make_llm(size: int, _per_case: int = per_case) -> ChatOpenAI:
+            def _make_llm(size: int, _per_case: Optional[int] = per_case) -> ChatOpenAI:
                 return _init_model(
                     state,
                     max_tokens=_output_token_budget(size, _per_case),
@@ -1582,12 +1577,20 @@ def math_llmaj_label_node(state: LoopAIState):
         labeled_records,
         failed_indices,
     )
-    enriched_oj_path = _write_enriched_oj(
-        str(records_path),
-        outdir,
-        ts,
-        public_records,
-    )
+    rollout_context = analyzer.get("math_rollout_input")
+    if rollout_context:
+        from loopai.skills.Analyzer.math_rollout import write_enriched_rollouts
+        enriched_oj_path = write_enriched_rollouts(
+            rollout_context, public_records, outdir / f"oj_records_enriched_{ts}.json"
+        )
+        # Keep large rollout trajectories on disk rather than in every state checkpoint.
+        labeled_path = outdir / "math_rollout_labeled_records.jsonl"
+        with labeled_path.open("w", encoding="utf-8") as handle:
+            for record in labeled_records:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    else:
+        enriched_oj_path = _write_enriched_oj(str(records_path), outdir, ts, public_records)
+        labeled_path = enriched_oj_path
 
     stats_payload = {
         "failed_total": len(failed_indices),
@@ -1640,15 +1643,15 @@ def math_llmaj_label_node(state: LoopAIState):
     metric_result = dict(metric_result)
     metric_result["alignment"] = {
         **(metric_result.get("alignment") or {}),
-        "source_path": str(records_path),
+        "source_path": rollout_context["source_path"] if rollout_context else str(records_path),
         "path": str(enriched_oj_path.resolve()),
         "mode": "records",
         "labeled": True,
     }
     analyzer["metric_eval_results"] = metric_result
     state["eval_results"] = metric_result
-    analyzer["labeled_records"] = labeled_records
-    analyzer["labeled_records_path"] = str(enriched_oj_path.resolve())
+    analyzer["labeled_records"] = [] if rollout_context else labeled_records
+    analyzer["labeled_records_path"] = str(labeled_path.resolve())
     analyzer["enriched_oj_path"] = str(enriched_oj_path.resolve())
     analyzer["analyze_output_result_path"] = str(enriched_oj_path.resolve())
     analyzer.pop("labeled_failed_cases_path", None)

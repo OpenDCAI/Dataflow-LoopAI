@@ -748,7 +748,7 @@ class AnalyzerState(BaseModel):
     math_report_dataset_dir: str = Field(
         default="",
         title="Math 数据集报告目录",
-        description="当前数学数据集五份人类可读报告所在目录",
+        description="当前数学数据集报告目录；多 rollout 输入额外生成五档分析和训练阶段评估",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
     math_report_overview_path: str = Field(
@@ -756,6 +756,28 @@ class AnalyzerState(BaseModel):
         title="Math 报告总览路径",
         description="数学评测最终报告目录中的人类可读总览文件",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_rollout_report_path: str = Field(
+        default="", title="Math Rollout 五档分析路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_training_stage_report_path: str = Field(
+        default="", title="Math SFT/RL 训练阶段评估路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_training_plan_path: str = Field(
+        default="", title="Math SFT/RL 训练领域 JSON 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_sft_completion_thresholds: Dict[str, float] = Field(
+        default_factory=dict, title="Math SFT 转段门槛",
+        description="二分转段规则：正确率默认至少90%、格式率95%、截断率最多5%、全错组最多5%；是可调整的工程规则，不认证训练历史"
+    )
+    math_rollout_input: Dict[str, Any] = Field(default_factory=dict, description="多轮 Math Judger 输入的题目、轮次和 rollout 对齐元数据")
+    math_rollout_summary: Dict[str, Any] = Field(default_factory=dict, description="Math rollout 全量统计、短评覆盖和训练阶段初筛证据")
+    math_rl_readiness_thresholds: Dict[str, float] = Field(
+        default_factory=dict, title="Math RL 初筛门槛",
+        description="可覆盖 rollout 正确率、混合组占比、格式率、截断率和评测异常率门槛；仅工程初筛，不是 SFT 完成标准"
     )
 
 

@@ -86,6 +86,17 @@ def metric_score_node(state: LoopAIState):
     t_node = time.perf_counter()
     stage_timing: Dict[str, float] = {}
 
+    from loopai.skills.Analyzer.math_rollout import prepare_math_rollout_input
+    if prepare_math_rollout_input(state):
+        analyzer = state["analyzer"]
+        result = analyzer["metric_eval_results"]
+        output = _ensure_metric_outdir(state) / "math_rollout_metric_result.json"
+        _safe_write_json(output, result)
+        analyzer["metric_eval_result_path"] = str(output.resolve())
+        _emit(writer, "逐次评分对齐完成（沿用 Judger correct）", progress=1.0,
+              data={"rollouts": result["num_samples"], "metric_eval_result_path": str(output)})
+        return state
+
     judger_cfg = state.get("judger", {}) or {}
     analyzer_cfg = state.get("analyzer", {}) or {}
 

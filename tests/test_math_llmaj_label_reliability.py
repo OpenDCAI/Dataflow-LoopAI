@@ -32,6 +32,20 @@ class _FakeLLM:
         return resp
 
 
+def test_explicit_null_output_budget_supports_reasoning_models(monkeypatch):
+    cfg = {"math_llmaj_max_output_tokens_per_case": None, "math_llmaj_disable_thinking": False}
+    assert m._per_case_output_budget(cfg) is None
+    assert m._output_token_budget(14, m._per_case_output_budget(cfg)) is None
+    captured = {}
+    monkeypatch.setattr(m, "ChatOpenAI", lambda **kw: captured.update(kw))
+    monkeypatch.setattr(m, "_runtime_api_key", lambda cfg: "test-only")
+    m._init_model({"analyzer": cfg}, max_tokens=m._output_token_budget(1, None))
+    assert "max_tokens" not in captured
+    assert m._per_case_output_budget({}) == m.DEFAULT_MAX_OUTPUT_TOKENS_PER_CASE
+    assert m._output_token_budget(2, 140) == 312
+    assert m._label_config_fingerprint(cfg=cfg) != m._label_config_fingerprint(cfg={"math_llmaj_disable_thinking": False})
+
+
 def test_parse_single_array_response():
     """Prompt asks for JSON array; single-item path must accept array."""
     content = '[{"case_id": 7, "tags": ["计算错误"], "reason": "算错", "confidence": 0.9, "domain": "algebra"}]'

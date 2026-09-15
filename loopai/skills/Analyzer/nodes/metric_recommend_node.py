@@ -113,6 +113,15 @@ def metric_recommend_node(state: LoopAIState):
     """
     writer = get_safe_stream_writer()
 
+    from loopai.skills.Analyzer.math_rollout import prepare_math_rollout_input
+    if prepare_math_rollout_input(state):
+        context = state["analyzer"]["math_rollout_input"]
+        _emit(writer, "已识别 Math 多轮 rollout 输入，复用 Judger 的逐次评分",
+              progress=1.0, data={"questions": context["unique_questions"],
+                                  "groups": context["num_groups"],
+                                  "rollouts": context["num_rollouts"]})
+        return state
+
     judger_cfg = state.get("judger", {}) or {}
     analyzer_cfg = state.get("analyzer", {}) or {}
 

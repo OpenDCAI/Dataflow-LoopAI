@@ -29,6 +29,16 @@ MATH_REPORT_FILENAMES = {
     "suggestions": "04_模型改进建议.txt",
     "obtainer": "05_数据爬取与构造建议.txt",
 }
+MATH_ROLLOUT_REPORT_FILENAMES = {
+    "rollout": "06_Rollout五档能力分析.txt",
+    "training": "07_SFT与RL训练阶段评估.txt",
+    "training_plan": "08_training_plan.json",
+}
+
+
+def _write_math_report_text(path: str, text: str) -> None:
+    with Path(path).open("w", encoding="utf-8-sig", newline="\r\n") as handle:
+        handle.write(text.replace("\r\n", "\n").replace("\r", "\n"))
 
 _CRITIQUE_CRAWL_HINTS = {
     "评测异常": {
@@ -143,7 +153,7 @@ def _render_math_bundle_overview(bundle_root: Path) -> str:
     lines = [
         "数学垂域 Analyzer 评测报告总览",
         "",
-        "本目录汇总 Math Analyzer 生成的人类可读报告，不包含内部 JSON、checkpoint 或运行事件。",
+        "本目录汇总 Math Analyzer 生成的人类可读报告；多 Rollout 输入附带训练需求 JSON，不包含 checkpoint 或运行事件。",
         "",
         "【数据集目录】",
         *([f"- {name}" for name in dataset_names] or ["- 暂无数据集报告"]),
@@ -154,6 +164,8 @@ def _render_math_bundle_overview(bundle_root: Path) -> str:
         "3. 最终报告：适合直接阅读与汇报的精简结论。",
         "4. 模型改进建议：优先补强能力及 Metric 修复事项。",
         "5. 数据爬取与构造建议：补数来源、样本结构、质检与闭环方案。",
+        "带多次 rollout 的输入另有：6. 五档能力分析；7. SFT 与 RL 训练阶段评估。",
+        "8. 08_training_plan.json：SFT 转段二分结果、SFT/RL 布尔值、训练领域题型标签与题号依据。",
         "",
         "【统计口径】",
         "每条失败样本只计入一次；模型能力错误进入训练数据能力桶，评测异常只进入 Metric 回归修复。",
@@ -243,6 +255,9 @@ def _load_records_from_alignment(metric_result: Dict[str, Any]) -> List[Dict[str
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
+        from loopai.skills.Analyzer.math_rollout import is_rollout_payload, normalize_rollouts
+        if is_rollout_payload(data):
+            return normalize_rollouts(data)[0]
         for key in ["rows", "records", "data", "examples", "items"]:
             if key in data and isinstance(data[key], list):
                 return data[key]
@@ -336,13 +351,8 @@ def _build_quick_samples(
                 or rec.get("prompt")
                 or rec.get("input")
             ),
-            "target": (
-                rec.get("target")
-                or rec.get("answer")
-                or rec.get("ground_truth")
-                or rec.get("label")
-                or rec.get("reference")
-            ),
+            "target": next((rec.get(key) for key in ("target", "answer", "ground_truth", "label", "reference")
+                            if rec.get(key) is not None and rec.get(key) != ""), None),
             "generated_ans": (
                 rec.get("generated_ans")
                 or rec.get("completion")
@@ -1232,6 +1242,26 @@ def _build_summary(
 
     metric_overview = _build_metric_overview(metric_result)
     quick_samples = _build_quick_samples(records, primary_metric_item, top_k=10)
+    prompt_metric_result = metric_result
+    rollout_context = (state.get("analyzer") or {}).get("math_rollout_input")
+    if rollout_context:
+        # Scores stay intact on disk/in state. The LLM needs aggregates and diagnosis,
+        # not thousands of already-consumed metric rows or ten full long trajectories.
+        prompt_metric_result = {
+            "source_schema": metric_result.get("source_schema"),
+            "num_samples": total,
+            "unique_questions": rollout_context["unique_questions"],
+            "question_run_groups": rollout_context["num_groups"],
+            "metrics": {name: {key: value for key, value in item.items() if key != "details"}
+                        for name, item in (metric_result.get("metrics") or {}).items()},
+            "detail_policy": "完整逐次评分保留在原始指标文件，报告输入仅使用精确汇总。",
+        }
+        for sample in quick_samples:
+            for key in ("generated_ans", "raw_pred"):
+                value = sample.get(key)
+                if isinstance(value, str) and len(value) > 1600:
+                    sample[key] = value[:800] + "\n[报告输入仅展示首尾片段，完整作答保留在 OJ]\n" + value[-800:]
+                    sample["prediction_excerpted"] = True
     failure_patterns = _build_failure_patterns(primary_metric_name, primary_metric_item)
     top_err = failure_patterns[0]["name"] if failure_patterns else "none"
 
@@ -1249,7 +1279,7 @@ def _build_summary(
         "failure_patterns": failure_patterns,
         "quick_samples": quick_samples,
         "by_stage": {},
-        "summary_json": metric_result,
+        "summary_json": prompt_metric_result,
     }
     summary["bucket_task_type"] = _infer_bucket_task_type(state, summary)
     summary["dataset"] = _dataset_profile(
@@ -2451,6 +2481,25 @@ def analyze_metric_report_node(state: LoopAIState):
             direct_badcase_count=len(direct_badcase_rows),
         )
 
+    rollout_text = training_text = ""
+    if is_math and analyzer_cfg.get("math_rollout_input"):
+        from loopai.skills.Analyzer.math_rollout_report import generate_rollout_reports
+        from loopai.skills.Analyzer.math_training_plan import render_training_decision
+        rollout_text, training_text, rollout_summary = generate_rollout_reports(
+            state, records, llm,
+            invoke=_invoke_prompt, build_profile=_build_critique_profile,
+            render_profile=_render_critique_profile_sections,
+            progress=lambda message: _emit(message, progress=0.86),
+        )
+        analyzer_cfg["math_rollout_summary"] = rollout_summary
+        report_text += "\n" + rollout_text + "\n" + training_text
+        final_report_text += (
+            "\n【Rollout 与训练阶段】\n"
+            + "、".join(f"{grade} {count} 组" for grade, count in rollout_summary["grade_counts"].items())
+            + "。\n" + render_training_decision(rollout_summary["training_plan"])
+            + "判定限于本次评测范围，不认证训练历史或全部能力；理由见 07，领域需求见 08_training_plan.json。\n"
+        )
+
     t_write = time.perf_counter()
     ts = time.strftime("%Y%m%d_%H%M%S")
     outdir = _ensure_analyzer_outdir(state)
@@ -2516,29 +2565,43 @@ def analyze_metric_report_node(state: LoopAIState):
             "suggestion_txt": analyzer["analyze_output_suggestion_path"],
             "obtainer_txt": analyzer["analyze_output_obtainer_txt_path"],
         }
+        if rollout_text:
+            analyzer["math_rollout_report_path"] = str(dataset_dir / MATH_ROLLOUT_REPORT_FILENAMES["rollout"])
+            analyzer["math_training_stage_report_path"] = str(dataset_dir / MATH_ROLLOUT_REPORT_FILENAMES["training"])
+            _write_math_report_text(analyzer["math_rollout_report_path"], rollout_text)
+            _write_math_report_text(analyzer["math_training_stage_report_path"], training_text)
+            analyzer["math_training_plan_path"] = str(dataset_dir / MATH_ROLLOUT_REPORT_FILENAMES["training_plan"])
+            plan_path = Path(analyzer["math_training_plan_path"])
+            temp_path = plan_path.with_suffix(".tmp")
+            temp_path.write_text(json.dumps(rollout_summary["training_plan"], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            temp_path.replace(plan_path)
+            analyzer["report_artifact_format"] = "text_with_training_plan"
+            artifact_paths.update(rollout_txt=analyzer["math_rollout_report_path"],
+                                  training_stage_txt=analyzer["math_training_stage_report_path"],
+                                  training_plan_json=analyzer["math_training_plan_path"])
 
         _emit(
             "写入人类可读的 Math 分析报告",
             progress=0.9,
             data=artifact_paths,
         )
-        Path(analyzer["math_report_overview_path"]).write_text(
-            _render_math_bundle_overview(bundle_root), encoding="utf-8"
+        _write_math_report_text(analyzer["math_report_overview_path"],
+            _render_math_bundle_overview(bundle_root)
         )
-        Path(analyzer["analyze_output_summary_text_path"]).write_text(
-            summary_text, encoding="utf-8"
+        _write_math_report_text(analyzer["analyze_output_summary_text_path"],
+            summary_text
         )
-        Path(analyzer["analyze_output_report_text_path"]).write_text(
-            report_text, encoding="utf-8"
+        _write_math_report_text(analyzer["analyze_output_report_text_path"],
+            report_text
         )
-        Path(analyzer["analyze_output_final_report_text_path"]).write_text(
-            final_report_text, encoding="utf-8"
+        _write_math_report_text(analyzer["analyze_output_final_report_text_path"],
+            final_report_text
         )
-        Path(analyzer["analyze_output_suggestion_path"]).write_text(
-            suggestion_text.rstrip() + "\n", encoding="utf-8"
+        _write_math_report_text(analyzer["analyze_output_suggestion_path"],
+            suggestion_text.rstrip() + "\n"
         )
-        Path(analyzer["analyze_output_obtainer_txt_path"]).write_text(
-            obtainer_text.rstrip() + "\n", encoding="utf-8"
+        _write_math_report_text(analyzer["analyze_output_obtainer_txt_path"],
+            obtainer_text.rstrip() + "\n"
         )
         analyzer["analysis_summary"] = summary
         stage_timing["write_ms"] = round(
