@@ -7,20 +7,31 @@
 定义），拼进测试程序后报 `NameError: name 'chkList' is not defined`。
 线上 task 201 就是这个形态：模型函数完全正确，被判错。
 
-改成语法驱动，三步：
+改成语法驱动，四步：
 
-1. 整段能 ``ast.parse`` → 直接用（base 模型续写、或模型只给了代码）
-2. 否则从 ``def <entry_point>`` 那一行往后长，取最长的合法前缀
-3. 再丢掉顶层的非定义语句（示例调用、自测、print），只留 import / 定义 / 赋值
+1. 整段能 ``ast.parse`` **且确实定义了入口函数** → 直接用
+2. 否则从 ``def <entry_point>`` 往后长取最长合法片段，再往前尽量多吃
+3. 回复里压根没有入口函数时，退回 HumanEval 的标准约定 ``prompt + 回复`` 再试
+4. 裁掉入口函数够不着的顶层语句
 
-第 3 步很关键：模型常在函数后面跟一段"示例/自测"，那些是**顶层表达式语句**，
-exec 时真的会跑；里面若带 assert 且恰好写错，整条样本就被判错 —— 而错不在解答。
+第 3 步是给"补全式续写"的：题目的 prompt 是半成品函数（签名 + docstring、没有
+函数体），模型按直觉**只回函数体**时回复里没有 ``def``，直接 exec 就是一段悬空
+的缩进代码。
+
+第 4 步按**可达性**裁而不是按"是不是赋值语句"：模型的"演示代码"
+
+    nums = list(map(int, input().split()))
+
+是赋值语句，exec 时照样跑（读 stdin → OSError）；模型的"自测"里若带 assert
+且恰好写错，整条样本还会被误判为答错。两种都必须拦掉，而它们的形式分别是
+赋值和裸调用，只有可达性能一刀切干净。
 """
 
 from __future__ import annotations
 
 import ast
 import re
+import warnings
 from typing import Optional, Tuple
 
 # 顶层保留的节点类型。**用允许列表而不是禁止列表**：顶层任何"会执行的东西"
@@ -42,9 +53,22 @@ METHOD_COMPLETION = "completion"          # 回复里没有 def，接上题目�
 METHOD_RAW = "raw"                        # 都没成，原样返回
 
 
+def _parse(code: str):
+    """``ast.parse``，顺手吞掉 SyntaxWarning。
+
+    模型很爱写 ``"\\w+"`` 这种**非 raw** 的正则字符串，Python 3.12 会为每一条报
+    一次 SyntaxWarning。一次评测几万条样本，这堆警告能把真正的输出整个淹掉，
+    而它既不影响解析结果也不影响执行（这个 escape 目前仍按字面传递）。真正要
+    关心的是**模型代码写错**，不是它在警告里说的话。
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        return ast.parse(code)
+
+
 def _parses(code: str) -> bool:
     try:
-        ast.parse(code)
+        _parse(code)
         return True
     except (SyntaxError, MemoryError, ValueError):
         return False
@@ -90,7 +114,9 @@ def extract_code(text: str, entry_point: Optional[str] = None) -> Tuple[str, str
     锚点取**最后一个** ``def <entry_point>``：模型有时先给一版、再说"修正一下"
     给第二版，取第一个会拿到错的那版。
     """
-    if _parses(text):
+    # 整段能解析就直接用 —— 但**前提是它真的定义了入口函数**。模型的"演示代码"
+    # （顶层一堆赋值 + input()）也是合法 Python，整段收下会把 demo 当解答。
+    if _parses(text) and (not entry_point or defines_entry_point_with_body(text, entry_point)):
         return text, METHOD_AS_IS
 
     lines = text.split("\n")
@@ -103,26 +129,101 @@ def extract_code(text: str, entry_point: Optional[str] = None) -> Tuple[str, str
     return text, METHOD_RAW
 
 
-def keep_definitions(code: str) -> Tuple[str, int]:
-    """丢掉顶层非定义语句，返回 ``(code, dropped_count)``。
+def _assigned_names(node) -> set:
+    """这条顶层语句**定义**出来的名字。"""
+    names = set()
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            names |= {sub.id for sub in ast.walk(target) if isinstance(sub, ast.Name)}
+    elif isinstance(node, ast.AnnAssign):
+        names |= {sub.id for sub in ast.walk(node.target) if isinstance(sub, ast.Name)}
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        names.add(node.name)
+    return names
 
-    ``dropped_count`` 是丢掉的顶层语句数，落进样本里 —— 它大于 0 就说明模型
-    确实写了"示例/自测"这类会被执行的东西。
+
+def _used_names(node) -> set:
+    """这条顶层语句**引用**到的名字。"""
+    return {sub.id for sub in ast.walk(node) if isinstance(sub, ast.Name)}
+
+
+def keep_definitions(code: str, entry_point: Optional[str] = None) -> Tuple[str, int]:
+    """只留入口函数真正需要的声明，返回 ``(code, dropped_count)``。
+
+    顶层任何**会执行的东西**都要丢掉 —— 不光是裸调用和 ``__main__`` 块，还包括
+    模型的"演示代码"。实测截了一段：
+
+        import heapq as hq
+        nums = list(map(int, input().split()))     ← 读 stdin
+        n = int(input())
+
+    这些是**赋值语句**，光按"是不是赋值"判断挡不住，exec 时照样跑，于是
+    `OSError` 而不是判错。
+
+    所以按**可达性**裁：从 ``entry_point`` 出发，只保留它（传递地）引用到的
+    函数/类/常量。顶层 import 一律保留（它们没有名字，且留着无害）。
     """
     try:
-        tree = ast.parse(code)
+        tree = _parse(code)
     except SyntaxError:
         return code, 0
 
-    kept = [node for node in tree.body if isinstance(node, _KEEP_NODE_TYPES)]
-    if not kept:
-        # 全是裸语句（比如模型只回了一段 print），保留原样让下游报错，
-        # 总比返回空字符串、连错误都看不出来强
+    candidates = [node for node in tree.body if isinstance(node, _KEEP_NODE_TYPES)]
+    if not candidates:
         return code, 0
 
-    segments = [ast.get_source_segment(code, node) for node in kept]
+    if entry_point:
+        defined = {}
+        for node in candidates:
+            for name in _assigned_names(node):
+                defined.setdefault(name, node)
+
+        reachable = {entry_point}
+        queue = [entry_point]
+        while queue:
+            node = defined.get(queue.pop())
+            if node is None:
+                continue
+            for ref in _used_names(node):
+                if ref in defined and ref not in reachable:
+                    reachable.add(ref)
+                    queue.append(ref)
+
+        candidates = [
+            node for node in candidates
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            or (_assigned_names(node) & reachable)
+        ]
+
+    if not candidates:
+        return code, len(tree.body)
+
+    segments = [ast.get_source_segment(code, node) for node in candidates]
     body = "\n".join(segment for segment in segments if segment)
-    return body + "\n", len(tree.body) - len(kept)
+    return body + "\n", len(tree.body) - len(candidates)
+
+
+def defines_entry_point_with_body(code: str, entry_point: Optional[str]) -> bool:
+    """提取出来的东西里，入口函数是不是**真有实现**（不是只有 docstring）。
+
+    题目的 prompt 本身就是个能解析的空壳函数（签名 + docstring），所以"提取成功"
+    这件事本身说明不了什么 —— 模型只回一句"我不会"也会提取出那个空壳。这个判据
+    用来区分"真拿到了解答"和"拿到的只是题目占位符"。
+    """
+    if not entry_point:
+        return bool(code.strip())
+    try:
+        tree = _parse(code)
+    except SyntaxError:
+        return False
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == entry_point:
+            body = node.body
+            # 函数体只有一条 Expr（docstring）→ 空壳
+            if len(body) == 1 and isinstance(body[0], ast.Expr):
+                return False
+            return True
+    return False
 
 
 def prompt_import_prefix(prompt: str) -> str:
@@ -151,11 +252,12 @@ def _retry_with_prompt(prompt: str, text: str, entry_point: str) -> Tuple[str, s
     if method == METHOD_RAW:
         return text, METHOD_RAW
 
-    # 守卫：题目的 prompt 本身就是个能解析的**空壳函数**，光提取它也会"成功"。
-    # 模型什么都没写（只回了句"我不会"）时，提到的东西和单独提取 prompt 一模一样
-    # —— 那不算提取到了模型的代码，别记成 completion 假装成功。
-    stub, _ = extract_code(prompt, entry_point)
-    if code.strip() == stub.strip():
+    # 守卫：题目的 prompt 本身就是个能解析的**空壳函数**（签名 + docstring），
+    # 接上它再提取必然"成功" —— 哪怕模型只回了一句"我不会"。要求提取结果里
+    # 入口函数**真有实现**，否则不算提到了东西，别记成 completion 假装成功。
+    # （不能拿"和单独提取 prompt 的结果比字符串"代替：顶层 import 会被无条件
+    # 保留，两边永远不相等，线上 task 4/7 就是这么漏过去的。）
+    if not defines_entry_point_with_body(code, entry_point):
         return text, METHOD_RAW
 
     return code, METHOD_COMPLETION
@@ -184,11 +286,14 @@ def sanitize(
         # 这是 HumanEval 系列的标准约定：完整解答 = prompt + completion。
         code, method = _retry_with_prompt(prompt, text, entry_point)
 
-    code, dropped = keep_definitions(code)
+    code, dropped = keep_definitions(code, entry_point)
 
     return {
         "solution": code.strip(),
         "extract_method": method,
         "dropped_statements": dropped,
-        "extract_ok": bool(code.strip()),
+        # 「提到的东西里，入口函数是不是真有实现」—— 区分"真拿到解答"和
+        # "只拿到题目占位符"。extract_method 说的是**怎么**拿到的，
+        # extract_ok 说的是**拿到的是不是答案**，两件事。
+        "extract_ok": defines_entry_point_with_body(code, entry_point),
     }

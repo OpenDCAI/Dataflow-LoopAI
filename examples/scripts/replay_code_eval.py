@@ -55,6 +55,7 @@ def main() -> None:
 
     rows = []
     methods = collections.Counter()
+    unusable = 0
     for sample in samples:
         problem = problems.get(sample["task_id"], {})
         result = sanitize(
@@ -63,10 +64,15 @@ def main() -> None:
             prompt=problem.get("prompt"),
         )
         methods[result["extract_method"]] += 1
+        if not result["extract_ok"]:
+            unusable += 1
         rows.append((problem, result))
 
+    n = len(rows) or 1
     print(f"样本数: {len(rows)}")
     print(f"提取方式: {dict(methods)}")
+    # 这个数才是关键：它高说明模型压根没交出解答（而不是交错了）
+    print(f"没提到可用解答: {unusable} ({unusable / n * 100:.1f}%)")
 
     passed = 0
     errors = collections.Counter()

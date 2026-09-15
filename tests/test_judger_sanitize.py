@@ -200,6 +200,53 @@ def test_keeps_top_level_assignments():
     assert "MOD" in result["solution"]
 
 
+def test_drops_the_models_demo_driver_code():
+    """线上 task 4/7：模型回的是"演示代码"，整段能解析，但不是解答。
+
+        import heapq as hq
+        nums = list(map(int, input().split()))   ← 读 stdin → OSError
+
+    这些是**赋值语句**，光按"是不是赋值"判断挡不住。按可达性裁才拦得下来。
+    """
+    demo = ("import heapq as hq\n"
+            "nums = list(map(int, input().split()))\n"
+            "n = int(input())\n"
+            "largest_n = [hq.heappop(nums) for i in range(n)]\n")
+
+    result = st.sanitize(demo, entry_point="count_ways", prompt="def count_ways(n):\n    \"\"\"doc\"\"\"")
+
+    assert result["extract_ok"] is False
+    assert "input()" not in result["solution"]
+
+
+def test_drops_definitions_the_entry_point_does_not_use():
+    text = ("def unused_helper():\n    return 1\n\n"
+            "def f(x):\n    return x\n")
+
+    result = st.sanitize(text, entry_point="f")
+
+    assert "unused_helper" not in result["solution"]
+    assert "def f(x)" in result["solution"]
+
+
+def test_extract_ok_is_false_for_a_bodyless_stub():
+    """线上 task 3/6：提取"成功"了，但拿到的只是题目自己的占位符。
+
+    `extract_method` 说的是**怎么**拿到的，`extract_ok` 说的是**拿到的是不是答案**
+    —— 这两件事必须分开，否则"提到了空壳"会被记成一次成功的提取。
+    """
+    result = st.sanitize("def f():\n    \"\"\"doc\"\"\"\n\n我不会写。\n",
+                         entry_point="f", prompt="def f():\n    \"\"\"doc\"\"\"")
+
+    assert result["extract_ok"] is False
+
+
+def test_extract_ok_is_true_when_the_body_is_there():
+    result = st.sanitize("def f():\n    \"\"\"doc\"\"\"\n    return 1\n", entry_point="f")
+
+    assert result["extract_ok"] is True
+
+
 # ---------------------------------------------------------------------------
 # 题目里的 import 段
 # ---------------------------------------------------------------------------
