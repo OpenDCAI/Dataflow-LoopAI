@@ -12,46 +12,7 @@ from loopai.logger import get_logger
 
 logger = get_logger()
 
-# 模型输出里的 ```python 代码块。取最后一个：模型常在解释一遍之后再给最终版。
-_PYTHON_BLOCK_RE = re.compile(r"```python(.*?)```", re.DOTALL)
-
-
-def filter_code(solution_str: str) -> Tuple[str, bool]:
-    """从模型输出里取出 Python 代码。
-
-    返回 ``(code, has_python_fence)``。没有围栏时原样返回整个输出 —— 这**不必然**
-    判错：整段就是裸代码的话，下游 ``add_import`` 会把 prompt 前缀接回去、照样能跑；
-    只有「散文 + 代码」才会 exec 失败。所以这里不打日志：一条输出一行 error 的话，
-    几万条样本会把真正的错误淹掉。标记随样本落盘，由调用方汇总。
-    """
-    matches = list(_PYTHON_BLOCK_RE.finditer(solution_str))
-
-    if not matches:
-        return solution_str, False
-
-    return matches[-1].group(1).strip(), True
-
-"""s1为生成代码，s2为提示词"""
-def add_import(s1, s2):
-    if s1.startswith(('def', ' def')):
-        """
-        从 s2 中查找 "def" 的位置
-        find() 会返回 "def" 第一次出现时的起始索引
-        如果找不到，会返回 -1
-        提取 s2 中 "def" 之前的内容,只有在找到 "def" 的情况下才进行提取,并将提取出的内容加到 s1 的前面
-        """
-        def_index_in_s2 = s2.find("def")  
-        if def_index_in_s2 != -1:
-            prefix_from_s2 = s2[:def_index_in_s2]
-            new_s1 = prefix_from_s2 + s1.lstrip()
-            return new_s1
-        else:
-            return s1.lstrip()
-
-    else:
-        return s1.lstrip()
-
-def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[str]):
+def unsafe_execute(problem: Dict, code: str, timeout: float, result: List[str]):
     with create_tempdir():
 
         """These system calls are needed when cleaning up tempdir."""
@@ -64,11 +25,8 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[
 
         """Disable functionalities that can make destructive changes to the test."""
         reliability_guard()
-        """被测试代码"""
-        completion, has_python_fence = filter_code(completion)
-        # 先落盘：后面 exec 崩了、或进程被超时杀掉，这个标记也要留下
-        result.append({"has_python_fence": has_python_fence})
-        test_script = f"{add_import(completion, problem['prompt'])}\n\n"
+        """被测试代码。提取已经在 sanitize 步骤做过（含题目 import 段），直接用。"""
+        test_script = f"{code}\n\n"
 
         """进入口"""
         entry_point = problem['entry_point']
@@ -125,11 +83,12 @@ def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[
 
 
 def check_correctness(
-    problem: Dict, completion: str, timeout: float, completion_id: Optional[int] = None
+    problem: Dict, code: str, timeout: float, completion_id: Optional[int] = None
 ) -> Dict:
-    """
-    Evaluates the functional correctness of a completion by running the test
-    suite provided in the problem.
+    """跑测试用例判定 ``code`` 是否正确。
+
+    ``code`` 已经是 sanitize 步骤提取好的可执行 Python（含题目 import 段），
+    这里不再做任何提取。
 
     :param completion_id: an optional completion ID so we can match
         the results later even if execution finishes asynchronously.
@@ -138,15 +97,14 @@ def check_correctness(
     manager = multiprocessing.Manager()
     result = manager.list()
 
-    p = multiprocessing.Process(target=unsafe_execute, args=(problem, completion, timeout, result))
+    p = multiprocessing.Process(target=unsafe_execute, args=(problem, code, timeout, result))
     p.start()
     p.join(timeout=timeout + 1)
     if p.is_alive():
         p.kill()
 
-    # 进程被超时杀掉时可能只落了围栏标记、没落执行结果，所以按 key 取而不是按下标。
+    # 进程被超时杀掉时 result 可能是空的，所以按 key 取而不是按下标。
     outcome_entry = next((e for e in result if "outcome" in e), {})
-    fence_entry = next((e for e in result if "has_python_fence" in e), {})
     outcome = outcome_entry.get("outcome", "timed out")
 
     return dict(
@@ -155,7 +113,6 @@ def check_correctness(
         result=outcome,
         error_type=outcome_entry.get("error_type"),
         syntax_error=outcome_entry.get("syntax_error", False),
-        has_python_fence=fence_entry.get("has_python_fence"),
         completion_id=completion_id,
     )
 

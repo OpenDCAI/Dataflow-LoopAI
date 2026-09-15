@@ -25,6 +25,7 @@ JUDGER_PIPELINE_STEPS = (
     "start_vllm",          # 启动本地 vLLM 服务
     "format_data",         # 可选的数据格式转换
     "generate",            # 生成 code/text2sql 样本
+    "sanitize",            # 从模型输出里提取可执行代码（仅 code）
     "evaluate",            # 评测样本并计算 pass@k
     "kill_vllm_cleanup",   # 评测完成后关闭 vLLM
     "eval_general_text",   # 通用文本评测（One-Eval DataFlow）
@@ -41,6 +42,8 @@ _STEP_ALIASES = {
     "vllm_start": "start_vllm",
     "data_format": "format_data",
     "generate_code": "generate",
+    "extract_code": "sanitize",
+    "sanitize_code": "sanitize",
     "evaluate_node": "evaluate",
     "eval_general_text_node": "eval_general_text",
     "eval_math": "evaluate_math",
@@ -49,8 +52,23 @@ _STEP_ALIASES = {
     "finish_node": "finish",
 }
 
-# code / text2sql 任务的流水线步骤
-_CODE_TEXTSQL_STEPS = (
+# code 任务的流水线步骤。比 text2sql 多一步 sanitize：模型返回的是散文里夹
+# 代码，得先把可执行的片段提出来（见 utils/sanitize.py）。
+_CODE_STEPS = (
+    "validate",
+    "kill_vllm",
+    "start_vllm",
+    "format_data",
+    "generate",
+    "sanitize",
+    "evaluate",
+    "kill_vllm_cleanup",
+    "finish",
+)
+
+# text2sql 任务的流水线步骤。SQL 的提取在评测步骤内部（compare_sql）完成，
+# 不需要单独的 sanitize。
+_TEXTSQL_STEPS = (
     "validate",
     "kill_vllm",
     "start_vllm",
@@ -137,6 +155,7 @@ def _load_task_state(task_id: str) -> Dict[str, Any]:
             "vLLM 服务已启动": "start_vllm",
             "数据格式转换完成": "format_data",
             "样本生成完成": "generate",
+            "代码提取完成": "sanitize",
             "评测完成": "evaluate",
             "通用文本评测完成": "eval_general_text",
             "数学评测完成": "evaluate_math",
@@ -206,8 +225,10 @@ def _resume_step_from_state(state: Dict[str, Any]) -> str:
         steps = _GENERAL_TEXT_STEPS
     elif task_type == "math":
         steps = _MATH_STEPS
+    elif task_type == "text2sql":
+        steps = _TEXTSQL_STEPS
     else:
-        steps = _CODE_TEXTSQL_STEPS
+        steps = _CODE_STEPS
 
     if last_completed and last_completed in steps and last_completed != "finish":
         next_index = min(_start_index(last_completed, steps) + 1, len(steps) - 1)
@@ -658,6 +679,59 @@ def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     return state
 
 
+def _step_sanitize(state: Dict[str, Any], writer) -> Dict[str, Any]:
+    """从模型输出里提取可执行代码（仅 code）。
+
+    单独成一步而不是塞进 evaluate，是为了让"原始输出"和"提取后"都留档：排查
+    "评测挂掉到底是模型写错还是我们提错"时，这两个文件对比着看就够了 ——
+    不用像以前那样手动复现（线上 task 201 就是这么查的）。
+    """
+    from loopai.skills.Judger.utils.data import read_problems, stream_jsonl, write_jsonl
+    from loopai.skills.Judger.utils.sanitize import sanitize
+
+    judger = state.get("judger", {})
+    bench_name = judger.get("bench_name", "bench")
+    problem_path = judger["eval_problem_path"]
+    sample_path = judger["output_case_path"]
+
+    out_dir = (Path(str(state.get("output_dir", "."))) / str(state.get("task_id"))
+               / "judger" / writer.version_id / bench_name)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sanitized_path = str(out_dir / f"{bench_name}_sanitized.jsonl")
+
+    problems = read_problems(problem_path)
+    rows = []
+    method_counts: Dict[str, int] = {}
+    dropped_total = 0
+    for sample in stream_jsonl(sample_path):
+        problem = problems.get(sample["task_id"], {})
+        result = sanitize(
+            sample["completion"],
+            entry_point=problem.get("entry_point"),
+            prompt=problem.get("prompt"),
+        )
+        method_counts[result["extract_method"]] = method_counts.get(result["extract_method"], 0) + 1
+        dropped_total += result["dropped_statements"]
+        rows.append({
+            "task_id": sample["task_id"],
+            # 原始输出留着，方便和 solution 对比 —— 这正是这一步存在的意义
+            "completion": sample["completion"],
+            **result,
+        })
+
+    write_jsonl(sanitized_path, rows)
+    state["judger"]["output_sanitized_path"] = sanitized_path
+
+    logger.info(f"[Judger] sanitize: {len(rows)} 条，提取方式 {method_counts}，"
+                f"丢掉顶层语句 {dropped_total} 条")
+    writer(StreamEvent(
+        current=state.get("current"), progress=1.0, message="代码提取完成",
+        data={"output_sanitized_path": sanitized_path,
+              "extract_methods": method_counts,
+              "dropped_statements": dropped_total}))
+    return state
+
+
 def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     """样本评测步骤：执行代码/执行 SQL，计算 pass@k。"""
@@ -729,6 +803,7 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
         "start_vllm": _step_start_vllm,
         "format_data": _step_format_data,
         "generate": _step_generate,
+        "sanitize": _step_sanitize,
         "evaluate": _step_evaluate,
         "kill_vllm_cleanup": _step_kill_vllm,
         "eval_general_text": _step_eval_general_text,
@@ -821,8 +896,10 @@ def _run_single_bench(
         steps = _GENERAL_TEXT_STEPS
     elif task_type == "math":
         steps = _MATH_STEPS
+    elif task_type == "text2sql":
+        steps = _TEXTSQL_STEPS
     else:
-        steps = _CODE_TEXTSQL_STEPS
+        steps = _CODE_STEPS
 
     bench_name = bench["name"]
     logger.info(f"[Judger] bench {bench_name} (task_type={task_type}) starting...")

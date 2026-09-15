@@ -123,7 +123,11 @@ def _check_eval_output_health(
 
 
 def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
-    """评测代码样本，返回 pass@k 和 result_path。"""
+    """评测代码样本，返回 pass@k 和 result_path。
+
+    读的是 ``sanitize`` 步骤产出的 ``<bench>_sanitized.jsonl`` —— 里面每行的
+    ``solution`` 已经是提取好的可执行代码，这里不再做任何提取。
+    """
     state_task_id = state.get("task_id")
     judger_state = state.get("judger", {})
     output_dir = Path(state.get("output_dir"))
@@ -131,7 +135,7 @@ def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
     bench_name = judger_state.get("bench_name", Path(problem_path).stem)
     test_case_path = str(
         output_dir / str(state_task_id) / "judger" / writer.version_id
-        / bench_name / f"{bench_name}_sample.jsonl"
+        / bench_name / f"{bench_name}_sanitized.jsonl"
     )
     result_path = str(
         output_dir / str(state_task_id) / "judger" / writer.version_id
@@ -153,8 +157,8 @@ def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
         logger.info("Reading samples...")
         for sample in tqdm.tqdm(stream_jsonl(test_case_path)):
             task_id = sample["task_id"]
-            completion = sample["completion"]
-            args = (problems[task_id], completion, TIMEOUT, completion_id[task_id])
+            solution = sample["solution"]
+            args = (problems[task_id], solution, TIMEOUT, completion_id[task_id])
             futures.append(executor.submit(check_correctness, *args))
             completion_id[task_id] += 1
             n_samples += 1
@@ -201,7 +205,8 @@ def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
             sample["passed"] = r[1]["passed"]
             sample["error_type"] = r[1]["error_type"]
             sample["syntax_error"] = r[1]["syntax_error"]
-            sample["has_python_fence"] = r[1]["has_python_fence"]
+            # extract_method / dropped_statements / completion 来自 sanitize
+            # 步骤写的那一行，这里原样带过去，留着事后对比"提取前 vs 提取后"
             yield sample
 
     logger.info(f"Writing results to {result_path}...")

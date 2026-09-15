@@ -138,11 +138,24 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 对每个 bench:
   _apply_bench_to_state → 注入 bench 字段到 state["judger"]
   → 按 task_type 选流水线:
-    code/text2sql: validate → kill_vllm → start_vllm → format_data → generate → evaluate → kill_vllm_cleanup → finish
+    code:          validate → kill_vllm → start_vllm → format_data → generate
+                   → sanitize → evaluate → kill_vllm_cleanup → finish
+    text2sql:      validate → kill_vllm → start_vllm → format_data → generate
+                   → evaluate → kill_vllm_cleanup → finish
     general_text:  validate → eval_general_text → finish
     math:          validate → kill_vllm → start_vllm → evaluate_math (Docker) → kill_vllm_cleanup → finish
   → 收集结果到 bench_result / extra_bench_result
 ```
+
+**`sanitize` 步骤（仅 code）**：从模型输出里提取可执行的 Python。单独成一步是为了
+让"原始输出"和"提取后"都留档 —— 排查"评测挂掉是模型写错还是提取错了"时，对比
+`<bench>_sample.jsonl` 和 `<bench>_sanitized.jsonl` 就够了。
+
+提取方式是**语法驱动**的：先看整段能否 `ast.parse`，不行就从 `def <entry_point>`
+往后长取最长的合法片段，最后丢掉顶层非定义语句（模型的"示例/自测"会被 exec 真的
+执行，里面写错的 assert 会把整条样本判错）。**不用 markdown 围栏正则** —— 围栏不是
+任何地方定下的约束，而「先给函数定义、再给 Example Usage」是最常见的输出形状，
+按围栏取块很容易拿到只有调用、没有定义的示例段。详见 `utils/sanitize.py`。
 
 ## Output
 
@@ -177,8 +190,9 @@ outputs/<task_id>/
         │   ├── text_eval_summary_*.json
         │   └── gsm8k_*_steps/
         ├── human_eval/
-        │   ├── human_eval_sample.jsonl
-        │   ├── human_eval_result.jsonl
+        │   ├── human_eval_sample.jsonl     ← 模型原始输出（generate）
+        │   ├── human_eval_sanitized.jsonl  ← 提取后的可执行代码（sanitize）
+        │   ├── human_eval_result.jsonl     ← 逐样本判定结果（evaluate）
         │   └── log.txt
         ├── aime26/                     ← math bench
         │   └── aime26_result.json
