@@ -249,7 +249,8 @@ def test_math_metric_report_persists_math_allocation_plan(tmp_path, monkeypatch)
         "05_数据爬取与构造建议.txt",
     }
     assert len(list(bundle_dir.rglob("*.txt"))) == 6
-    assert not list((tmp_path / "output").rglob("*.json"))
+    assert not list(bundle_dir.rglob("*.json"))
+    assert len(list((tmp_path / "output" / ".analyzer_report_history").glob("*.json"))) == 1
 
 
 def test_math_report_writes_complete_human_readable_bundle_by_default(tmp_path, monkeypatch):
@@ -315,7 +316,8 @@ def test_math_report_writes_complete_human_readable_bundle_by_default(tmp_path, 
     dataset_dir = Path(analyzer["math_report_dataset_dir"])
     assert dataset_dir.name == "MATH-test"
     assert len(list(dataset_dir.glob("*.txt"))) == 5
-    assert not list((tmp_path / "output").rglob("*.json"))
+    assert not list(dataset_dir.rglob("*.json"))
+    assert len(list((tmp_path / "output" / ".analyzer_report_history").glob("*.json"))) == 1
 
 
 def test_math_report_subject_name_is_portable():

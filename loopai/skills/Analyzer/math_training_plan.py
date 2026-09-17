@@ -28,6 +28,12 @@ def build_training_plan(evidence: dict, records: list[dict], readiness: dict,
             raise ValueError(f"SFT threshold {key} must be between 0 and 1")
         thresholds[key] = value
     stats = evidence["stats"]
+    task_type = evidence.get("task_type", "math")
+    sft_data = {
+        "math": "收集独立同类题的完整解题示范、关键步骤和答案一致性检查。",
+        "code": "收集独立同类编程题、明确函数接口、可执行参考实现及边界测试，验证代码补全协议。",
+        "text2sql": "收集独立业务问题、数据库 schema、参考 SQL 和执行结果，覆盖关联、过滤与聚合边界。",
+    }.get(task_type, "收集独立同类题及可验证的完整示范。")
     values = {**stats, "all_wrong_group_fraction": stats["all_wrong_groups"] / stats["question_run_groups"]}
     checks = []
     for metric, key, higher, label in (
@@ -86,14 +92,16 @@ def build_training_plan(evidence: dict, records: list[dict], readiness: dict,
         rate = q["correct"] / q["total"]
         # Route questions before merging topics so easy siblings cannot hide a hard case.
         stage = "rl" if rl_candidate and rate >= 0.5 and q["mixed_groups"] else "sft"
-        domain = domains.setdefault((q["tag"], stage), {
-            "tag": q["tag"], "question_tags": [q["tag"]], "training_stage": stage,
+        capability = q["tag_source"] == "capability_evidence"
+        domain = domains.setdefault((q["tag"], stage, capability), {
+            "tag": q["tag"], "question_tags": [] if capability else [q["tag"]],
+            "tag_type": "capability" if capability else "question_topic", "training_stage": stage,
             "is_sft": stage == "sft", "is_rl": stage == "rl", "question_refs": [],
             "evidence": {"correct": 0, "total": 0, "mixed_groups": 0, "error_tags": Counter()},
             "reason": ("存在同题对错对照且成功率不低于 50%，推荐独立同类题的可验证 RL 小试。" if stage == "rl"
                        else "存在失败且未满足本次 RL 候选规则，优先用独立同类题的完整示范验证 SFT 补强效果。"),
             "data_requirements": (["收集独立同类题与可验证答案，在当前模型上重新采样并审核奖励函数。"] if stage == "rl"
-                                  else ["收集独立同类题的完整解题示范、关键步骤和答案一致性检查。"]),
+                                  else [sft_data]),
             "analysis_source": "engineering_rule",
         })
         domain["question_refs"].append({k: q[k] for k in (
@@ -103,17 +111,17 @@ def build_training_plan(evidence: dict, records: list[dict], readiness: dict,
         domain["evidence"]["error_tags"].update(q["error_tags"])
     rows = sorted(domains.values(), key=lambda d: (d["training_stage"] != "sft", d["tag"]))
     for index, domain in enumerate(rows, 1):
-        domain["domain_id"] = f"math-{index:03d}"
+        domain["domain_id"] = f"{task_type}-{index:03d}"
         domain["evidence"]["error_tags"] = dict(domain["evidence"]["error_tags"])
         domain["evidence"]["accuracy"] = domain["evidence"]["correct"] / domain["evidence"]["total"]
     return {
-        "schema_version": "1.0", "task_type": "math",
+        "schema_version": "1.0", "task_type": task_type,
         "evaluation": dict(stats),
         "sft_completed": sft_completed,
         "is_sft": not sft_completed or any(d["is_sft"] for d in rows),
         "is_rl": any(d["is_rl"] for d in rows),
         "rl_scope": "pilot_only", "automatic_training_authorized": False,
-        "decision_scope": "仅判断本次输入评测范围是否达到预设转段门槛，不认证模型训练历史或全部数学能力",
+        "decision_scope": f"仅判断本次 {task_type} 输入评测范围是否达到预设转段门槛，不认证模型训练历史或全部领域能力",
         "boolean_definitions": {
             "sft_completed": "是否达到本次评测范围的 SFT 转段条件；缺少必要证据时为 false",
             "is_sft": "是否建议继续 SFT 补强或收集 SFT 候选数据，不表示 SFT 已完成",
@@ -126,7 +134,7 @@ def build_training_plan(evidence: dict, records: list[dict], readiness: dict,
         "prerequisites": ["在与本 benchmark 隔离的候选数据上复核判分、推理正确性与格式约定。",
                           "RL 候选题需重新采样并审计 reward；比较等预算 SFT/RL 小试后再扩大。"],
         "data_boundary": "question_refs 仅为诊断溯源，禁止直接将测试题、答案或复刻题用于训练。",
-        "limitations": readiness["limitations"],
+        "limitations": readiness["limitations"], "input_warnings": list(evidence["warnings"]),
     }
 
 

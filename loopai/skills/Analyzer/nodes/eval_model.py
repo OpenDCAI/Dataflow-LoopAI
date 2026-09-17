@@ -304,7 +304,10 @@ def build_judge_prompt_generic(task: str, evidence: Dict[str, Any]) -> str:
         "query": trunc(evidence.get("query", ""), 256),
     }
     tpl = get_template("judge", "judge_user")
-    return tpl.format(task=task, **ev)
+    return tpl.format(task=task, **ev) + (
+        "\n在同一个 JSON 对象中增加 short_critique 字段：用一句中文概括该作答的主要失败原因，"
+        "必须依据提供的执行结果与作答证据，不增加新推测；证据不足时明确说明。保留原有所有字段。"
+    )
 
 
 def parse_assert_from_stdout(stdout: str) -> Dict[str, Any]:
@@ -888,7 +891,10 @@ def eval_model_node(state: LoopAIState):
 
     result_content = []
     for source in eval_result_sources:
+        from loopai.skills.Analyzer.oj_annotations import source_digest
         source_path = source["path"]
+        source["sha256"] = source_digest(Path(source_path))
+        source["record_bench_names"] = []
         with open(source_path, "r", encoding="utf-8") as f:
             for line in f:
                 if not line.strip():
@@ -896,6 +902,8 @@ def eval_model_node(state: LoopAIState):
                 record = json.loads(line)
                 if isinstance(record, dict):
                     record.setdefault("bench_name", source["bench_name"])
+                    if record["bench_name"] not in source["record_bench_names"]:
+                        source["record_bench_names"].append(record["bench_name"])
                     result_content.append(record)
     if writer:
         writer(StreamEvent(
@@ -1159,7 +1167,10 @@ def eval_model_node(state: LoopAIState):
                data=None
                ).json())
 
+    from loopai.skills.Analyzer.oj_annotations import diagnosis_annotation
     for index, position in enumerate(failed_positions):
+        annotation = diagnosis_annotation(failed_results[index], task_type)
+        failed_results[index].update({key: value for key, value in annotation.items() if value})
         result_content[position] = failed_results[index]
 
     logger.info(

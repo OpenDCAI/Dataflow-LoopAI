@@ -310,8 +310,9 @@ def test_label_node_preserves_nested_input_and_report_reads_disk_checkpoint(tmp_
     source = payload((2,), n=4, repeats=2)
     input_path = tmp_path / "nested.json"
     input_path.write_text(json.dumps(source))
-    state = {"analyzer": {"analyze_task_type": "math", "eval_result_path": str(input_path),
-                          "runtime_output_dir": str(tmp_path / "version"), "metric_report_quick": True}}
+    state = {"task_id": "task", "version_id": "v1", "analyzer": {
+        "analyze_task_type": "math", "eval_result_path": str(input_path),
+        "runtime_output_dir": str(tmp_path / "task" / "analyzer" / "v1"), "metric_report_quick": True}}
     prepare_math_rollout_input(state)
     monkeypatch.setattr(label_node, "get_safe_stream_writer", lambda: None)
     monkeypatch.setattr(label_node, "_rule_label", lambda *args: {
@@ -336,6 +337,33 @@ def test_label_node_preserves_nested_input_and_report_reads_disk_checkpoint(tmp_
     monkeypatch.setattr(report, "init_model", lambda s: None)
     report.analyze_metric_report_node(state)
     assert cfg["math_rollout_summary"]["stats"]["missing_critiques"] == 0
+    assert Path(cfg["enriched_oj_path"]).name == "09_oj_enriched.json"
+    delivered = json.loads(Path(cfg["enriched_oj_path"]).read_text())
+    for run in delivered["eval"]:
+        for problem in run["results"]:
+            for generation in problem["generations"]:
+                if not generation["correct"]:
+                    assert generation.pop("short_critique")
+                    assert generation.pop("overall_error_tag")
+    assert delivered == source
+    assert json.loads(input_path.read_text()) == source
+    manifest = next(iter(cfg["report_artifacts"].values()))
+    assert len(manifest["files"]) == 9
+
+    second_path = tmp_path / "second.json"
+    second_path.write_text(json.dumps(payload((3,), n=4, repeats=2)))
+    second = {"task_id": "task", "version_id": "v2", "analyzer": {
+        "analyze_task_type": "math", "eval_result_path": str(second_path),
+        "runtime_output_dir": str(tmp_path / "task" / "analyzer" / "v2"), "metric_report_quick": True}}
+    prepare_math_rollout_input(second)
+    label_node.math_llmaj_label_node(second)
+    report.analyze_metric_report_node(second)
+    plan = json.loads(Path(second["analyzer"]["math_training_plan_path"]).read_text())
+    assert plan["historical_comparison"]["round_number"] == 2
+    comparison = plan["historical_comparison"]["comparisons"][0]
+    assert comparison["matched_question_count"] == 1
+    assert comparison["matched_mean_question_pass_rate_delta"] == .25
+    assert Path(comparison["baseline_result_path"]).name == "09_oj_enriched.json"
 
 
 def test_different_sampling_configs_prevent_pooled_readiness_claim():

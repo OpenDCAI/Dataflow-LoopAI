@@ -405,6 +405,7 @@ def run_analyzer_standalone_payload(
                 "version_id": final_state.get("version_id") if isinstance(final_state, dict) else None,
                 "current": final_state.get("current") if isinstance(final_state, dict) else None,
                 "last_completed": final_state.get("last_completed") if isinstance(final_state, dict) else None,
+                "report_artifacts": analyzer_state.get("report_artifacts") or {},
                 "insights": analyzer_state.get("analysis_summary") or analyzer_state.get("historical_comparison") or {},
                 "error_patterns": analyzer_state.get("historical_comparison", {}).get("error_distribution_diff", {})
                 if isinstance(analyzer_state.get("historical_comparison"), dict)

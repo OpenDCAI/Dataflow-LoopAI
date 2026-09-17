@@ -55,10 +55,23 @@ Math 路线支持 Judger 已完成评测的嵌套 JSON：
 1. `06_Rollout五档能力分析.txt`：各档题型、全部短评形成的错误画像、适合的独立训练数据、逐轮明细与跨轮波动。
 2. `07_SFT与RL训练阶段评估.txt`：规则初筛、模型综合判断、支持和反对理由、缺失证据和验证方案。
 3. `08_training_plan.json`：二分 SFT 转段结果、训练用途布尔值、需要收集的题型标签、具体题号依据和数据要求。正文仍为人类可读文字，不嵌入整段 JSON。
+4. `09_oj_enriched.json`：完整保留原嵌套输入的增强副本，只在失败 generation 增加总错因与一句话短评；原文件不覆盖。
 
-完整分析报告同时包含这两个章节，最终报告附上结论和阅读入口。Math 文本使用 UTF-8 BOM 和 CRLF，方便 Windows 阅读。
+完整分析报告同时包含这两个章节，最终报告附上结论和阅读入口。Math 文本使用 UTF-8 BOM 和 CRLF，方便 Windows 阅读。总计七份文本、一个训练计划 JSON、一份增强 OJ。
+
+下游统一从 `analyzer.report_artifacts[Bench].files` 读取路径；训练计划键为 `training_plan`，增强 OJ 键为 `enriched_oj`。Code/Text2SQL 也采用这一套七份报告与 JSON 契约，只是其增强 OJ 为 JSONL，判因仍使用各自的执行证据链。不要把 Code/Text2SQL 改走 Math 评分流程。
 
 题型识别和已完成的短评分档归纳、训练阶段评审分别缓存在运行目录的 `rollout_report_cache`。模型归纳失败时不把规则兜底计为完整模型评审，可以从 `analyze_metric_report` 续跑。`metric_report_quick=true` 只生成规则预览，明确标注未进行模型评审。
+
+## Analyzer 版本间对比
+
+文件内部的 `eval[]` 采样轮次和 Analyzer 的 `version_id` 是两个不同层次。前者用于报告中的同题多轮观察；后者用于比较前后两次分析的已完成评测结果。
+
+在 `<output>/<task_id>/analyzer/<version_id>/` 中，同一任务、同一 Bench 的第二个已报告版本会自动比较上一个，第三个起同时比较首个版本。续跑同版本不增加轮次，不改变当时可见的基准范围；未完成版本不当作基准。
+
+跨版本统计包含通过数、全量错因变化、共同题目等权平均通过比例，以及改善/退步题例。同题全部 rollout 参与统计，不把不同轮随机生成的序号直接配对。题集、指标和采样设置变化时给出审计提醒；这些是描述性变化，不是训练收益的因果证明。
+
+结果写入 02、03 和 `08_training_plan.json.historical_comparison`，不额外增加文本文件。可用 `baseline_result_path` 或按 Bench 的 `baseline_result_paths` 指定其他 OJ；平铺 Math 基准缺少指标信息时还需明确 `baseline_metric`。保留旧报告与 `.analyzer_report_history` 才能持续追溯。完整约定见[统一输出说明](../../docs/analyzer-report-output-contract.md)。
 
 ## SFT / RL 判断依据
 

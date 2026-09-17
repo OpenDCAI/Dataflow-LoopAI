@@ -22,23 +22,14 @@ logger = get_logger()
 CRITIQUE_PROFILE_SCHEMA = "short_critique_profile_v1"
 
 MATH_REPORT_BUNDLE_DIRNAME = "数学评测最终报告"
-MATH_REPORT_FILENAMES = {
-    "summary": "01_数据集背景与评测概览.txt",
-    "report": "02_完整分析与审计报告.txt",
-    "final_report": "03_最终报告.txt",
-    "suggestions": "04_模型改进建议.txt",
-    "obtainer": "05_数据爬取与构造建议.txt",
-}
-MATH_ROLLOUT_REPORT_FILENAMES = {
-    "rollout": "06_Rollout五档能力分析.txt",
-    "training": "07_SFT与RL训练阶段评估.txt",
-    "training_plan": "08_training_plan.json",
-}
+from loopai.skills.Analyzer.report_bundle import REPORT_FILENAMES, register_report_bundle, write_report_text
+
+MATH_REPORT_FILENAMES = {key: REPORT_FILENAMES[key] for key in ("summary", "report", "final_report", "suggestions", "obtainer")}
+MATH_ROLLOUT_REPORT_FILENAMES = {key: REPORT_FILENAMES[key] for key in ("rollout", "training", "training_plan")}
 
 
 def _write_math_report_text(path: str, text: str) -> None:
-    with Path(path).open("w", encoding="utf-8-sig", newline="\r\n") as handle:
-        handle.write(text.replace("\r\n", "\n").replace("\r", "\n"))
+    write_report_text(path, text)
 
 _CRITIQUE_CRAWL_HINTS = {
     "评测异常": {
@@ -153,7 +144,7 @@ def _render_math_bundle_overview(bundle_root: Path) -> str:
     lines = [
         "数学垂域 Analyzer 评测报告总览",
         "",
-        "本目录汇总 Math Analyzer 生成的人类可读报告；多 Rollout 输入附带训练需求 JSON，不包含 checkpoint 或运行事件。",
+        "本目录汇总 Math Analyzer 生成的人类可读报告与增强 OJ；多 Rollout 输入附带训练需求 JSON，不包含 checkpoint 或运行事件。",
         "",
         "【数据集目录】",
         *([f"- {name}" for name in dataset_names] or ["- 暂无数据集报告"]),
@@ -637,7 +628,7 @@ def _normalize_profile_payload(payload: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-def _fallback_profile_for_critiques(critiques: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _fallback_profile_for_critiques(critiques: List[Dict[str, Any]], task_type: str = "math") -> Dict[str, Any]:
     grouped: Dict[str, List[Dict[str, Any]]] = {}
     for item in critiques:
         grouped.setdefault(str(item.get("overall_error_tag") or "判因未完成"), []).append(item)
@@ -665,6 +656,13 @@ def _fallback_profile_for_critiques(critiques: List[Dict[str, Any]]) -> Dict[str
             "search_queries": [f"{tag} 数学错题 完整解析 数据集"],
             "sample_spec": "保留题目、标准推导、错误作答、短评、总错因标签和可验证最终答案。",
         })
+        if task_type != "math":
+            hint = {
+                "source_types": ["带独立测试用例的编程题库" if task_type == "code" else "包含数据库 schema 与可执行参考查询的 SQL 数据集"],
+                "search_queries": [f"{task_type} {tag} 可验证训练数据"],
+                "sample_spec": ("采集独立题目、函数接口、正确补全、边界测试与纠错对照。" if task_type == "code" else
+                                "采集独立业务问题、schema、参考 SQL、数据库快照与查询结果校验。"),
+            }
         recommendations.append({
             "priority": priority,
             "target_gap": tag,
@@ -839,7 +837,10 @@ def _build_critique_profile(
     max_chars: int = 12000,
     reduce_group_size: int = 8,
     progress_callback: Optional[Callable[[str, int, int], None]] = None,
+    task_type: str = "math",
+    invoke_prompt: Optional[Callable[[Any, str], str]] = None,
 ) -> Dict[str, Any]:
+    call = invoke_prompt or _invoke_prompt
     selected_critiques, selection = _select_critiques_per_tag(
         critiques,
         samples_per_tag,
@@ -880,7 +881,7 @@ def _build_critique_profile(
         )
         try:
             normalized = (
-                _normalize_profile_payload(_invoke_prompt(llm, prompt))
+                _normalize_profile_payload(call(llm, prompt))
                 if llm is not None else None
             )
         except Exception as exc:
@@ -888,7 +889,7 @@ def _build_critique_profile(
             normalized = None
         if normalized is None:
             fallback_batches += 1
-            normalized = _fallback_profile_for_critiques(batch)
+            normalized = _fallback_profile_for_critiques(batch, task_type)
         partials.append(normalized)
 
     reduce_group_size = max(2, int(reduce_group_size))
@@ -910,7 +911,7 @@ def _build_critique_profile(
             prompt = _build_critique_reduce_prompt(group, reduce_round=reduce_rounds)
             try:
                 normalized = (
-                    _normalize_profile_payload(_invoke_prompt(llm, prompt))
+                    _normalize_profile_payload(call(llm, prompt))
                     if llm is not None else None
                 )
             except Exception as exc:
@@ -922,8 +923,8 @@ def _build_critique_profile(
             reduced.append(normalized)
         partials = reduced
 
-    final_sections = partials[0] if partials else _fallback_profile_for_critiques(selected_critiques)
-    deterministic_sections = _fallback_profile_for_critiques(selected_critiques)
+    final_sections = partials[0] if partials else _fallback_profile_for_critiques(selected_critiques, task_type)
+    deterministic_sections = _fallback_profile_for_critiques(selected_critiques, task_type)
     if not final_sections.get("error_profile"):
         final_sections["error_profile"] = deterministic_sections["error_profile"]
     if not final_sections.get("crawl_recommendations"):
@@ -2274,6 +2275,28 @@ def analyze_metric_report_node(state: LoopAIState):
     if not isinstance(records, list) or not records:
         records = _load_records_from_alignment(metric_result)
     summary = _build_summary(state, metric_result, records)
+    report_history = None
+    if summary.get("bucket_task_type") == "math":
+        from loopai.skills.Analyzer.report_history import prepare_report_history, with_rollout_sampling
+        _, primary = _select_primary_metric(metric_result)
+        details = primary.get("details") or []
+        history_records = []
+        for index, row in enumerate(records):
+            item = dict(row)
+            if type(item.get("passed", item.get("correct"))) is not bool and index < len(details):
+                detail = details[index]
+                value = detail.get("score") if isinstance(detail, dict) else detail
+                if isinstance(value, (int, float)) and value in (0, 1):
+                    item["passed"] = value == 1
+            history_records.append(item)
+        history_source = analyzer_cfg.get("enriched_oj_path") or analyzer_cfg.get("eval_result_path") or (metric_result.get("alignment") or {}).get("path")
+        report_history = prepare_report_history(
+            state, outdir=Path(_ensure_analyzer_outdir(state)), dataset=summary["bench_name"], task_type="math",
+            records=with_rollout_sampling(history_records, analyzer_cfg.get("math_rollout_input") or {}),
+            source_path=str(history_source or _ensure_analyzer_outdir(state)), metric=summary["primary_metric"])
+        summary["historical_comparison"] = report_history["public"]
+        if analyzer_cfg.get("math_rollout_input"):
+            analyzer_cfg["math_rollout_input"]["historical_comparison"] = report_history["public"]
     obtainer_stats = _build_obtainer_stats(state, metric_result, records, summary)
     allocation_plan = obtainer_stats.get("allocation_plan") or {}
     if (
@@ -2501,6 +2524,11 @@ def analyze_metric_report_node(state: LoopAIState):
         )
 
     t_write = time.perf_counter()
+    if report_history:
+        from loopai.skills.Analyzer.report_history import render_report_history
+        history_text = render_report_history(report_history)
+        report_text += "\n" + history_text
+        final_report_text += "\n" + history_text
     ts = time.strftime("%Y%m%d_%H%M%S")
     outdir = _ensure_analyzer_outdir(state)
 
@@ -2603,6 +2631,29 @@ def analyze_metric_report_node(state: LoopAIState):
         _write_math_report_text(analyzer["analyze_output_obtainer_txt_path"],
             obtainer_text.rstrip() + "\n"
         )
+        if rollout_text:
+            files = {key: str(dataset_dir / filename) for key, filename in REPORT_FILENAMES.items()}
+        else:
+            files = {key: str(dataset_dir / filename) for key, filename in MATH_REPORT_FILENAMES.items()}
+        enriched_source = analyzer.get("enriched_oj_path")
+        if enriched_source and Path(enriched_source).is_file():
+            import shutil
+            source_path = Path(enriched_source)
+            enriched_target = dataset_dir / ("09_oj_enriched" + source_path.suffix)
+            if source_path.resolve() != enriched_target.resolve():
+                temp = enriched_target.with_suffix(enriched_target.suffix + ".tmp")
+                shutil.copyfile(source_path, temp)
+                temp.replace(enriched_target)
+            files["enriched_oj"] = str(enriched_target.resolve())
+            analyzer["enriched_oj_path"] = files["enriched_oj"]
+            analyzer["enriched_oj_paths"] = {summary["bench_name"]: files["enriched_oj"]}
+            if report_history:
+                report_history["current"]["source_path"] = files["enriched_oj"]
+        if rollout_text:
+            register_report_bundle(analyzer, summary["bench_name"], dataset_dir, files)
+        if report_history:
+            from loopai.skills.Analyzer.report_history import commit_report_history
+            commit_report_history(report_history)
         analyzer["analysis_summary"] = summary
         stage_timing["write_ms"] = round(
             (time.perf_counter() - t_write) * 1000.0, 1

@@ -1,7 +1,7 @@
 # Analyzer Skill
 
 ## Purpose
-Analyzer Skill is the Codex/Agent-facing capability for running LoopAI Analyzer independently. It analyzes evaluation outputs, writes Analyzer reports, emits stream events, returns unified success/error payloads, and can compare current results with a historical baseline.
+Analyzer Skill is the Codex/Agent-facing capability for running LoopAI Analyzer independently. It analyzes evaluation outputs, writes Analyzer reports, emits stream events, returns unified success/error payloads, and compares completed versions of the same task and benchmark. Code, Text2SQL and Math Rollout share seven text reports, a training-plan JSON and a new annotated OJ copy.
 
 ## Python Implementation
 The Python skill layer and Analyzer business implementation live in:
@@ -61,7 +61,10 @@ python examples/scripts/run_analyzer_standalone.py   --config-path /tmp/analyzer
 Supported options:
 
 - `--config-path`
+- `--thread-id`
+- `--version-id`
 - `--resume`
+- `--new-version`
 - `--from-node`
 - `--checkpoint-path`
 - `--baseline-result-path`
@@ -168,16 +171,37 @@ The in-memory state still carries:
 `--from-node` forces a specific Analyzer step. `--resume` loads the matching version-scoped checkpoint first, then falls back to Configer task state if no checkpoint exists.
 
 ## Historical Comparison
-Set `baseline_result_path` to enable Historical Comparison. Current results come from `analyzer.eval_result_path`; baseline results come from `baseline_result_path`.
+Code, Text2SQL and Math automatically search sibling version directories under
+the same task's `analyzer/` directory for completed reports of the same task
+type and Bench. The second version compares against the previous completed
+version; later versions also compare against the first. Resuming the same
+version is not a new round and retains its original baseline window. Incomplete
+versions are not baselines. Legacy bundles without an index are imported only
+when all seven reports, the training plan and matching OJ counts are available.
 
-Analyzer preserves the `historical_comparison` field and appends a `Historical Comparison` section to report/final_report outputs when available. Missing or unreadable baseline files produce a warning instead of failing the main flow.
+The new contract is `analyzer.historical_comparisons[Bench]`, also written into
+reports 02/03 and `08_training_plan.json.historical_comparison`. It includes
+full-population correctness and error-count changes, matched-question pass-rate
+changes, improved/regressed counts and up to 20 examples of each. Match stable
+question identity and content, not row order or random generation index. Metric,
+question-set and sampling changes are audited; unavailable or incompatible
+evidence must not be presented as verified training gains.
+
+Set `analyzer.baseline_result_paths` per Bench or `baseline_result_path` for an
+explicit baseline. A flat Math baseline without metric metadata also needs
+`baseline_metric` to establish comparability. Unreadable explicit baselines
+produce a notice, not silent substitution. The old `historical_comparison`
+field remains compatible; General Text is outside this automatic-history extension.
+Keep historical report directories and `.analyzer_report_history` even when
+old resume checkpoints are cleaned up.
 
 ## Multiple Benches
 
 Analyzer can consume two or more Judger results from `judger.bench_result` and
 `judger.extra_bench_result`. Results with the same `task_type` are merged into
-one analysis run while `summary["bench_summaries"]` preserves per-bench sample
-counts, pass rates, and failure distributions. A single string
+one Code/Text2SQL analysis run while `summary["bench_summaries"]` preserves per-bench sample
+counts, pass rates, and failure distributions. Each Bench receives a separate
+delivery directory and manifest entry. A single string
 `analyzer.eval_result_path` remains supported. Standalone callers may also use:
 
 ```json
@@ -237,14 +261,21 @@ budget. If labeling retries still cannot produce a concrete route, Analyzer
 stops report generation and resumes the same version instead of publishing a
 `待诊断` result.
 
-Math writes a human-readable delivery bundle under the version-scoped Analyzer
-directory:
+## Report Delivery Contract
+
+Code/Text2SQL write a human-readable delivery bundle under:
+
+```text
+<runtime_output_dir>/评测最终报告/<code-or-text2sql>/<Bench>/
+```
+
+Math keeps its existing directory:
 
 ```text
 <runtime_output_dir>/数学评测最终报告/<dataset_name>/
 ```
 
-The bundle always contains five ordered text reports:
+Code, Text2SQL and Math Rollout produce these seven text reports:
 
 - `01_数据集背景与评测概览.txt`: dataset background, field mapping, and metric overview.
 - `02_完整分析与审计报告.txt`: full bad-case audit followed by the same five-part analysis
@@ -254,20 +285,57 @@ The bundle always contains five ordered text reports:
   modes, and recommended bucket allocation.
 - `04_模型改进建议.txt`: prioritized model and Metric improvements.
 - `05_数据爬取与构造建议.txt`: detailed acquisition and construction instructions.
+- `06_Rollout五档能力分析.txt`: question types and all available failed critiques
+  grouped by observed same-question success fractions.
+- `07_SFT与RL训练阶段评估.txt`: binary SFT gate decision, RL pilot evidence,
+  reasons, limitations and next validation steps.
 
-The parent bundle also contains `总览.txt`. Math creates all five reports by
-default; the Code/Text2SQL suggestion toggles do not remove files from this
-bundle. Set `math_report_bundle_root` only when a caller needs a custom bundle
-location.
+The same directory also contains `08_training_plan.json` and
+`09_oj_enriched.jsonl` (or `.json` for nested Math input). The training plan uses
+common `task_type`, `sft_completed`, `is_sft`, `is_rl`, `domains`,
+`question_refs` and `historical_comparison` fields. Missing evidence remains
+unknown; single-sample questions populate only all-correct/all-wrong bands and
+cannot establish rollout stability. Code/SQL questions without a topic or
+usable question text may supply a capability tag, explicitly distinguished
+from a question-topic tag.
 
-Math reports are deliberately text-only and must not embed raw JSON or internal
-action payloads. The only public structured artifact is
-`oj_records_enriched_*.json` or `.jsonl`: it preserves every Judger record and
-adds only `overall_error_tag` and `short_critique` to failed rows. Confidence,
-evidence, review status, and construction actions stay in runtime state and the
-version-scoped checkpoint. A downstream direct-repair adapter can consume this
-enriched OJ without external data selection, but must still verify answers,
-deduplicate rows, and prevent benchmark contamination.
+Read `state["analyzer"]["report_artifacts"][Bench]["files"]`, with keys
+`summary`, `report`, `final_report`, `suggestions`, `obtainer`, `rollout`,
+`training`, `training_plan`, `enriched_oj`. Do not guess timestamped filenames.
+`enriched_oj_paths` maps Bench names to new OJ files; `enriched_oj_path` is a
+single-Bench alias. `run_analyzer_standalone_payload(...)` additionally exposes
+the manifest at `data.result.report_artifacts`. CLI `--print-result` prints the
+final state; read its `analyzer.report_artifacts` instead.
+
+The parent bundle also contains `总览.txt`. Plain non-Rollout Math keeps its
+five text reports plus annotated OJ; General Text keeps its existing report
+route. The delivery bundle is not disabled by legacy Code/Text2SQL suggestion
+toggles. `report_bundle_root` customizes Code/Text2SQL delivery;
+`math_report_bundle_root` customizes Math delivery.
+
+Reports use UTF-8 BOM and CRLF for Windows text readers and must not embed raw
+JSON or internal action payloads. The new public OJ copies every original
+Judger row and adds only `overall_error_tag` and `short_critique` to failures;
+successful rows remain unchanged. Nested Math preserves `data`, `eval`, run
+metadata and generation structure, annotating failed generations only. Never
+overwrite or delete the source OJ. Code/Text2SQL request the critique in the
+existing diagnosis call, not an extra per-case call. Before export, validate
+source hashes and row correspondence; legacy checkpoints without source
+provenance are explicitly marked `original_source_verified=false`.
+
+Full error counts do not depend on the critique sample limit. Reports 06/07
+read all available failed critiques. Runtime confidence, evidence and cached
+model stages stay outside the delivery bundle. A direct-repair adapter may use
+OJ annotations to design independent training data, but must verify answers,
+deduplicate and prevent benchmark contamination.
+
+Report stages cache by input, model and prompt; failed stages must not be
+recorded as successful model review. `report_quick=true` (Code/Text2SQL) and
+`metric_report_quick=true` (Math) are explicitly marked rules-only previews,
+not substitutes for real model analysis. This report alignment does not add
+an output-token cap. See [the output contract](../../docs/analyzer-report-output-contract.md).
+
+## General Text Evidence
 
 General Text uses structured evaluator labels and reasons first. Empty answers,
 verifiable format violations, and obvious refusal patterns provide deterministic

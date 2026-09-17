@@ -1,7 +1,7 @@
 # Analyzer Agent 详细指南
 
 > Dataflow-LoopAI v2
-> 更新日期：2026-08-31
+> 更新日期：2026-09-17
 
 `Analyzer` 负责读取已经完成的评测结果，进一步解释模型为什么失败、失败集中在哪些能力，以及下一轮应该补什么数据。它不重新生成被测模型回答，而是位于“评测之后、数据动作之前”的诊断与决策层。
 
@@ -22,8 +22,9 @@
 - 统计通过率、失败阶段、错误标签和 metric；
 - 分析失败样例并归纳错误模式；
 - 将可验证证据归入领域专属能力桶；
-- 生成 summary、report、final report 和优化建议；
-- 结合历史评测记录生成对比分析；
+- Code、Text2SQL 与 Math Rollout 统一交付七份文本报告、训练计划 JSON 和增强 OJ；
+- 为错误样本补充总错因和一句话短评，保留原始 Judger 文件；
+- 自动结合同一任务、同一 Bench 的已完成版本生成跨轮对比；
 - 为下一轮数据获取、构造和训练生成分桶与比例建议。
 
 在完整闭环中的位置为：
@@ -71,8 +72,7 @@ Analyzer 的 MCP 暴露目前保持关闭，暂不注册 `analyzer_run` 或 `ana
   "eval": {},
   "analyzer": {
     "analyze_task_type": "math",
-    "eval_result_path": "./outputs/math_result.jsonl",
-    "baseline_result_path": "./outputs/math_previous.jsonl"
+    "eval_result_path": "./outputs/math_result.jsonl"
   }
 }
 ```
@@ -121,10 +121,12 @@ eval_model -> analyze_result -> draw_conclusion -> finish
 ### 4.2 General Text / Math：Metric 分析链
 
 ```text
-metric_recommend -> metric_score -> analyze_metric_report -> finish
+metric_recommend -> metric_score -> math_llmaj_label -> analyze_metric_report -> finish
 ```
 
-General Text 和 Math 都先选择合适的 metric，再完成样本/整体评分与报告分析，但两者使用独立能力分桶。Math 不会被归入 General Text 的通用文本能力桶。
+General Text 和 Math 共用 Metric 编排，但使用独立能力分桶。`math_llmaj_label` 只对 Math 生效，General Text 跳过该节点的数学判因。Math 不会被归入 General Text 的通用文本能力桶。
+
+Math 嵌套输入包含 `eval[].results[].generations[]` 时，直接复用每次作答的 Judger `correct` 布尔值，主指标为 `judger_correctness`，不重新评分。旧的平铺输入保留原有 Metric 流程。
 
 ## 5. 不同任务下重点分析什么
 
@@ -202,7 +204,27 @@ Math 采用两级结构：
 1. 上述能力主桶决定训练数据分配；
 2. 代数、几何、概率统计、微积分、数论、组合数学和算术作为 `domain_breakdown`，用于在能力桶内部选择数据来源。
 
-最终答案不匹配只能确认样本失败，不能证明失败来自计算、建模或推理。没有可靠步骤级证据、也无法确认答案提取失败的样本进入 `diagnostic_unknown`，训练预算为 0。
+最终答案不匹配只能确认样本失败，不能证明失败来自计算、建模或推理。Math 判因结合题目、参考答案与完整作答，定位第一个可验证错误步骤，同时生成一句话短评和样本级总错因。每个错误标签都有描述，约束模型依据证据判因。
+
+可定位且有原文证据的错误用于步骤级修复；已有可信总错因但无法定位步骤的，保留该标签并建议整题对比数据，不伪造步骤位置。疑似 `评测异常` 单独进入 Metric 回归审计，训练预算为 0。若重试后仍无法得到具体判因，停止发布报告并保留同版本断点，不把“待诊断”伪装成完整结论。
+
+### 5.5 Rollout 五档与训练阶段判断
+
+Code、Text2SQL 与 Math Rollout 统一按同题同轮的实际正确比例分档：
+
+| 档位 | 正确比例 | 每题 12 次作答时 |
+| --- | --- | --- |
+| 好 | 100% | 12 次正确 |
+| 较好 | 75% 至不足 100% | 9–11 次正确 |
+| 中等 | 50% 至不足 75% | 6–8 次正确 |
+| 较差 | 大于 0 至不足 50% | 1–5 次正确 |
+| 差 | 0% | 全错 |
+
+所有失败均计入分桶统计。普通 Math 错误画像可通过 `critique_samples_per_tag` 设置每个标签读取几条短评，默认 5，`full` 表示全部；新 Rollout 章节会按档读取全部已有失败短评，不受该抽样限制。题型优先沿用原标签，否则依据题干分析，不把错因直接当作题型。
+
+每题只有一次作答时，五档报告仍生成，但只有好/差两档有样本，不能据此推断多次采样稳定性。Code/Text2SQL 缺少题干时只输出有证据的能力需求，并明确标记 `tag_type=capability`。采样数、格式或截断标记缺失时会审计提示，不补成自动通过。
+
+SFT 转段结论只输出是/否，RL 是否适合小规模试验独立判断。结论依据实际通过率、格式、截断、全错组、对错混合组及判因完整性，并说明支持与反对理由。`sft_completion_thresholds` 和 `rl_readiness_thresholds` 可配置；Math 原有 `math_*_thresholds` 保持兼容。这是当前评测范围内的工程判断，不认证训练历史，也不自动启动训练。
 
 ## 6. 数据分桶与训练比例
 
@@ -231,7 +253,7 @@ weight_i = error_share_i^alpha
 ### `other` 的处理
 
 1. 先根据执行日志、parser 结果、结构化标签和评分理由重新分类；
-2. 仍无法可靠归因的样本进入诊断队列；
+2. Code、Text2SQL、General Text 中仍无法可靠归因的样本进入诊断队列；Math 执行上文的具体判因或停止发布规则；
 3. 诊断队列不参与训练预算，避免不可操作的 `other` 挤占数据。
 
 ### Math 分配示例
@@ -246,7 +268,7 @@ weight_i = error_share_i^alpha
 | 数学建模 | 12% | 15% | 难度较高，但对复杂题成功率影响大 |
 | 多步推理 | 10% | 12% | 需要连续推导和步骤校验样本 |
 | 验证与完整性 | 7% | 8% | 用于减少漏解、增根和未闭合证明 |
-| 待诊断 `other` | 10% | 0% | 证据不足，不直接进入训练数据 |
+| 评测异常 | 10% | 0% | 先审计指标，不直接进入模型训练数据 |
 
 首轮后应通过小规模试训测量“目标指标增量 / 新增样本数”，再更新下一轮 `learnability` 和分配比例。
 
@@ -258,29 +280,27 @@ state["analyzer"]["allocation_plan"]
 
 ## 7. 历史评测对比
 
-设置 `baseline_result_path` 后，Analyzer 会比较当前 `eval_result_path` 和历史评测，生成 `historical_comparison`，并在 report/final_report 中加入 `Historical Comparison` 小节。
+### 7.1 自动选择基准
 
-```json
-{
-  "has_baseline": true,
-  "baseline_result_path": "previous.jsonl",
-  "current_result_path": "current.jsonl",
-  "metric_diff": {},
-  "score_distribution_diff": {},
-  "error_distribution_diff": {},
-  "improved_cases": [],
-  "regressed_cases": [],
-  "comparison_summary": "..."
-}
-```
+Code、Text2SQL、Math 在同一 `task_id` 的版本目录中查找同一任务类型、同一 Bench 的已完成报告。第二轮自动比较最近一轮；第三轮起同时对比首轮，观察累计变化。不同任务、不同 Bench 不自动混比。
 
-case 匹配优先级：
+同一 `version_id` 的断点续跑不算新一轮，也不会把之后才完成的版本选成此前的基准。报告完成后才登记历史索引；失败或未完成版本不作为基准。旧版本只有在七份报告、训练计划与可核验 OJ 均完整且计数一致时才自动导入。没有基准就明确说明，不编造提升。
 
-```text
-sample_id > task_id > id > 行号
-```
+### 7.2 对比口径与输出
 
-baseline 缺失、不可读或字段不完整时只产生 warning，不中断主流程。
+- 比较总作答数、通过数、逐次正确率与全量错因次数变化。
+- 按稳定题号、题干、参考答案及适用的数据库/测试身份匹配共同题目，不按行号强配。
+- 同题多次 rollout 先汇总每题通过比例，再比较共同题目的等权平均变化；不把不同轮随机生成的第几个样本强行配对。
+- 改善、退步、持平的数量全量统计；最多各展示 20 个改善/退步题例，不因此缩小统计分母。
+- 题集、采样参数、作答次数或主指标改变时明确提示。指标未知或不一致时不计算可比提升；缺少共同题目时标注证据不足。
+
+对比写入第 02、03 份文本报告和 `08_training_plan.json.historical_comparison`，状态入口为 `analyzer.historical_comparisons[Bench]`。这是描述性变化，不是训练收益的因果证明；判因模型或规则变化也可能影响错因分布。
+
+### 7.3 手动基准与兼容
+
+可通过 `baseline_result_paths` 按 Bench 指定历史 OJ，或单 Bench 使用 `baseline_result_path` 覆盖自动选择。平铺 Math 基准若没有指标元数据，需明确 `baseline_metric` 才能确认可比。指定文件不可读时在报告中说明，不静默替换基准。
+
+旧 `historical_comparison` 字段保留兼容；下游新接口优先读取按 Bench 的 `historical_comparisons` 和训练计划中的对比。本节自动对比仅适用于 Code、Text2SQL、Math；General Text 不在本次扩展范围内。
 
 ## 8. 多 Bench 分析
 
@@ -298,7 +318,7 @@ Analyzer 可以合并两个及以上同任务类型的 Judger 结果：
 }
 ```
 
-`summary["bench_summaries"]` 会保留每个 bench 的样本量、通过率和失败分布。
+Code/Text2SQL 的 `summary["bench_summaries"]` 保留每个 Bench 的样本量、通过率和失败分布，报告收尾时每个 Bench 单独生成一套七份文本、训练计划与增强 OJ。Math 嵌套文件保留其中的评测轮次与数据集标识；不要把文件内重复采样轮次直接视为 Analyzer 历史版本。
 
 Code、Text2SQL、General Text 和 Math 的证据与分桶规则不同，因此多 Bench 合并仅适用于同一任务类型，不应跨路线混合。
 
@@ -310,25 +330,60 @@ Code、Text2SQL、General Text 和 Math 的证据与分桶规则不同，因此�
 <output_dir>/<task_id>/analyzer/<version_id>/
 ├── analyzer.pkl
 ├── state_checkpoint.sqlite
-├── summary_*.json / summary_*.txt
-├── report_*.json / report_*.txt
-├── final_report_*.json / final_report_*.txt
-└── final_report_*.suggestions.txt
+├── .analyzer_report_history/
+├── 评测最终报告/<code或text2sql>/<Bench>/
+└── 数学评测最终报告/<dataset_name>/
 ```
 
-具体文件会随任务路线变化。Code/Text2SQL 还可能生成增强后的失败记录；Metric 路线会保存指标明细、分析报告和数据计划。
+Code/Text2SQL 可用 `report_bundle_root` 修改报告总目录；Math 使用 `math_report_bundle_root`。旧时间戳产物、内部增强记录和模型缓存继续保留在运行目录，供恢复使用，不混进交付文件夹。
 
-### 9.2 核心输出
+### 9.2 七份报告、训练计划与新 OJ
 
-- `insights`：模型当前主要问题和结构化结论；
-- `error_patterns`：错误模式、证据和分布；
-- `allocation_plan`：下一轮训练数据分桶与建议比例；
-- `historical_comparison`：当前版本相对历史版本的改善与退化；
-- `artifacts`：summary、report、final report 和建议文件路径。
+Code、Text2SQL 与 Math Rollout 的交付文件名一致：
 
-### 9.3 报告生成耗时参考
+| 文件 | 内容 |
+| --- | --- |
+| `01_数据集背景与评测概览.txt` | 数据用途、字段、来源、全量样本与通过/失败计数 |
+| `02_完整分析与审计报告.txt` | 错误审计、模型分析、分桶依据、训练阶段与历史对比 |
+| `03_最终报告.txt` | 汇报总结、训练阶段二分结论与前后变化 |
+| `04_模型改进建议.txt` | 需要补强的能力、优先级与验证方式 |
+| `05_数据爬取与构造建议.txt` | 数据来源、样本结构、能力预算与验收要求 |
+| `06_Rollout五档能力分析.txt` | 各档题型、全部已有失败短评归纳与数据需求 |
+| `07_SFT与RL训练阶段评估.txt` | 当前模型能力、是否满足 SFT 转段条件、RL 小试理由 |
+| `08_training_plan.json` | 训练领域 tag、SFT/RL 用途、布尔决策、题号溯源与历史对比 |
+| `09_oj_enriched.jsonl` / `.json` | 保留原 OJ 字段的增强副本 |
 
-耗时主要取决于失败样本数、batch size、模型端点速度、网络和 Prompt 长度。以下仅用于排期，不是固定 SLA：
+文本为 UTF-8 BOM、CRLF，便于 Windows 阅读，正文不嵌入大段 JSON。Math 非 Rollout 输入仍保留五份文本加增强 OJ，General Text 保持原报告流程，不宣称这两种情况也已统一为七份。
+
+新 OJ 保留原始成功与失败记录、顺序和字段值，仅给错误记录增加 `overall_error_tag`、`short_critique`。Code/Text2SQL 输出 JSONL；Math 嵌套输入保留原 JSON 层级，字段加到失败的 `generations[]` 中。原输入不覆盖。Code/Text2SQL 在原有判因请求里同时请求短评，不额外增加一轮逐条请求。
+
+新运行会校验源文件与记录是否一致；旧 checkpoint 若已丢失原始来源，只能复制其中保留的记录，并用 `original_source_verified=false` 标记。下游可使用增强 OJ 的错因与短评构造独立同类训练数据，但不能直接回收 benchmark 答案或复刻题来宣称泛化提升。
+
+### 9.3 下游读取入口
+
+统一读取 `state["analyzer"]["report_artifacts"][Bench]["files"]`：
+
+```json
+{
+  "summary": "01文件路径",
+  "report": "02文件路径",
+  "final_report": "03文件路径",
+  "suggestions": "04文件路径",
+  "obtainer": "05文件路径",
+  "rollout": "06文件路径",
+  "training": "07文件路径",
+  "training_plan": "08文件路径",
+  "enriched_oj": "09文件路径"
+}
+```
+
+不要依赖时间戳或扫描目录猜文件名。单 Bench 兼容 `enriched_oj_path`、`training_plan_path` 等别名；多 Bench 使用清单或 `enriched_oj_paths`。Code/Text2SQL 内部 `analyze_output_summary_path` 仍可指向旧 JSON，交付概览请读 `files.summary`。
+
+训练计划中的 `sft_completed` 表示是否满足本次评测范围的 SFT 转段条件；`is_sft` 表示建议继续 SFT 补强；`is_rl` 表示建议收集 RL 候选数据做小试。三者都是布尔值。`domains[]` 提供 `tag`、`question_tags`、`training_stage`、`is_sft`、`is_rl`、`question_refs` 和具体 `data_requirements`，不能把 `is_sft` 误读为“已经完成 SFT”。
+
+### 9.4 报告生成耗时参考
+
+耗时主要取决于失败样本数、batch size、模型端点速度、网络和 Prompt 长度。下表是早期链路的排期估算，不是当前七份报告流程的实测或固定 SLA；多 Bench、全量 Rollout 短评归纳和训练阶段评审会增加耗时，应以实际日志为准：
 
 | 规模 | 样本判因与统计 | 报告生成 | 总耗时参考 |
 | --- | --- | --- | --- |
@@ -337,6 +392,8 @@ Code、Text2SQL、General Text 和 Math 的证据与分桶规则不同，因此�
 | 约 1500 条 | 约 12 至 35 分钟 | 约 1 至 5 分钟 | 约 15 至 40 分钟 |
 
 默认模型请求 timeout 为 300 秒。首次请求保留完整证据；发生 timeout/524 时，Analyzer 记录耗时和 Prompt 长度，并用压缩后的代表证据重试一次。第三方代理仍可能有更短的网关限制。
+
+新增报告阶段按输入、模型与 Prompt 缓存，已完成阶段可复用；未完成的模型归纳不登记为成功。本次报告统一未新增输出 token 上限。Code/Text2SQL 的 `report_quick=true` 和 Math 的 `metric_report_quick=true` 仅用于规则预览或离线测试，不代表完成真实模型评审。
 
 ## 10. Codex、Python 与 CLI 调用
 
@@ -391,6 +448,7 @@ python examples/scripts/run_analyzer_standalone.py \
 - `--resume`
 - `--from-node`
 - `--checkpoint-path`
+- `--version-id`
 - `--baseline-result-path`
 - `--request-timeout-seconds`
 - `--new-version`
@@ -422,6 +480,8 @@ state["last_completed"]
 - `--resume` 读取匹配 version 的 checkpoint，跳过已完成节点和已提交 batch；
 - `--from-node` 用于人工强制从指定节点开始；
 - 已完成 version 不会阻止同一 task 创建下一 version。
+
+历史报告索引与可清理的恢复 checkpoint 用途不同。不要删除旧报告目录及 `.analyzer_report_history`，否则无法自动追溯完整轮次。
 
 已提交的节点或 batch 可以跳过，但一个尚未返回的外部 LLM 请求无法从 token 中间恢复，只能从该请求重新发起。真正的细粒度恢复依赖分批提交 checkpoint，而不是仅依赖进度条估算。
 
@@ -455,6 +515,7 @@ writer(StreamEvent(
 - `analyzer.draw_conclusion`
 - `analyzer.metric_recommend`
 - `analyzer.metric_score`
+- `analyzer.math_llmaj_label`
 - `analyzer.analyze_metric_report`
 - `analyzer.completed`
 - `analyzer.failed`
@@ -491,6 +552,9 @@ emit_error(
 - `task_id`、`version_id`、writer 和 checkpoint 是否使用同一运行身份；
 - 续跑时是否复用未完成 version，而不是误开新 version；
 - 报告中的 `other` 是否进入诊断池，而不是直接获得训练预算；
+- Math 是否完成具体判因；判因失败时是否保留断点而非发布“待诊断”报告；
+- `report_artifacts` 中交付文件是否齐全，增强 OJ 是否保留全部原始记录；
+- 下一轮是否复用同一任务身份并保留历史目录，比较的题目与指标是否可比；
 - 分桶比例是否经过小规模试训收益校准，而不是长期固定使用首轮先验。
 
 ## 14. 参考依据

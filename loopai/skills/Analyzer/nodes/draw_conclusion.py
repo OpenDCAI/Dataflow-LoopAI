@@ -545,7 +545,7 @@ def build_suggestion_prompt(final_json: dict) -> str:
     quick_samples_json = json.dumps(quick_samples, ensure_ascii=False, indent=2)
 
     summary_obj = final_json.get("summary") or {}
-    summary_json = json.dumps(summary_obj, ensure_ascii=False, indent=2)
+    summary_json = json.dumps({key: value for key, value in summary_obj.items() if key != "pass_at_k_task"}, ensure_ascii=False, indent=2)
 
     return tpl.format(
         total=t,
@@ -564,7 +564,7 @@ def build_obtainer_prompt(final_json: dict, obtainer_stats: dict) -> str:
     tpl = loader("data_obtainer", "suggest_obtainer")
 
     dataset_json = json.dumps(final_json.get("dataset", {}), ensure_ascii=False, indent=2)
-    summary_json = json.dumps(final_json.get("summary", {}), ensure_ascii=False, indent=2)
+    summary_json = json.dumps({key: value for key, value in final_json.get("summary", {}).items() if key != "pass_at_k_task"}, ensure_ascii=False, indent=2)
     obtainer_stats_json = json.dumps(obtainer_stats, ensure_ascii=False, indent=2)
 
     prompt = tpl.format(
@@ -785,7 +785,8 @@ def draw_conclusion_node(state: LoopAIState):
             final_txt_path = outdir / f"final_report_{run_ts}.txt"
             analyzer = _analyzer(state)
             analyzer["analyze_output_final_report_json_path"] = str(report_path)
-            if analyzer.get("output_obtainer_report", False):
+            saved_obtainer = outdir / f"final_report_{run_ts}.obtainer.txt"
+            if analyzer.get("output_obtainer_report", False) and not (saved_obtainer.is_file() and saved_obtainer.stat().st_size):
                 _emit("继续生成 obtainer 细粒度报告", progress=0.8)
                 llm = init_model(state)
                 try:
@@ -810,6 +811,8 @@ def draw_conclusion_node(state: LoopAIState):
                 )
                 analyzer["analyze_output_obtainer_json_path"] = str(obtainer_json_path)
                 analyzer["analyze_output_obtainer_txt_path"] = str(obtainer_txt_path)
+            from loopai.skills.Analyzer.oj_report_bundle import publish_oj_report_bundles
+            publish_oj_report_bundles(state, emit=_emit)
             _emit("最终报告生成完成", progress=1.0)
             return state
 
@@ -852,9 +855,11 @@ def draw_conclusion_node(state: LoopAIState):
     final_json["quick_brief"]["by_stage"] = stage_cnt
 
     # ===== 构造数据集元信息 + 样例，供 background 使用 =====
-    dataset_name = summary.get("dataset_name") or summary.get("task_name") or Path(summary_path).stem
+    benches = summary.get("bench_summaries") or {}
+    dataset_name = summary.get("dataset_name") or summary.get("task_name") or (next(iter(benches)) if len(benches) == 1 else Path(summary_path).stem)
     cfg = _analyzer(state)
     task_type = cfg.get("analyze_task_type", "code")
+    final_json["report_model_key"] = {key: cfg.get(key) for key in ("analyze_model_path", "analyze_base_url", "analyze_temperature", "analyze_top_p")}
     qb = final_json.get("quick_brief") or {}
     samples = qb.get("samples") or []
 
@@ -997,5 +1002,7 @@ def draw_conclusion_node(state: LoopAIState):
 
         _emit("Obtainer 报告生成完成", progress=0.95)
 
+    from loopai.skills.Analyzer.oj_report_bundle import publish_oj_report_bundles
+    publish_oj_report_bundles(state, emit=_emit, llm=llm)
     _emit("最终报告生成完成", progress=1.0)
     return state
