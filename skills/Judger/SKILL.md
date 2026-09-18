@@ -4,7 +4,7 @@
 
 无 LangGraph 的独立评测流水线。支持四种任务类型：
 
-- **code** — 代码生成评测（human-eval / mbpp），计算 pass@k
+- **code** — 代码生成评测（evalplus 的 HumanEval+ / MBPP+），计算 pass@k
 - **text2sql** — SQL 生成评测，SQLite 执行校验
 - **general_text** — 通用文本评测（One-Eval DataFlowEvalTool）
 - **math** — 数学/AIME 评测（生成、答案提取和判分在 Docker 镜像内完成）
@@ -69,10 +69,10 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
     {
       "name": "human_eval",
       "task_type": "code",
-      "problem_path": "/data/humaneval.jsonl",
+      "problem_path": "data/evalplus/humaneval_plus.jsonl",
       "case_num": 10,
       "batch_size": 10,
-      "format_type": ""
+      "format_type": "humaneval+"
     },
     {
       "name": "bird_dev",
@@ -99,7 +99,7 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 |---|---|---|---|---|---|
 | `name` | ✅ 必填 | ✅ 必填 | ✅ 必填 | ✅ 必填 | bench 标识 |
 | `task_type` | ✅ 必填 | ✅ 必填 | ✅ 必填 | ✅ 必填 | `code` / `text2sql` / `general_text` / `math` |
-| `problem_path` | ✅ 必填 | ✅ 必填 | ✅ 必填 | ✅ 必填 | 问题文件路径 |
+| `problem_path` | ✅ 必填 | ✅ 必填 | ✅ 必填 | ✅ 必填 | 问题文件路径；code 必须是 evalplus 的 HumanEval+ / MBPP+ 数据集 jsonl（validate 按 `format_type` 查字段/前缀/题数） |
 | `case_num` | 可选 10 | 可选 10 | — | 可选 10 | 每问题样本数；math 同时作为 val_n |
 | `batch_size` | 可选 10 | 可选 10 | — | — | 生成阶段每批并发多少条 prompt（仅 code/text2sql），bench 设了覆盖全局 |
 | `temperature` | 可选 | 可选 | 可选 | 可选 | 覆盖全局 `eval_temperature` |
@@ -108,7 +108,7 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 | `min_p` | — | — | — | 可选 | 覆盖全局 `eval_min_p`，math 请求采样参数 |
 | `max_tokens` | 可选 | 可选 | 可选 | 可选 | 覆盖全局 `eval_max_tokens` |
 | `enable_thinking` | 可选 | 可选 | 可选 | 可选 | 覆盖全局 `eval_enable_thinking`，`false` 强制关闭思考 |
-| `format_type` | 可选 | — | — | — | `human-eval` / `mbpp`，不设走默认 |
+| `format_type` | 可选 | — | — | — | code 必填：只有 `humaneval+` / `mbpp+` 两个值（其他写法直接报错），决定判哪个 evalplus 数据集 |
 | `text2sql_dir` | — | ✅ 必填 | — | — | SQLite 数据库目录 |
 | `eval_type` | — | — | ✅ 必填 | — | `key2_qa` / `key1_text_score` 等 |
 | `key_mapping` | — | — | 可选 | — | 字段映射，可自动推断 |
@@ -138,11 +138,32 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 对每个 bench:
   _apply_bench_to_state → 注入 bench 字段到 state["judger"]
   → 按 task_type 选流水线:
-    code/text2sql: validate → kill_vllm → start_vllm → format_data → generate → evaluate → kill_vllm_cleanup → finish
+    code:          validate → kill_vllm → start_vllm → generate
+                   → sanitize → evaluate → kill_vllm_cleanup → finish
+    text2sql:      validate → kill_vllm → start_vllm → generate
+                   → evaluate → kill_vllm_cleanup → finish
     general_text:  validate → eval_general_text → finish
     math:          validate → kill_vllm → start_vllm → evaluate_math (Docker) → kill_vllm_cleanup → finish
   → 收集结果到 bench_result / extra_bench_result
 ```
+
+**`sanitize` 步骤（仅 code）**：从模型输出里提取可执行的 Python。单独成一步是为了
+让"原始输出"和"提取后"都留档 —— 排查"评测挂掉是模型写错还是提取错了"时，对比
+`<bench>_sample.jsonl` 和 `<bench>_sanitized.jsonl` 就够了。
+
+**`evaluate` 步骤（code）在 evalplus 官方镜像里跑**：宿主机把模型原始样本
+`<bench>_sample.jsonl` 挂进 `ganler/evalplus:latest`，容器里先跑官方
+`evalplus.sanitize` 抽取、再跑官方 `evalplus.evaluate` 用 HumanEval+ / MBPP+（base
+官方用例 + plus 扩展用例）判分，结果落回 `<bench>_result.jsonl` /
+`<bench>_summary.json`。这边不构建镜像、不改判分代码；`metrics` 是百分数口径，
+`pass@1` 取 plus 口径，另有 `base_pass@1` / `plus_pass@1`。上面那个宿主机 `sanitize`
+步骤只用来留档对比，**不在判分路径上**。详见 `docs/JUDGER_CODE_EVALPLUS.md`。
+
+提取方式是**语法驱动**的：先看整段能否 `ast.parse`，不行就从 `def <entry_point>`
+往后长取最长的合法片段，最后丢掉顶层非定义语句（模型的"示例/自测"会被 exec 真的
+执行，里面写错的 assert 会把整条样本判错）。**不用 markdown 围栏正则** —— 围栏不是
+任何地方定下的约束，而「先给函数定义、再给 Example Usage」是最常见的输出形状，
+按围栏取块很容易拿到只有调用、没有定义的示例段。详见 `utils/sanitize.py`。
 
 ## Output
 
@@ -177,8 +198,12 @@ outputs/<task_id>/
         │   ├── text_eval_summary_*.json
         │   └── gsm8k_*_steps/
         ├── human_eval/
-        │   ├── human_eval_sample.jsonl
-        │   ├── human_eval_result.jsonl
+        │   ├── human_eval_sample.jsonl              ← 模型原始输出（generate）
+        │   ├── human_eval_sanitized.jsonl           ← 自研提取器留档（不参与判分）
+        │   ├── human_eval_sample-sanitized.jsonl    ← evalplus 官方抽取（判分用的输入）
+        │   ├── human_eval_sample-sanitized.eval_results.json  ← evalplus 原始判定
+        │   ├── human_eval_result.jsonl              ← 逐样本判定结果（evaluate）
+        │   ├── human_eval_summary.json              ← pass@k 汇总（evaluate）
         │   └── log.txt
         ├── aime26/                     ← math bench
         │   └── aime26_result.json
@@ -247,7 +272,7 @@ loopai-judger \
 | `--tensor-parallel-size` / `--gpu-memory-utilization` | vLLM 启动参数 | 否 |
 | `--cuda-visible-devices` | 可见 GPU 编号 | 否 |
 | `--enable-thinking` / `--no-thinking` | 思考模式开关（互斥） | 否 |
-| `--resume` / `--from-step` | 断点恢复 / 强制从指定步骤开始 | 否 |
+| `--resume` | 复用上次运行的 `version_id`（输出目录不变）；**步骤不会跳过** | 否 |
 
 除 `--config-path` 外都是**只影响本次运行**的环境变量覆盖（`JUDGER_*` / `CUDA_VISIBLE_DEVICES`），不写数据库。
 

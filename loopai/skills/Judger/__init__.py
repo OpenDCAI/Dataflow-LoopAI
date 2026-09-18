@@ -16,7 +16,8 @@ logger = get_logger()
 def run(
     state: Optional[Dict[str, Any]] = None,
     resume: bool = False,
-    from_step: Optional[str] = None,
+    # from_step 暂时注释：流水线目前总是跑完整条，接了断点续跑再放出来
+    # from_step: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run Judger standalone (Codex / CLI / subprocess entry point).
 
@@ -63,7 +64,6 @@ def run(
             state=state,
             task_id=task_id,
             resume=resume,
-            from_step=from_step,
             writer=writer,
         )
     except Exception as exc:
