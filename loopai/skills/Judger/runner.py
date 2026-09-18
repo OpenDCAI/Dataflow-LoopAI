@@ -23,7 +23,6 @@ JUDGER_PIPELINE_STEPS = (
     "validate",            # 校验必填字段和文件有效性
     "kill_vllm",           # 关闭本地 vLLM 进程
     "start_vllm",          # 启动本地 vLLM 服务
-    "format_data",         # 可选的数据格式转换
     "generate",            # 生成 code/text2sql 样本
     "sanitize",            # 从模型输出里提取可执行代码（仅 code）
     "evaluate",            # 评测样本并计算 pass@k
@@ -34,13 +33,12 @@ JUDGER_PIPELINE_STEPS = (
 )
 
 # 步骤别名：将 LangGraph 节点名称 / 旧名称映射到标准步骤名
-# 用于 CLI --from-step 参数兼容和 checkpoint 恢复
+# 供 _run_step 分发和事件流里的旧消息名兼容使用
 _STEP_ALIASES = {
     "check_required_fields": "validate",
     "check_param_type": "validate",
     "vllm_kill": "kill_vllm",
     "vllm_start": "start_vllm",
-    "data_format": "format_data",
     "generate_code": "generate",
     "extract_code": "sanitize",
     "sanitize_code": "sanitize",
@@ -58,7 +56,6 @@ _CODE_STEPS = (
     "validate",
     "kill_vllm",
     "start_vllm",
-    "format_data",
     "generate",
     "sanitize",
     "evaluate",
@@ -72,7 +69,6 @@ _TEXTSQL_STEPS = (
     "validate",
     "kill_vllm",
     "start_vllm",
-    "format_data",
     "generate",
     "evaluate",
     "kill_vllm_cleanup",
@@ -153,7 +149,6 @@ def _load_task_state(task_id: str) -> Dict[str, Any]:
             "配置校验通过": "validate",
             "vLLM 服务已关闭": None,  #  由 current 区分 kill_vllm/kill_vllm_cleanup
             "vLLM 服务已启动": "start_vllm",
-            "数据格式转换完成": "format_data",
             "样本生成完成": "generate",
             "代码提取完成": "sanitize",
             "评测完成": "evaluate",
@@ -283,6 +278,21 @@ def _bench_label(bench: Any, group: str, index: int) -> str:
     return f"{group}[{index}]" + (f" {name}" if name else "")
 
 
+def _problem_path_dump_hint(task_type: Any, source: Dict[str, Any], path: str) -> str:
+    """problem_path 不存在时，给 code bench 补一句「怎么导出官方数据集」。
+
+    其他 task_type 没有标准数据集，返回空串（措辞留在调用方）。
+    """
+    if task_type != "code":
+        return ""
+    try:
+        from .utils.evaluate_code import dataset_dump_hint, resolve_code_task
+        task = resolve_code_task({"format_type": source.get("format_type")})
+    except Exception:
+        return ""
+    return f"（可用 `{dataset_dump_hint(task, path)}` 导出官方数据集）"
+
+
 def _collect_bench_problems(
     bench: Any, label: str = "bench", *, check_problem_path: bool = False
 ) -> List[str]:
@@ -310,7 +320,8 @@ def _collect_bench_problems(
     problem_path = bench.get("problem_path")
     if check_problem_path and isinstance(problem_path, str) and problem_path.strip():
         if not os.path.exists(problem_path):
-            problems.append(f"{label}: problem_path 不存在: {problem_path}")
+            hint = _problem_path_dump_hint(task_type, bench, problem_path)
+            problems.append(f"{label}: problem_path 不存在: {problem_path}{hint}")
 
     return problems
 
@@ -424,31 +435,41 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     if not os.path.exists(problem_path):
         bench_name = judger.get("bench_name", "")
         prefix = f"评测集 {bench_name} 的" if bench_name else ""
+        hint = _problem_path_dump_hint(task_type, judger, problem_path)
         emit_error(
             FileNotFoundError(f"Problem file does not exist: {problem_path}"),
             code=ErrorCode.INVALID_INPUT, recoverable=True,
             stream_writer=writer,
-            message=f"{prefix}problem_path 不存在: {problem_path}",
+            message=f"{prefix}problem_path 不存在: {problem_path}{hint}",
         )
 
     # 5. JSONL 字段校验
     from loopai.skills.Judger.utils.data import check_jsonl_fields
 
     if task_type == "code":
-        fmt = judger.get("eval_format_type", "")
-        if fmt == "mbpp":
-            required = ["text", "code", "task_id", "challenge_test_list", "test_list"]
-        elif fmt == "human-eval":
-            required = ["task_id", "prompt", "entry_point", "canonical_solution", "test"]
-        else:
-            required = ["task_id", "prompt", "entry_point", "canonical_solution", "test_list"]
-        ok, details = check_jsonl_fields(problem_path, required)
-        if not ok:
+        # 判分在 evalplus 官方镜像里跑，题目必须是它那份数据集（HumanEval+ / MBPP+）：
+        # task_id 前缀、必需字段、题目数量任何一条不对，判分都只会以 assert 收场。
+        # HumanEval+ 和 MBPP+ 的字段不完全一样，按 bench 指定的数据集分别检查。
+        from loopai.skills.Judger.utils.evaluate_code import (
+            check_problem_file, dataset_dump_hint, dataset_label, resolve_code_task)
+        try:
+            code_dataset = resolve_code_task(judger)
+        except ValueError as exc:
             emit_error(
-                ValueError(f"JSONL field validation failed: {json.dumps(details, ensure_ascii=False, indent=2)}"),
+                exc, code=ErrorCode.INVALID_INPUT, recoverable=True, stream_writer=writer,
+                message=("code bench 需要指定评测数据集：bench.format_type"
+                         "（只支持 humaneval+ / mbpp+）。"),
+            )
+
+        problems = check_problem_file(problem_path, code_dataset)
+        if problems:
+            emit_error(
+                ValueError(f"code problem file validation failed: {problems}"),
                 code=ErrorCode.INVALID_INPUT, recoverable=True,
                 stream_writer=writer,
-                message=f"Problem file {problem_path} has invalid fields for task type {task_type}.",
+                message=(f"评测集 {judger.get('bench_name', '')} 的 problem_path 不是 evalplus "
+                         f"{dataset_label(code_dataset)} 数据集格式：{'；'.join(problems)}。"
+                         f"可用 `{dataset_dump_hint(code_dataset)}` 生成一份。"),
             )
     elif task_type == "text2sql":
         required = ["task_id", "prompt", "db_id", "question", "ground_truth"]
@@ -620,31 +641,6 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
     return state
 
 
-def _step_format_data(state: Dict[str, Any], writer) -> Dict[str, Any]:
-
-    """可选的数据格式转换步骤（human-eval、mbpp 等）。"""
-
-    from loopai.skills.Judger.utils.format import run_format_data
-    judger = state.get("judger", {})
-    format_type = judger.get("eval_format_type")
-
-    if format_type and format_type != "":
-        writer(StreamEvent(
-            current=state.get("current"), progress=0.0,
-            message=f"正在进行数据格式转换 [{format_type}]"))
-        run_format_data(state, writer)
-        writer(StreamEvent(
-            current=state.get("current"), progress=1.0, message="数据格式转换完成",
-            data={"target": state["judger"]["eval_problem_path"]}))
-    else:
-        writer(StreamEvent(
-            current=state.get("current"), progress=1.0,
-            message="未设置 format_type，跳过数据格式化"))
-
-    state["judger"]["output_problem_path"] = state["judger"]["eval_problem_path"]
-    return state
-
-
 def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     """样本生成步骤：调用 vLLM 批量生成 code/text2sql 样本。"""
@@ -736,7 +732,10 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     """样本评测步骤：执行代码/执行 SQL，计算 pass@k。"""
 
-    from loopai.skills.Judger.utils.evaluate import run_evaluate_code, run_evaluate_text2sql
+    from loopai.skills.Judger.utils.evaluate import run_evaluate_text2sql
+    # code 的判分在 evalplus 官方镜像里跑（见 utils/evaluate_code.py）；
+    # text2sql 仍是进程内判分。
+    from loopai.skills.Judger.utils.evaluate_code import run_evaluate_code
 
     task_type = state.get("judger", {}).get("eval_task_type", "code")
 
@@ -757,17 +756,17 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         )
 
     state["judger"]["output_result_path"] = result.get("result_path", "")
-    pass_at_k = result.get("pass_at_k", {})
-    metrics = dict(pass_at_k)
-    if result.get("invalid_code_rate") is not None:
-        # 只有 code 路径有：产出压根不是合法 Python 的样本占比
-        metrics["invalid_code_rate"] = result["invalid_code_rate"]
+    if result.get("summary_path"):
+        state["judger"]["output_summary_path"] = result["summary_path"]
+    # code 走 evalplus 容器，指标已经算好（百分数口径）；text2sql 还是老的
+    # pass_at_k 字典（小数口径），两条路径在这里统一收口。
+    metrics = result.get("metrics") or dict(result.get("pass_at_k", {}))
     state["judger"]["metrics"] = metrics
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="评测完成",
         data={
             "output_result_path": state["judger"]["output_result_path"],
-            "metrics": json.dumps(pass_at_k, ensure_ascii=False) if pass_at_k else "",
+            "metrics": json.dumps(metrics, ensure_ascii=False) if metrics else "",
         }))
     return state
 
@@ -801,7 +800,6 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
         "validate": _step_validate,
         "kill_vllm": _step_kill_vllm,
         "start_vllm": _step_start_vllm,
-        "format_data": _step_format_data,
         "generate": _step_generate,
         "sanitize": _step_sanitize,
         "evaluate": _step_evaluate,
@@ -856,21 +854,22 @@ def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
             judger.pop(judger_key, None)
 
     # 2. 清除 bench 特有字段，避免残留
-    for k in ("eval_format_type", "eval_text2sql_dir",
+    for k in ("format_type", "eval_text2sql_dir",
               "bench_dataflow_eval_type", "key_mapping"):
         judger.pop(k, None)
 
     # 3. 必填字段（每个 bench 都必须有）
     judger["eval_task_type"] = bench.get("task_type", "code")
     judger["eval_problem_path"] = bench.get("problem_path", "")
+    # 题目文件现在就是 bench 给的这一份（不再有中间转换产物）；留着给 CLI 显示用。
+    judger["output_problem_path"] = judger["eval_problem_path"]
     judger["bench_name"] = bench.get("name", "")
 
     # 4. bench 特有字段（可选）
     if bench.get("format_type"):
-        # 校验和格式化都靠它选分支：validate 按它决定用哪套必填字段去检查**原始**
-        # 数据集，format_data 按它选转换器。漏了它，mbpp/human-eval 这类需要转换
-        # 的数据集会卡在 validate 的 else 分支上报「缺 prompt/entry_point」。
-        judger["eval_format_type"] = bench["format_type"]
+        # 原样搬到 judger 上（步骤只拿到 state，拿不到 bench 本身）：code 靠它选评测
+        # 数据集（humaneval+ / mbpp+）。
+        judger["format_type"] = bench["format_type"]
     if bench.get("text2sql_dir"):
         judger["eval_text2sql_dir"] = bench["text2sql_dir"]
     if bench.get("eval_type"):
@@ -963,7 +962,8 @@ def run_judger_pipeline(
     state: Optional[Dict[str, Any]],
     task_id: Optional[str] = None,
     resume: bool = False,
-    from_step: Optional[str] = None,
+    # from_step 暂时注释：bench 循环目前总是跑完整条流水线，接了断点续跑再放出来
+    # from_step: Optional[str] = None,
     writer: Any = None,
 ) -> Dict[str, Any]:
     """执行 Judger 独立函数流水线（无需 LangGraph）。
@@ -977,8 +977,6 @@ def run_judger_pipeline(
         state: 包含 ``state["judger"]`` 配置的状态字典。
         task_id: 任务唯一标识，用于读写 state、事件流和输出目录。
         resume: 从 checkpoint 恢复执行。
-        from_step: 强制从指定步骤开始。
-        **kwargs: 运行时覆盖参数。
 
     Returns:
         最终状态字典。

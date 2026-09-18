@@ -171,20 +171,27 @@ def _print_result(state: Dict[str, Any]):
 
 
 def _list_steps():
-    from loopai.skills.Judger.runner import JUDGER_PIPELINE_STEPS
+    from loopai.skills.Judger.runner import (
+        JUDGER_PIPELINE_STEPS,
+        _CODE_STEPS,
+        _GENERAL_TEXT_STEPS,
+        _MATH_STEPS,
+        _TEXTSQL_STEPS,
+    )
 
     print("Available Judger pipeline steps:")
     for step in JUDGER_PIPELINE_STEPS:
         print(f"  - {step}")
     print()
-    print("code/text2sql pipeline:")
-    print("  validate -> kill_vllm -> start_vllm -> format_data -> generate -> evaluate -> kill_vllm_cleanup -> finish")
-    print()
-    print("general_text pipeline:")
-    print("  validate -> eval_general_text -> finish")
-    print()
-    print("math pipeline:")
-    print("  validate -> kill_vllm -> start_vllm -> evaluate_math (Docker) -> kill_vllm_cleanup -> finish")
+    for label, steps in (
+        ("code pipeline", _CODE_STEPS),
+        ("text2sql pipeline", _TEXTSQL_STEPS),
+        ("general_text pipeline", _GENERAL_TEXT_STEPS),
+        ("math pipeline", _MATH_STEPS),
+    ):
+        print(f"{label}:")
+        print("  " + " -> ".join(steps))
+        print()
 
 
 def main():
@@ -203,12 +210,13 @@ def main():
         default=False,
         help="Resume from last checkpoint",
     )
-    parser.add_argument(
-        "--from-step",
-        type=str,
-        default=None,
-        help="Force start from a specific pipeline step",
-    )
+    # --from-step 暂时注释：流水线目前总是跑完整条，接了断点续跑再放出来
+    # parser.add_argument(
+    #     "--from-step",
+    #     type=str,
+    #     default=None,
+    #     help="Force start from a specific pipeline step",
+    # )
     parser.add_argument(
         "--task-id",
         type=str,
@@ -271,7 +279,6 @@ def main():
     run(
         state=state,
         resume=args.resume,
-        from_step=args.from_step,
     )
 
 

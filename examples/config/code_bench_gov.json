@@ -1,0 +1,37 @@
+{
+  "task_id": "513763dd-b41c-4234-8081-e3ed792d1fa5",
+  "output_dir": "./outputs",
+  "judger": {
+    "eval_model_path": "/jizhicfs/hymiezhao/lpc/repos/zx/models/Qwen3-8B",
+    "eval_vllm_tensor_parallel_size": 4,
+    "eval_vllm_gpu_memory_utilization": 0.9,
+    "cuda_visible_devices": "4,5,6,7",
+
+    "eval_temperature": 0.0,
+    "eval_top_p": 1.0,
+    "eval_max_tokens": 16384,
+    "eval_case_num": 1,
+    "eval_batch_size": 10,
+    "eval_enable_thinking": false,
+
+    "benchlist": [
+      {
+        "name": "humaneval",
+        "task_type": "code",
+        "problem_path": "data/evalplus/humaneval_plus.jsonl",
+        "format_type": "humaneval+",
+        "case_num": 1,
+        "batch_size": 10
+      },
+      {
+        "name": "mbpp",
+        "task_type": "code",
+        "problem_path": "data/evalplus/mbpp_plus.jsonl",
+        "format_type": "mbpp+",
+        "case_num": 1,
+        "batch_size": 10
+      }
+    ],
+    "extra_benchlist": []
+  }
+}
