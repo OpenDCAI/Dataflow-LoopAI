@@ -11,7 +11,10 @@ bench（`benchlist` / `extra_benchlist`）。
 - 启动本地 vLLM：`code` / `text2sql` 用它采样，`math` 的评测器直接访问这个服务；
   `general_text` 走 One-Eval 子进程，不需要 vLLM
 - 算分：
-  - `code`：把样本交给 **evalplus 官方镜像**（`ganler/evalplus:latest`）判 HumanEval+ / MBPP+，产出 pass@k
+  - `code`：两个判分后端，由 bench 的 `format_type` 选 ——
+    `humaneval+` / `mbpp+` 走 **evalplus 官方镜像**（`ganler/evalplus:latest`）判
+    HumanEval+ / MBPP+；`livecodebench` 走 `livecodebench:latest`，**生成和判分都在
+    容器里**（容器通过 `--vllm_base_url` 回调本机 vLLM）。两者都产出 pass@k
   - `text2sql`：进程内执行 SQL 对比结果，产出 pass@k
   - `general_text`：One-Eval DataFlowEvalTool 子进程
   - `math`：`math-eval-loopai` Docker 评测器
@@ -43,7 +46,7 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger --output-dir /data/out
 | `--problem-path` / `--dataset-path` | 覆盖评测数据集路径 |
 | `--model-path` / `--model-name` | vLLM 模型路径 / 对外模型名 |
 | `--temperature` `--top-p` `--top-k` `--min-p` `--presence-penalty` | 采样参数 |
-| `--batch-size` `--case-num` `--max-tokens` | 生成阶段批大小 / 每问题样本数 / 最大生成 token |
+| `--batch-size` `--case-num` `--max-tokens` | 宿主生成阶段批大小（LCB 分支无效果）/ 每问题样本数 / 最大生成 token |
 | `--tensor-parallel-size` `--gpu-memory-utilization` `--cuda-visible-devices` | vLLM 启动参数 |
 | `--enable-thinking` / `--no-thinking` | 思考模式开关（互斥） |
 | `--resume` | 复用上次运行的 `version_id`（输出目录不变）；**步骤不会跳过** |
@@ -71,10 +74,11 @@ python examples/scripts/run_judger_standalone.py \
 | --- | --- | --- | --- | --- | --- |
 | `name` | ✅ | ✅ | ✅ | ✅ | 评测集名称，同时作为输出目录名 |
 | `task_type` | ✅ | ✅ | ✅ | ✅ | `code` / `text2sql` / `general_text` / `math` |
-| `problem_path` | ✅ | ✅ | ✅ | ✅ | 问题文件路径；code 必须是 evalplus 的 HumanEval+ / MBPP+ 数据集（见下） |
-| `format_type` | ✅ | — | — | — | code 用它选数据集：**只有 `humaneval+` / `mbpp+`** |
-| `case_num` | 可选 | 可选 | — | 可选 | 每问题样本数（pass@k 的 n；math 即 `val_n`），默认 10 |
-| `batch_size` | 可选 | 可选 | — | — | 生成阶段每批并发多少条 prompt，默认 10 |
+| `problem_path` | ✅ | ✅ | ✅ | ✅ | 问题文件路径；code 按 `format_type` 要求 evalplus 的 HumanEval+ / MBPP+ 或 LiveCodeBench 的目标数据集（见下） |
+| `format_type` | ✅ | — | — | — | code 用它选判分后端：`humaneval+` / `mbpp+` / `livecodebench`（其他写法在预检阶段报错） |
+| `lcb_scenario` | 条件必填 | — | — | — | 只在 `format_type=livecodebench` 时可配且**必须配**：`codegeneration` / `selfrepair` / `testoutputprediction` / `codeexecution` |
+| `case_num` | 可选 | 可选 | — | 可选 | 每问题样本数（= pass@k 的 n，决定出现哪些 k；math 即 `val_n`），默认 10 |
+| `batch_size` | 可选（仅 evalplus） | 可选 | — | — | 宿主 `generate` 阶段每批并发多少条 prompt；`format_type=livecodebench` 时无效果，默认 10 |
 | `temperature` / `top_p` / `max_tokens` / `enable_thinking` | 可选 | 可选 | 可选 | 可选 | 覆盖同名全局字段 |
 | `top_k` / `min_p` | — | — | — | 可选 | math 请求采样参数 |
 | `text2sql_dir` | — | ✅ | — | — | SQLite 数据库目录 |
@@ -104,9 +108,15 @@ python examples/scripts/run_judger_standalone.py \
 ### 预检
 
 主任务的所有 bench 会在**启动 vLLM 之前**一次性校验（必填字段、`task_type`、
-`problem_path` 是否存在、code 的 `format_type` 是否合法）：有问题直接
+`problem_path` 是否存在、code 的 `format_type` 是否合法、`lcb_scenario` 是否合法且与
+`format_type` 配套）：有问题直接
 `emit_error`（`CONFIG_ERROR`），不会跑到第 N 个 bench 才发现配错。附加任务的问题
 降级为告警并跳过该 bench。
+
+`lcb_scenario` 必须显式配：漏写、取值未知、写在 evalplus 的 bench 上（该字段只在
+LiveCodeBench 侧生效）三种情况都在预检报错。它没有默认值 —— 运行时缺省会落到
+`codegeneration`，而 `selfrepair` 和它共用同一份数据集与字段，漏写只会静默跑错
+scenario。
 
 ## 全局配置字段
 
@@ -121,7 +131,7 @@ python examples/scripts/run_judger_standalone.py \
 | `eval_top_k` / `eval_min_p` / `eval_presence_penalty` | `-1` / `0.0` / `0.0` | 采样参数（math 会用） | `JUDGER_TOP_K` / `JUDGER_MIN_P` / `JUDGER_PRESENCE_PENALTY` |
 | `eval_enable_thinking` | 不设置 | 是否开启思考模式（Qwen3 的 `enable_thinking`）；`true`/`false` 通过 `chat_template_kwargs` 显式开关，不设置跟随模型默认 | `JUDGER_ENABLE_THINKING` |
 | `eval_max_tokens` | `16384` | 最大输出 token 数（含推理 token） | `JUDGER_MAX_TOKENS` |
-| `eval_batch_size` | `10` | 生成阶段批大小 | `JUDGER_BATCH_SIZE` |
+| `eval_batch_size` | `10` | 宿主 `generate` 阶段批大小；只对 code 的 evalplus 分支和 text2sql 生效 | `JUDGER_BATCH_SIZE` |
 | `eval_case_num` | `10` | 每问题样本数 | `JUDGER_CASE_NUM` |
 | `eval_vllm_tensor_parallel_size` | `1` | vLLM 张量并行大小 | `JUDGER_TENSOR_PARALLEL_SIZE` |
 | `eval_vllm_gpu_memory_utilization` | `0.9` | vLLM GPU 显存利用率 | `JUDGER_GPU_MEMORY_UTILIZATION` |
@@ -130,12 +140,15 @@ python examples/scripts/run_judger_standalone.py \
 ## 流水线步骤
 
 完整步骤列表：`validate`、`kill_vllm`、`start_vllm`、`generate`、`sanitize`、
-`evaluate`、`kill_vllm_cleanup`、`eval_general_text`、`evaluate_math`、`finish`。
+`evaluate`、`evaluate_livecodebench`、`kill_vllm_cleanup`、`eval_general_text`、
+`evaluate_math`、`finish`。
 
 每个 bench 独立跑一遍：
 
 ```
 code:          validate → kill_vllm → start_vllm → generate → sanitize → evaluate
+               → kill_vllm_cleanup → finish
+code(lcb):     validate → kill_vllm → start_vllm → evaluate_livecodebench
                → kill_vllm_cleanup → finish
 text2sql:      validate → kill_vllm → start_vllm → generate → evaluate
                → kill_vllm_cleanup → finish
@@ -150,12 +163,17 @@ math:          validate → kill_vllm → start_vllm → evaluate_math → kill_
 - `start_vllm`：用 `eval_model_path` / 张量并行 / 显存利用率启动本地 vLLM，成功后写
   `eval_base_url`；日志落盘到 `<output_dir>/<task_id>/judger/<version_id>/vllm.log`。
 - `generate`：按 `batch_size` 分批调 vLLM 采样（**并发度**，不影响分数），写
-  `<bench_name>_sample.jsonl`。
-- `sanitize`（仅 code）：用自研提取器从模型输出里抽可执行代码，写
-  `<bench_name>_sanitized.jsonl`。**只用于留档对比，不在判分路径上** —— 判分用的是
-  evalplus 官方镜像里的抽取。
-- `evaluate`：code 走 evalplus 官方容器（`evalplus.sanitize` + `evalplus.evaluate`），
-  text2sql 走进程内 SQL 执行，产出结果与 metrics。
+  `<bench_name>_sample.jsonl`。只有 code 的 evalplus 分支和 text2sql 走这一步。
+- `sanitize`（仅 code 的 evalplus 分支）：用自研提取器从模型输出里抽可执行代码，写
+  `<bench_name>_sanitized.jsonl`。**只用于留档对比，不在判分路径上** —— 判分时的抽取
+  各归各的后端（evalplus 用镜像里的 `evalplus.sanitize`，LiveCodeBench 用它自己的
+  `extract_code`）。
+- `evaluate`：code 的 evalplus 分支走官方容器（`evalplus.sanitize` +
+  `evalplus.evaluate`），text2sql 走进程内 SQL 执行，产出结果与 metrics。
+- `evaluate_livecodebench`：LCB 分支的生成 + 判分，整段在 `livecodebench:latest` 里
+  （宿主机没有 generate / sanitize）。容器用 `--network host` 连宿主机的 vLLM，把
+  结果写在挂进去的 `/app/output`，宿主机读回来转成 Judger 的契约文件。宿主机不参与
+  生成，所以 `batch_size` 对它无效（并发走容器内 LCB 自己的默认值）。
 - `kill_vllm_cleanup`：评测结束后关闭 vLLM。清理不依赖这一步：无论成功、失败还是
   `emit_error` 直接退出，`run_judger_pipeline` 都会在 `finally` 里收掉**本次运行
   启动的** vLLM（没启动过就不碰 8911 端口）。
@@ -165,8 +183,12 @@ math:          validate → kill_vllm → start_vllm → evaluate_math → kill_
 
 ### `code` 任务
 
-题目必须是 **evalplus 官方数据集**，因为判分在官方镜像里用它自带的那一份
-（HumanEval+ 164 题 / MBPP+ 378 题），`evalplus.evaluate` 要求**每题都有样本**：
+题目必须是**判分侧认的那份数据集**，按 `format_type` 分两条。
+
+#### `format_type=humaneval+` / `mbpp+`（evalplus）
+
+判分在官方镜像里用它自带的那一份（HumanEval+ 164 题 / MBPP+ 378 题），
+`evalplus.evaluate` 要求**每题都有样本**：
 
 | `format_type` | 必需字段 | `task_id` 前缀 | 题数 |
 | --- | --- | --- | --- |
@@ -191,6 +213,42 @@ bench 样例：
 {"name": "humaneval", "task_type": "code",
  "problem_path": "data/evalplus/humaneval_plus.jsonl",
  "format_type": "humaneval+", "case_num": 1, "batch_size": 10}
+```
+
+#### `format_type=livecodebench`（LiveCodeBench）
+
+`lcb_scenario` 决定要哪份数据集和哪些字段（**只查字段、不校验题数** —— 题数随 release
+版本变，且 `testN.jsonl` 带 base64 私有用例、release_v1 就 1.2 GB，只读文件头部）：
+
+| `lcb_scenario` | 数据集 | 题数 | 必需字段 |
+| --- | --- | --- | --- |
+| `codegeneration` | `code_generation_lite` 的 `testN.jsonl` | 400 (v1) → 1055 (v6) | `question_id, question_content, platform, contest_date, difficulty, starter_code, public_test_cases, private_test_cases, metadata` |
+| `selfrepair` | 同一份代码生成题（跑之前会自动先跑一遍 `codegeneration` 当输入） | 同上 | 同上 |
+| `testoutputprediction` | `test_generation` | 442 | `question_id, question_title, question_content, contest_id, contest_date, difficulty, test, starter_code, function_name, test_id` |
+| `codeexecution` | `execution-v2`（老的 `execution` 缺 `contest_date` 等字段，加载会报错） | 479 | `question_id, id, contest_id, contest_date, difficulty, function_name, code, input, output, numsteps, problem_id` |
+
+数据集同样不在仓库里，各下一次即可（`test.jsonl` 就是 release_v1，要别的版本下
+`test2.jsonl` … `test6.jsonl`）：
+
+```bash
+mkdir -p data/livecodebench
+curl -L -o data/livecodebench/test.jsonl \
+  https://huggingface.co/datasets/livecodebench/code_generation_lite/resolve/main/test.jsonl
+python -c "from datasets import load_dataset; load_dataset('livecodebench/test_generation', split='test').to_json('data/livecodebench/test_generation.jsonl', orient='records', lines=True)"
+python -c "from datasets import load_dataset; load_dataset('livecodebench/execution-v2', split='test').to_json('data/livecodebench/execution.jsonl', orient='records', lines=True)"
+```
+
+`testoutputprediction` / `codeexecution` 是一题多份样本（442 行 = 182 题，479 行 = 92 题），
+产物里的 `task_id` 会带 `test_id` / `id` 后缀，不带后缀会撞车。判分镜像
+`livecodebench:latest` 由仓库内 `loopai/skills/Judger/docker/livecodebench` 本地构建
+（缺镜像时自动 build，首次要几分钟），一次容器跑完整份数据集、**不支持按题续跑**。
+
+bench 样例：
+
+```json
+{"name": "livecodebench_codegen", "task_type": "code",
+ "problem_path": "data/livecodebench/test.jsonl",
+ "format_type": "livecodebench", "lcb_scenario": "codegeneration", "case_num": 1}
 ```
 
 ### `text2sql` 任务
@@ -228,12 +286,14 @@ bench 样例：
 ├── vllm.log                    ← 本次运行的 vLLM 日志（排查崩溃 / OOM）
 └── <version_id>/
     └── <bench_name>/
-        ├── <bench>_sample.jsonl                       ← 模型原始输出（generate）
-        ├── <bench>_sanitized.jsonl                    ← 自研提取器留档（不参与判分）
-        ├── <bench>_sample-sanitized.jsonl             ← evalplus 官方抽取（判分输入）
-        ├── <bench>_sample-sanitized_eval_results.json ← evalplus 原始判定
+        ├── <bench>_sample.jsonl                       ← 模型原始输出
+        ├── <bench>_sanitized.jsonl                    ← 自研提取器留档（不参与判分，仅 evalplus 分支）
+        ├── <bench>_sample-sanitized.jsonl             ← evalplus 官方抽取（判分输入，仅 evalplus 分支）
+        ├── <bench>_sample-sanitized_eval_results.json ← evalplus 原始判定（仅 evalplus 分支）
         │                                              （新版镜像写成 .eval_results.json，两种都认）
-        ├── <bench>_result.jsonl                       ← 逐样本判定
+        ├── <model_repr>/                              ← LCB 分支：容器写的原生产物
+        │   └── Scenario.<scenario>_<n>_<temperature>[_eval_all].json
+        ├── <bench>_result.jsonl                       ← 逐样本判定（带 Analyzer 判因读的 passed）
         ├── <bench>_summary.json                       ← pass@k 汇总
         └── log.txt                                    ← text2sql 的 pass@k 日志
 ```
@@ -242,10 +302,16 @@ bench 样例：
 
 | task_type | metrics |
 | --- | --- |
-| `code` | 百分数：`pass@1`（plus 口径，主指标）、`base_pass@1`、`plus_pass@1`、`passed`、`samples`、`failed_task_count` |
+| `code`（evalplus） | 百分数：`pass@1`（plus 口径，主指标）、`base_pass@1`、`plus_pass@1`、`passed`、`samples`、`failed_task_count` |
+| `code`（LiveCodeBench） | 百分数：`pass@1`（主指标）和其余 `pass@k`，没有 `base_` / `plus_` 前缀；题数、样本数、`failed_task_count` 只在 `<bench>_summary.json` |
 | `text2sql` | 小数：`pass@1` / `pass@10` / `pass@100` |
 | `math` | 百分数：`pass@n`、`average@n`、`majority_vote@n`、`format_rate`（n = `case_num`） |
 | `general_text` | 评测器返回的统计（如 `accuracy`） |
+
+两个 code 后端支持的 `pass@k` 不一样，且都要 `case_num >= k` 才会出现：evalplus 固定
+1 / 10 / 100；LiveCodeBench 是 1 / 5 / 10 / 20 / 40 … 1000（`codeexecution` 只有
+`pass@1`，`testoutputprediction` 是 1 / 5）。示例配置里 `case_num=1`，所以只有
+`pass@1`。详见 `skills/Judger/SKILL.md` 的「code bench 的数据契约」。
 
 结果聚合到 `bench_result` / `extra_bench_result` 并写入数据库任务状态（供 Analyzer
 读取）；stdout 的 `emit_success` payload 里 `metrics` 是**按 bench_name 索引的 JSON
@@ -261,7 +327,9 @@ Judger 通常是闭环里真正开始执行的第一层。没有这一步，后�
 ## 使用时最该关注什么
 
 - 本地 vLLM 是否起得来（显存、GPU 编号、端口 8911 是否被占）
-- 每个 bench 的 `task_type` / `problem_path`（code 还要看 `format_type`）是否正确
-- code bench 的数据集是否已导出，且与镜像里的 HumanEval+ / MBPP+ 对得上
+- 每个 bench 的 `task_type` / `problem_path` 是否正确；code 还要看 `format_type` 选了哪个
+  后端，以及（LCB）`lcb_scenario` 是否和目标数据集配套
+- code bench 的数据集是否已准备：evalplus 要 HumanEval+ / MBPP+ 且与镜像里那份对得上；
+  LiveCodeBench 要 `testN.jsonl`（release 版本决定题数）/ `test_generation` / `execution-v2`
 - 结果路径与 metrics 是否生成
 - 输出样例是否足以支撑后续问题分析

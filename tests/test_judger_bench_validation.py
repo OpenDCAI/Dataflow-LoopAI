@@ -73,6 +73,46 @@ def test_requires_task_type_specific_fields(bench, expected_field):
     assert any(expected_field in p for p in problems)
 
 
+def _code_bench(**overrides):
+    bench = {"name": "b", "task_type": "code", "problem_path": "/data/p.jsonl"}
+    bench.update(overrides)
+    return bench
+
+
+def test_code_bench_requires_format_type():
+    problems = runner._collect_bench_problems(_code_bench())
+
+    assert any("format_type" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("bench,expected", [
+    # LCB：lcb_scenario 缺省会静默落到 codegeneration，而 selfrepair 和它共用同一份
+    # 数据集和字段，漏写不会报错、只会跑错 scenario，所以必须显式配
+    (_code_bench(format_type="livecodebench"), "lcb_scenario"),
+    (_code_bench(format_type="livecodebench", lcb_scenario="coderepair"), "coderepair"),
+    # format_type 写错
+    (_code_bench(format_type="livebench"), "livebench"),
+    # evalplus 的 bench 上带了 lcb_scenario：写错了地方，不猜
+    (_code_bench(format_type="humaneval+", lcb_scenario="codegeneration"), "lcb_scenario"),
+])
+def test_code_bench_backend_fields_are_checked(bench, expected):
+    problems = runner._collect_bench_problems(bench)
+
+    assert any(expected in p for p in problems), problems
+
+
+@pytest.mark.parametrize("bench", [
+    _code_bench(format_type="humaneval+"),
+    _code_bench(format_type="mbpp+"),
+    _code_bench(format_type="livecodebench", lcb_scenario="codegeneration"),
+    _code_bench(format_type="livecodebench", lcb_scenario="selfrepair"),
+    _code_bench(format_type="livecodebench", lcb_scenario="testoutputprediction"),
+    _code_bench(format_type="livecodebench", lcb_scenario="codeexecution"),
+])
+def test_code_bench_accepts_the_supported_backends(bench):
+    assert runner._collect_bench_problems(bench) == []
+
+
 def test_rejects_non_dict_entry():
     problems = runner._collect_bench_problems(["not", "a", "dict"])
 

@@ -68,7 +68,7 @@ def _state(tmp_path, **judger_overrides) -> dict:
 # format_type 要能从 bench 传到 judger
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("format_type", ["humaneval+", "mbpp+"])
+@pytest.mark.parametrize("format_type", ["humaneval+", "mbpp+", "livecodebench"])
 def test_format_type_is_carried_from_bench(tmp_path, format_type):
     state = _state(tmp_path)
 
@@ -185,3 +185,100 @@ def test_preflight_missing_dataset_hint_skips_unknown_task_type(tmp_path):
 
     assert str(missing) in problems[0]
     assert "_ready_" not in problems[0]
+
+
+# ---------------------------------------------------------------------------
+# LiveCodeBench：自己的流水线 + 认 LCB 的题目文件
+# ---------------------------------------------------------------------------
+
+def _lcb_row(question_id: str = "1873_A") -> dict:
+    return {"question_id": question_id, "question_content": "cards ...",
+            "platform": "codeforces", "contest_date": "2023-08-21T00:00:00",
+            "difficulty": "easy", "starter_code": "",
+            "public_test_cases": "[]", "private_test_cases": "gASV...", "metadata": "{}"}
+
+
+def test_livecodebench_pipeline_has_no_host_generation():
+    """LCB 的生成在容器里（容器回调本机 vLLM），宿主机就没有 generate / sanitize。"""
+    steps = runner._pipeline_for("code", "livecodebench")
+
+    assert "evaluate_livecodebench" in steps
+    assert "generate" not in steps and "sanitize" not in steps
+    assert steps[0] == "validate"                      # 校验仍然在起 vLLM 之前
+    assert steps.index("start_vllm") < steps.index("evaluate_livecodebench")
+
+
+def test_evalplus_pipeline_is_untouched():
+    assert runner._pipeline_for("code", "humaneval+") == runner._CODE_STEPS
+    assert runner._pipeline_for("code", "mbpp+") == runner._CODE_STEPS
+
+
+def test_livecodebench_resume_uses_its_own_pipeline(tmp_path):
+    """断点续跑也要按 format_type 选流水线，不能落回 evalplus 那条。"""
+    state = _state(tmp_path, eval_task_type="code", format_type="livecodebench")
+    state["last_completed"] = "start_vllm"
+
+    assert runner._resume_step_from_state(state) == "evaluate_livecodebench"
+
+
+def test_run_step_dispatches_livecodebench_to_its_own_step(tmp_path, monkeypatch):
+    """步骤名和实现要对上：LCB 走专门那一步，不是 evalplus 的 evaluate。"""
+    seen = []
+
+    def fake_lcb(state, writer):
+        seen.append("lcb")
+        return state
+
+    monkeypatch.setattr(runner, "_step_evaluate_livecodebench", fake_lcb)
+    monkeypatch.setattr(runner, "_step_evaluate",
+                        lambda state, writer: seen.append("evalplus") or state)
+
+    runner._run_step("evaluate_livecodebench", _state(tmp_path), lambda event: None)
+
+    assert seen == ["lcb"]
+
+
+def test_validate_accepts_livecodebench_rows(tmp_path):
+    """LCB 题目文件就是上游的 test.jsonl（含私有用例），题数不卡死。"""
+    raw = _write_jsonl(tmp_path / "test.jsonl",
+                       *[_lcb_row(f"1873_{chr(ord('A') + i)}") for i in range(3)])
+
+    state = _state(tmp_path)
+    runner._apply_bench_to_state(state, {
+        "name": "livecodebench", "task_type": "code",
+        "problem_path": str(raw), "format_type": "livecodebench",
+        "lcb_scenario": "codegeneration"})
+
+    runner._step_validate(state, lambda event: None)   # 不抛 SystemExit 即通过
+
+
+def test_validate_rejects_non_livecodebench_rows(tmp_path):
+    """把 evalplus 的题目挂到 LCB bench 上：字段对不上要当场报出来。"""
+    raw = _write_jsonl(tmp_path / "humaneval_plus.jsonl", _evalplus_row())
+
+    state = _state(tmp_path)
+    runner._apply_bench_to_state(state, {
+        "name": "livecodebench", "task_type": "code",
+        "problem_path": str(raw), "format_type": "livecodebench",
+        "lcb_scenario": "codegeneration"})
+
+    writer = _Writer()
+    with pytest.raises(SystemExit):
+        runner._step_validate(state, writer)
+
+    message = writer.failed["message"]
+    assert "LiveCodeBench" in message
+    assert "question_id" in message and "private_test_cases" in message
+
+
+def test_preflight_missing_livecodebench_dataset_gives_curl(tmp_path):
+    """LCB 数据集要自己下载，报错里要直接给出 curl 命令。"""
+    missing = tmp_path / "data" / "livecodebench" / "test.jsonl"
+
+    usable, problems = runner._preflight_benches(
+        [{"name": "livecodebench", "task_type": "code", "format_type": "livecodebench",
+          "lcb_scenario": "codegeneration", "problem_path": str(missing)}], "benchlist")
+
+    assert usable == []
+    assert len(problems) == 1
+    assert "curl" in problems[0] and "code_generation_lite" in problems[0]
