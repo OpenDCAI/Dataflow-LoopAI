@@ -80,11 +80,16 @@ def build_training_plan(evidence: dict, records: list[dict], readiness: dict,
         judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
         tag = str(judge.get("overall_error_tag") or record.get("overall_error_tag") or "未提供错因")
         questions[group_questions[record[META_KEY]["group_id"]]]["error_tags"][tag] += 1
+        if (record.get("_code_bench") or {}).get("preprocessing_issue"):
+            questions[group_questions[record[META_KEY]["group_id"]]]["preprocessing_issue"] = True
 
     domains, excluded = {}, []
     for key, q in sorted(questions.items()):
         if q["correct"] == q["total"]:
             excluded.append({"question_key": key, "tag": q["tag"], "reason": "全部通过，保留为回归评测，不据此自动增加训练配额"})
+            continue
+        if q.get("preprocessing_issue"):
+            excluded.append({"question_key": key, "tag": q["tag"], "reason": "清洗/送测差异需先复核，不自动转为模型训练数据需求"})
             continue
         if q["tag_source"] == "unavailable" or q["error_tags"].get("评测异常", 0):
             excluded.append({"question_key": key, "tag": q["tag"], "reason": "题型或评分证据需复核，不自动转为训练数据需求"})

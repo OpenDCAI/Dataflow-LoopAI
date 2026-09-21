@@ -32,9 +32,19 @@ def adapt_oj_report_evidence(records: list[dict], dataset: str, task_type: str,
         if type(original.get("passed")) is bool and type(original.get("correct")) is bool and original["passed"] != original["correct"]:
             raise ValueError(f"Judger record {index}: conflicting passed/correct verdicts")
         row = deepcopy(original)
+        code_meta = row.get("_code_bench") or {}
+        if code_meta:
+            if code_meta.get("extracted_solution_differs"):
+                warnings.add("自行提取代码与实际送测 solution 存在差异；以 result 中送测代码为准，不直接归咎于模型能力。")
+            if code_meta.get("preprocessing_issue"):
+                warnings.add("部分函数在清洗/送测过程中缺失，需先修复评测链路；相关题目暂不产生模型训练需求。")
+            if not code_meta.get("dataset_hash"):
+                warnings.add("缺少测试集哈希，无法核验测试版本可比性。")
         row["correct"] = verdict
         metadata = {key: row[key] for key in run_fields if key in row}
         metadata["dataset"] = dataset
+        if code_meta:
+            metadata["evaluation_protocol"] = {key: code_meta.get(key) for key in ("schema", "pass_source", "dataset_hash", "image")}
         run_id = _identity([dataset, row.get("run_id"), metadata])
         question = _first(row, ("question", "problem_prompt", "problem", "prompt", "input"), "")
         question = question if isinstance(question, str) else ""

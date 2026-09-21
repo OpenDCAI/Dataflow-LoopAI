@@ -58,7 +58,8 @@ def write_annotated_oj(originals: list[dict], diagnosed: list[dict], output: Pat
     for index, (original, record) in enumerate(zip(originals, diagnosed)):
         # Position is safe only when identity, prediction and verdict still agree.
         for key in ("task_id", "id", "sample_id", "sample_index", "question", "problem_prompt", "prompt",
-                    "completion", "prediction", "pred_sql", "db_file", "passed", "correct"):
+                    "completion", "prediction", "pred_sql", "db_file", "passed", "correct",
+                    "solution", "completion_id", "base_status", "plus_status", "base_fail_tests", "plus_fail_tests"):
             if key in original and record.get(key) != original[key]:
                 raise ValueError(f"Original OJ changed or rows were reordered: row {index}, field {key}")
         row = deepcopy(original)
@@ -88,7 +89,11 @@ def export_bench_oj(cfg: dict, dataset: str, rows: list[dict], directory: Path, 
             path = Path(source["path"])
             if source.get("sha256") and source_digest(path) != source["sha256"]:
                 raise ValueError("Original Judger source changed after diagnosis; refusing misaligned annotation")
-            originals.extend(row for row in read_oj_rows(path) if row.get("bench_name", source["bench_name"]) == dataset)
+            for artifact in source.get("artifacts", {}).values():
+                if source_digest(Path(artifact["path"])) != artifact["sha256"]:
+                    raise ValueError("Judger companion source changed after diagnosis")
+            originals.extend(row for row in read_oj_rows(path)
+                             if source.get("schema") == "evalplus_bench_v1" or row.get("bench_name", source["bench_name"]) == dataset)
     else:
         # Older checkpoints may only retain the enriched input, not source provenance.
         originals = deepcopy(rows)

@@ -638,6 +638,9 @@ def classify_failure_bucket(
     judge = record.get("judge") if isinstance(record.get("judge"), dict) else {}
     metric_detail = record.get("metric_detail") if isinstance(record.get("metric_detail"), dict) else {}
     task_route = _normalize_task_type(task_type)
+    if task_route == "code" and (record.get("_code_bench") or {}).get("preprocessing_issue"):
+        return _classification(_UNKNOWN_BUCKET, "preprocessing", 1.0,
+                               "自行提取的函数在实际送测代码中缺失，先审计清洗/送测链路，不自动分配模型训练预算")
     original_stage = _text(
         judge.get("stage")
         or record.get("error_type")

@@ -208,13 +208,43 @@ delivery directory and manifest entry. A single string
 {
   "analyzer": {
     "analyze_task_type": "code",
-    "eval_result_path": ["humaneval.jsonl", "mbpp.jsonl"]
+    "eval_result_path": ["./judger/humaneval/", "./judger/mbpp/"]
   }
 }
 ```
 
 Do not combine `code`, `text2sql`, `math`, and general-text results in one Analyzer
 route; each task type keeps its own analysis rules.
+
+### Code Bench Inputs (EvalPlus)
+
+Extract archives before use. Code accepts `<bench>_result.jsonl`, its adjacent
+`<bench>_summary.json`, a bench directory, or a parent containing bench directories.
+Keep all six Judger artifacts together when available. Names are not restricted
+to HumanEval or MBPP. A result uses `solution` as evaluated code and summary's
+`pass_source` to select the verdict: `plus` requires both base and plus to pass;
+`base` requires base to pass. Plus reports add a `+` suffix to the bench name.
+Legacy boolean-verdict OJ inputs remain supported.
+
+Never use generation samples, either sanitized archive, or raw `_eval_results.json`
+as the main result. These are optional audit evidence. Summary counts, raw results,
+dataset hashes and actual sanitized input are validated against flattened results.
+Unknown verdicts and conflicting artifacts are errors, not zero scores. Missing
+summary defaults to plus with an explicit warning; missing dataset hashes prevent
+claims of comparable historical gains. Preserve official pass@k separately from
+row-weighted pass rates, especially with unequal rollout counts.
+
+Failure lists contain inputs, not expected answers or tracebacks; empty lists do
+not imply success. Diagnose the evaluated `solution`, not Markdown in raw responses.
+Never treat generated docstrings as trusted questions. Align sidecars by explicit
+sample identity or unambiguous code, not row position. Function loss between own
+extraction and evaluated code is a preprocessing audit issue; preserve its failed
+verdict, but exclude it from model-training demands pending review. Report this
+separately from model capability errors.
+
+The nine-file bundle and original-field-preserving OJ export remain unchanged.
+01/02/03 add evaluation-protocol auditing; 08 includes `evaluation_protocol` and
+`judger_evaluations`. Full contract: `docs/analyzer-report-output-contract.md`.
 
 ## Data Bucket Strategy
 

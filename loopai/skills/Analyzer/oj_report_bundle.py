@@ -10,6 +10,7 @@ from .math_rollout_report import _cached, generate_rollout_reports
 from .math_training_plan import render_training_decision
 from .oj_report_evidence import adapt_oj_report_evidence
 from .oj_annotations import export_bench_oj
+from .code_bench_inputs import evaluation_summary
 from .report_history import prepare_report_history, commit_report_history, render_report_history
 from .report_bundle import register_report_bundle, safe_dataset_names, write_report_bundle, write_report_text
 
@@ -66,7 +67,22 @@ def _summary(rows: list[dict], dataset: str, task_type: str, source: str) -> dic
             "total_samples": len(rows), "passed_samples": len(rows) - len(failed),
             "pass_rate_samples": (len(rows) - len(failed)) / len(rows),
             "failure_stage_distribution": dict(stages), "loc_distribution": dict(loc), "kw_distribution": dict(kw),
-            "pass_at_k_task": {}}
+            "pass_at_k_task": {}, "code_evaluation": evaluation_summary(rows)}
+
+
+def _code_audit(summary: dict) -> str:
+    details = summary.get("code_evaluation") or {}
+    if not details:
+        return ""
+    return ("\n【Bench 评测口径与预处理审计】\n"
+            f"主口径：{', '.join(details['pass_sources'])}；Plus 要求 base 和 plus 同时通过。\n"
+            f"基础测试通过：{details['base_pass_samples']}；基础与增强测试均通过：{details['plus_pass_samples']}。\n"
+            f"基础通过但增强失败：{details['plus_only_failures']}。这类失败需结合代码与失败输入进一步归因。\n"
+            f"自行提取与实际送测代码不同：{details['extracted_solution_differences']}；其中函数缺失需复核：{details['preprocessing_issue_samples']}。\n"
+            f"测试集哈希：{', '.join(details['dataset_hashes']) or '未提供'}。\n"
+            "判因基于 result 中实际执行的 solution，不将原始生成中的说明文字当作送测语法错误。\n"
+            "fail_tests 只提供失败输入，不提供期望输出或异常栈；空列表也可能对应失败，不能当作通过。\n"
+            "函数缺失差异先进入评测预处理审计，不自动下发相关模型训练需求；所有失败仍计入完整评测统计。\n")
 
 
 def _samples(rows: list[dict], limit: int = 20) -> list[dict]:
@@ -140,6 +156,11 @@ def publish_oj_report_bundles(state: dict, *, emit, llm=None, invoke=None) -> di
         history_text = render_report_history(history)
         context["historical_comparison"] = history["public"]
         summary = _summary(rows, name, task_type, str(source))
+        source_evaluations = [item["evaluation"] for item in cfg.get("eval_result_sources", [])
+                              if item.get("bench_name") == name and item.get("evaluation")]
+        if source_evaluations:
+            summary["judger_evaluations"] = source_evaluations
+            context["warnings"].extend(warning for evaluation in source_evaluations for warning in evaluation.get("warnings", []))
         summary["historical_comparison"] = history["public"]
         _, final = legacy.make_final_json(summary, rows)
         final["summary"] = summary
@@ -177,10 +198,16 @@ def publish_oj_report_bundles(state: dict, *, emit, llm=None, invoke=None) -> di
                     f"逐次正确率：{summary['pass_rate_samples']:.2%}\n"
                     "统计覆盖全部作答；判因只统计失败记录；短评阅读范围不改变分桶计数。\n"
                     "这里只报告实际逐次正确率及同题观察结果，不将至少一次通过比例冒充 pass@k。\n")
+        overview += _code_audit(summary)
+        for evaluation in source_evaluations:
+            for suite, scores in evaluation.get("judger_pass_at_k", {}).items():
+                if isinstance(scores, dict):
+                    overview += "Judger 汇总指标（" + suite + "）：" + "、".join(f"{key}={value}" for key, value in scores.items()) + "\n"
+        overview += "\n".join(warning for evaluation in source_evaluations for warning in evaluation.get("warnings", []))
         audit = ("【全量失败审计】\n" + "\n".join(f"- {tag}：{count} 条" for tag, count in summary["failure_stage_distribution"].items())
                  + ("\n本次无失败记录。" if not summary["failure_stage_distribution"] else "")
                  + "\n\n" + legacy.make_human_text(final)
-                 + "\n\n【数据完整性】\n" + "\n".join(context["warnings"] or ["输入采样数量检查通过。"])
+                 + _code_audit(summary) + "\n\n【数据完整性】\n" + "\n".join(context["warnings"] or ["输入采样数量检查通过。"])
                  + "\n格式标记与生成截断仅采用明确字段；运行超时不等于生成截断，语法通过不等于格式合规。\n")
         analysis = prose("analysis", build_prompt_for_llm(summary, samples), "统计结论见前面的全量失败审计；未生成额外模型分析。")
         suggestion = prose("suggestions", legacy.build_suggestion_prompt(final), legacy.make_human_text(final))
@@ -192,11 +219,14 @@ def publish_oj_report_bundles(state: dict, *, emit, llm=None, invoke=None) -> di
             render_profile=_render_critique_profile_sections,
             progress=lambda message: emit(f"{name}：{message}", progress=0.98))
         plan = rollout_summary["training_plan"]
+        if summary.get("code_evaluation"):
+            plan["evaluation_protocol"] = summary["code_evaluation"]
+            plan["judger_evaluations"] = source_evaluations
         texts = {
             "summary": overview,
             "report": audit + "\n" + history_text + ("\n【统计分析】\n" if cfg.get("report_quick", False) else "\n【模型分析】\n") + analysis + "\n" + rollout + "\n" + training,
             "final_report": legacy.make_human_text(final, background) + "\n\n【训练阶段结论】\n" + render_training_decision(plan)
-                            + "判断理由：" + "；".join(plan["sft_reasons"]) + "\n详细证据见 07，训练领域与用途见 08_training_plan.json。\n" + history_text,
+                            + "判断理由：" + "；".join(plan["sft_reasons"]) + "\n详细证据见 07，训练领域与用途见 08_training_plan.json。\n" + _code_audit(summary) + history_text,
             "suggestions": "【模型改进建议】\n" + suggestion,
             "obtainer": obtainer_report,
             "rollout": rollout, "training": training,

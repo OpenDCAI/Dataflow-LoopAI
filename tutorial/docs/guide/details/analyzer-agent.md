@@ -1,7 +1,7 @@
 # Analyzer Agent 详细指南
 
 > Dataflow-LoopAI v2
-> 更新日期：2026-09-17
+> 更新日期：2026-09-20
 
 `Analyzer` 负责读取已经完成的评测结果，进一步解释模型为什么失败、失败集中在哪些能力，以及下一轮应该补什么数据。它不重新生成被测模型回答，而是位于“评测之后、数据动作之前”的诊断与决策层。
 
@@ -133,6 +133,14 @@ Math 嵌套输入包含 `eval[].results[].generations[]` 时，直接复用每�
 ### 5.1 Code
 
 Code 路线优先读取编译、运行、断言、stdout/stderr 和 completion 等证据。
+
+新版 Judger / EvalPlus 以 Bench 为单位提供文件组。Analyzer 读取 `<bench>_result.jsonl` 中的实际送测 `solution` 与测试状态，使用相邻 `<bench>_summary.json` 的 `pass_source` 区分基础与增强口径：plus 要求 base 与 plus 同时通过，base 只看基础测试。增强口径显示为 HumanEval+、MBPP+ 等名称，不限制支持的 Bench 名单；旧布尔正误字段 OJ 仍可使用。
+
+`<bench>_sample.jsonl` 是原始生成回答，`<bench>_sanitized.jsonl` 是自行提取留档，`<bench>_sample-sanitized.jsonl` 才是实际送测代码。原始 `<bench>_sample-sanitized_eval_results.json` 用于核验评测记录。请保留整组文件；不要将中间文件当成最终 result。
+
+报告分别展示基础通过、增强通过、基础通过但增强失败，并核验 summary、实际送测文件及原始评测结果。`fail_tests` 只包含失败输入，不提供期望答案或异常栈；空数组不代表通过。原始回答中的 Markdown 不直接算成送测代码的格式错误，生成代码的 docstring 也不作为可信题干。
+
+若自行提取代码中的函数在实际送测代码里缺失，报告单列清洗/送测审计问题；原失败计数保留，但相关记录不直接用于模型训练需求分配。需先复核评测预处理，避免用训练去解决清洗链路的问题。
 
 | 能力桶 | 典型问题 | 推荐数据方向 |
 | --- | --- | --- |
@@ -296,6 +304,8 @@ Code、Text2SQL、Math 在同一 `task_id` 的版本目录中查找同一任务�
 
 对比写入第 02、03 份文本报告和 `08_training_plan.json.historical_comparison`，状态入口为 `analyzer.historical_comparisons[Bench]`。这是描述性变化，不是训练收益的因果证明；判因模型或规则变化也可能影响错因分布。
 
+新版 Code 同时比较 base/plus 口径、数据集哈希与评测器标识；发生变化或缺少测试集哈希时，不宣称两轮分数差异是模型提升。
+
 ### 7.3 手动基准与兼容
 
 可通过 `baseline_result_paths` 按 Bench 指定历史 OJ，或单 Bench 使用 `baseline_result_path` 覆盖自动选择。平铺 Math 基准若没有指标元数据，需明确 `baseline_metric` 才能确认可比。指定文件不可读时在报告中说明，不静默替换基准。
@@ -313,12 +323,16 @@ Analyzer 可以合并两个及以上同任务类型的 Judger 结果：
 {
   "analyzer": {
     "analyze_task_type": "code",
-    "eval_result_path": ["humaneval.jsonl", "mbpp.jsonl"]
+    "eval_result_path": ["./judger/humaneval/", "./judger/mbpp/"]
   }
 }
 ```
 
 Code/Text2SQL 的 `summary["bench_summaries"]` 保留每个 Bench 的样本量、通过率和失败分布，报告收尾时每个 Bench 单独生成一套七份文本、训练计划与增强 OJ。Math 嵌套文件保留其中的评测轮次与数据集标识；不要把文件内重复采样轮次直接视为 Analyzer 历史版本。
+
+上例为新版 Code 的目录输入：先解压归档，再传每个 Bench 的目录。也可传 `*_result.jsonl`、对应 summary、或包含 Bench 子目录的父目录。目录发现仅扫描本层，或本层无结果时扫描下一层；不会递归读取所有历史版本。Bench 名称优先取显式配置，其次 summary 的 `task`，最后文件前缀。配套留档不按行号强行对应多次作答。
+
+Judger 的官方 pass@k 单独展示；当不同题目的 rollout 数不一致时，pass@1 按题等权，与逐次作答通过率可能不同。01/02/03 提供新 Code 口径审计，08 JSON 提供 `evaluation_protocol` 与 `judger_evaluations`，09 仍保留原始字段，仅为失败作答增加错因和短评。
 
 Code、Text2SQL、General Text 和 Math 的证据与分桶规则不同，因此多 Bench 合并仅适用于同一任务类型，不应跨路线混合。
 

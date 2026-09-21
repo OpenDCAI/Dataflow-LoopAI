@@ -60,7 +60,10 @@ def history_snapshot(records: list[dict], *, dataset: str, task_type: str, metri
             "metrics": {"total": len(records), "known": known, "correct": correct, "failed": known - correct,
                         "pass_rate": correct / known if known else None},
             "questions": questions, "unidentified_records": unidentified,
-            "error_distribution": dict(tags), "sampling": sampling}
+            "error_distribution": dict(tags), "sampling": sampling,
+            "evaluation_protocols": sorted({json.dumps({key: row["_code_bench"].get(key)
+                for key in ("schema", "pass_source", "dataset_hash", "image")}, sort_keys=True)
+                for row in records if row.get("_code_bench")})}
 
 
 def compare_snapshots(current: dict, baseline: dict) -> dict:
@@ -70,6 +73,12 @@ def compare_snapshots(current: dict, baseline: dict) -> dict:
     metric_compatible = current["metric"] == baseline["metric"]
     if not metric_compatible:
         warnings.append("主评测指标不同，不能把分数差解读为模型进步或退步。")
+    if current.get("evaluation_protocols", []) != baseline.get("evaluation_protocols", []):
+        metric_compatible = False
+        warnings.append("基础/增强测试口径、测试集哈希或评测器标识不同或缺失，不能作为可比提升。")
+    elif any(not json.loads(protocol).get("dataset_hash") for protocol in current.get("evaluation_protocols", [])):
+        metric_compatible = False
+        warnings.append("缺少测试集哈希，无法确认两轮使用同一版本的测试集，不计算可比提升。")
     if set(current_q) != set(base_q):
         warnings.append("题目集合发生变化；整体通过率仅供描述，优先查看共同题目的等权平均通过率。")
     if current["sampling"] != baseline["sampling"]:
@@ -138,6 +147,9 @@ def _read_baseline(path: Path, dataset: str) -> list[dict]:
                 allowed = {group["group_id"] for group in context["groups"]}
             return with_rollout_sampling([row for row in rows if row[META_KEY]["group_id"] in allowed], context)
     rows = read_oj_rows(path)
+    if any("base_status" in row or "plus_status" in row for row in rows):
+        from .code_bench_inputs import load_bench_records
+        return load_bench_records({"path": str(path), "bench_name": dataset, "bench_name_explicit": True}, "code")
     named = any(row.get("bench_name") for row in rows)
     return [row for row in rows if row.get("bench_name") == dataset] if named else rows
 

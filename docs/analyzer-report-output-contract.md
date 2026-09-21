@@ -56,12 +56,47 @@ Code/Text2SQL 默认位置：
 
 单 Bench 额外提供 `training_plan_path`、`rollout_report_path`、`training_stage_report_path`、`enriched_oj_path`。多 Bench 请遍历清单或 `enriched_oj_paths`，不使用单文件别名。Code/Text2SQL 的内部 `analyze_output_summary_path` 仍指向 JSON，避免破坏断点续跑；交付概览从 `files.summary` 读取。
 
+## Code：按 Bench 读取 Judger / EvalPlus 产物
+
+Code 支持新的 EvalPlus Bench 文件组，也保留旧 `passed` / `correct` 布尔值 OJ 的读取。Bench 名称来自显式配置、Judger summary 的 `task` 或文件名前缀，不限定为 HumanEval / MBPP。
+
+| Judger 文件 | Analyzer 用途 |
+| --- | --- |
+| `<bench>_result.jsonl` | 主输入，逐次作答的 `solution`、`base_status`、`plus_status`、失败输入和身份 |
+| `<bench>_summary.json` | 主评分口径 `pass_source`、数据集哈希、官方 pass@k 与计数校验 |
+| `<bench>_sample-sanitized_eval_results.json` | 可选原始评测证据，与主结果核对内容和哈希 |
+| `<bench>_sample-sanitized.jsonl` | 可选实际送测代码，核对是否与主结果的 `solution` 一致 |
+| `<bench>_sanitized.jsonl` | 可选自行提取代码，审计与实际送测代码的差异 |
+| `<bench>_sample.jsonl` | 可选原始模型回答留档，不能替代实际送测代码判因 |
+
+先解压归档并保留每个 Bench 的文件组。`analyzer.eval_result_path` 可指定单个结果文件、对应 summary、单 Bench 目录、包含多个 Bench 子目录的父目录，或上述路径的列表。目录发现仅扫描本层，或本层无结果时扫描下一层，不递归扫描历史版本。不要传入 sample、sanitized 或原始 eval_results 作为主输入。
+
+```json
+{
+  "analyzer": {
+    "analyze_task_type": "code",
+    "eval_result_path": ["./judger/humaneval/", "./judger/mbpp/"]
+  }
+}
+```
+
+也兼容 `judger.bench_result` 的路径映射与 `{ "Bench名称": { "result_path": "...", "task_type": "code" } }`。每个 Bench 生成独立的九文件目录。
+
+评分不重新调用评测器：`pass_source=plus` 要求 base 与 plus **同时**为 `pass`；`pass_source=base` 只看 base。这与 [EvalPlus 官方评测实现](https://github.com/evalplus/evalplus/blob/master/evalplus/evaluate.py) 一致。增强测试在报告中以 `+` 后缀区别基础测试；summary 缺失时默认 plus 并明确警告，不把缺失状态当成失败。未知状态、重复作答标识或已提供产物相互冲突会中止并报告原因。
+
+01/02/03 报告补充基础通过、增强通过、基础通过但增强失败，以及清洗/送测差异审计；08 JSON 提供 `evaluation_protocol` 和 `judger_evaluations`。Judger 的 pass@k 独立保留，不用样本通过率替换。各题 rollout 数不一致时，pass@1 按题等权，可能与逐次作答通过率不同。
+
+判因只根据真实证据：`fail_tests` 是失败输入，不是期望值或异常栈；空数组不等于通过。原回答中的 Markdown 不直接算成实际代码的语法错误。原题干、参考答案未提供时，不把生成代码的 docstring 当作标准题干。配套文件按题号与明确的 completion_id / 唯一作答匹配，无法可靠配对时不按行号猜。
+
+自行提取代码中存在、实际送测代码中缺失的函数单列为预处理差异，先复核清洗/送测链路，不能直接归因为模型能力缺陷。其失败仍进入全量统计，但不直接产生训练补数预算或训练领域需求。其他代码差异仅作为审计提醒，不自动认定为错误。每题只有一次作答时不据此推断多次采样稳定性。
+
 ## 新 OJ 的保留规则
 
 - 不覆盖输入文件；保留全部成功与失败记录、记录顺序及原始字段值。
 - 仅在错误记录增加 `overall_error_tag` 与 `short_critique`。Code/Text2SQL 输出 JSONL；Math 嵌套 Rollout 输入保留原 JSON 层级，两个字段加在具体失败的 `generations[]` 上，不修改题目级摘要。
 - Code/Text2SQL 在已有逐条判因请求中同时请求一句话短评，不额外增加一轮逐条模型调用。兼容旧记录中的 `brief_analysis` / `judge.reason`；诊断缺失则明确标注，不编造内容。
 - Code/Text2SQL 导出前校验源文件摘要、记录数、身份、作答与评分；源文件被修改或记录错位时拒绝拼接。
+- 新 Code OJ 仍保留原始 `solution`、`base_status`、`plus_status` 等字段，不把内部归一化用的 `passed`、`completion` 或元数据强行加到公开 OJ；配套文件也参与来源摘要校验。
 - 旧 checkpoint 若没有原始来源信息，只能复制当时保留的增强记录；`enriched_oj_sources[Bench].original_source_verified=false` 明确标识，不能承诺恢复已丢失的原字段。新运行保存来源信息。
 - 所有错误都进入统计，短评抽样或正文题例数量不改变统计分母。
 
@@ -77,6 +112,7 @@ Code/Text2SQL 默认位置：
 - 按稳定题号与题干/参考答案/数据库身份匹配共同题目，比较每题全部作答的通过比例；不把随机 rollout 的第几个序号强行配对。
 - 改善、退步、持平题数与最多各 20 个题例；题例截断不截断统计。
 - 题目集合、采样参数、同题作答数及指标变化的审计提醒。指标未知或不一致时不计算可比提升；缺少可靠共同题目时明确标注证据不足。
+- 新 Code 还检查 base/plus 口径、测试集哈希及评测器标识；口径变化、哈希不同或哈希缺失时，不计算可比提升。保留原 summary 和历史索引，才能核验新旧 Bench 版本。
 
 对比是描述性证据，不是训练收益的因果证明。判因规则或判因模型变化也可能影响错因标签分布。
 
@@ -100,7 +136,7 @@ Code/Text2SQL 默认位置：
 
 好：全部通过；较好：75% 至不足 100%；中等：50% 至不足 75%；较差：大于 0 至不足 50%；差：全部失败。
 
-Code/Text2SQL 按 Bench、运行配置、题号及题干/数据库身份区分同题作答。统计只使用 Judger 明确的 `passed` / `correct` 布尔值，不重新判分；重复作答标识或相互冲突的正误字段会报错。
+Code/Text2SQL 按 Bench、运行配置、题号及题干/数据库身份区分同题作答。统计使用 Judger 明确的 `passed` / `correct` 布尔值，或上述 EvalPlus 状态规则，不重新判分；重复作答标识或相互冲突的正误字段会报错。
 
 所有失败均计入错因统计。短评优先读取 `short_critique`，其次原有 `brief_analysis` 或 `judge.reason`；错因兼容总标签、细粒度分类及 `judge.tags`。缺失诊断明确显示缺失，不编造。
 
@@ -111,6 +147,8 @@ Code/Text2SQL 按 Bench、运行配置、题号及题干/数据库身份区分�
 ## 缓存与测试模式
 
 报告新增模型阶段按输入、模型配置和提示内容缓存。已有的同一输入报告可以复用；新阶段失败不登记为成功，续跑时继续缺失阶段。不会添加输出 token 上限。
+
+Code/Text2SQL 的逐批判因 checkpoint 同时核对输入文件及配套文件摘要、任务类型和 batch size，避免仅凭失败条数相同而复用另一份数据的判因结果。旧 checkpoint 没有此指纹时不复用逐批判因缓存。
 
 `report_quick=true` 仅用于 Code/Text2SQL 的离线格式检查，生成明确标注“未调用模型”的规则版正文。默认是 `false`，会请求配置的分析模型。旧 `quick_brief` 仍只控制 Code/Text2SQL 的短评生成，不关闭报告模型评审。
 
