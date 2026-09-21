@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from loopai.common.event_tool import StreamEvent
 from loopai.common.exception import emit_error, ErrorCode
 from loopai.skills.Judger.utils.data import check_jsonl_fields
+from loopai.skills.Judger.utils.evaluate_code import LIVE_CODEBENCH
 from loopai.logger import get_logger
 
 
@@ -26,6 +27,7 @@ JUDGER_PIPELINE_STEPS = (
     "generate",            # 生成 code/text2sql 样本
     "sanitize",            # 从模型输出里提取可执行代码（仅 code）
     "evaluate",            # 评测样本并计算 pass@k
+    "evaluate_livecodebench",  # LiveCodeBench：生成 + 判分都在容器里
     "kill_vllm_cleanup",   # 评测完成后关闭 vLLM
     "eval_general_text",   # 通用文本评测（One-Eval DataFlow）
     "evaluate_math",       # 数学评测 Docker runner
@@ -90,6 +92,32 @@ _MATH_STEPS = (
     "kill_vllm_cleanup",
     "finish",
 )
+
+# LiveCodeBench 分支。和 evalplus 分支的分工不同：生成与判分都在容器里完成
+# （容器通过 --vllm_base_url 回调本机 vLLM），所以没有宿主机 generate/sanitize
+# 两步，也就没有 <bench>_sample.jsonl 的「宿主机产出」阶段。
+_LCB_STEPS = (
+    "validate",
+    "kill_vllm",
+    "start_vllm",
+    "evaluate_livecodebench",
+    "kill_vllm_cleanup",
+    "finish",
+)
+
+
+def _pipeline_for(task_type: str, format_type: str = "") -> tuple:
+    """按 task_type / format_type 选流水线步骤。"""
+    if task_type == "general_text":
+        return _GENERAL_TEXT_STEPS
+    if task_type == "math":
+        return _MATH_STEPS
+    if task_type == "text2sql":
+        return _TEXTSQL_STEPS
+    if str(format_type) == LIVE_CODEBENCH:
+        return _LCB_STEPS
+    return _CODE_STEPS
+
 
 def normalize_judger_step(step_name: Optional[str]) -> Optional[str]:
     """将步骤名标准化为流水线中定义的标准名称。"""
@@ -215,15 +243,9 @@ def _resume_step_from_state(state: Dict[str, Any]) -> str:
     """
     last_completed = normalize_judger_step(state.get("last_completed"))
 
-    task_type = (state.get("judger") or {}).get("eval_task_type", "code")
-    if task_type == "general_text":
-        steps = _GENERAL_TEXT_STEPS
-    elif task_type == "math":
-        steps = _MATH_STEPS
-    elif task_type == "text2sql":
-        steps = _TEXTSQL_STEPS
-    else:
-        steps = _CODE_STEPS
+    judger = state.get("judger") or {}
+    steps = _pipeline_for(judger.get("eval_task_type", "code"),
+                          judger.get("format_type", ""))
 
     if last_completed and last_completed in steps and last_completed != "finish":
         next_index = min(_start_index(last_completed, steps) + 1, len(steps) - 1)
@@ -267,9 +289,43 @@ _BENCH_REQUIRED_FIELDS = ("name", "task_type", "problem_path")
 
 # 特定 task_type 额外需要的 bench 字段。
 _BENCH_TASK_TYPE_REQUIRED_FIELDS = {
+    # code 的后端选择（humaneval+ / mbpp+ / livecodebench），没有默认值，必须显式配
+    "code": ("format_type",),
     "text2sql": ("text2sql_dir",),
     "general_text": ("eval_type",),
 }
+
+
+def _collect_code_bench_problems(bench: Dict[str, Any], label: str) -> List[str]:
+    """code bench 的后端字段：``format_type`` 选后端，``lcb_scenario`` 只在 LCB 侧生效。
+
+    ``lcb_scenario`` **必须显式配**：它缺省会落到 ``codegeneration``，而 ``selfrepair``
+    和 codegeneration 共用同一份数据集、同一套字段，漏写不会报错、只会静默跑错 scenario。
+    evalplus 的两种 ``format_type`` 上带了它同理 —— 那是写错了地方，不猜。
+    """
+    from loopai.skills.Judger.utils.evaluate_code import (
+        FORMAT_TYPES, LIVE_CODEBENCH, LCB_SCENARIOS)
+
+    format_type = str(bench.get("format_type") or "").strip()
+    if not format_type:      # 缺失由 _BENCH_TASK_TYPE_REQUIRED_FIELDS 报
+        return []
+    if format_type not in FORMAT_TYPES:
+        return [f"{label}: 未知 format_type {format_type!r}，"
+                f"可选值: {', '.join(FORMAT_TYPES)}"]
+
+    scenario = str(bench.get("lcb_scenario") or "").strip()
+    if format_type == LIVE_CODEBENCH:
+        if not scenario:
+            return [f"{label}: format_type=livecodebench 需要字段 lcb_scenario"
+                    f"（可选值: {', '.join(LCB_SCENARIOS)}）"]
+        if scenario not in LCB_SCENARIOS:
+            return [f"{label}: 未知 lcb_scenario {scenario!r}，"
+                    f"可选值: {', '.join(LCB_SCENARIOS)}"]
+        return []
+    if scenario:
+        return [f"{label}: lcb_scenario 只对 format_type=livecodebench 生效，"
+                f"当前 format_type={format_type!r}"]
+    return []
 
 
 def _bench_label(bench: Any, group: str, index: int) -> str:
@@ -290,7 +346,8 @@ def _problem_path_dump_hint(task_type: Any, source: Dict[str, Any], path: str) -
         task = resolve_code_task({"format_type": source.get("format_type")})
     except Exception:
         return ""
-    return f"（可用 `{dataset_dump_hint(task, path)}` 导出官方数据集）"
+    return (f"（可用 `{dataset_dump_hint(task, path, lcb_scenario=source.get('lcb_scenario') or '')}`"
+            " 导出官方数据集）")
 
 
 def _collect_bench_problems(
@@ -314,6 +371,9 @@ def _collect_bench_problems(
     for field in _BENCH_TASK_TYPE_REQUIRED_FIELDS.get(task_type, ()):
         if not bench.get(field):
             problems.append(f"{label}: task_type={task_type} 需要字段 {field}")
+
+    if task_type == "code":
+        problems.extend(_collect_code_bench_problems(bench, label))
 
     # 与 _step_validate 的落地检查保持一致：都用原始路径，不额外展开 ~，
     # 否则预检放行而 validate 失败，反而更难排查。
@@ -447,9 +507,9 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     from loopai.skills.Judger.utils.data import check_jsonl_fields
 
     if task_type == "code":
-        # 判分在 evalplus 官方镜像里跑，题目必须是它那份数据集（HumanEval+ / MBPP+）：
-        # task_id 前缀、必需字段、题目数量任何一条不对，判分都只会以 assert 收场。
-        # HumanEval+ 和 MBPP+ 的字段不完全一样，按 bench 指定的数据集分别检查。
+        # 判分在容器里跑，题目必须是判分侧认的那份数据集：evalplus 要求 task_id 前缀、
+        # 必需字段、题目数量都对（任何一条不对，判分都只会以 assert 收场），
+        # LiveCodeBench 只查字段（题数随 release 版本变）。按 bench 指定的数据集分别检查。
         from loopai.skills.Judger.utils.evaluate_code import (
             check_problem_file, dataset_dump_hint, dataset_label, resolve_code_task)
         try:
@@ -458,18 +518,20 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
             emit_error(
                 exc, code=ErrorCode.INVALID_INPUT, recoverable=True, stream_writer=writer,
                 message=("code bench 需要指定评测数据集：bench.format_type"
-                         "（只支持 humaneval+ / mbpp+）。"),
+                         "（humaneval+ / mbpp+ / livecodebench）。"),
             )
 
-        problems = check_problem_file(problem_path, code_dataset)
+        problems = check_problem_file(
+            problem_path, code_dataset, judger.get("lcb_scenario") or "")
         if problems:
             emit_error(
                 ValueError(f"code problem file validation failed: {problems}"),
                 code=ErrorCode.INVALID_INPUT, recoverable=True,
                 stream_writer=writer,
-                message=(f"评测集 {judger.get('bench_name', '')} 的 problem_path 不是 evalplus "
+                message=(f"评测集 {judger.get('bench_name', '')} 的 problem_path 不是 "
                          f"{dataset_label(code_dataset)} 数据集格式：{'；'.join(problems)}。"
-                         f"可用 `{dataset_dump_hint(code_dataset)}` 生成一份。"),
+                         f"可用 `{dataset_dump_hint(code_dataset, lcb_scenario=judger.get('lcb_scenario') or '')}`"
+                         " 生成一份。"),
             )
     elif task_type == "text2sql":
         required = ["task_id", "prompt", "db_id", "question", "ground_truth"]
@@ -793,6 +855,27 @@ def _step_evaluate_math(state: Dict[str, Any], writer) -> Dict[str, Any]:
     return state
 
 
+def _step_evaluate_livecodebench(state: Dict[str, Any], writer) -> Dict[str, Any]:
+    """LiveCodeBench 评测步骤：生成和判分都在容器里完成（见 utils/evaluate_code.py）。
+
+    容器通过 ``--vllm_base_url`` 回调本机 vLLM，所以这里没有宿主机的 generate /
+    sanitize 两步；``<bench>_sample.jsonl`` 是容器跑完后从 LCB 的产物转出来的。
+    """
+    from loopai.skills.Judger.utils.evaluate_code import run_evaluate_livecodebench
+
+    writer(StreamEvent(
+        current=state.get("current"), progress=0.0,
+        message="开始评测样本 [task_type=code, format_type=livecodebench]"))
+
+    result = run_evaluate_livecodebench(state, writer)
+    state["judger"]["output_case_path"] = result.get("sample_path", "")
+    state["judger"]["output_sanitized_path"] = result.get("sanitized_path", "")
+    state["judger"]["output_result_path"] = result.get("result_path", "")
+    state["judger"]["output_summary_path"] = result.get("summary_path", "")
+    state["judger"]["metrics"] = result.get("metrics", {})
+    return state
+
+
 def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
     """分发执行单个流水线步骤。异常先写事件流再抛，确保错误不丢失。"""
     step = normalize_judger_step(step_name)
@@ -803,6 +886,7 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
         "generate": _step_generate,
         "sanitize": _step_sanitize,
         "evaluate": _step_evaluate,
+        "evaluate_livecodebench": _step_evaluate_livecodebench,
         "kill_vllm_cleanup": _step_kill_vllm,
         "eval_general_text": _step_eval_general_text,
         "evaluate_math": _step_evaluate_math,
@@ -854,7 +938,7 @@ def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
             judger.pop(judger_key, None)
 
     # 2. 清除 bench 特有字段，避免残留
-    for k in ("format_type", "eval_text2sql_dir",
+    for k in ("format_type", "lcb_scenario", "eval_text2sql_dir",
               "bench_dataflow_eval_type", "key_mapping"):
         judger.pop(k, None)
 
@@ -867,9 +951,13 @@ def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
 
     # 4. bench 特有字段（可选）
     if bench.get("format_type"):
-        # 原样搬到 judger 上（步骤只拿到 state，拿不到 bench 本身）：code 靠它选评测
-        # 数据集（humaneval+ / mbpp+）。
+        # 原样搬到 judger 上（步骤只拿到 state，拿不到 bench 本身）：code 靠它选判分
+        # 后端和数据集（humaneval+ / mbpp+ / livecodebench）。
         judger["format_type"] = bench["format_type"]
+    if bench.get("lcb_scenario"):
+        # LiveCodeBench 的三个 scenario（codegeneration / selfrepair /
+        # testoutputprediction）题目文件和产物字段都不一样，单独一个字段传下去。
+        judger["lcb_scenario"] = bench["lcb_scenario"]
     if bench.get("text2sql_dir"):
         judger["eval_text2sql_dir"] = bench["text2sql_dir"]
     if bench.get("eval_type"):
@@ -891,14 +979,7 @@ def _run_single_bench(
     _apply_bench_to_state(state, bench)
 
     task_type = bench["task_type"]
-    if task_type == "general_text":
-        steps = _GENERAL_TEXT_STEPS
-    elif task_type == "math":
-        steps = _MATH_STEPS
-    elif task_type == "text2sql":
-        steps = _TEXTSQL_STEPS
-    else:
-        steps = _CODE_STEPS
+    steps = _pipeline_for(task_type, bench.get("format_type") or "")
 
     bench_name = bench["name"]
     logger.info(f"[Judger] bench {bench_name} (task_type={task_type}) starting...")

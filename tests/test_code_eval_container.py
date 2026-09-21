@@ -121,18 +121,30 @@ def test_resolve_code_task_rejects_legacy_names(raw):
     assert "humaneval+" in str(excinfo.value) and "mbpp+" in str(excinfo.value)
 
 
-def test_example_config_resolves_to_the_evalplus_datasets():
-    """样例配置里的 format_type 必须真的能被识别（写错就是起完 vLLM 才发现）。"""
+def test_example_config_resolves_every_code_bench():
+    """样例配置里每个 code bench 的 format_type 都要真能被识别（写错就是起完 vLLM 才发现）。
+
+    配置是拿来改的工作文件（跑哪几个 bench、叫什么名字随时会动），所以这里只查
+    「format_type → 后端」的映射，以及 LCB 的 bench 有没有把 ``lcb_scenario`` 写清楚。
+    """
     config = json.loads(
         (Path(__file__).resolve().parents[1]
          / "examples" / "config" / "code_bench_gov.json").read_text(encoding="utf-8"))
 
-    resolved = {
-        bench["name"]: ec.resolve_code_task({"format_type": bench["format_type"]})
-        for bench in config["judger"]["benchlist"]
-    }
+    backend = {"humaneval+": "humaneval", "mbpp+": "mbpp",
+               "livecodebench": "livecodebench"}
+    benches = config["judger"]["benchlist"]
+    assert benches, "样例配置至少要留一个 code bench"
 
-    assert resolved == {"humaneval": "humaneval", "mbpp": "mbpp"}
+    resolved = {bench["name"]: ec.resolve_code_task(bench) for bench in benches}
+    assert resolved == {bench["name"]: backend[bench["format_type"]]
+                        for bench in benches}
+
+    # LCB 的 bench 必须显式配 lcb_scenario：漏了会全都落到默认的 codegeneration
+    scenarios = {bench["name"]: bench.get("lcb_scenario")
+                 for bench in benches if bench["format_type"] == "livecodebench"}
+    assert all(scenarios.values()), f"这些 bench 没写 lcb_scenario：{scenarios}"
+    assert set(scenarios.values()) <= set(ec.LCB_SCENARIOS)
 
 
 def test_resolve_code_task_rejects_unknown_name():
@@ -514,3 +526,476 @@ def test_dataset_dump_hint_command_produces_a_valid_dataset(tmp_path, task):
     subprocess.run(["bash", "-c", command], check=True, env=env)
 
     assert ec.check_problem_file(str(target), task) == []
+
+
+# ---------------------------------------------------------------------------
+# 4. LiveCodeBench 分支（生成 + 判分都在容器里，产物回宿主机转契约）
+# ---------------------------------------------------------------------------
+
+def _lcb_problem_row(index: int, scenario: str = "codegeneration") -> dict:
+    """一件 LCB 格式的题目：四个 scenario 的字段不一样。"""
+    if scenario == "testoutputprediction":
+        return {
+            "question_id": str(2727 + index),
+            "question_title": "number-of-senior-citizens",
+            "question_content": "You are given a 0-indexed array of strings details...",
+            "contest_id": "weekly-contest-345",
+            "contest_date": "2023-05-13T00:00:00",
+            "difficulty": "easy",
+            "test": '[{"input": "[[\\"1\\"]]", "output": "1", "testtype": "functional"}]',
+            "starter_code": "",
+            "function_name": "solve",
+            "test_id": 0,
+        }
+    if scenario == "codeexecution":
+        return {
+            "question_id": "2777",
+            "id": f"sample_{index}",
+            "contest_id": "weekly-contest-345",
+            "contest_date": 1683417600000,          # 本地 jsonl 是 epoch 毫秒
+            "difficulty": "easy",
+            "function_name": "solve",
+            "code": "def solve(x):\n    return x",
+            "input": "1\n",
+            "output": "1\n",
+            "numsteps": 1,
+            "problem_id": "2777",
+        }
+    return {
+        "question_id": f"1873_{chr(ord('A') + index)}",
+        "question_content": "There are three cards ...",
+        "platform": "codeforces",
+        "contest_date": "2023-08-21T00:00:00",
+        "difficulty": "easy",
+        "starter_code": "",
+        "public_test_cases": '[{"input": "1\\n", "output": "YES", "testtype": "stdin"}]',
+        "private_test_cases": "gASV...base64",
+        "metadata": '{"func_name": null}',
+    }
+
+
+def _lcb_problem_rows(count: int, scenario: str = "codegeneration", **overrides) -> list:
+    rows = []
+    for index in range(count):
+        row = _lcb_problem_row(index, scenario)
+        row.update(overrides)
+        rows.append(row)
+    return rows
+
+
+def _lcb_state(tmp_path: Path, problem_path: Path, scenario: str = "codegeneration",
+               **judger) -> dict:
+    return {"task_id": "t1", "output_dir": str(tmp_path / "outputs"), "version_id": "v1",
+            "judger": {"bench_name": "livecodebench", "eval_task_type": "code",
+                       "format_type": "livecodebench", "lcb_scenario": scenario,
+                       "eval_model_name": "Qwen3-8B",
+                       "eval_base_url": "http://localhost:8911/v1",
+                       "eval_case_num": 1, "eval_temperature": 0.0,
+                       "eval_top_p": 1.0, "eval_max_tokens": 2000,
+                       "eval_problem_path": str(problem_path), **judger}}
+
+
+def _fake_lcb_docker(monkeypatch, problems: int = 2, samples: int = 2,
+                     write_eval_all: bool = True, image_present: bool = True):
+    """拦掉 docker；每次「容器」运行都把该 scenario 的原生产物写回 bench 目录。
+
+    ``image_present=False`` 模拟本地没有镜像：``docker image inspect`` 失败，
+    ``_ensure_livecodebench_image`` 应该转去 ``docker build``（也记进 runs）。
+    """
+    runs: list = []
+
+    def fake_run(command, **kwargs):
+        if command[:2] == ["docker", "image"]:
+            class _Inspect:
+                returncode = 0 if image_present else 1
+            return _Inspect()
+        if command[:2] == ["docker", "build"]:
+            runs.append(list(command))
+
+            class _Built:
+                returncode = 0
+            return _Built()
+        if command[:2] == ["docker", "pull"]:
+            class _Pull:
+                returncode = 0
+            return _Pull()
+        runs.append(list(command))
+        scenario = command[command.index("--scenario") + 1]
+        host_dir = Path(command[command.index("-v") + 1].split(":")[0])
+        native_dir = host_dir / "Qwen3-8B"
+        native_dir.mkdir(parents=True, exist_ok=True)
+        if write_eval_all:
+            field = "code_list" if scenario in ("codegeneration", "selfrepair") else "pred_list"
+            instances = []
+            for index in range(problems):
+                instance = {
+                    "question_id": f"1873_{chr(ord('A') + index)}",
+                    "output_list": [f"print({index}) #{s}" for s in range(samples)],
+                    field: [f"print({index}) #{s}" for s in range(samples)],
+                    "graded_list": [s == 0 for s in range(samples)],
+                }
+                if scenario == "testoutputprediction":
+                    instance["question_id"] = str(2727 + index)
+                    instance["test_id"] = 0
+                elif scenario == "codeexecution":
+                    instance["question_id"] = "2777"
+                    instance["id"] = f"sample_{index}"
+                instances.append(instance)
+            prefix = f"Scenario.{scenario}_1_0.0"
+            (native_dir / f"{prefix}_eval_all.json").write_text(
+                json.dumps(instances), encoding="utf-8")
+            (native_dir / f"{prefix}_eval.json").write_text(
+                json.dumps([{"pass@1": 1 / problems, "detail": {}}]), encoding="utf-8")
+
+        class _Done:
+            returncode = 0
+        return _Done()
+
+    monkeypatch.setattr(ec.subprocess, "run", fake_run)
+    return runs
+
+
+def _lcb_command(tmp_path, judge_overrides=None, scenario="codegeneration"):
+    bench_dir = tmp_path / "bench"
+    bench_dir.mkdir(exist_ok=True)
+    problem = tmp_path / "test.jsonl"
+    problem.write_text("", encoding="utf-8")
+    judger = _lcb_state(tmp_path, problem, scenario, **(judge_overrides or {}))["judger"]
+    return ec._build_livecodebench_command(
+        bench_dir, problem, judger, ec.LCB_EVAL_IMAGE, scenario)
+
+
+def test_livecodebench_problem_file_accepts_upstream_shape(tmp_path):
+    path = _write_problems(tmp_path, "test.jsonl", _lcb_problem_rows(3))
+
+    assert ec.check_problem_file(str(path), "livecodebench") == []
+
+
+def test_livecodebench_problem_file_fields_depend_on_scenario(tmp_path):
+    """三个 scenario 的题目字段不一样，串用要当场报出来（而不是跑完才发现）。"""
+    codegen = _write_problems(tmp_path, "codegen.jsonl", _lcb_problem_rows(2))
+    prediction = _write_problems(
+        tmp_path, "prediction.jsonl", _lcb_problem_rows(2, "testoutputprediction"))
+
+    assert ec.check_problem_file(str(prediction), "livecodebench",
+                                 "testoutputprediction") == []
+    assert ec.check_problem_file(str(codegen), "livecodebench", "selfrepair") == []
+
+    # codegen 的数据喂给 testoutputprediction：缺 test / test_id / function_name
+    problems = ec.check_problem_file(str(codegen), "livecodebench", "testoutputprediction")
+    assert problems and all(field in problems[0] for field in ("test", "test_id"))
+
+
+def test_livecodebench_problem_file_names_missing_fields(tmp_path):
+    rows = _lcb_problem_rows(2)
+    for row in rows:
+        row.pop("private_test_cases")
+
+    problems = ec.check_problem_file(str(_write_problems(tmp_path, "t.jsonl", rows)),
+                                     "livecodebench")
+
+    assert len(problems) == 1
+    assert "private_test_cases" in problems[0]
+    assert "LiveCodeBench" in problems[0]
+
+
+def test_livecodebench_problem_file_does_not_pin_row_count(tmp_path):
+    """题数随 release 版本变（v1=400 … v6=1055），不能像 evalplus 那样卡死行数。"""
+    rows = _lcb_problem_rows(7)
+    assert ec.check_problem_file(str(_write_problems(tmp_path, "t.jsonl", rows)),
+                                 "livecodebench") == []
+    assert ec.check_problem_file(str(_write_problems(tmp_path, "e.jsonl", [])),
+                                 "livecodebench") == ["题目文件是空的"]
+
+
+def test_livecodebench_dataset_dump_hint_depends_on_scenario():
+    """codegeneration / selfrepair 是 curl 上游 test.jsonl，testoutputprediction 从 Hub 导。"""
+    codegen = ec.dataset_dump_hint("livecodebench", "data/lcb/test.jsonl")
+    assert codegen.startswith("curl -L -o data/lcb/test.jsonl")
+    assert "code_generation_lite" in codegen
+
+    prediction = ec.dataset_dump_hint("livecodebench", "data/lcb/prediction.jsonl",
+                                      lcb_scenario="testoutputprediction")
+    assert "livecodebench/test_generation" in prediction
+    assert "to_json" in prediction and "data/lcb/prediction.jsonl" in prediction
+
+
+def test_livecodebench_scenario_defaults_to_codegeneration():
+    assert ec.lcb_scenario({}) == "codegeneration"
+    assert ec.lcb_scenario({"lcb_scenario": " selfrepair "}) == "selfrepair"
+
+
+def test_livecodebench_rejects_unknown_scenario():
+    """写错 scenario 要当场报错并列出支持的几个，而不是当没配、默默跑 codegeneration。"""
+    with pytest.raises(ValueError) as excinfo:
+        ec.lcb_scenario({"lcb_scenario": "codereview"})
+
+    message = str(excinfo.value)
+    for scenario in ec.LCB_SCENARIOS:
+        assert scenario in message
+
+
+def test_livecodebench_command_hands_the_vllm_over_to_the_container(tmp_path):
+    command = _lcb_command(tmp_path)
+    bench_dir = Path(command[command.index("-v") + 1].split(":")[0])
+
+    assert command[0] == "docker" and ec.LCB_EVAL_IMAGE in command
+    # vLLM 在宿主机上，容器要能连过去；本机 daemon 是 bridge: none，只能用 host
+    assert command[command.index("--network") + 1] == "host"
+    mounts = [command[i + 1] for i, arg in enumerate(command) if arg == "-v"]
+    assert f"{bench_dir}:/app/output" in mounts          # LCB 的产物目录挂回宿主机
+    assert any(mount.endswith(":/data/livecodebench.jsonl:ro") for mount in mounts)
+    # 生成 + 判分都在容器里：走 LCB 自己的 CLI，不再有 evalplus 那两个命令
+    assert command[command.index("--vllm_base_url") + 1] == "http://localhost:8911/v1"
+    assert command[command.index("--scenario") + 1] == "codegeneration"
+    assert command[command.index("--local_dataset_path") + 1] == "/data/livecodebench.jsonl"
+    assert command[command.index("--model") + 1] == "Qwen3-8B"
+    assert command[-1] == "--evaluate"
+    assert not any("evalplus" in arg for arg in command)
+    # 没配 eval_enable_thinking 就不下发，让被服务模型用自己的默认模板
+    assert "--enable_thinking" not in command
+
+
+def test_livecodebench_builds_the_image_when_missing(monkeypatch, tmp_path):
+    """LCB 没有官方镜像可拉：本地缺镜像就按仓库里的上下文现场构建，pip 源要透传进去。"""
+    monkeypatch.setenv("PIP_INDEX_URL", "https://mirrors.example.com/pypi/simple")
+    runs = _fake_lcb_docker(monkeypatch, problems=1, samples=1, image_present=False)
+    problem = _write_problems(tmp_path, "test.jsonl", _lcb_problem_rows(1))
+
+    ec.run_evaluate_livecodebench(_lcb_state(tmp_path, problem), _Writer())
+
+    builds = [run for run in runs if run[:2] == ["docker", "build"]]
+    assert len(builds) == 1, "缺镜像时必须构建一次（没有官方镜像可拉）"
+    build = builds[0]
+    assert ec.LCB_EVAL_CONTEXT.is_dir()
+    assert build[-1] == str(ec.LCB_EVAL_CONTEXT)
+    assert build[build.index("-t") + 1] == ec.LCB_EVAL_IMAGE
+    # docker 的 bridge 网络经常出不了网：pip 源和代理照抄宿主机的环境变量
+    assert "PIP_INDEX_URL=https://mirrors.example.com/pypi/simple" in build
+
+
+def test_livecodebench_command_selfrepair_repairs_existing_samples(tmp_path):
+    """selfrepair 的 --n 必须是 1，被修的样本数走 --codegen_n（= bench 的 case_num）。"""
+    command = _lcb_command(tmp_path, {"eval_case_num": 4}, scenario="selfrepair")
+
+    assert command[command.index("--scenario") + 1] == "selfrepair"
+    assert command[command.index("--n") + 1] == "1"
+    assert command[command.index("--codegen_n") + 1] == "4"
+
+
+def test_livecodebench_command_testoutputprediction_has_no_codegen_n(tmp_path):
+    command = _lcb_command(tmp_path, scenario="testoutputprediction")
+
+    assert command[command.index("--scenario") + 1] == "testoutputprediction"
+    assert "--codegen_n" not in command
+
+
+@pytest.mark.parametrize("value,expected", [(False, "false"), (True, "true")])
+def test_livecodebench_command_passes_the_thinking_switch(tmp_path, value, expected):
+    """Qwen3 这类思考模型：开关不下发的话 max_tokens 会被思考链吃光，样本里没有代码。"""
+    command = _lcb_command(tmp_path, {"eval_enable_thinking": value})
+
+    assert command[command.index("--enable_thinking") + 1] == expected
+    assert command[-1] == "--evaluate"
+
+
+def test_livecodebench_command_requires_a_running_vllm(tmp_path):
+    with pytest.raises(ValueError) as excinfo:
+        _lcb_command(tmp_path, {"eval_base_url": ""})
+
+    assert "eval_base_url" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("scenario,raw,expected", [
+    ("codegeneration", 0.53, 53.0),
+    ("testoutputprediction", 0.15384615384615385, 15.38),
+    ("codeexecution", 40.91858037578288, 40.92),   # 上游返回的已经是百分数
+])
+def test_livecodebench_pass_at_k_normalises_the_upstream_scale(scenario, raw, expected):
+    assert ec._lcb_pass_at_k({"pass@1": raw}, scenario)["pass@1"] == pytest.approx(expected)
+
+
+def test_livecodebench_codeexecution_summary_keeps_the_percent_scale(tmp_path):
+    """回归：codeexecution 的上游 pass@1 已经是百分数，再乘 100 会写出 4091.86。"""
+    instances = [{"question_id": "2777", "id": "sample_0", "output_list": ["print(1)"],
+                  "pred_list": ["[-3, -1, 1, 3, 5]"], "graded_list": [True]}]
+
+    result = ec._write_livecodebench_artifacts(
+        tmp_path, "livecodebench_codeexe", instances,
+        {"pass@1": 40.91858037578288}, "livecodebench:latest", "codeexecution")
+
+    assert result["metrics"]["pass@1"] == pytest.approx(40.92)
+    assert result["summary"]["pass@1"] == pytest.approx(40.92)
+    assert result["summary"]["passed_samples"] == 1
+
+
+def test_evaluate_livecodebench_writes_the_judger_contract(tmp_path, monkeypatch):
+    problem = _write_problems(tmp_path, "test.jsonl", _lcb_problem_rows(2))
+    _fake_lcb_docker(monkeypatch, problems=2, samples=2)
+    writer = _Writer()
+
+    result = ec.run_evaluate_livecodebench(_lcb_state(tmp_path, problem), writer)
+
+    # metrics 是百分数（和 evalplus 分支同口径）：2 题都只过第 1 个样本 → pass@1 = 50
+    assert result["metrics"]["pass@1"] == pytest.approx(50.0)
+    assert result["summary"]["problems"] == 2
+    assert result["summary"]["samples"] == 4
+    assert result["summary"]["passed_samples"] == 2
+    assert result["summary"]["scenario"] == "Scenario.codegeneration"
+
+    samples = [json.loads(line) for line in
+               Path(result["sample_path"]).read_text(encoding="utf-8").splitlines()]
+    assert [row["task_id"] for row in samples] == ["1873_A", "1873_A", "1873_B", "1873_B"]
+    assert "question_content" not in samples[0]          # 样本只留契约字段，不搬题面
+
+    sanitized = [json.loads(line) for line in
+                 Path(result["sanitized_path"]).read_text(encoding="utf-8").splitlines()]
+    assert sanitized[0]["solution"] == sanitized[0]["completion"]
+
+    detail = [json.loads(line) for line in
+              Path(result["result_path"]).read_text(encoding="utf-8").splitlines()]
+    # Analyzer 判因直接读 passed，逐样本粒度
+    assert [row["passed"] for row in detail] == [True, False, True, False]
+    assert all(row["status"] in {"pass", "fail"} for row in detail)
+
+
+def test_livecodebench_problem_file_accepts_codeexecution(tmp_path):
+    path = _write_problems(tmp_path, "execution.jsonl", _lcb_problem_rows(2, "codeexecution"))
+
+    assert ec.check_problem_file(str(path), "livecodebench", "codeexecution") == []
+
+
+def test_evaluate_livecodebench_codeexecution_keeps_every_sample(tmp_path, monkeypatch):
+    """codeexecution 一题多条输入（479 行只有 92 个 question_id）：task_id 必须带 id，
+    solution 取 pred_list。"""
+    problem = _write_problems(
+        tmp_path, "execution.jsonl", _lcb_problem_rows(2, "codeexecution"))
+    _fake_lcb_docker(monkeypatch, problems=2, samples=1)
+    writer = _Writer()
+
+    result = ec.run_evaluate_livecodebench(
+        _lcb_state(tmp_path, problem, "codeexecution"), writer)
+
+    assert result["summary"]["scenario"] == "Scenario.codeexecution"
+    samples = [json.loads(line) for line in
+               Path(result["sample_path"]).read_text(encoding="utf-8").splitlines()]
+    assert [row["task_id"] for row in samples] == ["2777_sample_0", "2777_sample_1"]
+    sanitized = [json.loads(line) for line in
+                 Path(result["sanitized_path"]).read_text(encoding="utf-8").splitlines()]
+    assert sanitized[0]["solution"] == "print(0) #0"
+
+
+def test_evaluate_livecodebench_selfrepair_runs_codegeneration_first(tmp_path, monkeypatch):
+    """selfrepair 要拿 codegen 的产物当输入：同一个 bench 目录先跑一遍 codegeneration。"""
+    problem = _write_problems(tmp_path, "test.jsonl", _lcb_problem_rows(2))
+    runs = _fake_lcb_docker(monkeypatch, problems=2, samples=2)
+
+    result = ec.run_evaluate_livecodebench(
+        _lcb_state(tmp_path, problem, "selfrepair", eval_case_num=2), _Writer())
+
+    scenarios = [command[command.index("--scenario") + 1] for command in runs]
+    assert scenarios == ["codegeneration", "selfrepair"]
+    # 两次都挂同一个 bench 目录，容器里才读得到上一轮的 Scenario.codegeneration_*_eval_all.json
+    mounts = {command[command.index("-v") + 1] for command in runs}
+    assert len(mounts) == 1
+    # 产物取的是 selfrepair 那份，codegen 的产物只是输入（不参与打分）
+    assert result["summary"]["scenario"] == "Scenario.selfrepair"
+    assert result["summary"]["problems"] == 2
+
+
+def test_evaluate_livecodebench_testoutputprediction_uses_pred_list(tmp_path, monkeypatch):
+    """testoutputprediction 的代码放在 pred_list，且一题多个测试 —— task_id 要带 test_id。"""
+    problem = _write_problems(tmp_path, "prediction.jsonl",
+                              _lcb_problem_rows(2, "testoutputprediction"))
+    _fake_lcb_docker(monkeypatch, problems=2, samples=2)
+
+    result = ec.run_evaluate_livecodebench(
+        _lcb_state(tmp_path, problem, "testoutputprediction"), _Writer())
+
+    rows = [json.loads(line) for line in
+            Path(result["result_path"]).read_text(encoding="utf-8").splitlines()]
+    assert [row["task_id"] for row in rows] == ["2727_0", "2727_0", "2728_0", "2728_0"]
+    assert rows[0]["solution"] == "print(0) #0"
+    assert [row["passed"] for row in rows] == [True, False, True, False]
+    assert result["summary"]["scenario"] == "Scenario.testoutputprediction"
+
+
+def test_evaluate_livecodebench_clears_stale_outputs(tmp_path, monkeypatch):
+    """上一次的分数不能变成这一次的结果：summary 和 LCB 原生目录都要先清掉。"""
+    problem = _write_problems(tmp_path, "test.jsonl", _lcb_problem_rows(1))
+    state = _lcb_state(tmp_path, problem)
+    bench_dir = (tmp_path / "outputs" / "t1" / "judger" / "v1" / "livecodebench")
+    bench_dir.mkdir(parents=True)
+    (bench_dir / "livecodebench_summary.json").write_text('{"pass@1": 99.0}',
+                                                          encoding="utf-8")
+    stale_native = bench_dir / "Qwen3-8B"
+    stale_native.mkdir()
+    (stale_native / "Scenario.codegeneration_1_0.0_eval_all.json").write_text(
+        json.dumps([{"question_id": "old", "output_list": ["x"], "code_list": ["x"],
+                     "graded_list": [True]}]), encoding="utf-8")
+
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        if command[:2] == ["docker", "image"]:
+            class _Inspect:
+                returncode = 0
+            return _Inspect()
+        host_dir = Path(command[command.index("-v") + 1].split(":")[0])
+        seen["native_dir_exists"] = (host_dir / "Qwen3-8B").exists()
+        (host_dir / "Qwen3-8B").mkdir(parents=True, exist_ok=True)
+        prefix = "Scenario.codegeneration_1_0.0"
+        (host_dir / "Qwen3-8B" / f"{prefix}_eval_all.json").write_text(
+            json.dumps([{"question_id": "1873_A", "output_list": ["print(1)"],
+                         "code_list": ["print(1)"], "graded_list": [False]}]),
+            encoding="utf-8")
+        (host_dir / "Qwen3-8B" / f"{prefix}_eval.json").write_text(
+            json.dumps([{"pass@1": 0.0, "detail": {}}]), encoding="utf-8")
+
+        class _Done:
+            returncode = 0
+        return _Done()
+
+    monkeypatch.setattr(ec.subprocess, "run", fake_run)
+    result = ec.run_evaluate_livecodebench(state, _Writer())
+
+    assert seen["native_dir_exists"] is False        # 跑之前旧产物已经删了
+    assert result["metrics"]["pass@1"] == pytest.approx(0.0)
+
+
+def test_evaluate_livecodebench_without_outputs_emits_error(tmp_path, monkeypatch):
+    problem = _write_problems(tmp_path, "test.jsonl", _lcb_problem_rows(1))
+    _fake_lcb_docker(monkeypatch, write_eval_all=False)
+    writer = _Writer()
+
+    with pytest.raises(SystemExit):
+        ec.run_evaluate_livecodebench(_lcb_state(tmp_path, problem), writer)
+
+    assert writer.failed["error"]["code"] == "EXTERNAL_SERVICE_ERROR"
+    assert "Scenario.codegeneration_*_eval_all.json" in writer.failed["message"]
+
+
+def test_evaluate_livecodebench_container_failure_emits_error(tmp_path, monkeypatch):
+    problem = _write_problems(tmp_path, "test.jsonl", _lcb_problem_rows(1))
+    writer = _Writer()
+
+    def fake_run(command, **kwargs):
+        if command[:2] == ["docker", "image"]:
+            class _Inspect:
+                returncode = 0
+            return _Inspect()
+        raise ec.subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(ec.subprocess, "run", fake_run)
+    with pytest.raises(SystemExit):
+        ec.run_evaluate_livecodebench(_lcb_state(tmp_path, problem), writer)
+
+    assert writer.failed["error"]["code"] == "EXTERNAL_SERVICE_ERROR"
+    assert "LiveCodeBench" in writer.failed["message"]
+
+
+def test_evaluate_livecodebench_rejects_a_missing_problem_file(tmp_path, monkeypatch):
+    _fake_lcb_docker(monkeypatch)
+    with pytest.raises(FileNotFoundError):
+        ec.run_evaluate_livecodebench(
+            _lcb_state(tmp_path, tmp_path / "nope.jsonl"), _Writer())
