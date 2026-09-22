@@ -104,10 +104,11 @@ def main():
         "--resume", action="store_true", default=False,
         help="Resume from last checkpoint",
     )
-    parser.add_argument(
-        "--from-step", type=str, default=None,
-        help="Force start from a specific pipeline step",
-    )
+    # --from-step 暂时注释：流水线目前总是跑完整条，接了断点续跑再放出来
+    # parser.add_argument(
+    #     "--from-step", type=str, default=None,
+    #     help="Force start from a specific pipeline step",
+    # )
     parser.add_argument("--task-id", help="Task id to load from Configer database")
     parser.add_argument("--db-path", help="SQLite database path")
     parser.add_argument("--output-dir", help="Override output root directory")
@@ -184,7 +185,7 @@ def main():
             os.environ[env_name] = str(value)
 
     from loopai.skills.Judger import run
-    run(resume=args.resume, from_step=args.from_step)
+    run(resume=args.resume)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,9 @@ setup(
         "loopai": [
             "agents/Obtainer/datamixer/assets/**/*",
             "skills/Judger/docker/math_eval/*",
+            # LiveCodeBench 判分镜像的构建上下文（Dockerfile + vendored 源码），
+            # 装成 wheel 之后也能现场构建镜像
+            "skills/Judger/docker/livecodebench/**",
         ],
     },
     include_package_data=False,
