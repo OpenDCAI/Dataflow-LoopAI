@@ -41,7 +41,7 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 | `eval_model_path` | 无 | 模型路径（必填） |
 | `eval_temperature` | `0` | 采样温度，bench 可覆盖 |
 | `eval_top_p` | `0.95` | Top-P 采样，bench 可覆盖 |
-| `eval_max_tokens` | `16384` | 最大输出 token 数（含思考推理），bench 可覆盖 |
+| `eval_max_tokens` | `16384` | 最大输出 token 数（含思考推理），bench 可覆盖。vLLM 以 `--generation-config vllm` 启动，模型目录 `generation_config.json` 的 `max_new_tokens` 不会再把上限压低（如 Qwen3-8B-Base 的 2048） |
 | `eval_enable_thinking` | 不设置 | 思考模式开关（None 跟随模型默认 / True 开 / False 关），bench 可覆盖 |
 | `eval_batch_size` | `10` | 宿主 `generate` 阶段每批并发多少条 prompt；只对 code 的 evalplus 分支和 text2sql 生效（LiveCodeBench 在容器里自己生成，不吃这个值），bench 可覆盖 |
 | `eval_case_num` | `10` | 每问题样本数，bench 可覆盖 |
@@ -148,6 +148,17 @@ code bench 只认 `format_type` 一个开关，取值就三个；`problem_path` 
 HumanEval+ 叫 `test`、MBPP+ 叫 `assertion`（这两个不参与判分，是用来确认「这确实是
 官方那一份」的标记 —— 原始 HumanEval / sanitized-mbpp 都缺 `base_input` 等字段）。
 
+`base_input` / `plus_input` 就是 base / plus 两套用例，判分时同一份代码两套都跑，
+得到 `base_status` / `plus_status`：
+
+- `base`：原题自带的用例（HumanEval 每题中位 7 条、MBPP 中位 3 条），宽；
+  `base_pass@k` 就是「官方原版测试」口径
+- `plus`：evalplus 自动生成的扩展输入（HumanEval+ 每题中位 972 条、合计 12.3 万；
+  MBPP+ 中位 105 条、合计 4.0 万），专治「只对题目给的样例输入正确」的解法
+
+plus 通过必然 base 通过，反之不然，所以 `base_pass@1 >= plus_pass@1`。主指标
+`pass@1` 取 **plus 口径**（严格的那个），`base_pass@1` 留作对照
+
 ⚠️ **别用 `get_mbpp_plus()` + `write_jsonl` 生成**：`get_*_plus()` 会把输入反序列化成
 `complex` / `tuple` / `set`，而 evalplus 的 `write_jsonl` 是裸 `json.dumps`，MBPP+ 的
 `Mbpp/124`、`Mbpp/252`（复数输入）会直接 `TypeError`。必须复制它缓存的原始 jsonl。
@@ -170,8 +181,9 @@ validate 只读文件头部几行）。`testoutputprediction` / `codeexecution` 
 不加后缀会撞车。
 
 三种 `format_type` 的产物一致：`<bench>_sample.jsonl`（模型原始输出）/
-`<bench>_sanitized.jsonl`（抽取后留档）/ `<bench>_result.jsonl`（逐样本，带 Analyzer
-判因要读的 `passed`）/ `<bench>_summary.json`。`metrics` 全是百分数（两位小数），
+`<bench>_result.jsonl`（逐样本，带 Analyzer 判因要读的 `passed`）/
+`<bench>_summary.json`（evalplus 分支还多一份容器抽出来的
+`<bench>_sample-sanitized.jsonl`）。`metrics` 全是百分数（两位小数），
 但**两个后端支持哪些 `pass@k` 不一样，且都受 `case_num`（每题样本数 n）限制**：
 
 | `format_type` | 支持的 k | 说明 |
@@ -207,7 +219,7 @@ validate 只读文件头部几行）。`testoutputprediction` / `codeexecution` 
   _apply_bench_to_state → 注入 bench 字段到 state["judger"]
   → 按 task_type 选流水线:
     code:          validate → kill_vllm → start_vllm → generate
-                   → sanitize → evaluate → kill_vllm_cleanup → finish
+                   → evaluate → kill_vllm_cleanup → finish
     code(lcb):     validate → kill_vllm → start_vllm
                    → evaluate_livecodebench → kill_vllm_cleanup → finish
     text2sql:      validate → kill_vllm → start_vllm → generate
@@ -217,15 +229,9 @@ validate 只读文件头部几行）。`testoutputprediction` / `codeexecution` 
   → 收集结果到 bench_result / extra_bench_result
 ```
 
-**`sanitize` 步骤（仅 code）**：用宿主机 `utils/sanitize.py` 从模型输出里提取可执行的
-Python。单独成一步只是为了留档 —— 排查「评测挂掉是模型写错还是提取错了」时，对比
-`<bench>_sample.jsonl` 和 `<bench>_sanitized.jsonl` 就够了。**它不在判分路径上**：
-判分时的抽取各归各的后端，evalplus 用镜像里的 `evalplus.sanitize`，LiveCodeBench 用
-它自己的 `extract_code`。
-
 **`evaluate` 步骤（code）在 evalplus 官方镜像里跑**：宿主机把模型原始样本
-`<bench>_sample.jsonl` 挂进 `ganler/evalplus:latest`，容器里先跑官方
-`evalplus.sanitize` 抽取、再跑官方 `evalplus.evaluate` 用 HumanEval+ / MBPP+（base
+`<bench>_sample.jsonl` 挂进 `ganler/evalplus:latest`，容器里先抽取、再跑官方
+`evalplus.evaluate` 用 HumanEval+ / MBPP+（base
 官方用例 + plus 扩展用例）判分，结果落回 `<bench>_result.jsonl` /
 `<bench>_summary.json`。这边不构建镜像、不改判分代码；`metrics` 是百分数口径，
 `pass@1` 取 plus 口径，另有 `base_pass@1` / `plus_pass@1`。
@@ -278,7 +284,6 @@ outputs/<task_id>/
         │   └── gsm8k_*_steps/
         ├── human_eval/
         │   ├── human_eval_sample.jsonl              ← 模型原始输出（generate）
-        │   ├── human_eval_sanitized.jsonl           ← 自研提取器留档（不参与判分）
         │   ├── human_eval_sample-sanitized.jsonl    ← evalplus 官方抽取（判分用的输入）
         │   ├── human_eval_sample-sanitized.eval_results.json  ← evalplus 原始判定
         │   ├── human_eval_result.jsonl              ← 逐样本判定结果（evaluate）
