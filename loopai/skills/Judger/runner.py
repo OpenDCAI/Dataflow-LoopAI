@@ -25,7 +25,6 @@ JUDGER_PIPELINE_STEPS = (
     "kill_vllm",           # 关闭本地 vLLM 进程
     "start_vllm",          # 启动本地 vLLM 服务
     "generate",            # 生成 code/text2sql 样本
-    "sanitize",            # 从模型输出里提取可执行代码（仅 code）
     "evaluate",            # 评测样本并计算 pass@k
     "evaluate_livecodebench",  # LiveCodeBench：生成 + 判分都在容器里
     "kill_vllm_cleanup",   # 评测完成后关闭 vLLM
@@ -42,8 +41,6 @@ _STEP_ALIASES = {
     "vllm_kill": "kill_vllm",
     "vllm_start": "start_vllm",
     "generate_code": "generate",
-    "extract_code": "sanitize",
-    "sanitize_code": "sanitize",
     "evaluate_node": "evaluate",
     "eval_general_text_node": "eval_general_text",
     "eval_math": "evaluate_math",
@@ -52,14 +49,13 @@ _STEP_ALIASES = {
     "finish_node": "finish",
 }
 
-# code 任务的流水线步骤。比 text2sql 多一步 sanitize：模型返回的是散文里夹
-# 代码，得先把可执行的片段提出来（见 utils/sanitize.py）。
+# code 任务的流水线步骤。宿主机只负责生成，代码提取和判分都在评测镜像里完成
+# （evalplus 分支是容器里的 ``evalplus.sanitize`` + ``evalplus.evaluate``）。
 _CODE_STEPS = (
     "validate",
     "kill_vllm",
     "start_vllm",
     "generate",
-    "sanitize",
     "evaluate",
     "kill_vllm_cleanup",
     "finish",
@@ -178,7 +174,10 @@ def _load_task_state(task_id: str) -> Dict[str, Any]:
             "vLLM 服务已关闭": None,  #  由 current 区分 kill_vllm/kill_vllm_cleanup
             "vLLM 服务已启动": "start_vllm",
             "样本生成完成": "generate",
-            "代码提取完成": "sanitize",
+            # 旧任务的事件流里还有宿主 sanitize 这一步（现已删除）。映射到
+            # "generate"，恢复时就会从它后面那步 evaluate 继续 —— 样本文件本来
+            # 就是 generate 的产物，不受影响。
+            "代码提取完成": "generate",
             "评测完成": "evaluate",
             "通用文本评测完成": "eval_general_text",
             "数学评测完成": "evaluate_math",
@@ -737,59 +736,6 @@ def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     return state
 
 
-def _step_sanitize(state: Dict[str, Any], writer) -> Dict[str, Any]:
-    """从模型输出里提取可执行代码（仅 code）。
-
-    单独成一步而不是塞进 evaluate，是为了让"原始输出"和"提取后"都留档：排查
-    "评测挂掉到底是模型写错还是我们提错"时，这两个文件对比着看就够了 ——
-    不用像以前那样手动复现（线上 task 201 就是这么查的）。
-    """
-    from loopai.skills.Judger.utils.data import read_problems, stream_jsonl, write_jsonl
-    from loopai.skills.Judger.utils.sanitize import sanitize
-
-    judger = state.get("judger", {})
-    bench_name = judger.get("bench_name", "bench")
-    problem_path = judger["eval_problem_path"]
-    sample_path = judger["output_case_path"]
-
-    out_dir = (Path(str(state.get("output_dir", "."))) / str(state.get("task_id"))
-               / "judger" / writer.version_id / bench_name)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    sanitized_path = str(out_dir / f"{bench_name}_sanitized.jsonl")
-
-    problems = read_problems(problem_path)
-    rows = []
-    method_counts: Dict[str, int] = {}
-    dropped_total = 0
-    for sample in stream_jsonl(sample_path):
-        problem = problems.get(sample["task_id"], {})
-        result = sanitize(
-            sample["completion"],
-            entry_point=problem.get("entry_point"),
-            prompt=problem.get("prompt"),
-        )
-        method_counts[result["extract_method"]] = method_counts.get(result["extract_method"], 0) + 1
-        dropped_total += result["dropped_statements"]
-        rows.append({
-            "task_id": sample["task_id"],
-            # 原始输出留着，方便和 solution 对比 —— 这正是这一步存在的意义
-            "completion": sample["completion"],
-            **result,
-        })
-
-    write_jsonl(sanitized_path, rows)
-    state["judger"]["output_sanitized_path"] = sanitized_path
-
-    logger.info(f"[Judger] sanitize: {len(rows)} 条，提取方式 {method_counts}，"
-                f"丢掉顶层语句 {dropped_total} 条")
-    writer(StreamEvent(
-        current=state.get("current"), progress=1.0, message="代码提取完成",
-        data={"output_sanitized_path": sanitized_path,
-              "extract_methods": method_counts,
-              "dropped_statements": dropped_total}))
-    return state
-
-
 def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     """样本评测步骤：执行代码/执行 SQL，计算 pass@k。"""
@@ -884,7 +830,6 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
         "kill_vllm": _step_kill_vllm,
         "start_vllm": _step_start_vllm,
         "generate": _step_generate,
-        "sanitize": _step_sanitize,
         "evaluate": _step_evaluate,
         "evaluate_livecodebench": _step_evaluate_livecodebench,
         "kill_vllm_cleanup": _step_kill_vllm,

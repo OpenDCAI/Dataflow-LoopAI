@@ -154,7 +154,12 @@ def start_vllm_openai_api_server(
     # 路径去猜名字必然对不上，请求会被判成 404。这里显式钉死一个名字。
     served_name = (vllm_served_model_name or "").strip()
     served_arg = f" --served-model-name {served_name}" if served_name else ""
-    vllm_command = f"{python_exec} -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {DEFAULT_VLLM_PORT} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes{served_arg}"
+    # vLLM 默认 --generation-config auto 会把模型目录的 generation_config.json 当服务端
+    # 默认采样参数，并且 get_max_tokens() 用 min() 把它算进上限（vllm/entrypoints/utils.py）。
+    # 例：Qwen3-8B-Base 的 generation_config.json 带 "max_new_tokens": 2048，调用方传
+    # 16384 也会被压到 2048；同时模型自带的 temperature/top_k 会覆盖请求未显式给出的项。
+    # 切成 vllm 后模型侧的默认值全部失效，生成上限与采样参数只由请求决定。
+    vllm_command = f"{python_exec} -m vllm.entrypoints.openai.api_server --model {vllm_model} --port {DEFAULT_VLLM_PORT} --tensor-parallel-size {vllm_tensor_parallel_size} --trust-remote-code --gpu-memory-utilization {vllm_gpu_memory_utilization} --enable-auto-tool-choice --tool-call-parser hermes --generation-config vllm{served_arg}"
     port = parse_port_from_command_str(vllm_command)
     host = "localhost"
 

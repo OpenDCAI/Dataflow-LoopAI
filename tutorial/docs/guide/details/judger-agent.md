@@ -130,7 +130,7 @@ scenario。
 | `eval_top_p` | `0.95` | top-p 采样累计概率阈值 | `JUDGER_TOP_P` |
 | `eval_top_k` / `eval_min_p` / `eval_presence_penalty` | `-1` / `0.0` / `0.0` | 采样参数（math 会用） | `JUDGER_TOP_K` / `JUDGER_MIN_P` / `JUDGER_PRESENCE_PENALTY` |
 | `eval_enable_thinking` | 不设置 | 是否开启思考模式（Qwen3 的 `enable_thinking`）；`true`/`false` 通过 `chat_template_kwargs` 显式开关，不设置跟随模型默认 | `JUDGER_ENABLE_THINKING` |
-| `eval_max_tokens` | `16384` | 最大输出 token 数（含推理 token） | `JUDGER_MAX_TOKENS` |
+| `eval_max_tokens` | `16384` | 最大输出 token 数（含推理 token）；vLLM 启动带 `--generation-config vllm`，模型 `generation_config.json` 的 `max_new_tokens` 不再覆盖此值 | `JUDGER_MAX_TOKENS` |
 | `eval_batch_size` | `10` | 宿主 `generate` 阶段批大小；只对 code 的 evalplus 分支和 text2sql 生效 | `JUDGER_BATCH_SIZE` |
 | `eval_case_num` | `10` | 每问题样本数 | `JUDGER_CASE_NUM` |
 | `eval_vllm_tensor_parallel_size` | `1` | vLLM 张量并行大小 | `JUDGER_TENSOR_PARALLEL_SIZE` |
@@ -139,14 +139,14 @@ scenario。
 
 ## 流水线步骤
 
-完整步骤列表：`validate`、`kill_vllm`、`start_vllm`、`generate`、`sanitize`、
-`evaluate`、`evaluate_livecodebench`、`kill_vllm_cleanup`、`eval_general_text`、
-`evaluate_math`、`finish`。
+完整步骤列表：`validate`、`kill_vllm`、`start_vllm`、`generate`、`evaluate`、
+`evaluate_livecodebench`、`kill_vllm_cleanup`、`eval_general_text`、`evaluate_math`、
+`finish`。
 
 每个 bench 独立跑一遍：
 
 ```
-code:          validate → kill_vllm → start_vllm → generate → sanitize → evaluate
+code:          validate → kill_vllm → start_vllm → generate → evaluate
                → kill_vllm_cleanup → finish
 code(lcb):     validate → kill_vllm → start_vllm → evaluate_livecodebench
                → kill_vllm_cleanup → finish
@@ -164,12 +164,10 @@ math:          validate → kill_vllm → start_vllm → evaluate_math → kill_
   `eval_base_url`；日志落盘到 `<output_dir>/<task_id>/judger/<version_id>/vllm.log`。
 - `generate`：按 `batch_size` 分批调 vLLM 采样（**并发度**，不影响分数），写
   `<bench_name>_sample.jsonl`。只有 code 的 evalplus 分支和 text2sql 走这一步。
-- `sanitize`（仅 code 的 evalplus 分支）：用自研提取器从模型输出里抽可执行代码，写
-  `<bench_name>_sanitized.jsonl`。**只用于留档对比，不在判分路径上** —— 判分时的抽取
-  各归各的后端（evalplus 用镜像里的 `evalplus.sanitize`，LiveCodeBench 用它自己的
-  `extract_code`）。
-- `evaluate`：code 的 evalplus 分支走官方容器（`evalplus.sanitize` +
-  `evalplus.evaluate`），text2sql 走进程内 SQL 执行，产出结果与 metrics。
+- `evaluate`：**code 的 evalplus 分支的代码提取和判分都在官方容器里**（
+  `evalplus.sanitize` + `evalplus.evaluate`，宿主机不做提取），text2sql 走进程内 SQL
+  执行，产出结果与 metrics。容器输出实时透传终端；判分看起来卡住时可以配合
+  `docker top <容器ID>` 看是不是单核 100% 在跑 `evalplus.sanitize`。
 - `evaluate_livecodebench`：LCB 分支的生成 + 判分，整段在 `livecodebench:latest` 里
   （宿主机没有 generate / sanitize）。容器用 `--network host` 连宿主机的 vLLM，把
   结果写在挂进去的 `/app/output`，宿主机读回来转成 Judger 的契约文件。宿主机不参与
@@ -198,6 +196,11 @@ math:          validate → kill_vllm → start_vllm → evaluate_math → kill_
 字段缺了、前缀不对、题数不对，都会在 `validate` 阶段 `emit_error`
 （`INVALID_INPUT`，消息里点名缺哪些字段/多少行，并给出导出命令）。原始 HumanEval、
 原始/sanitized MBPP 都不是这个格式，会被当场拦下。
+
+`base_input`（原题自带的用例）和 `plus_input`（evalplus 生成的扩展输入）是同一份代码
+要跑的两套测试：`base` 宽、`plus` 严，同一份代码两套都跑，得出 `base_status` /
+`plus_status`。plus 通过必然 base 通过，反之不然。主指标 `pass@1` 取 plus 口径，
+`base_pass@1` 作对照（实测 Qwen3-8B：base 61.59% vs plus 56.10%）。
 
 数据集不在仓库里（`data/` 被 gitignore），每个环境导出一次：
 
@@ -270,9 +273,22 @@ bench 样例：
 
 ### `math` 任务
 
-本地 JSON / JSONL / Parquet，字段别名会被自动归一化：问题支持
+**没有固定数据集清单**，也不按数据集名去 HuggingFace 拉取：只要是本地 JSON /
+JSONL / Parquet，字段别名会被自动归一化 —— 问题支持
 `problem`/`question`/`prompt`/`query`/`input`，答案支持
-`answer`/`target`/`final_answer`/`solution`。
+`answer`/`target`/`final_answer`/`solution`。AIME / MATH(-500) / GSM8K / AMC 这类
+「题干 + 数值或 LaTeX 答案」的数据集都能直接跑，不需要传数据集名。
+
+判分在 `math-eval-loopai` 镜像里用 `math_verify` 做 LaTeX 等价比较：
+
+- 标准答案先取 `####` 后缀（GSM8K 风格），再取 `\boxed{...}`，都没有就用原字符串
+- 模型输出必须带 `\boxed{...}`（prompt 里已要求），取不到就记
+  `[No boxed answer found]`，该样本判错并拉低 `format_rate`
+
+要注意的是：`answer` 必须是能和 `\boxed{...}` 里那点内容直接比较的答案。选择题只有在
+`answer` 就是字母/数值时才对得上 —— 存的是选项序号或整段选项文本时会全判错；需要执行
+代码才能判分的数据集也不属于这条流水线（走 `code` 分支）。metrics 见
+`skills/Judger/SKILL.md`。
 
 ## 输入与输出
 
@@ -287,7 +303,6 @@ bench 样例：
 └── <version_id>/
     └── <bench_name>/
         ├── <bench>_sample.jsonl                       ← 模型原始输出
-        ├── <bench>_sanitized.jsonl                    ← 自研提取器留档（不参与判分，仅 evalplus 分支）
         ├── <bench>_sample-sanitized.jsonl             ← evalplus 官方抽取（判分输入，仅 evalplus 分支）
         ├── <bench>_sample-sanitized_eval_results.json ← evalplus 原始判定（仅 evalplus 分支）
         │                                              （新版镜像写成 .eval_results.json，两种都认）
