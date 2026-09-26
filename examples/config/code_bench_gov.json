@@ -2,7 +2,7 @@
   "task_id": "513763dd-b41c-4234-8081-e3ed792d1fa5",
   "output_dir": "./outputs",
   "judger": {
-    "eval_model_path": "/jizhicfs/hymiezhao/lpc/repos/zx/models/Qwen3-8B",
+    "eval_model_path": "/jizhicfs/hymiezhao/lpc/repos/zx/models/Qwen3-8B-Base",
     "eval_vllm_tensor_parallel_size": 4,
     "eval_vllm_gpu_memory_utilization": 0.9,
     "cuda_visible_devices": "0,1,2,3",
@@ -14,49 +14,10 @@
     "eval_enable_thinking": false,
     "benchlist": [
       {
-        "name": "humaneval",
-        "task_type": "code",
-        "problem_path": "data/evalplus/humaneval_plus.jsonl",
-        "format_type": "humaneval+",
-        "case_num": 1
-      },
-      {
-        "name": "mbpp",
-        "task_type": "code",
-        "problem_path": "data/evalplus/mbpp_plus.jsonl",
-        "format_type": "mbpp+",
-        "case_num": 1
-      },
-      {
-        "name": "livecodebench_codegen",
-        "task_type": "code",
-        "problem_path": "/jizhicfs/hymiezhao/lpc/repos/zx/data/code/livecodebench/codegeneration.jsonl",
-        "format_type": "livecodebench",
-        "lcb_scenario": "codegeneration",
-        "case_num": 1
-      },
-      {
-        "name": "livecodebench_top",
-        "task_type": "code",
-        "problem_path": "/jizhicfs/hymiezhao/lpc/repos/zx/data/code/livecodebench/testoutputprediction.jsonl",
-        "format_type": "livecodebench",
-        "lcb_scenario": "testoutputprediction",
-        "case_num": 1
-      },
-      {
-        "name": "livecodebench_codeexe",
-        "task_type": "code",
-        "problem_path": "/jizhicfs/hymiezhao/lpc/repos/zx/data/code/livecodebench/execution.jsonl",
-        "format_type": "livecodebench",
-        "lcb_scenario": "codeexecution",
-        "case_num": 1
-      },
-      {
-        "name": "livecodebench_selfrepair",
-        "task_type": "code",
-        "problem_path": "/jizhicfs/hymiezhao/lpc/repos/zx/data/code/livecodebench/selfrepair.jsonl",
-        "format_type": "livecodebench",
-        "lcb_scenario": "selfrepair",
+        "name": "bird",
+        "task_type": "text2sql",
+        "problem_path": "/jizhicfs/hymiezhao/lpc/repos/zx/data/text2sql/bird/dev_bird_for_oj_sampled.jsonl",
+        "text2sql_dir": "/jizhicfs/hymiezhao/lpc/repos/zx/data/text2sql/bird/dev_databases",
         "case_num": 1
       }
     ],

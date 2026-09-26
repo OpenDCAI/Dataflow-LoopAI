@@ -43,39 +43,6 @@ Judger 的 Text2SQL `evaluate` 步骤由
 `BIRD_EVAL_BASE_IMAGE=public.ecr.aws/docker/library/python:3.12-slim-bookworm`。
 镜像代码更新后，若本机已有同名镜像，需手动重新 `docker build` 才会生效。
 
-## 先跑一个小例子
-
-下面的例子不需要下载 BIRD 数据，也不需要模型。先在仓库根目录生成一个
-两行数据的 SQLite 数据库和三条模拟模型回答：
-
-```bash
-python3 loopai/skills/Judger/docker/bird_eval/make_demo.py
-```
-
-随后运行镜像。只读挂载题目和数据库，结果写到 `/private/tmp/loopai-bird-demo/output`：
-
-```bash
-docker run --rm --network none \
-  --mount "type=bind,source=/private/tmp/loopai-bird-demo/samples.jsonl,target=/input/samples.jsonl,readonly" \
-  --mount "type=bind,source=/private/tmp/loopai-bird-demo/dev_databases,target=/databases,readonly" \
-  --mount "type=bind,source=/private/tmp/loopai-bird-demo/output,target=/output" \
-  loopai-bird-eval:dev \
-  --samples /input/samples.jsonl \
-  --databases /databases \
-  --results /output/bird_result.jsonl \
-  --summary /output/bird_summary.json
-```
-
-最后查看结果：
-
-```bash
-python3 -m json.tool /private/tmp/loopai-bird-demo/output/bird_summary.json
-cat /private/tmp/loopai-bird-demo/output/bird_result.jsonl
-```
-
-预期三题依次为**通过、结果不符、SQL 执行错误**，整体 EX 为约 33.33%。
-`--rm` 只删除这次运行的容器，镜像和 `/private/tmp/loopai-bird-demo` 下的结果仍在。
-
 ## 判分
 
 先将下面三个变量换成**本机绝对路径**。`DATABASES` 是
