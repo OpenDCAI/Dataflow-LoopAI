@@ -223,7 +223,7 @@ validate 只读文件头部几行）。`testoutputprediction` / `codeexecution` 
     code(lcb):     validate → kill_vllm → start_vllm
                    → evaluate_livecodebench → kill_vllm_cleanup → finish
     text2sql:      validate → kill_vllm → start_vllm → generate
-                   → evaluate → kill_vllm_cleanup → finish
+                   → evaluate (BIRD Docker) → kill_vllm_cleanup → finish
     general_text:  validate → eval_general_text → finish
     math:          validate → kill_vllm → start_vllm → evaluate_math (Docker) → kill_vllm_cleanup → finish
   → 收集结果到 bench_result / extra_bench_result
@@ -249,6 +249,14 @@ metrics 同样是百分数，`pass@1` 是 LCB 自己的口径（会出现哪些 
 `eval_enable_thinking` 会透传成容器的 `--enable_thinking`：思考模型不关掉思考链的话，
 `max_tokens` 会被思考吃光、样本里没有代码（实测 Qwen3-8B / 15 题：开着思考时 13 条
 `solution` 为空、pass@1 = 13.33；关掉后只剩 1 条为空、pass@1 = 66.67，生成也快 6 倍）。
+
+**`text2sql` 的 `evaluate` 步骤**由 `utils/evaluate_bird.py` 调用仓库内的
+`loopai/skills/Judger/docker/bird_eval`。镜像 `loopai-bird-eval:dev` 不存在时会
+自动 `docker build`，已有镜像则直接复用；生成的 JSONL 和 `text2sql_dir` 只读
+挂进容器，结果写回 `<bench>_result.jsonl` 与 `<bench>_summary.json`。
+`generate` 已把模型回答、标准 SQL 和数据库路径合并到每条 JSONL 记录。
+Text2SQL 的 `pass@k` 沿用 0–1 小数口径；`case_num=1` 时 summary 另有 BIRD
+EX 百分数。`setup.py` 仅打包 Dockerfile 和入口代码，不在安装时构建镜像。
 
 ## Output
 
@@ -291,7 +299,10 @@ outputs/<task_id>/
         │   └── log.txt
         ├── aime26/                     ← math bench
         │   └── aime26_result.json
-        └── bird_dev/
+        └── bird_dev/                      ← text2sql bench
+            ├── bird_dev_sample.jsonl     ← 模型回答与标准 SQL
+            ├── bird_dev_result.jsonl     ← 逐条判定
+            └── bird_dev_summary.json     ← pass@k / EX 汇总
 ```
 
 ### Configer 持久化

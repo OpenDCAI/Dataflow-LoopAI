@@ -61,8 +61,8 @@ _CODE_STEPS = (
     "finish",
 )
 
-# text2sql 任务的流水线步骤。SQL 的提取在评测步骤内部（compare_sql）完成，
-# 不需要单独的 sanitize。
+# text2sql 任务的流水线步骤。生成样本后，容器执行 SQL 判分；
+# SQL 的提取在容器评测入口完成，不需要单独的 sanitize。
 _TEXTSQL_STEPS = (
     "validate",
     "kill_vllm",
@@ -740,9 +740,9 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     """样本评测步骤：执行代码/执行 SQL，计算 pass@k。"""
 
-    from loopai.skills.Judger.utils.evaluate import run_evaluate_text2sql
+    from loopai.skills.Judger.utils.evaluate_bird import run_evaluate_bird
     # code 的判分在 evalplus 官方镜像里跑（见 utils/evaluate_code.py）；
-    # text2sql 仍是进程内判分。
+    # text2sql 的判分在仓库的 bird_eval 镜像里跑。
     from loopai.skills.Judger.utils.evaluate_code import run_evaluate_code
 
     task_type = state.get("judger", {}).get("eval_task_type", "code")
@@ -754,7 +754,7 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     if task_type == "code":
         result = run_evaluate_code(state, writer)
     elif task_type == "text2sql":
-        result = run_evaluate_text2sql(state, writer)
+        result = run_evaluate_bird(state, writer)
     else:
         emit_error(
             ValueError(f"Unsupported task type for evaluate step: {task_type}"),
@@ -764,10 +764,8 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         )
 
     state["judger"]["output_result_path"] = result.get("result_path", "")
-    if result.get("summary_path"):
-        state["judger"]["output_summary_path"] = result["summary_path"]
-    # code 走 evalplus 容器，指标已经算好（百分数口径）；text2sql 还是老的
-    # pass_at_k 字典（小数口径），两条路径在这里统一收口。
+    state["judger"]["output_summary_path"] = result.get("summary_path", "")
+    # code 是百分数口径；text2sql 的 pass@k 保持原有的小数口径。
     metrics = result.get("metrics") or dict(result.get("pass_at_k", {}))
     state["judger"]["metrics"] = metrics
     writer(StreamEvent(
@@ -884,7 +882,8 @@ def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
 
     # 2. 清除 bench 特有字段，避免残留
     for k in ("format_type", "lcb_scenario", "eval_text2sql_dir",
-              "bench_dataflow_eval_type", "key_mapping"):
+              "bench_dataflow_eval_type", "key_mapping", "output_case_path",
+              "output_result_path", "output_summary_path", "metrics"):
         judger.pop(k, None)
 
     # 3. 必填字段（每个 bench 都必须有）
@@ -968,6 +967,7 @@ def _run_single_bench(
             "task_type": task_type,
             "output_case_path": judger.get("output_case_path", ""),
             "output_result_path": judger.get("output_result_path", ""),
+            "output_summary_path": judger.get("output_summary_path", ""),
             "metrics": judger.get("metrics", {}),
             "eval_status": "success",
         }

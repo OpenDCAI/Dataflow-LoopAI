@@ -11,6 +11,9 @@ setup(
             # LiveCodeBench 判分镜像的构建上下文（Dockerfile + vendored 源码），
             # 装成 wheel 之后也能现场构建镜像
             "skills/Judger/docker/livecodebench/**",
+            # BIRD SQL 判分镜像的 Dockerfile 和独立评测入口
+            "skills/Judger/docker/bird_eval/*",
+            "skills/Judger/docker/bird_eval/.dockerignore",
         ],
     },
     include_package_data=False,
