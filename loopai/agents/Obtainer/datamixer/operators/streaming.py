@@ -1,9 +1,9 @@
 """Persistent, stage-by-stage streaming execution for DataMixer pipelines.
 
-The batch runner in :mod:`pipeline` is useful for finite datasets.  A web
-campaign is an unbounded producer while it is crawling, so it needs a durable
-queue between every operator.  This module stores only row metadata and CAS
-references in SQLite; large HTML/PT bodies stay in the content store.
+The batch runner in :mod:`pipeline` is useful for finite datasets. A
+long-running producer may need a durable queue between every operator. This
+module stores only row metadata and CAS references in SQLite; large content
+bodies stay in the content store.
 """
 from __future__ import annotations
 
@@ -214,7 +214,7 @@ class PersistentPipelineQueue:
             if row is not None and row["spec_fingerprint"] != fingerprint:
                 if not retry_failed:
                     raise RuntimeError(
-                        "streaming pipeline spec changed for an existing campaign; "
+                        "streaming pipeline spec changed for an existing run; "
                         "resume with failed-job retry to migrate durable queues"
                     )
                 first_changed = self._first_changed_stage(

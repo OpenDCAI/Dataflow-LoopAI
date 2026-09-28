@@ -1952,8 +1952,8 @@ def test_datamixer_dataflow_agent_run_exports_trials_and_applies_results(
     }
     assert "generating-dataflow-pipeline" in captured["prompt"]
     assert "launch the full processing" in captured["prompt"]
-    assert "sub-agents" in captured["prompt"]
-    assert "after removing complete `<think>`" in captured["prompt"]
+    assert "independent subagents" in captured["prompt"]
+    assert "pipeline_review.json" in captured["prompt"]
     assert Path(result["trial_jsonl"]).exists()
     assert Path(result["full_jsonl"]).exists()
 
@@ -2021,7 +2021,7 @@ def test_dataflow_operator_llm_uses_default_qwen_not_codex_model(
     }
 
 
-def test_dataflow_operator_llm_supports_process_local_override(monkeypatch) -> None:
+def test_dataflow_operator_llm_does_not_bypass_configured_model_pool(monkeypatch) -> None:
     from loopai.agents.Obtainer.datamixer.dataflow_agent import (
         operator_llm_config_from_starter,
     )
@@ -2031,10 +2031,10 @@ def test_dataflow_operator_llm_supports_process_local_override(monkeypatch) -> N
     monkeypatch.setenv("DF_API_KEY", "local-vllm")
 
     assert operator_llm_config_from_starter() == {
-        "api_url": "http://127.0.0.1:8001/v1/chat/completions",
-        "model_name": "Qwen3.6-27B",
+        "api_url": "http://127.0.0.1:8855/responseProxy/v1/chat/completions",
+        "model_name": "B",
         "api_key_env": "DF_API_KEY",
-        "api_key": "local-vllm",
+        "api_key": "loopai-local-proxy",
     }
 
 def test_dataflow_agent_rejects_incomplete_intermediate_response(
@@ -2256,6 +2256,15 @@ def test_dataflow_agent_delivers_trial_pipeline_for_upstream_full_run(
         pipeline = work_dir / "pipeline.py"
         processed.write_text(trial_path.read_text(encoding="utf-8"), encoding="utf-8")
         pipeline.write_text("# generated pipeline\n", encoding="utf-8")
+        (work_dir / "pipeline_review.json").write_text(json.dumps({
+            "decision": "release", "total": 100,
+            "dimensions": {
+                name: {"raw_score": 4, "weighted_score": weight, "blocked": False,
+                       "redlines": [], "evidence": [{"numbers": "1 trial row"}]}
+                for name, weight in dataflow_agent.PIPELINE_REVIEW_WEIGHTS.items()
+            },
+        }), encoding="utf-8")
+        (work_dir / "pipeline_review.md").write_text("Trial release review", encoding="utf-8")
         return {
             "ok": True,
             "mode": "trial_run",
@@ -2313,6 +2322,10 @@ def test_dataflow_agent_delivers_trial_pipeline_for_upstream_full_run(
     assert "apply-jsonl" in upstream["apply_command"]
     assert details["applied"] is False
     assert details["merge"] is None
+    status = json.loads((work_dir / "status.json").read_text())
+    assert status["output_rows"] == 1
+    assert status["full_output_rows"] == 0
+    assert details["full_rows_out"] == 0
 
 
 def test_parse_llm_scalar_score_ignores_reasoning_numbers_and_fails_closed() -> None:
@@ -3072,7 +3085,7 @@ def test_obtainercli_provider_prefers_codex_model_from_starter_pool(
     prov, meta = _resolve_provider(tmp_path, None)
 
     assert prov["base_url"] == "http://127.0.0.1:8855/responseProxy/v1"
-    assert prov["model"] == "deepseek-chat"
+    assert prov["model"] == "codex"
     assert meta["model_pool_name"] == "codex"
     assert meta["tier"] == "medium"
     assert meta["upstream_model_name"] == "deepseek-chat"
@@ -3217,12 +3230,11 @@ def test_dataset_acquisition_agent_start_defaults_to_background(
     assert state["provider"]["model_pool_name"] == "codex"
     assert state["provider"]["model"] == "codex"
     assert state["resolved_model"] == "deepseek-chat"
-    assert state["webagent_model"] == "codex"
     assert state["model_source"] == "codex_default"
-    registered = json.loads((warehouse / "models.json").read_text(encoding="utf-8"))
-    assert registered["default_model"] == "codex"
-    assert registered["models"]["codex"]["model"] == "deepseek-chat"
-    assert registered["models"]["codex"]["response_format"] == "response"
+    # Agent providers remain authoritative in the shared Starter model pool;
+    # the acquisition wrapper no longer duplicates them into warehouse-local
+    # models.json.
+    assert not (warehouse / "models.json").exists()
 
 def test_dataset_acquisition_agent_large_start_uses_scaled_default_timeout(
     tmp_path: Path,

@@ -134,13 +134,16 @@ def _load_config(config_path: str) -> Dict[str, Any]:
 def _extract_state_from_starter_yaml(config: Dict[str, Any]) -> Dict[str, Any]:
     """从 starter.yaml 格式提取 state 字典。
 
-    仅提取 task_id 和 output_dir，不提取 judger 配置。
-    Judger 配置优先从 DB (taskmodel) 读取。
+    提取 task_id、output_dir 和 default_states.judger；运行时仍可由任务
+    state/DB 覆盖 bench 配置。
     """
     defaults = config.get("default_states", {})
 
+    judger = defaults.get("judger", {})
+    if not isinstance(judger, dict):
+        judger = {}
     return {
-        "judger": {},
+        "judger": dict(judger),
         "task_id": defaults.get("task_id", ""),
         "output_dir": defaults.get("output_dir", "./outputs"),
     }
@@ -177,7 +180,7 @@ def _list_steps():
         print(f"  - {step}")
     print()
     print("code/text2sql pipeline:")
-    print("  validate -> kill_vllm -> start_vllm -> format_data -> generate -> evaluate -> kill_vllm_cleanup -> finish")
+    print("  validate -> kill_vllm -> start_vllm -> format_data -> generate -> evaluate -> retain_vllm -> finish")
     print()
     print("general_text pipeline:")
     print("  validate -> eval_general_text -> finish")

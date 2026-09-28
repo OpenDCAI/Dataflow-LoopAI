@@ -24,6 +24,14 @@ If the existing trial does not cover three records from every selected dataset,
 do not extrapolate from it. Extend the trial input and rerun the same candidate
 pipeline on the missing audit records. Do not run the full dataset.
 
+The outer CLI owns `status.json`, `stdout.json` and `process_result.json`.
+Review occurs while that managed run is active: `running` status or an empty
+stdout capture is expected until the agent returns its final JSON. Do not ask
+the pipeline agent to finalize these files early or treat their active state
+as a candidate defect. Assess candidate packaging from its pipeline, trial,
+`summary.md` and review evidence; the outer coordinator verifies final process
+receipts after the worker exits.
+
 ## Delegated review
 
 Dispatch six independent subagents, one for each D1-D6 rubric dimension. Give

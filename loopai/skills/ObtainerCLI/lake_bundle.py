@@ -34,8 +34,7 @@ BUNDLE_SCHEMA_VERSION = 1
 
 # warehouse sub-paths that are runtime state (excluded from bundles)
 WAREHOUSE_RUNTIME_SUBPATHS = {
-    ".loopai", "llm_cache", "locks", "runs", "webagent_campaigns",
-    "webcrawler_dm_runs", "pipeline_queue.sqlite", "webagent_queue.sqlite",
+    ".loopai", "llm_cache", "locks", "runs", "pipeline_queue.sqlite",
 }
 # run-dir file names that are runtime state (excluded from bundles)
 RUN_RUNTIME_NAMES = {
@@ -323,7 +322,7 @@ def _bundle_filter(path: Path, *, scope: str, include_runtime: bool) -> bool:
             return False
         if rel.name in RUN_RUNTIME_NAMES or rel.name in {"worker_prompt.md", "resume_prompt.md", "policy.md"}:
             return False
-        if rel.name == "monitor_state.json" or rel.name == "campaign_logs":
+        if rel.name == "monitor_state.json":
             return False
     return True
 

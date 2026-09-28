@@ -1,23 +1,25 @@
 ---
 name: generating-dataflow-pipeline
-description: Reasoning-guided pipeline planner that generates standard DataFlow pipeline code
+description: Reasoning-guided planner for filtering, normalizing, and enriching existing DataFlow records
 metadata:
   version: 1.0.0
 ---
-# DataFlow Pipeline Code Generator
+# Existing-Data DataFlow Pipeline Code Generator
 
 ## Goal
 
 This skill is used when users provide:
 
 - **Target**: What the pipeline should achieve
-- **Sample Data File**: Path to a JSONL file containing 1-5 representative data samples
+- **Sample Data File**: Path to a JSONL file containing representative records from
+  the existing dataset
 
 The skill must:
 
 1. **Read and analyze the JSONL file** at the provided path
 2. Infer data structure, field types, and content characteristics
-3. Determine task type based on file content (document processing, text transformation, multi-field composition)
+3. Determine the existing-record task (filtering, normalization, rewriting, enrichment,
+   or multi-field composition)
 4. Select appropriate operators from preferred primitives
 5. Validate field dependencies
 6. Output intermediate operator decision summary
@@ -36,27 +38,29 @@ Sample file: [Path to JSONL file, e.g., ./data/input.jsonl]
 
 ## Preferred Operator Strategy
 
-**Six Core Primitives** (high-coverage operators for most data science tasks):
+**Five Core Primitives** (high-coverage operators for existing-data processing):
 
 1. `PromptedGenerator` - Single-field LLM generation
 2. `FormatStrPromptedGenerator` - Multi-field template generation
 3. `Text2MultiHopQAGenerator` - Multi-hop QA pair construction
 4. `PromptedFilter` - LLM-based quality filtering
 5. `GeneralFilter` - Rule-based filtering
-6. KBC trio (always used together in order): `FileOrURLToMarkdownConverterFlash` → `KBCChunkGenerator` → `KBCTextCleaner`
-
 These are **preferred primitives**, not fixed workflows. They can be used repeatedly and combined flexibly.
+The default objective is to improve and select records that already exist in the input
+JSONL. Treat the pipeline as an existing-data **filtering + shaping** workflow:
+retain/reject records, normalize their representation, rewrite fields when the
+training contract requires it, and add grounded derived fields without breaking the
+source semantics.
 
 ## Operator Selection Priority Rule (MANDATORY)
 
-When a specialized operator exists for the task, it MUST be used over generic operators. Do NOT use `PromptedGenerator` to replicate functionality that a dedicated operator already provides.
+When a specialized operator exists for the task, it MUST be used over generic operators. Do NOT use `PromptedGenerator` to replicate functionality that a dedicated operator already provides. The prompt-transparent training-target rule below takes precedence: a specialized operator that injects task, reasoning, style, or answer-format instructions cannot produce the final assistant target.
 
 **Decision table** (check in order, use the first match):
 
 | Task / Scenario                                 | Required Operator                                                                               | Do NOT use                                 |
 | ----------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------ |
 | Generate QA pairs from text                     | `Text2MultiHopQAGenerator`                                                                    | `PromptedGenerator` with QA prompt       |
-| Convert file path / URL to text                 | KBC trio (`FileOrURLToMarkdownConverterFlash` → `KBCChunkGenerator` → `KBCTextCleaner`) | `PromptedGenerator` to summarize files   |
 | Score / evaluate using multiple fields          | `FormatStrPromptedGenerator` + `GeneralFilter`                                              | `PromptedFilter` (single input_key only) |
 | Filter by deterministic rule on existing fields | `GeneralFilter`                                                                               | `PromptedFilter`                         |
 | Generate new content from a single field        | `PromptedGenerator`                                                                           | —                                         |
@@ -126,25 +130,98 @@ that branch through an appropriate reasoning-generation operator to construct
 CoT, or filter it out when generating useful reasoning is unwarranted or
 unreliable.
 
+## Training-Target Generation, Judging, and DAG Routing (MANDATORY)
+
+### Prompt-transparent strong-model targets
+
+When an LLM completion will become the assistant-side training target, including
+answer or reasoning regeneration, send the strong teacher only the canonical
+user question/task and source context that is part of that task. Do not inject a
+system prompt, answer hint, gold/reference answer, rubric, benchmark description,
+reasoning instruction, style instruction, format instruction, or training-data
+metacomment. Use an empty system/user prefix and no output schema when the
+operator supports them, and preserve the teacher's natural response as the
+candidate target. If an operator necessarily adds such instructions, it is not
+eligible to generate the final training target; use a prompt-transparent serving
+path instead.
+
+This restriction applies to model text retained as training data, not to
+question synthesis, routing labels, metadata extraction, or evaluator output.
+Keep the gold answer hidden from the target generator and expose it only to
+downstream verification. Deterministic cleanup may remove transport artifacts,
+but must not rewrite the answer's substance. A recovery branch for a rejected
+target may deterministically normalize it or rerun the prompt-transparent strong
+teacher on the canonical task; it must not add a repair prompt whose response is
+then silently used as the training target.
+
+### Question-aware LLM judging
+
+Every correctness or answer-quality LLM judge MUST see all three semantic
+inputs in the same evaluation request:
+
+1. the canonical question/task;
+2. the candidate answer being judged;
+3. the standard/gold answer.
+
+Use a native question-aware evaluator when available. Otherwise compose an
+explicit judge payload from those three existing fields before invoking the
+evaluator. Never judge only the answer, or only answer plus gold. The judge may
+receive a rubric because its output is evaluation metadata, not training text.
+If a trustworthy standard answer is unavailable, do not claim that an LLM
+correctness gate passed; route the record to a separately declared unsupported
+or human-review path.
+
+### Conditional DAG subgraphs
+
+Design the pipeline as an auditable DAG, even when its main path is linear.
+Declare nodes, edges, split conditions, join points, and per-branch input/output
+fields. Operators inside a branch still execute in dependency order.
+
+- Send failures caused only by correctable format, wrapper, or style issues to a
+  separate recovery branch. Do not route correctness, grounding, safety, or
+  semantic-quality failures through that branch.
+- Keep the recovery branch dormant while the accepted main-path pool satisfies
+  the configured dataset/bucket target. Activate it only when a measured quota
+  or minimum output-size check reports a shortfall. If no scale target exists,
+  do not invent one merely to activate recovery.
+- Revalidate recovered records with the same downstream correctness and quality
+  gates before joining them back into the main flow. Preserve `sample_id`, source
+  provenance, original position, branch path, rejection reason, rewrite method,
+  and pre/post values; deduplicate at the join and restore input order.
+- Materialize branch counts and skipped/activated decisions so the trial review
+  can verify the trigger rather than infer it from final output alone.
+
+### Rollout-based difficulty gate
+
+For tasks with verifiable answers, difficulty filtering SHOULD use the actual
+target/candidate model rather than only a strong-model difficulty score:
+
+1. Run at most four independent, prompt-transparent target-model rollouts per
+   question. Compare each response with the gold answer using a deterministic
+   task verifier when possible; otherwise use the question-aware LLM judge above.
+2. Continue while all observed results have the same correctness value, up to
+   four rollouts. Once both a correct and an incorrect result exist, the sample
+   is already in the mixed group and further rollouts are optional.
+3. Route the resulting groups explicitly. Remove `all_correct` samples from both
+   SFT and GRPO pools. Retain `mixed` samples when they pass the other quality
+   gates. Never make a direct keep/drop decision for `all_wrong` samples.
+4. Every `all_wrong` sample MUST enter a separate strong-model rollout branch.
+   Run a prompt-transparent strong teacher on the canonical task, then compare
+   its response against the gold with the same verifier or a judge that sees
+   question, strong-model answer, and gold. Retain only records established as
+   hard-but-valid; quarantine or reject broken, ambiguous, unsolvable, or
+   incorrect-gold records. An inconclusive diagnosis must not silently pass.
+
+Persist model identities, rollout count, raw responses, parsed answers,
+per-rollout correctness, verifier/judge evidence, group assignment, strong-model
+diagnosis, and final routing decision. Rollout responses used only for difficulty
+or diagnosis are audit evidence and must not automatically replace the selected
+training target.
+
 ## Prompted Operator Usage Policy (MANDATORY)
 
 - Don't mechanically create one prompted operator per tiny requirement. If one operator can handle multiple related transformations, prefer that over splitting.
 - Multiple prompted operators are allowed when the task genuinely requires distinct semantic transformations. If using multiple, justify each step's role, input field, and output field.
-
-## KBC Usage Constraint (MANDATORY)
-
-The KBC trio must always be used in this exact order:
-
-1. `FileOrURLToMarkdownConverterFlash` — converts file path / URL → Markdown text (field: `text_path`)
-2. `KBCChunkGenerator` — splits Markdown into chunks (field: `raw_chunk`)
-3. `KBCTextCleaner` — LLM-cleans each chunk (field: `cleaned_chunk`)
-
-Rules:
-
-- All three steps are required; never skip one.
-- Input to step 1 must be a file path or URL, never plain text content.
-- Each step's `output_key` becomes the next step's `input_key`.
-- Use the default field names (`text_path`, `raw_chunk`, `cleaned_chunk`) unless explicitly requested otherwise.
 
 ## GeneralFilter Field Safety Rule (MANDATORY)
 
@@ -167,16 +244,22 @@ Output this first:
 ```json
 {
   "ops": ["OperatorA", "OperatorB", "OperatorC"],
-  "field_flow": "field_a -> field_b -> field_c",
-  "reason": "Why this ordered operator chain satisfies the target, how field dependencies are satisfied, and why prompted operators are or are not used."
+  "dag": {
+    "nodes": ["main_filter", "scale_gate", "recovery", "rollout_gate", "strong_diagnosis", "join"],
+    "edges": ["main_filter -> scale_gate", "scale_gate(shortfall) -> recovery", "rollout_gate(all_wrong) -> strong_diagnosis"],
+    "joins": ["recovery -> join"],
+    "branch_triggers": {"recovery": "main_pass_count < required_count"}
+  },
+  "field_flow": "fields and branch-specific transitions through the DAG",
+  "reason": "Why this DAG satisfies the target, how dependencies and conditional branches are enforced, and why prompted operators are or are not used."
 }
 ```
 
 ### Stage 2: Complete Response (5 sections)
 
 1. **Field Mapping**: Map sample fields to semantic roles, identify fields to generate
-2. **Ordered Operator List**: List operators in execution order with justification
-3. **Reasoning Summary**: Explain operator selection, field flow, why this design
+2. **DAG Operator Graph**: List nodes in topological order, plus edges, branch triggers, joins, and operator justification
+3. **Reasoning Summary**: Explain operator selection, field flow, rollout routing, recovery activation, and why this design
 4. **Complete Standard Pipeline Code**: Full executable Python following repository style
 5. **Adjustable Parameters / Caveats**: Tunable parameters, fallback strategies, debugging tips
 
@@ -190,7 +273,12 @@ Output this first:
 - File extension must be `.jsonl` (one JSON object per line, NOT an array)
 - **DO NOT create new file paths** - use the exact path the user provided
 
-**Required structure**: `__init__` (storage + llm_serving + operators) → `forward` (sequential `operator.run(storage=self.storage.step(), ...)`) → `if __name__ == "__main__"` entry point.
+**Required structure**: `__init__` (storage + llm_serving + operators) →
+`forward` (topological execution of `operator.run(storage=..., ...)`, including
+explicit conditional branches and joins where required) →
+`if __name__ == "__main__"` entry point. A linear pipeline is a valid
+single-path DAG, but it must not erase conditional recovery or rollout branches
+required by the rules above.
 
 **DO NOT**: generate custom runtime executors, `forward(plan)` style frameworks, or dynamic dispatch engines.
 
@@ -215,14 +303,14 @@ FileStorage(
 
 ```python
 APILLMServing_request(
-  api_url="...",
-  key_name_of_api_key="DF_API_KEY",  # defaults to DF_API_KEY; set to e.g. "OPENAI_API_KEY" if needed
-  model_name="gpt-4o",
+  api_url=os.environ["DF_API_URL"],
+  key_name_of_api_key="DF_API_KEY",
+  model_name=os.environ["DF_MODEL_NAME"],
   max_workers=10
 )
 ```
 
-### Six Core Operators: Signatures + Key Requirements
+### Five Core Operators: Signatures + Key Requirements
 
 **1) `PromptedGenerator`**
 
@@ -270,28 +358,6 @@ APILLMServing_request(
 - Run: `run(storage=self.storage.step())`
 - Each rule must return boolean `pd.Series`. Referenced fields must already exist.
 
-**6) KBC Trio (always used in this order)**
-
-**Step 1 — `FileOrURLToMarkdownConverterFlash`**
-
-- Constructor: `FileOrURLToMarkdownConverterFlash(intermediate_dir="../example_data/KBCleaningPipeline/flash/", mineru_model_path="opendatalab/MinerU2.5-2509-1.2B", batch_size=4, replicas=1, num_gpus_per_replica=1.0, engine_gpu_util_rate_to_ray_cap=0.9)`
-- **Does NOT take `llm_serving`** — this operator has no LLM dependency.
-- `mineru_model_path` is **required** — passing `None` raises `ValueError`. Use a HuggingFace model ID or local path.
-- Run: `run(storage=self.storage.step(), input_key="source", output_key="text_path")`
-- Input must be a file path or URL (`.pdf`, `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.html`, `.xml`, `.txt`, `.md`).
-
-**Step 2 — `KBCChunkGenerator`**
-
-- Constructor: `KBCChunkGenerator(chunk_size=512, chunk_overlap=50, split_method="token", min_tokens_per_chunk=100, tokenizer_name="bert-base-uncased")`
-- Run: `run(storage=self.storage.step(), input_key="text_path", output_key="raw_chunk")`
-- `split_method` options: `"token"`, `"sentence"`, `"semantic"`, `"recursive"`.
-
-**Step 3 — `KBCTextCleaner`**
-
-- Constructor: `KBCTextCleaner(llm_serving, lang="en")`
-- Run: `run(storage=self.storage.step(), input_key="raw_chunk", output_key="cleaned_chunk")`
-- LLM-cleans each chunk; output is ready for downstream QA generation.
-
 ### Correct Import Paths (MANDATORY)
 
 ```python
@@ -299,9 +365,8 @@ APILLMServing_request(
 from dataflow.utils.storage import FileStorage
 from dataflow.serving import APILLMServing_request
 
-# Operators
+# Existing-data operators
 from dataflow.operators.core_text import PromptedGenerator, FormatStrPromptedGenerator, Text2MultiHopQAGenerator, PromptedFilter, GeneralFilter
-from dataflow.operators.knowledge_cleaning import FileOrURLToMarkdownConverterFlash, KBCChunkGenerator, KBCTextCleaner
 ```
 
 ## Extended Operator Reference: core_text Skill
@@ -317,11 +382,11 @@ The sibling skill **`core_text`** (located at `../core_text/`) provides detailed
 
 **When to consult `core_text`**:
 
-- When generating pipeline code that uses an operator beyond the 6 core primitives (e.g., `BenchAnswerGenerator`, `ChunkedPromptedGenerator`, `EmbeddingGenerator`, `RetrievalGenerator`, `RandomDomainKnowledgeRowGenerator`)
+- When generating pipeline code that uses an operator beyond the 5 core primitives (e.g., `BenchAnswerGenerator`, `ChunkedPromptedGenerator`, `EmbeddingGenerator`, `RetrievalGenerator`, `RandomDomainKnowledgeRowGenerator`)
 - When you need to verify edge-case behavior, return value semantics, or error conditions for any operator
 - When debugging generated pipeline code — the `bad.md` examples document the most frequent mistakes
 
-**Note**: The 6 core primitives documented above in "Operator Parameter Signature Rule" remain the primary reference for standard pipeline generation. The `core_text` skill provides deeper detail and covers additional operators not in the core set.
+**Note**: The 5 core primitives documented above in "Operator Parameter Signature Rule" remain the primary reference for standard pipeline generation. The `core_text` skill provides deeper detail and covers additional operators not in the core set.
 
 ---
 
@@ -385,24 +450,28 @@ The sibling skill **`core_text`** (located at `../core_text/`) provides detailed
 | `PandasOperator`  | `pandas-operator/`  | Custom DataFrame transformation — applies a sequential list of functions, no LLM calls        |
 | `PromptedRefiner` | `prompted-refiner/` | LLM text refinement — rewrites text in-place, overwrites original column with refined results |
 
-## Input File Content Analysis Rule (MANDATORY)
+## Existing Record Content Analysis Rule (MANDATORY)
 
-Analyze sample data content to determine task nature:
+Analyze the actual record content to determine the filtering and enrichment task:
 
-**File path fields** (e.g., `pdf_path`, `image_path`, `doc_path`):
+**Plain text fields** (e.g., `text`, `content`, `review_text`, `raw_content`):
 
-- → KBC trio in order: `FileOrURLToMarkdownConverterFlash` → `KBCChunkGenerator` → `KBCTextCleaner` (supports `.pdf`, `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.html`, `.xml`, `.txt`, `.md`)
-- → Document/file processing workflow
-
-**Plain text fields** (e.g., `text`, `content`, `review_text`):
-
-- → Use `PromptedGenerator`, `PromptedFilter`, `Text2MultiHopQAGenerator`, `FormatStrPromptedGenerator`, `GeneralFilter`
-- → Do NOT use KBC
+- → inspect representative records first
+- → use deterministic pre-filters for parseability, emptiness, duplication, safety,
+  and structural invariants
+- → use LLM evaluation/filtering and, where needed, grounded generation to
+  normalize or enrich the existing record
 
 **Multiple semantic fields** (e.g., `instruction`, `output`, `question`, `answer`):
 
-- → Use `FormatStrPromptedGenerator` for combining fields
-- → Use `GeneralFilter` for field-based rules
+- → use `FormatStrPromptedGenerator` for multi-field scoring or rewriting
+- → use `GeneralFilter` for deterministic field-based rules
+- → preserve the original semantic roles and construct improved derived fields
+  when the source representation is not training-ready
+
+**Path/URL-like fields**:
+
+- → handle them according to the downstream target and the actual record semantics
 
 ## Examples
 
@@ -411,20 +480,19 @@ See `examples/` folder for complete workflows:
 1. **`examples/basic_generate_and_filter.md`** — `PromptedGenerator` + `PromptedFilter` (simplest pattern)
 2. **`examples/multifield_scoring.md`** — `FormatStrPromptedGenerator` with multi-field scoring
 3. **`examples/multi_stage_pipeline.md`** — Multiple `PromptedGenerator` stages + `GeneralFilter`
-4. **`examples/kbc_pdf_to_qa.md`** — KBC trio (`FileOrURLToMarkdownConverterFlash` + `KBCChunkGenerator` + `KBCTextCleaner`) + `Text2MultiHopQAGenerator` + `PromptedFilter` (scores nested QA_pairs column per chunk)
-5. **`examples/reasoning_math_pipeline.md`** — High-quality math reasoning workflow using native question screening/synthesis, difficulty and category evaluation, `ReasoningAnswerGenerator`, and format/length/ground-truth/ngram validation
-6. **`examples/reasoning_general_pipeline.md`** — General or mixed-domain reasoning generation with reference-aware model judging and n-gram filtering
-7. **`examples/reasoning_math_fusion_pipeline.md`** — Embedding-grounded sequential, parallel, and condition fusion for synthesizing harder math questions, followed by solvability evaluation
-8. **`examples/reasoning_pretrain_pipeline.md`** — Math reasoning generation and filtering followed by explicit SFT-to-pretraining `text` conversion
-9. **`examples/reasoning_diy_pipeline.md`** — Native reasoning operators with custom vertical-domain filter, synthesis, and answer prompt contracts
-10. **`examples/reasoning_cpu_clean_pipeline.md`** — CPU-only format, mathematical ground-truth, and n-gram cleaning for existing reasoning answers
-11. **`examples/agentic_rag_text_pipeline.md`** — Atomic and verified multi-hop QA over retrieved text, including grounding, shortcut, reasoning, and final-answer checks
-12. **`examples/code_text_pipelines.md`** — Code-to-SFT and seed-to-code generation with quality scoring and sandbox execution, plus CPU code-text cleaning
-13. **`examples/chemistry_smiles_text_pipeline.md`** — Chemistry-text SMILES extraction followed by molecular-equivalence evaluation
-14. **`examples/function_call_text_pipeline.md`** — Scenario, task, function-schema, multi-turn tool-conversation synthesis and evaluation
-15. **`examples/text2qa_pipeline.md`** — Diversity-aware text selection, QA generation, and multidimensional QA evaluation
-16. **`examples/text2sql_text_pipelines.md`** — Executable Text-to-SQL generation, refinement, VectorSQL construction, CoT voting, and difficulty classification
-17. **`examples/text_synthesis_and_quality_pipelines.md`** — Conversation, SFT, and PT text synthesis plus deterministic and learned quality-filtering chains
-18. **`examples/text_benchmark_eval_pipelines.md`** — Direct and question-aware semantic or deterministic answer evaluation
+4. **`examples/reasoning_math_pipeline.md`** — High-quality math reasoning workflow using native question screening/synthesis, difficulty and category evaluation, `ReasoningAnswerGenerator`, and format/length/ground-truth/ngram validation
+5. **`examples/reasoning_general_pipeline.md`** — General or mixed-domain reasoning generation with reference-aware model judging and n-gram filtering
+6. **`examples/reasoning_math_fusion_pipeline.md`** — Embedding-grounded sequential, parallel, and condition fusion for synthesizing harder math questions, followed by solvability evaluation
+7. **`examples/reasoning_pretrain_pipeline.md`** — Math reasoning generation and filtering followed by explicit SFT-to-pretraining `text` conversion
+8. **`examples/reasoning_diy_pipeline.md`** — Native reasoning operators with custom vertical-domain filter, synthesis, and answer prompt contracts
+9. **`examples/reasoning_cpu_clean_pipeline.md`** — CPU-only format, mathematical ground-truth, and n-gram cleaning for existing reasoning answers
+10. **`examples/agentic_rag_text_pipeline.md`** — Atomic and verified multi-hop QA over retrieved text, including grounding, shortcut, reasoning, and final-answer checks
+11. **`examples/code_text_pipelines.md`** — Code-to-SFT and seed-to-code generation with quality scoring and sandbox execution, plus CPU code-text cleaning
+12. **`examples/chemistry_smiles_text_pipeline.md`** — Chemistry-text SMILES extraction followed by molecular-equivalence evaluation
+13. **`examples/function_call_text_pipeline.md`** — Scenario, task, function-schema, multi-turn tool-conversation synthesis and evaluation
+14. **`examples/text2qa_pipeline.md`** — Diversity-aware text selection, QA generation, and multidimensional QA evaluation
+15. **`examples/text2sql_text_pipelines.md`** — Executable Text-to-SQL generation, refinement, VectorSQL construction, CoT voting, and difficulty classification
+16. **`examples/text_synthesis_and_quality_pipelines.md`** — Conversation, SFT, and PT text synthesis plus deterministic and learned quality-filtering chains
+17. **`examples/text_benchmark_eval_pipelines.md`** — Direct and question-aware semantic or deterministic answer evaluation
 
 These are strategy guidance, not templates to copy blindly. Generated code must follow standard pipeline structure.

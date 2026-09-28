@@ -644,9 +644,9 @@ model:
   pool:
     - tier: "medium"
       name: "default"
-      api_key: "<YOUR_DEEPSEEK_API_KEY>"
-      base_url: "https://api.deepseek.com"
-      model_name: "deepseek-v4-flash"
+      api_key: "env:LOOPAI_MEDIUM_MODEL_API_KEY"
+      base_url: "<upstream-provider-v1>"
+      model_name: "<medium-model-name>"
       maxworker: 1
       wire_api: "chat"
       response_format: ""
@@ -659,7 +659,7 @@ model:
 http://127.0.0.1:8855/responseProxy/v1
 ```
 
-这里真正的上游供应商地址应放在 `model.pool[*].base_url` 中，例如 `https://api.deepseek.com`，而不是再单独写一个旧的 `codex_chat_proxy_url`。
+这里真正的上游供应商地址应放在 `model.pool[*].base_url` 中，而不是再单独写一个旧的 `codex_chat_proxy_url`。
 
 ### 2. 启动顺序
 

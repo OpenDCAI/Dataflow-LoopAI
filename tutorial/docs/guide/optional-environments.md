@@ -9,7 +9,7 @@ LoopAI 的不同阶段依赖并不完全一样：
 - Starter 更偏对话编排与状态管理
 - Judger 可能需要本地推理服务
 - Analyzer 可能依赖外部大模型服务
-- ObtainerCLI/DataMixer 使用主环境，网页采集流程需要 Playwright 浏览器
+- ObtainerCLI/DataMixer 使用主环境，Hugging Face 数据集获取无需额外浏览器运行时
 - Trainer 会依赖训练框架
 
 这些依赖往往和 CUDA、PyTorch、推理框架或训练框架强相关，因此不建议全部塞进一个环境中。
@@ -35,13 +35,6 @@ conda create -n loopai-verl python=3.10
 ### `loopai`
 
 主环境承载 Starter、WebUI 后端、ObtainerCLI/DataMixer 以及常规图执行。
-
-如果要使用 Obtainer 的网页抓取或 Kaggle 下载流程，需要在该环境中额外安装 Playwright 浏览器：
-
-```bash
-conda activate loopai
-playwright install
-```
 
 数据清洗、去重、质量处理、格式映射和最终导出也由 ObtainerCLI/DataMixer 在主环境中完成。
 
@@ -83,10 +76,6 @@ playwright install
 如果只是想先把系统跑起来：
 
 - 只需要主环境 `loopai`
-
-如果要做网页抓取或 Kaggle 数据获取：
-
-- 在主环境里额外执行 `playwright install`
 
 如果要做本地评测：
 

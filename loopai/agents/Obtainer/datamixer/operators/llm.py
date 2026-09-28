@@ -72,14 +72,20 @@ class LLMOperator(Operator):
     def setup(self, ctx: OperatorContext) -> None:
         import threading
         from pathlib import Path
-        from ..models import ModelPool
+        from ..models import ModelPool, system_operator_model_aliases, system_operator_model_name
         pool = ModelPool(ctx.root)
         if not self.model_name:
-            self.model_name = pool.default_name()
+            self.model_name = system_operator_model_name()
+        allowed = system_operator_model_aliases()
+        if allowed and self.model_name not in allowed:
+            raise ValueError(
+                f"{self.spec.name} model {self.model_name!r} is not the configured "
+                "Starter rollout/medium role"
+            )
         if not self.model_name:
             raise ValueError(
-                f"{self.spec.name} has no resolved default model; start the managed "
-                "acquisition worker or explicitly pass a registered operator model"
+                f"{self.spec.name} has no resolved rollout/medium model; configure "
+                "the Starter model pool or explicitly pass a registered operator model"
             )
         self.model_spec = pool.get(self.model_name)
         self._check_local_openai_service()
@@ -287,7 +293,7 @@ _DEFAULT_INSTRUCTION = (
 # gates must be able to distinguish a model classification from a caller simply
 # assigning ``domain=finance`` during ingest.  The classifier emits a generic
 # ``semantic_signals`` list (no vertical vocabulary), so the same judgement
-# chain follows whichever topic the WebAgent explored.
+# chain follows whichever acquisition topic is configured.
 _SCHEMA_HINT = (
     "Return ONLY a JSON object with this exact schema, no prose:\n"
     '{"results": [{"index": <int>, "labels": [<string>, ...], "confidence": <number 0..1>, '
@@ -315,7 +321,7 @@ class DomainClassify(LLMOperator):
       * ``field``           core column to receive the primary label (default ``domain``)
       * ``sync_lake``       include the current lake's registered/observed
                             domain classes (default ``true``)
-      * ``focus_keywords``  the WebAgent's exploration keywords; items that are
+      * ``focus_keywords``  acquisition focus keywords; items that are
                             not directly related to this focus are marked
                             unrelated (labels=[]) instead of being admitted
       * ``prompt``          optional custom instruction (JSON schema is always appended)
@@ -449,15 +455,15 @@ class DomainClassify(LLMOperator):
 
 @register("topic_quality_filter")
 class TopicQualityFilter(Operator):
-    """Admit rows whose LLM domain judgement matches the WebAgent's focus.
+    """Admit rows whose LLM domain judgement matches the acquisition focus.
 
-    ``domain_classify`` already judged relevance against the campaign's
+    ``domain_classify`` already judged relevance against the configured
     ``focus_keywords`` and emitted grounded semantic signals.  This filter
     enforces a deterministic admission threshold on that evidence: a recognised
     classifier, a non-empty label list (focus relevance), a confidence floor,
     and at least ``min_semantic_signals`` grounded signal categories whose
     evidence appears verbatim in the content.  No vertical (e.g. finance) is
-    hard-wired, so the same step follows whichever topic the WebAgent explored.
+    hard-wired, so the same step follows whichever acquisition topic is configured.
     """
 
     spec = OperatorSpec(

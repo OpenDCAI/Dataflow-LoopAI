@@ -5,7 +5,7 @@ ObtainerCLI/DataMixer 是当前唯一可用的数据工作流。它负责从数�
 ## 完整链路
 
 1. 解析 Analyzer 报告或用户的数据需求。
-2. 通过托管 `dataset-acquisition-agent` 并行执行 hosted dataset 检索和垂直领域网页采集。
+2. 通过托管 `dataset-acquisition-agent` 执行 Hugging Face hosted dataset 检索。
 3. 在 worker 内完成候选筛选、下载、规范化和 DataMixer 入湖。
 4. 使用 DataMixer operator 执行清洗、去重、质量处理和格式映射。
 5. 根据当前数据需求规划 recipe，并由 `sft-export-agent` 导出最终训练数据。
@@ -17,7 +17,7 @@ Judger -> Analyzer -> ObtainerCLI/DataMixer -> Trainer
 
 ## 启动数据获取
 
-外层 Agent 必须读取 `skills/obtainer/SKILL.md`，再通过 CLI wrapper 启动托管 worker。不要在外层直接调用 SearchAgent、WebAgent、download manifest 或入湖命令。
+外层 Agent 必须读取 `skills/obtainer/SKILL.md`，再通过 CLI wrapper 启动托管 worker。不要在外层直接调用下载、规范化或入湖实现。
 
 ```bash
 python -m loopai.skills.ObtainerCLI.cli dm --lake .loopai/lake.yaml \

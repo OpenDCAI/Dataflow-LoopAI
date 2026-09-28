@@ -5,11 +5,6 @@ export async function getDataMixerMonitor(params = {}) {
     return res.data
 }
 
-export async function getWebAgentOverview(params = {}) {
-    const res = await axios.get('/obtainer/webagent/overview', { params })
-    return res.data
-}
-
 export async function rebuildDataMixerMonitor(params = {}) {
     const res = await axios.post('/obtainer/lake/monitor/rebuild', null, { params })
     return res.data

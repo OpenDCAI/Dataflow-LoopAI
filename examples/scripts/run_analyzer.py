@@ -1,11 +1,17 @@
+import os
+
+from loopai.schema.model_pool import StarterModelPool, load_starter_system_config_sync
 from loopai.skills.Analyzer.analyzer_agent import AnalyzerAgent
 from loopai.memory import checkpointer, store
 from rich.console import Console
 
 console = Console()
 
-with open('api_key.txt', 'r') as f:
-    api_key = f.read().strip()
+system = load_starter_system_config_sync(prefer_db=True)
+pool = StarterModelPool(system)
+provider = pool.resolve_role_provider("medium")
+if provider is None:
+    raise RuntimeError("Analyzer example requires a Starter model-pool medium provider")
 
 sg = AnalyzerAgent(checkpointer=checkpointer, store=store)
 graph = sg()
@@ -13,16 +19,16 @@ graph = sg()
 config = {"configurable": {"thread_id": "1"}}
 
 graph.invoke({
-    "output_dir": "/home/lpc/repos/Dataflow-LoopAI/output/analyze_outputs",
+    "output_dir": os.getenv("OUTPUT_DIR", "./output/analyze_outputs"),
 
     "eval": {
-        "eval_result_path": "/home/lpc/repos/Dataflow-LoopAI/output/humaneval_result_dev30.jsonl",
+        "eval_result_path": os.getenv("EVAL_RESULT_PATH", "./output/humaneval_result_dev30.jsonl"),
     },
 
     "analyzer": {
-        "analyze_model_path": "/home/lpc/models/Qwen2.5-14B-Instruct/",
-        "analyze_base_url": "http://127.0.0.1:8911/v1",
-        "analyze_api_key": api_key,
+        "analyze_model_path": provider.model,
+        "analyze_base_url": provider.base_url,
+        "analyze_api_key": provider.api_key,
         "analyze_temperature": 0,
         "analyze_top_p": 0.95,
         "analyze_task_type": "code",

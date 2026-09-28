@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import selectors
 import shutil
 import subprocess
@@ -26,15 +27,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
-import tomlkit
-
 from loopai.schema.model_pool import StarterModelPool, load_starter_system_config_sync
 from . import schema
 from .models import ModelPool, ModelSpec
 
 
 class CodexError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, thread_id: str | None = None):
+        super().__init__(message)
+        self.thread_id = thread_id
 
 
 # ---------------------------------------------------------------------------
@@ -167,11 +168,14 @@ def runtime_status() -> dict:
 
 
 ENV_MANIFEST_MARKER = "<!-- runtime_environment_manifest -->"
+ENV_MANIFEST_END_MARKER = "<!-- /runtime_environment_manifest -->"
 
 
 def _lake_pointer_summary() -> dict[str, str]:
     root = _project_root()
-    link = Path(root) / ".datamixer" / "lake.yaml" if root else Path(".datamixer") / "lake.yaml"
+    task_link = os.environ.get("LOOPAI_OBTAINER_LAKE_CONFIG", "").strip()
+    link = (Path(task_link).expanduser().resolve() if task_link else
+            Path(root) / ".datamixer" / "lake.yaml" if root else Path(".datamixer") / "lake.yaml")
     values: dict[str, str] = {}
     if link.is_file():
         for line in link.read_text(encoding="utf-8").splitlines():
@@ -228,16 +232,32 @@ def ensure_environment_manifest(home: Path) -> None:
     """Render the runtime environment manifest into a Codex home's AGENTS.md."""
     target = home / "AGENTS.md"
     manifest = environment_manifest_markdown(home)
+    block = f"{ENV_MANIFEST_MARKER}\n{manifest}\n{ENV_MANIFEST_END_MARKER}"
     if target.is_file():
         text = target.read_text(encoding="utf-8")
         if ENV_MANIFEST_MARKER in text:
-            target.write_text(text.replace(ENV_MANIFEST_MARKER, manifest), encoding="utf-8")
+            start = text.index(ENV_MANIFEST_MARKER)
+            end = text.find(ENV_MANIFEST_END_MARKER, start)
+            end = (end + len(ENV_MANIFEST_END_MARKER)) if end >= 0 else start + len(ENV_MANIFEST_MARKER)
+            text = text[:start] + block + text[end:]
+        else:
+            # Older renders consumed the sole marker and could never refresh.
+            # Replace only the known generated bullet block, preserving policy.
+            legacy = re.compile(
+                r"^- \*\*Python 解释器\*\*：[^\n]*\n.*?"
+                r"^- \*\*标准命令前缀\*\*：[^\n]*(?:\n|$)",
+                re.MULTILINE | re.DOTALL,
+            )
+            text, replaced = legacy.subn(lambda _: block + "\n", text, count=1)
+            if not replaced:
+                text = text.rstrip() + "\n\n## 运行环境清单\n\n" + block + "\n"
+        target.write_text(text, encoding="utf-8")
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         "## 运行环境清单\n\n"
         "以下运行环境信息由系统自动探测并注入，直接按清单使用：\n\n"
-        f"{manifest}\n",
+        f"{block}\n",
         encoding="utf-8",
     )
 
@@ -273,15 +293,12 @@ def provider_from_model(spec: ModelSpec) -> dict:
         or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
     )
     if has_explicit_pool:
-        provider = StarterModelPool(system).resolve_proxy_provider(spec.name or spec.model)
+        provider = StarterModelPool(system).resolve_role_provider("codex")
         if provider is not None:
             return provider.as_provider()
-    return {
-        "base_url": _base_url(spec.api_url),
-        "api_key": spec.resolved_key(),
-        "model": spec.model,
-        "wire_api": "responses" if spec.response_format == "response" else "chat",
-    }
+    raise CodexError(
+        "Codex worker requires a configured Starter model pool Codex provider"
+    )
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -313,6 +330,10 @@ def _sync_runner_project_config(home: Path, prov: dict, cwd: str) -> None:
     flags such as ``supports_websockets = false``. The Python response proxy is
     HTTP-only, so proxy-backed workers must use project config.
     """
+    try:
+        import tomlkit
+    except ImportError as exc:
+        raise CodexError("tomlkit is required to write Codex provider config") from exc
     home.mkdir(parents=True, exist_ok=True)
     config_path = home / "config.toml"
     if config_path.exists():
@@ -407,7 +428,13 @@ def _run_loopai_codex_runner(
         raise
     corepack = corepack_path()
     cmd: list[str] | None = None
-    if corepack:
+    # Prefer the installed local Node runner when node_modules is present.
+    # Yarn's project-state check can fail in minimal/air-gapped deployments
+    # even though all required packages are already installed.
+    direct = _direct_runner_command(runner)
+    if direct is not None:
+        cmd = direct
+    elif corepack:
         try:
             check = subprocess.run(
                 [corepack, "yarn", "--version"], cwd=runner,
@@ -534,9 +561,10 @@ def _parse_runner_output(stdout: str, stderr: str, exit_code: int) -> dict:
             completed = payload["result"]
     if exit_code != 0:
         message = _runner_error_message(stdout=stdout, stderr=stderr, exit_code=exit_code)
-        raise CodexError(message.strip())
+        raise CodexError(message.strip(), thread_id=thread_id or None)
     if completed is None:
-        raise CodexError(f"could not parse codex-runner completion: {stderr or stdout}")
+        raise CodexError(f"could not parse codex-runner completion: {stderr or stdout}",
+                         thread_id=thread_id or None)
 
     final_response = str(completed.get("finalResponse") or "")
     structured = _parse_json_object(final_response) or {"summary": final_response}
@@ -579,7 +607,13 @@ def run_via_sdk(prompt: str, prov: dict, cwd: str, timeout: int = 600,
     runtime state into a user's private Codex installation. Callers that do
     not pass an override retain the historical environment-based behavior.
     """
-    home = Path(codex_home_override) if codex_home_override else codex_home()
+    # Runner subprocesses execute with ``codex-runner`` as cwd, so relative
+    # CODEX_HOME/CODEX_WORKSPACE values would resolve against the wrong tree.
+    # Normalize both paths before handing them to Node.
+    home = (Path(codex_home_override) if codex_home_override else codex_home())
+    if home is not None:
+        home = home.expanduser().resolve()
+    cwd = str(Path(cwd).expanduser().resolve())
     if home:
         ensure_environment_manifest(home)
     use_project_config = _requires_project_config(prov)

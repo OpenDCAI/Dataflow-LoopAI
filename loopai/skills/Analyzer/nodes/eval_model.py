@@ -255,10 +255,7 @@ def _runtime_api_key(cfg: dict) -> str:
     return (
         cfg.get("analyze_api_key")
         or os.getenv("_LOOPAI_ANALYZER_RUNTIME_API_KEY")
-        or os.getenv("ANALYZER_API_KEY")
-        or os.getenv("analyzer_api_key")
-        or os.getenv("DEEPSEEK_API_KEY")
-        or "EMPTY"
+        or ""
     )
 
 def init_model(state: LoopAIState) -> BaseChatModel:

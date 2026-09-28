@@ -102,7 +102,7 @@ def _load_yaml_config(path: Path) -> dict[str, Any]:
 
 
 def _load_starter_system_from_db() -> dict[str, Any]:
-    db_path = _workspace() / "api" / "db" / "db.sqlite3"
+    db_path = Path(os.getenv("DB_PATH") or (_workspace() / "api" / "db" / "db.sqlite3"))
     if not db_path.exists():
         return {}
     try:
@@ -162,39 +162,24 @@ def _provider_from_starter_model_pool(model: str | None) -> tuple[dict, dict] | 
         if not _has_explicit_starter_pool(system):
             continue
         pool = StarterModelPool(system)
-        # ``system.model.codex_model`` is the canonical Starter selector.  The
-        # flat keys are compatibility aliases used by older saved configs.
-        # Never fall through to ``default_tier`` here: that is how a Codex
-        # default of DeepSeek was previously replaced by the local Qwen entry.
-        requested_model = model or _first_non_empty(
-            pool.codex_model,
-            system.get("codex_model_pool_name"),
-            system.get("codex_model_name"),
-            system.get("codex_model"),
-        )
-        if not requested_model:
-            continue
-        entry = pool.get_entry_by_name(str(requested_model))
-        if entry is None:
+        requested_model = str(model or "").strip() or None
+        codex_entry, _, _ = pool.resolve_role_entry("codex")
+        if requested_model and (codex_entry is None or requested_model not in codex_entry.aliases()):
             raise ObtainerCliError(
                 "OBTAINERCLI_MODEL_NOT_FOUND",
-                f"Codex model {requested_model!r} is not registered in Starter model pool",
+                f"model {requested_model!r} is not the configured Codex entry",
                 hint=(
-                    "Fix system.model.codex_model (or pass an explicit --model) so it "
-                    "names an enabled system.model.pool entry."
+                    "Fix system.model.codex_model so it names an enabled system.model.pool entry."
                 ),
                 exit_code=2,
             )
-        provider = pool.resolve_proxy_provider(
-            str(requested_model),
-            tier=entry.tier,
-        )
+        provider = pool.resolve_role_provider("codex", requested=requested_model)
         if provider is None:
             continue
         return provider.as_provider(), {
             **provider.meta(),
             "source": source,
-            "requested_model": requested_model or "",
+            "requested_model": requested_model or pool.codex_model or system.get("codex_model") or provider.name,
         }
     return None
 

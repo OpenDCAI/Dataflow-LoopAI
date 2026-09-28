@@ -73,11 +73,14 @@ def _write_jsonl(path: Path, rows: List[Dict[str, Any]]):
 
 
 def _build_model_config(cfg: Dict[str, Any]) -> ModelConfig:
+    model_name = cfg.get("eval_model_path")
+    if not model_name and not cfg.get("is_api"):
+        raise ValueError("eval_model_path is required for general-text evaluation")
     return ModelConfig(
-        model_name_or_path=cfg.get("eval_model_path") or "dummy",
+        model_name_or_path=str(model_name or ""),
         is_api=bool(cfg.get("is_api", False)),
         api_url=cfg.get("eval_base_url", ""),
-        api_key=cfg.get("eval_api_key", "EMPTY"),
+        api_key=cfg.get("eval_api_key", ""),
         temperature=float(cfg.get("eval_temperature", 0.0)),
         top_p=float(cfg.get("eval_top_p", 1.0)),
         tensor_parallel_size=int(cfg.get("eval_vllm_tensor_parallel_size", 1)),

@@ -179,8 +179,8 @@ _TRAINER_FIELD_HINTS: Dict[str, Dict[str, Any]] = {
     "verl_use_previous_best_model": {
         "required": False,
         "source": "auto",
-        "default": True,
-        "description": "Use the previous successful exported Hugging Face checkpoint as the next round model.",
+        "default": False,
+        "description": "Deprecated compatibility flag; incremental rounds keep using train_input_model_name.",
     },
 }
 
@@ -518,6 +518,29 @@ def resolve_trainer_runtime_config(
     trainer = _trainer(state)
     caller_trainer_config = copy.deepcopy(trainer)
     system = _system(state)
+    # Task state normally carries no provider credentials.  Resolve the
+    # Trainer Codex role from the current Starter model pool (DB first, YAML
+    # fallback) instead of treating an empty task ``system`` section as a
+    # signal to use legacy connection fields.
+    try:
+        from loopai.schema.model_pool import load_starter_system_config_sync
+        starter_system = load_starter_system_config_sync(prefer_db=True) or {}
+    except Exception:
+        starter_system = {}
+    if starter_system:
+        state_system = dict(system)
+        starter_model = starter_system.get("model")
+        state_model = state_system.get("model")
+        if isinstance(starter_model, dict) and isinstance(state_model, dict):
+            state_system["model"] = {**starter_model, **state_model}
+        system = {**starter_system, **state_system}
+    try:
+        from loopai.schema.model_pool import StarterModelPool
+        trainer_codex = StarterModelPool(system).resolve_role_provider("codex")
+    except Exception:
+        trainer_codex = None
+    trainer["codex_model"] = trainer_codex.model if trainer_codex else ""
+    trainer["codex_model_resolution"] = trainer_codex.meta() if trainer_codex else {"resolved": False}
 
     explicit_task_id = _first_non_empty(
         thread_id,
@@ -934,7 +957,7 @@ def resolve_trainer_runtime_config(
             os.getenv("VERL_USE_PREVIOUS_BEST_MODEL"),
             trainer.get("verl_use_previous_best_model"),
         ),
-        default=True,
+        default=False,
     )
     trainer["verl_multi_round_enabled"] = _as_bool(
         _first_non_empty(
@@ -958,6 +981,8 @@ def resolve_trainer_runtime_config(
         "db_path": str(db_path) if db_path else None,
         "task_state_loaded": task_state_loaded,
         "prefill_guide": prefill_guide,
+        "codex_model": trainer_codex.model if trainer_codex else "",
+        "codex_provider": trainer_codex.as_provider() if trainer_codex else {},
     }
 
 

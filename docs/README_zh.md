@@ -180,9 +180,9 @@ model:
   pool:
     - tier: "medium"
       name: "default"
-      api_key: "xxx"
-      base_url: "https://api.deepseek.com"
-      model_name: "deepseek-v4-flash"
+      api_key: "env:LOOPAI_MEDIUM_MODEL_API_KEY"
+      base_url: "<upstream-provider-v1>"
+      model_name: "<medium-model-name>"
       maxworker: 1
       wire_api: "chat"
       response_format: ""
@@ -193,7 +193,7 @@ model:
 
 配置说明：
 
-* `proxy_base_url` 适用于把 OpenAI 兼容的 Chat Completions 接口转换成 Responses 风格接口，以支持 `deepseek-v4-flash` 这类模型。
+* `proxy_base_url` 是所有 Agent 统一使用的网关地址；上游供应商信息只放在 `model.pool` 中。
 * `default_model` 指向 `model.pool` 里某个条目的 `name`，一般作为各节点默认使用的 API 模型。
 * `codex_model` 是 starter 使用的模型。
 
@@ -298,7 +298,7 @@ conda create -n loopai-verl python=3.10
 
 * **Judger Skill**：如果需要本地评测模型，通常需要在独立环境中安装 `vllm`，并将 `judger.eval_vllm_env_path` 配置为该环境的 Python 可执行文件，例如 `/path/to/miniconda3/envs/loopai-vllm/bin/python`。当 `judger.eval_base_url` 为空时，Judger 会使用这个解释器在子进程中启动本地 vLLM OpenAI 兼容服务，并读取 `eval_vllm_port`、`eval_vllm_tensor_parallel_size`、`eval_vllm_gpu_memory_utilization`、`eval_env_configs` 等参数。如果你已经手动启动了兼容服务，则填写 `judger.eval_base_url` 即可。
 * **Analyzer Skill**：Analyzer 通过 `analyzer.analyze_base_url`、`analyzer.analyze_model_path`、`analyzer.analyze_api_key` 调用 OpenAI 兼容聊天接口。本地分析时，可以复用 vLLM 环境启动分析模型，并将 `analyze_base_url` 指向该服务。当前 Analyzer 不会自动拉起 vLLM。
-* **ObtainerCLI/DataMixer**：这是唯一受支持的数据工作流。使用 `skills/obtainer/SKILL.md`、`docs/OBTAINERCLI_USAGE.md` 和 `python -m loopai.skills.ObtainerCLI.cli` 完成托管数据集与网页数据的获取、下载、规范化、入湖、清洗、去重、质量处理、模式映射、DataMixer recipe 规划和最终训练数据导出。已废弃的独立数据 Agent 不得再被调度。托管 worker 会从 warehouse model pool、`CODEX_*`/`DEEPSEEK_*` 环境变量或 starter system config 解析模型端点。
+* **ObtainerCLI/DataMixer**：这是唯一受支持的数据工作流。使用 `skills/obtainer/SKILL.md`、`docs/OBTAINERCLI_USAGE.md` 和 `python -m loopai.skills.ObtainerCLI.cli` 从 Hugging Face 搜索数据集，分别下载多个数据集、规范化为 JSONL、分别入湖并统一构建索引，再完成清洗、去重、质量处理、模式映射、DataMixer recipe 规划和最终训练数据导出。托管 worker 会从 warehouse model pool、`CODEX_*`/`DEEPSEEK_*` 环境变量或 starter system config 解析模型端点。
 * **Trainer Skill**：本地训练通常需要 `LLaMA-Factory` 或 `verl`。将 `trainer.train_framework` 设置为 `llamafactory` 或 `verl`。使用 LlamaFactory 时，需要配置 `trainer.llamafactory_dir` 为 LLaMA-Factory 仓库路径，并配置 `trainer.llamafactory_env_path` 为环境根目录或 `bin` 目录，例如 `/path/to/miniconda3/envs/loopai-llamafactory/bin`。使用 verl 时，可在 trainer 或 system 配置中提供 `verl_dir` 和 `verl_env_path`。Trainer 会通过内部任务管理器拉起对应训练框架的子进程并持续回传日志；Skill 调用会保持前台同步，直到训练完成、失败或取消。
 
 这些字段可以通过 WebUI 的 Configer 流程、节点 state，或 `starter.yaml` 中对应的 `judger`、`analyzer`、`obtainer`、`trainer`、`system` 配置段提供。
@@ -336,8 +336,8 @@ LoopAI 的主要运行时由**可独立组合的节点**构成，由 starter 负
 
 ### 🤖 ObtainerCLI/DataMixer
 
-* 通过托管数据获取 worker 发现托管数据集并采集领域网页
-* 下载、规范化并将数据入湖到 DataMixer warehouse，同时注册 dataset card 与 lineage
+* 通过托管 worker 搜索和获取 Hugging Face 数据集，优先选择 2025/2026 创建或更新的数据集
+* 分别下载多个数据集、规范化为 JSONL、分别入湖，并在全部入湖后构建统一索引
 * 清洗、去重、校验并映射异构数据
 * 规划 DataMixer recipe 并导出最终可训练数据集
 

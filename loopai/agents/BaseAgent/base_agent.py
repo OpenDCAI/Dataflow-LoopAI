@@ -18,7 +18,7 @@ class BaseAgent(ABC):
                  tools: Optional[List] = [],
                  model_name: Optional[str] = None,
                  base_url: Optional[str] = None,
-                 api_key: Optional[str] = 'empty',
+                 api_key: Optional[str] = None,
                  temperature: float = 0.0,
                  top_p: float = 0.95,
                  max_completion_tokens: int = 4096,

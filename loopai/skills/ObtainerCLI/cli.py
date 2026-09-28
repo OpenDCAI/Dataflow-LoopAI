@@ -15,7 +15,6 @@ from .datamixer_adapter import (
     start_background_auto_embed,
     warehouse_root,
 )
-from .dataset_acquisition_agent import run_agent as run_dataset_acquisition_agent
 from .download import MAX_BYTES_PER_DATASET, MAX_ROWS_PER_DATASET, download_manifest
 from .errors import ObtainerCliError
 from .events import emit_obtainer_event, get_obtainer_event_writer
@@ -33,9 +32,13 @@ from .lake_manager import (
 )
 from .models import sha256_text, utc_now
 from .monitor_state import start_background_rebuild, update_monitor_delta
-from .orchestrator_agent import run_agent as run_orchestrator_agent
-from .searchagent import run_searchagent
-from .sft_export_agent import run_agent as run_sft_export_agent
+
+
+def run_dataset_acquisition_agent(*args, **kwargs):
+    """Lazy proxy so basic lake commands do not require Codex dependencies."""
+    from .dataset_acquisition_agent import run_agent
+
+    return run_agent(*args, **kwargs)
 
 
 def _print_json(payload: dict) -> None:
@@ -240,15 +243,6 @@ def _has_option(args: list[str], option: str) -> bool:
     return any(item == option or item.startswith(f"{option}=") for item in args)
 
 
-def _option_value(args: list[str], option: str) -> str:
-    for index, item in enumerate(args):
-        if item == option and index + 1 < len(args):
-            return str(args[index + 1]).strip()
-        if item.startswith(f"{option}="):
-            return item.split("=", 1)[1].strip()
-    return ""
-
-
 def _lake_warehouse_for_agent(*, lake: str, root: str) -> str:
     if root:
         warehouse = Path(root).expanduser().resolve()
@@ -273,36 +267,10 @@ def _inject_lake_runtime_defaults(args: list[str], *, lake: str, root: str) -> t
     """Resolve agent-only boilerplate from the loaded lake context."""
     if not args or not lake:
         return args, root
-    pointer = current_lake_pointer(link_path=lake)
-    context = pointer.get("obtainer_context") or {}
     command = args[0]
     effective_root = root
-    if command in {"dataset-acquisition-agent", "sft-export-agent"}:
+    if command == "dataset-acquisition-agent":
         effective_root = _lake_warehouse_for_agent(lake=lake, root=root)
-    if args[:3] == ["webagent", "campaign", "start"]:
-        if len(args) == 3 or args[3].startswith("-"):
-            args = [*args[:3], str(context.get("obtainer_webagent") or "domain_data_acquisition"), *args[3:]]
-        if not _has_option(args, "--model") and context.get("obtainer_webagent_model"):
-            args.extend(["--model", str(context["obtainer_webagent_model"])])
-        if not _has_option(args, "--workers") and context.get("obtainer_webagent_workers"):
-            args.extend(["--workers", str(context["obtainer_webagent_workers"])])
-        if not _has_option(args, "--subquery-count") and context.get("obtainer_webagent_subquery_count"):
-            args.extend(["--subquery-count", str(context["obtainer_webagent_subquery_count"])])
-        if str(context.get("obtainer_webagent_auto_process") or "").lower() in {"1", "true", "yes", "on"} and not _has_option(args, "--auto-process"):
-            args.append("--auto-process")
-        # Inject MinerU-HTML service settings persisted in the lake pointer so
-        # the campaign pipeline uses the configured document-parsing service.
-        lake_config = pointer.get("config") or {}
-        for flag, key in (
-            ("--pipeline-mineru-url", "mineru_url"),
-            ("--pipeline-mineru-python", "mineru_python"),
-            ("--pipeline-mineru-model", "mineru_model"),
-            ("--pipeline-mineru-gpu", "mineru_gpu"),
-            ("--pipeline-mineru-transport", "mineru_transport"),
-        ):
-            value = str(lake_config.get(key) or "").strip()
-            if value and not _has_option(args, flag):
-                args.extend([flag, value])
     return args, effective_root
 
 
@@ -316,22 +284,10 @@ def _persist_lake_runtime_context(
         updates["obtainer_active_acquisition_run"] = str(result["run_dir"])
         if task_id:
             updates["obtainer_active_task_id"] = task_id
-        if result.get("webagent_model"):
-            updates["obtainer_webagent_model"] = str(result["webagent_model"])
         if result.get("resolved_model"):
             updates["obtainer_resolved_model"] = str(result["resolved_model"])
         if result.get("model_source"):
             updates["obtainer_model_source"] = str(result["model_source"])
-    if args[:3] == ["webagent", "campaign", "start"]:
-        payload = result.get("result") if isinstance(result.get("result"), dict) else result
-        if isinstance(payload, dict):
-            if payload.get("run_id"):
-                updates["obtainer_active_campaign_id"] = str(payload["run_id"])
-            if payload.get("dataset"):
-                updates["obtainer_active_l1_dataset"] = str(payload["dataset"])
-        model = _option_value(args, "--model")
-        if model:
-            updates["obtainer_webagent_model"] = model
     if updates:
         update_lake_obtainer_context(link_path=lake, updates=updates)
 
@@ -354,20 +310,23 @@ def _run_dm_command(
                 hint="Pass the same explicit --run directory to start, status, and resume.",
                 exit_code=2,
             )
-    if args and args[0] == "obtainer-orchestrator":
-        result = run_orchestrator_agent(args[1:], root=root, lake=lake, task_id=task_id)
-        result.setdefault("ok", True)
-        result.setdefault("command", "dm.obtainer-orchestrator")
-        result.setdefault("status", "success")
-        result.setdefault("warnings", [])
-        return result
-    if args and args[0] == "sft-export-agent":
-        result = run_sft_export_agent(args[1:], root=root)
-        result.setdefault("ok", True)
-        result.setdefault("command", "dm.sft-export-agent")
-        result.setdefault("status", "success")
-        result.setdefault("warnings", [])
-        return result
+    if args and args[0] in {
+        "obtainer-orchestrator",
+        "sft-export-agent",
+        "searchagent",
+        "webagent",
+    }:
+        retired = args[0]
+        raise ObtainerCliError(
+            "OBTAINER_AGENT_RETIRED",
+            f"{retired} is not available in the lite Obtainer workflow",
+            hint=(
+                "The main agent controls dataset-acquisition-agent and "
+                "dataflow agent-run. Dataset acquisition is Hugging Face-only; "
+                "use DataMixer recipe commands directly for validation and export."
+            ),
+            exit_code=2,
+        )
     if args and args[0] == "dataset-acquisition-agent":
         result = run_dataset_acquisition_agent(args[1:], root=root, task_id=task_id)
         result.setdefault("ok", True)
@@ -410,7 +369,7 @@ def _run_dm_lake_command(argv: list[str], *, lake: str = "") -> dict:
     context = sub.add_parser("context", help="show or update persistent Obtainer defaults for this lake")
     context.add_argument("--link", default=lake or ".datamixer/lake.yaml")
     context.add_argument("--set", dest="context_updates", action="append", default=[], metavar="KEY=VALUE")
-    unbind = sub.add_parser("unbind", help="clear active task/run bindings (task_id, acquisition run, campaign)")
+    unbind = sub.add_parser("unbind", help="clear active task/run bindings (task_id, acquisition run)")
     unbind.add_argument("--link", default=lake or ".datamixer/lake.yaml")
     monitor = sub.add_parser("monitor")
     monitor_sub = monitor.add_subparsers(dest="monitor_action", required=True)
@@ -529,18 +488,8 @@ def _command_event_data(args: argparse.Namespace) -> dict:
         "strategy",
         "balance_by",
         "query",
-        "query_file",
-        "task_json",
-        "objective",
-        "keywords",
         "output_root",
-        "model_name",
         "base_url",
-        "search_engine",
-        "max_urls",
-        "deepsearch",
-        "max_deep_queries",
-        "max_deep_pages",
         "download_command",
         "manifest",
         "limit",
@@ -633,33 +582,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-events", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    searchagent = sub.add_parser("searchagent")
-    searchagent.add_argument("--query", default="")
-    searchagent.add_argument("--query-file", default="")
-    searchagent.add_argument("--task-json", default="")
-    searchagent.add_argument("--objective", default="")
-    searchagent.add_argument("--keywords", default="")
-    searchagent.add_argument("--output-root", default="./outputs")
-    searchagent.add_argument("--model-name", default="")
-    searchagent.add_argument("--base-url", default="")
-    searchagent.add_argument("--api-key", default="")
-    searchagent.add_argument("--temperature", type=float, default=None)
-    searchagent.add_argument("--prompt-template-dir", default="")
-    searchagent.add_argument("--starter-config", default="")
-    searchagent.add_argument("--search-engine", default="")
-    searchagent.add_argument("--max-urls", type=int, default=None)
-    searchagent.add_argument("--max-results-per-source", type=int, default=5)
-    searchagent.add_argument("--deepsearch", action=argparse.BooleanOptionalAction, default=True)
-    searchagent.add_argument("--max-deep-queries", type=int, default=3)
-    searchagent.add_argument("--max-deep-pages", type=int, default=3)
-    searchagent.add_argument("--deep-context-chars", type=int, default=12000)
-    searchagent.add_argument("--parallelism", type=int, default=3)
-    searchagent.add_argument("--tavily-api-key", default=os.getenv("TAVILY_API_KEY", ""))
-    searchagent.add_argument("--kaggle-username", default=os.getenv("KAGGLE_USERNAME", ""))
-    searchagent.add_argument("--kaggle-key", default=os.getenv("KAGGLE_KEY", ""))
-    searchagent.add_argument("--debug", action="store_true")
-    searchagent.add_argument("--json", action="store_true")
-
     download = sub.add_parser("download")
     download_sub = download.add_subparsers(dest="download_command", required=True)
     download_manifest_cmd = download_sub.add_parser("manifest")
@@ -723,48 +645,13 @@ def run(argv: list[str] | None = None) -> int:
         data=_command_event_data(args),
     )
     try:
-        if args.command == "searchagent":
+        if args.command == "download" and args.download_command == "manifest":
             emit_obtainer_event(
                 writer,
                 node=node,
                 status="running",
                 progress=0.2,
-                message="Running Obtainer SearchAgent",
-                data=_command_event_data(args),
-            )
-            result = run_searchagent(
-                query=args.query,
-                query_file=args.query_file or None,
-                task_json=args.task_json or None,
-                objective=args.objective,
-                keywords=args.keywords,
-                output_root=args.output_root,
-                model_name=args.model_name,
-                base_url=args.base_url,
-                api_key=args.api_key,
-                temperature=args.temperature,
-                prompt_template_dir=args.prompt_template_dir,
-                starter_config=args.starter_config or None,
-                search_engine=args.search_engine,
-                max_urls=args.max_urls,
-                max_results_per_source=args.max_results_per_source,
-                tavily_api_key=args.tavily_api_key,
-                kaggle_username=args.kaggle_username,
-                kaggle_key=args.kaggle_key,
-                deepsearch=args.deepsearch,
-                max_deep_queries=args.max_deep_queries,
-                max_deep_pages=args.max_deep_pages,
-                deep_context_chars=args.deep_context_chars,
-                parallelism=args.parallelism,
-                debug=args.debug,
-            )
-        elif args.command == "download" and args.download_command == "manifest":
-            emit_obtainer_event(
-                writer,
-                node=node,
-                status="running",
-                progress=0.2,
-                message="Downloading datasets from SearchAgent manifest",
+                message="Downloading datasets from manifest",
                 data=_command_event_data(args),
             )
             result = download_manifest(

@@ -33,7 +33,13 @@ def _ensure_hf_mirror_env() -> None:
     os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
 
-def _load_hf_dataset(dataset_id: str, *, split: str, streaming: bool) -> Any:
+def _load_hf_dataset(
+    dataset_id: str,
+    *,
+    split: str,
+    streaming: bool,
+    config: str = "",
+) -> Any:
     """Load a dataset with multi-level endpoint fallback.
 
     Each endpoint is probed first (short timeout, no retry), then tried in
@@ -50,7 +56,10 @@ def _load_hf_dataset(dataset_id: str, *, split: str, streaming: bool) -> Any:
             continue
         _apply_hf_endpoint(endpoint)
         try:
-            return _load_hf_dataset_once(dataset_id, split=split, streaming=streaming)
+            load_kwargs = {"split": split, "streaming": streaming}
+            if config:
+                load_kwargs["config"] = config
+            return _load_hf_dataset_once(dataset_id, **load_kwargs)
         except Exception as exc:
             errors.append(f"{endpoint}: {type(exc).__name__}: {str(exc)[:300]}")
             continue
@@ -61,7 +70,13 @@ def _load_hf_dataset(dataset_id: str, *, split: str, streaming: bool) -> Any:
     )
 
 
-def _load_hf_dataset_once(dataset_id: str, *, split: str, streaming: bool) -> Any:
+def _load_hf_dataset_once(
+    dataset_id: str,
+    *,
+    split: str,
+    streaming: bool,
+    config: str = "",
+) -> Any:
     from datasets import get_dataset_config_names, load_dataset
     from datasets.download.download_config import DownloadConfig
 
@@ -73,6 +88,8 @@ def _load_hf_dataset_once(dataset_id: str, *, split: str, streaming: bool) -> An
         "download_config": DownloadConfig(max_retries=0),
     }
     try:
+        if config:
+            return load_dataset(dataset_id, config, **kwargs)
         return load_dataset(dataset_id, **kwargs)
     except Exception as first_error:
         try:
@@ -81,7 +98,7 @@ def _load_hf_dataset_once(dataset_id: str, *, split: str, streaming: bool) -> An
             configs = []
         if not configs:
             raise first_error
-        return load_dataset(dataset_id, configs[0], **kwargs)
+        return load_dataset(dataset_id, config or configs[0], **kwargs)
 
 
 def _safe_name(value: str) -> str:
@@ -95,14 +112,14 @@ def _read_manifest(path: str | Path) -> dict[str, Any]:
         raise ObtainerCliError(
             "MANIFEST_NOT_FOUND",
             f"download manifest not found: {manifest_path}",
-            hint="Run searchagent first or pass an existing searchagent_manifest.json.",
+            hint="Pass an existing JSON manifest containing download_list or candidates.",
         )
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ObtainerCliError(
             "INVALID_MANIFEST",
             "download manifest must be a JSON object",
-            hint="Expected a SearchAgent manifest with a download_list field.",
+            hint="Expected a manifest with a download_list or candidates field.",
         )
     return payload
 
@@ -113,9 +130,17 @@ def _iter_download_items(manifest: dict[str, Any], *, limit: int = 0) -> list[di
         raise ObtainerCliError(
             "INVALID_MANIFEST",
             "manifest download_list must be a list",
-            hint="Re-run searchagent to generate a valid manifest.",
+            hint="Write a valid manifest with a download_list or candidates list.",
         )
     items = [item for item in raw_items if isinstance(item, dict)]
+    for item in items:
+        source = str(item.get("source") or (item.get("download") or {}).get("method") or "huggingface").lower()
+        if source != "huggingface":
+            raise ObtainerCliError(
+                "HF_MANIFEST_REQUIRED",
+                "download manifest entries must be Hugging Face datasets",
+                hint="Set source=\"huggingface\" and provide a Hugging Face dataset_id.",
+            )
     if limit > 0:
         return items[:limit]
     return items
@@ -134,6 +159,7 @@ def _normalize_row(row: dict[str, Any], *, dataset_id: str, split: str, row_inde
     question = row.get("question") or row.get("problem") or row.get("query") or row.get("instruction") or ""
     answer = row.get("answer") or row.get("target") or row.get("output") or row.get("response") or ""
     normalized = dict(row)
+    normalized.setdefault("source_dataset", dataset_id)
     normalized.setdefault("text", text)
     normalized.setdefault("instruction", question if isinstance(question, str) else "")
     normalized.setdefault("input", question if isinstance(question, str) else "")
@@ -194,17 +220,25 @@ def _export_huggingface_jsonl(
         }
 
     _ensure_hf_mirror_env()
-    dataset = _load_hf_dataset(dataset_id, split=split, streaming=streaming)
+    item_config = str(item.get("config") or (item.get("download") or {}).get("config") or "").strip()
+    item_split = str(item.get("split") or (item.get("download") or {}).get("split") or split).strip() or split
+    load_kwargs = {
+        "split": item_split,
+        "streaming": streaming,
+    }
+    if item_config:
+        load_kwargs["config"] = item_config
+    dataset = _load_hf_dataset(dataset_id, **load_kwargs)
     endpoint_used = os.environ.get("HF_ENDPOINT") or ""
     effective_max_rows = _effective_max_rows(max_rows)
     effective_max_bytes = _effective_max_bytes(max_bytes_per_dataset)
     selected_rows = islice(dataset, effective_max_rows)
     rows_iter = (
-        _normalize_row(dict(row), dataset_id=dataset_id, split=split, row_index=index)
+        _normalize_row(dict(row), dataset_id=dataset_id, split=item_split, row_index=index)
         for index, row in enumerate(selected_rows, 1)
     )
     dataset_name = _safe_name(dataset_id)
-    records_path = output_root / "records" / f"{dataset_name}.{split}.jsonl"
+    records_path = output_root / "records" / f"{dataset_name}.{item_split}.jsonl"
     write_result = _write_jsonl(records_path, rows_iter, max_bytes=effective_max_bytes)
     rows_written = int(write_result["rows_written"])
     return {
@@ -212,7 +246,8 @@ def _export_huggingface_jsonl(
         "status": "completed" if rows_written > 0 else "empty",
         "source": "huggingface",
         "dataset_id": dataset_id,
-        "split": split,
+        "split": item_split,
+        "config": item_config,
         "endpoint_used": endpoint_used,
         "rows_written": rows_written,
         "bytes_written": int(write_result["bytes_written"]),
@@ -309,52 +344,28 @@ def download_manifest(
     _write_download_progress(progress_path, total=len(items), index=0, item=None, results=results, state="starting")
     for index, item in enumerate(items, 1):
         _write_download_progress(progress_path, total=len(items), index=index, item=item, results=results, state="running")
-        source = str(item.get("source") or (item.get("download") or {}).get("method") or "").lower()
-        if source == "huggingface":
-            try:
-                results.append(
-                    _export_huggingface_jsonl(
-                        item=item,
-                        output_root=output_path,
-                        split=split,
-                        max_rows=max_rows,
-                        max_bytes_per_dataset=max_bytes_per_dataset,
-                        streaming=streaming,
-                    )
+        try:
+            results.append(
+                _export_huggingface_jsonl(
+                    item=item,
+                    output_root=output_path,
+                    split=split,
+                    max_rows=max_rows,
+                    max_bytes_per_dataset=max_bytes_per_dataset,
+                    streaming=streaming,
                 )
-            except Exception as exc:
-                results.append(
-                    {
-                        "ok": False,
-                        "status": "failed",
-                        "source": "huggingface",
-                        "dataset_id": item.get("dataset_id"),
-                        "error": str(exc),
-                        "candidate": item,
-                    }
-                )
-        elif source == "kaggle":
+            )
+        except Exception as exc:
             results.append(
                 {
                     "ok": False,
-                    "status": "skipped",
-                    "source": "kaggle",
+                    "status": "failed",
+                    "source": "huggingface",
                     "dataset_id": item.get("dataset_id"),
-                    "error": "kaggle download is not implemented in ObtainerCLI minimal downloader",
+                    "error": str(exc),
                     "candidate": item,
                 }
             )
-        else:
-            results.append(
-                {
-                    "ok": False,
-                    "status": "skipped",
-                    "source": source or "unknown",
-                    "dataset_id": item.get("dataset_id"),
-                    "error": "unsupported download source",
-                    "candidate": item,
-                    }
-                )
         _write_download_progress(progress_path, total=len(items), index=index, item=item, results=results, state="running")
 
     result_path = output_path / "download_results.json"

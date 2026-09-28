@@ -29,6 +29,7 @@ from .task_status import TaskStatus
 from .task_tools import ensure_directory_exists, get_current_timestamp
 from .realtime_log_parser import RealTimeLogParser
 from .verl_launcher import build_verl_launch
+from .qwen_eos import prepare_qwen3_model_snapshot
 
 logger = get_logger()
 
@@ -127,6 +128,7 @@ class TaskManager:
         # 更新任务状态
         task_info['status'] = TaskStatus.RUNNING
         task_info['started_at'] = get_current_timestamp()
+        task_info['output_dir'] = output_dir
         self.metrics_dir = os.path.join(output_dir, "metrics")
         ensure_directory_exists(self.metrics_dir)
 
@@ -201,6 +203,17 @@ class TaskManager:
         if not isinstance(config, dict):
             raise ValueError(f"LLaMA-Factory config must be a mapping: {config_path}")
         assert_no_retired_tracking(config)
+        model_path = config.get("model_name_or_path")
+        if model_path:
+            normalized = prepare_qwen3_model_snapshot(
+                str(model_path), task_info.get("output_dir") or self.runs_dir
+            )
+            if normalized != model_path:
+                config["model_name_or_path"] = normalized
+                Path(config_path).write_text(
+                    yaml.safe_dump(config, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8",
+                )
 
         env = self._get_safe_env()
         config_env_path = self.app_config.get("llamafactory_env_path", "")
@@ -301,6 +314,24 @@ class TaskManager:
         """执行 verl 训练"""
         suffix = os.path.splitext(config_path)[1].lower()
         if suffix in {".yaml", ".yml"}:
+            launch_path = Path(config_path)
+            launch_config = (
+                yaml.safe_load(launch_path.read_text(encoding="utf-8")) or {}
+                if launch_path.is_file()
+                else {}
+            )
+            model_path = (launch_config.get("overrides", {})
+                          .get("actor_rollout_ref.model.path"))
+            if model_path:
+                normalized = prepare_qwen3_model_snapshot(
+                    str(model_path), task_info.get("output_dir") or self.runs_dir
+                )
+                if normalized != model_path:
+                    launch_config.setdefault("overrides", {})["actor_rollout_ref.model.path"] = normalized
+                    launch_path.write_text(
+                        yaml.safe_dump(launch_config, allow_unicode=True, sort_keys=False),
+                        encoding="utf-8",
+                    )
             cmd, cwd, env = build_verl_launch(config_path, self.app_config)
             logger.info(
                 f"Verl GRPO 命令已由审批 YAML 安全生成: {' '.join(cmd[:3])} "

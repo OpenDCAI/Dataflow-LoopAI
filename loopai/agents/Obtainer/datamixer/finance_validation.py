@@ -6,8 +6,8 @@ export`` gate (``quality_gates.finance``) validates that a passing row carries
 a classifier label plus at least two distinct semantic categories whose
 evidence can be found in the row's original content. Source names, URLs, and
 dataset aliases are provenance only and never decide whether a row is
-financial. (The WebAgent L2 chain now uses the generic ``domain_classify`` +
-``topic_quality_filter`` path with campaign ``--focus-keywords``.)
+financial. The generic ``domain_classify`` + ``topic_quality_filter`` path
+uses the configured acquisition ``focus_keywords`` when supplied.
 """
 from __future__ import annotations
 
@@ -241,5 +241,4 @@ def validate_finance_records(
         "records": decisions,
     }
     return accepted_records, report
-
 

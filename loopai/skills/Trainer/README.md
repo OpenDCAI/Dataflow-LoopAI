@@ -85,7 +85,7 @@ GRPO 训练/验证 Parquet 至少需要 `prompt`、`data_source`、`reward_model
 2. 自动识别原生 Verl、messages/ShareGPT、Alpaca 或普通 QA，转换为本轮目录下的 `prepared_data/train.parquet`。
 3. 若未提供验证数据，按 `verl_validation_ratio` 和 `verl_split_seed` 确定性切分；多轮仅在 reward 协议兼容时复用上一轮验证 Parquet。
 4. 生成 `dataset_manifest.json` 和 `rejected_rows.jsonl`，记录来源、去重、拒绝、切分、哈希和 reward 决策。
-5. 以上一轮已确认的 Verl YAML 为超参基线，只刷新本轮数据、最佳模型、reward、GPU、输出目录和 version；然后仍向用户展示整份新 YAML，等待本轮确认。
+5. 以上一轮已确认的 Verl YAML 为超参基线，只刷新本轮数据、待训练模型、reward、GPU、输出目录和 version；然后仍向用户展示整份新 YAML，等待本轮确认。上一轮最佳 checkpoint 只作为评测产物保留。
 
 生成数据的最小增量配置如下；通常不需要用户手写 Verl Parquet：
 
@@ -102,12 +102,12 @@ trainer:
   verl_validation_ratio: 0.05
   verl_reuse_previous_validation: true
   verl_inherit_previous_config: true
-  verl_use_previous_best_model: true
+  verl_use_previous_best_model: false
   verl_multi_round_enabled: true
   verl_reward_mode: auto
 ```
 
-`auto` 会针对每轮新的上游数据重新判断，只在任务/数据来源或答案标记能可靠对应已有 preset 时采用建议；无法判断时 `prepare()` 会停止并要求设置 `verl_reward_mode=preset`/`verl_reward_preset` 或 custom reward，不会猜测 ground truth 或 reward 语义。上一轮模型只有在训练成功、导出无错误且目录包含可加载的 Hugging Face 配置和权重时才会自动传给下一轮；若要改用指定模型，可在本轮调用显式传 `train_input_model_name`，或关闭 `verl_use_previous_best_model`。
+`auto` 会针对每轮新的上游数据重新判断，只在任务/数据来源或答案标记能可靠对应已有 preset 时采用建议；无法判断时 `prepare()` 会停止并要求设置 `verl_reward_mode=preset`/`verl_reward_preset` 或 custom reward，不会猜测 ground truth 或 reward 语义。增量轮次始终从 `train_input_model_name` 指定的待训练模型开始，上一轮结果只用于记录版本和 checkpoint 分析；训练数据由本轮 Obtainer/Constructor 输出更新或追加。
 
 ## Verl Reward 预设
 

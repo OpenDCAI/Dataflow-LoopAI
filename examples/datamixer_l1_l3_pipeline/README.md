@@ -14,7 +14,7 @@ pipeline runner. It does not overwrite L1 samples:
    No source whitelist is used.
 5. The accepted record is materialized as an independent L2 sample with
    parent/root lineage; its L3 descendants inherit the domain labels.
-6. `pt_to_sft_qa` uses the Qwen model-pool entry to create grounded QA.
+6. `pt_to_sft_qa` uses the Starter model-pool rollout/medium entry to create grounded QA.
 7. `sft_validate` filters malformed output before independent L3 materialization.
 
 Run it with an existing DataMixer warehouse that contains the selected model:
@@ -23,7 +23,6 @@ Run it with an existing DataMixer warehouse that contains the selected model:
 python3 examples/datamixer_l1_l3_pipeline/run_demo.py \
   --warehouse outputs/datamixer_l1_l3_pipeline/warehouse \
   --model-source-warehouse outputs/datamixer_dataflow_agent_verify/warehouse \
-  --model qwen3-14b-fp8 \
   --mineru-gpu 0 \
   --report outputs/datamixer_l1_l3_pipeline/run_report.json
 ```

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 import os
+import sys
 import json
 import time
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from loopai.common.event_tool import StreamEvent
 from loopai.schema.states import LoopAIState
@@ -62,6 +63,17 @@ def _coerce_metric_plan(metric_plan_obj: Any, bench_name: str) -> List[Dict[str,
     raise ValueError("metric_score_node: metric_plan 格式非法")
 
 
+def _coerce_benchinfo(bench):
+    """Standalone JSON / Judger state 常把 bench 存成 dict；MetricRunner 需要属性访问。"""
+    if bench is None or not isinstance(bench, dict):
+        return bench
+    from dataclasses import fields
+    from one_eval.core.state import BenchInfo
+
+    allowed = {f.name for f in fields(BenchInfo)}
+    return BenchInfo(**{k: v for k, v in bench.items() if k in allowed})
+
+
 def metric_score_node(state: LoopAIState):
     """
     在 metric_recommend_node 后执行：
@@ -71,15 +83,23 @@ def metric_score_node(state: LoopAIState):
     4. 将结果写回 state['analyzer']
     """
     writer = get_safe_stream_writer()
+    t_node = time.perf_counter()
+    stage_timing: Dict[str, float] = {}
 
     judger_cfg = state.get("judger", {}) or {}
     analyzer_cfg = state.get("analyzer", {}) or {}
 
     try:
+        t_load = time.perf_counter()
         bench = judger_cfg.get("bench") or state.get("bench")
 
         if bench is None:
             raise ValueError("metric_score_node: 未找到 bench，请先执行 eval_general_text_node")
+        bench = _coerce_benchinfo(bench)
+        if isinstance(judger_cfg, dict) and judger_cfg.get("bench") is not None:
+            judger_cfg["bench"] = bench
+        state["bench"] = bench
+        stage_timing["load_ms"] = round((time.perf_counter() - t_load) * 1000.0, 1)
 
     except Exception as e:
         logger.exception(f"[metric_score_node] bench加载失败: {e}")
@@ -159,8 +179,19 @@ def metric_score_node(state: LoopAIState):
         logger.info(f"[metric_score] dataset_cache={getattr(bench, 'dataset_cache', None)}")
     logger.info(f"[metric_score] metric_plan={metric_plan}")
 
-    runner = MetricRunner()
+    # Windows ProcessPool 开销大且易刷 spawn 噪声；默认单进程。可用 metric_max_workers 覆盖。
+    analyzer_cfg = state.get("analyzer") or {}
+    max_workers: Optional[int]
+    if "metric_max_workers" in analyzer_cfg and analyzer_cfg.get("metric_max_workers") is not None:
+        max_workers = max(1, int(analyzer_cfg.get("metric_max_workers")))
+    elif sys.platform.startswith("win"):
+        max_workers = 1
+    else:
+        max_workers = None
+    runner = MetricRunner(max_workers=max_workers)
+    logger.info(f"[metric_score] MetricRunner.max_workers={runner.max_workers}")
 
+    t_metric = time.perf_counter()
     if hasattr(runner, "run_bench"):
         metric_result = runner.run_bench(bench, metric_plan)
     elif hasattr(runner, "run"):
@@ -169,7 +200,9 @@ def metric_score_node(state: LoopAIState):
         raise AttributeError("MetricRunner 缺少 run_bench / run 方法，请检查 eval_metrics.metrics.runner")
 
     metric_result = metric_result or {}
+    stage_timing["metric_ms"] = round((time.perf_counter() - t_metric) * 1000.0, 1)
 
+    t_write = time.perf_counter()
     outdir = _ensure_metric_outdir(state)
     run_ts = time.strftime("%Y%m%d_%H%M%S")
     metric_result_path = outdir / f"metric_eval_result_{run_ts}.json"
@@ -179,6 +212,9 @@ def metric_score_node(state: LoopAIState):
     state["analyzer"]["metric_eval_result_path"] = str(metric_result_path.resolve())
     state["analyzer"]["metric_eval_results"] = metric_result
     state["eval_results"] = metric_result
+    stage_timing["write_ms"] = round((time.perf_counter() - t_write) * 1000.0, 1)
+    stage_timing["total_ms"] = round((time.perf_counter() - t_node) * 1000.0, 1)
+    state["analyzer"].setdefault("stage_timing_ms", {})["metric"] = stage_timing
 
     bench_meta["metric_eval_result_path"] = str(metric_result_path.resolve())
     bench_meta["metric_eval_results"] = metric_result
@@ -191,6 +227,7 @@ def metric_score_node(state: LoopAIState):
             "bench_name": bench_name,
             "metric_eval_result_path": str(metric_result_path.resolve()),
             "metric_eval_results": metric_result,
+            "stage_timing_ms": stage_timing,
         }
     )
 

@@ -124,9 +124,9 @@ def generate_verl_grpo_config(state: Dict[str, Any], template_path: str) -> Dict
     )
     result["selection_mode"] = str(trainer.get("verl_selection_mode") or "max")
     if trainer.get("verl_multi_round_enabled", False):
-        # A later round can only consume an exported Hugging Face model. Smoke
-        # templates used to disable both checkpointing and export, so make the
-        # multi-round contract explicit in the generated YAML shown to the user.
+        # Keep checkpointing/export enabled so each data increment has a
+        # complete, evaluable artifact. The exported model is not fed into the
+        # next round automatically.
         result["export_huggingface"] = True
         try:
             save_freq = int(overrides.get("trainer.save_freq", -1))

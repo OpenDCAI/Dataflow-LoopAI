@@ -312,38 +312,15 @@ def _prepare_fresh_trainer_round(
     else:
         inherited_config = None
 
-    previous_model = _first_non_empty(
-        trainer_state.get("update_model_path"),
-        trainer_state.get("trainer_best_checkpoint_path"),
-    )
-    explicit_model = _first_non_empty(
-        kwargs.get("train_input_model_name"),
-        kwargs.get("model_path"),
-        os.getenv("TRAIN_MODEL_PATH"),
-    )
+    # Incremental rounds add/refresh training data while always starting from
+    # the configured target model.  A previous best checkpoint is an output
+    # artifact, not the input model for the next round.
     model_inheritance: Dict[str, Any] = {
         "applied": False,
         "source_version_id": previous_version or None,
-        "source_model_path": str(previous_model) if previous_model else None,
+        "source_model_path": None,
+        "reason": "data_incremental_mode: use configured train_input_model_name",
     }
-    inherited_model: str | None = None
-    if explicit_model:
-        model_inheritance["reason"] = "current round supplied an explicit model override"
-    elif not trainer_state.get("verl_use_previous_best_model", True):
-        model_inheritance["reason"] = "verl_use_previous_best_model is disabled"
-    elif not previous_completed:
-        model_inheritance["reason"] = "no previous successful training round"
-    elif trainer_state.get("trainer_model_export_error"):
-        model_inheritance["reason"] = "previous Verl model export failed"
-    elif _is_huggingface_model_dir(previous_model):
-        inherited_model = str(Path(str(previous_model)).expanduser().resolve())
-        model_inheritance.update({
-            "applied": True,
-            "model_path": inherited_model,
-            "reason": "previous best checkpoint is a loadable Hugging Face model",
-        })
-    else:
-        model_inheritance["reason"] = "previous best checkpoint is not a loadable Hugging Face model directory"
 
     for field in _TRAINER_ROUND_TRANSIENT_FIELDS:
         trainer_state.pop(field, None)
@@ -355,8 +332,6 @@ def _prepare_fresh_trainer_round(
         trainer_state["_trainer_previous_config"] = inherited_config
     else:
         trainer_state.pop("_trainer_previous_config", None)
-    if inherited_model:
-        trainer_state["train_input_model_name"] = inherited_model
     explicit_eval = _first_non_empty(
         kwargs.get("train_input_eval_dataset_path"),
         kwargs.get("eval_dataset_path"),
@@ -527,6 +502,7 @@ def finalize_trainer_result_state(
         return result
     try:
         from loopai.skills.Trainer.results import analyze_results
+        from loopai.skills.Trainer.utils.qwen_eos import normalize_qwen3_eos_metadata
 
         analysis_payload = analyze_results(
             task_id=task_id or result.get("task_id"),
@@ -584,6 +560,7 @@ def finalize_trainer_result_state(
         trainer_state["trainer_best_checkpoint"] = best_checkpoint
         trainer_state["trainer_best_metric"] = best_metric
         if best_checkpoint.get("path") and not best_checkpoint.get("needs_merge"):
+            normalize_qwen3_eos_metadata(best_checkpoint["path"])
             trainer_state["trainer_best_checkpoint_path"] = best_checkpoint["path"]
             trainer_state["update_model_path"] = best_checkpoint["path"]
         if analysis_data.get("checkpoints") and not trainer_state.get("training_checkpoints"):

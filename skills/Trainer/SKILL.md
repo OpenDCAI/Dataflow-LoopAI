@@ -9,6 +9,10 @@ description: Use this skill when the user wants LoopAI to validate training data
 
 Trainer Skill is the Codex-facing entry point and the canonical Python implementation for LoopAI model training.
 
+Trainer 的 agent/训练配置辅助模型只使用 Starter 模型池的 `codex` 角色。这里的
+Codex provider 与 `train_input_model_name`（被训练的底座/检查点）是两个概念；
+后者继续由训练任务显式配置，不会被模型池角色替换。
+
 Use this skill for:
 
 - Running `sft + llamafactory` or `grpo + verl`; do not mix backend/stage pairs
@@ -175,12 +179,9 @@ On every fresh Verl `prepare()` round:
    round's approved `train_config` as the hyperparameter baseline. Always
    replace train/validation/model paths, reward fields, devices, experiment and
    checkpoint directories, selection settings, and version metadata.
-6. With `verl_use_previous_best_model=true`, promote `update_model_path` only
-   when the preceding round completed, export did not fail, and the directory
-   contains a loadable Hugging Face config plus weights. Never pass raw FSDP
-   shards into the next round. To deliberately restart from another model,
-   pass a current-call `train_input_model_name`/`model_path` override or set
-   `verl_use_previous_best_model=false` together with the desired model path.
+6. Every incremental round uses the configured `train_input_model_name` as
+   the training model. Previous checkpoints are retained for result analysis
+   and evaluation, but are not promoted to the next round's input model.
 7. With `verl_multi_round_enabled=true`, the prepared YAML enables Hugging Face
    export and a positive checkpoint save cadence, including when the selected
    smoke template originally disabled them.
@@ -366,7 +367,9 @@ Fields that Trainer can usually prefill:
 - `verl_reward_mode`: defaults to `auto`
 - `verl_data_adapter`: defaults to `auto`
 - `verl_validation_ratio` / `verl_split_seed`: default to `0.05` / `42`
-- `verl_inherit_previous_config`, `verl_use_previous_best_model`, `verl_multi_round_enabled`: default to `true`
+- `verl_inherit_previous_config`, `verl_multi_round_enabled`: default to `true`
+- `verl_use_previous_best_model`: retained for backward-compatible state
+  reading, but model promotion is disabled; the default is `false`
 - `trainer_persistent_worker`: defaults to `true`
 - `CUDA_VISIBLE_DEVICES`: defaults to `0`
 
@@ -455,7 +458,9 @@ When comparing multiple Trainer runs, call `analyze_results()` for each run and 
 - `trainer_result.status`
 - `trainer_last_error`
 
-Prefer reporting the selected checkpoint path from `trainer_best_checkpoint_path` or `update_model_path` as the model candidate for the next Judger or Analyzer step.
+Report the selected checkpoint path from `trainer_best_checkpoint_path` or
+`update_model_path` as the evaluation artifact for the next Judger or Analyzer
+step. It is not used as the next Trainer input model.
 
 ## Execution Lifetime
 

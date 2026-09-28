@@ -237,12 +237,6 @@
                     </div>
                 </section>
 
-                <web-pipeline-status
-                    :lake="lakePath"
-                    :root="webPipelineRoot"
-                    embedded
-                ></web-pipeline-status>
-
                 <section v-if="advancedMode" class="surface-panel">
                     <div
                         v-for="item in operationSurface"
@@ -519,7 +513,6 @@ import { mapState, mapActions } from 'pinia'
 import { useAppConfig } from '@/stores/appConfig'
 import { useTheme } from '@/stores/theme'
 import baseChart from '@/components/manage/obtainerLake/baseChart.vue'
-import webPipelineStatus from '@/components/manage/obtainerLake/webPipelineStatus.vue'
 import datasetManager from '@/components/manage/obtainerLake/datasetManager.vue'
 import {
     deleteDataMixerLake,
@@ -535,7 +528,6 @@ import {
 export default {
     components: {
         baseChart,
-        webPipelineStatus,
         datasetManager
     },
     data() {
@@ -594,9 +586,6 @@ export default {
         },
         lakeRoot() {
             return this.monitor?.lake_root || ''
-        },
-        webPipelineRoot() {
-            return this.monitor?.config?.warehouse || this.lakeState?.warehouse || ''
         },
         workspaceTitle() {
             if (this.monitor?.lake_root) return `${this.monitor.lake_root} - ${this.monitor.lake_config || this.lakePath}`

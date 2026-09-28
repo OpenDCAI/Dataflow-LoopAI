@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+# Deprecated compatibility module. The public Judger entry point is now the
+# Codex SDK worker in ``loopai.skills.Judger``; this legacy step implementation
+# is intentionally not imported by the CLI.
+
 import json
 import os
 from pathlib import Path
@@ -25,8 +29,9 @@ JUDGER_PIPELINE_STEPS = (
     "start_vllm",          # 启动本地 vLLM 服务
     "format_data",         # 可选的数据格式转换
     "generate",            # 生成 code/text2sql 样本
+    "sanitize",            # 留档代码抽取（判分仍用官方抽取）
     "evaluate",            # 评测样本并计算 pass@k
-    "kill_vllm_cleanup",   # 评测完成后关闭 vLLM
+    "kill_vllm_cleanup",   # 兼容步骤：默认保留 vLLM 并注册到模型池
     "eval_general_text",   # 通用文本评测（One-Eval DataFlow）
     "finish",              # 流水线结束
 )
@@ -40,6 +45,8 @@ _STEP_ALIASES = {
     "vllm_start": "start_vllm",
     "data_format": "format_data",
     "generate_code": "generate",
+    "extract_code": "sanitize",
+    "sanitize_code": "sanitize",
     "evaluate_node": "evaluate",
     "eval_general_text_node": "eval_general_text",
     "vllm_kill_node": "kill_vllm_cleanup",
@@ -64,6 +71,44 @@ _GENERAL_TEXT_STEPS = (
     "eval_general_text",
     "finish",
 )
+
+_BENCH_OVERRIDE_MAP = {
+    "case_num": "eval_case_num",
+    "batch_size": "eval_batch_size",
+    "temperature": "eval_temperature",
+    "top_p": "eval_top_p",
+    "max_tokens": "eval_max_tokens",
+    "enable_thinking": "eval_enable_thinking",
+    "top_k": "eval_top_k",
+    "min_p": "eval_min_p",
+    "presence_penalty": "eval_presence_penalty",
+    "model": "eval_model_name",
+}
+
+
+_JUDGER_TASK_TYPES = ("code", "text2sql", "general_text")
+
+
+_BENCH_REQUIRED_FIELDS = ("name", "task_type", "problem_path")
+
+
+_BENCH_TASK_TYPE_REQUIRED_FIELDS = {
+    "text2sql": ("text2sql_dir",),
+    "general_text": ("eval_type",),
+}
+
+
+_CODE_STEPS = (
+    "validate",
+    "kill_vllm",
+    "start_vllm",
+    "generate",
+    "sanitize",
+    "evaluate",
+    "kill_vllm_cleanup",
+    "finish",
+)
+
 
 def normalize_judger_step(step_name: Optional[str]) -> Optional[str]:
     """将步骤名标准化为流水线中定义的标准名称。"""
@@ -222,6 +267,85 @@ def _find_best_checkpoint(
     )
 
 
+def _problem_path_dump_hint(task_type: Any, source: Dict[str, Any], path: str) -> str:
+    """problem_path 不存在时，给 code bench 补一句「怎么导出官方数据集」。
+
+    其他 task_type 没有标准数据集，返回空串（措辞留在调用方）。
+    """
+    if task_type != "code":
+        return ""
+    try:
+        from .utils.evaluate_code import dataset_dump_hint, resolve_code_task
+        task = resolve_code_task({"format_type": source.get("format_type")})
+    except Exception:
+        return ""
+    return f"（可用 `{dataset_dump_hint(task, path)}` 导出官方数据集）"
+
+
+def _bench_label(bench: Any, group: str, index: int) -> str:
+    """生成便于定位的 bench 标签，例如 ``benchlist[0] aime26``。"""
+    name = bench.get("name") if isinstance(bench, dict) else None
+    return f"{group}[{index}]" + (f" {name}" if name else "")
+
+
+def _collect_bench_problems(
+    bench: Any, label: str = "bench", *, check_problem_path: bool = False
+) -> List[str]:
+    """收集单个 bench entry 的配置问题，不抛错，便于一次性汇总所有 bench。"""
+    if not isinstance(bench, dict):
+        return [f"{label}: 应为 JSON 对象，实际是 {type(bench).__name__}"]
+
+    problems: List[str] = []
+    for field in _BENCH_REQUIRED_FIELDS:
+        value = bench.get(field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            problems.append(f"{label}: 缺少必填字段 {field}")
+
+    task_type = bench.get("task_type")
+    if isinstance(task_type, str) and task_type.strip() and task_type not in _JUDGER_TASK_TYPES:
+        problems.append(
+            f"{label}: 未知 task_type {task_type!r}，可选值: {', '.join(_JUDGER_TASK_TYPES)}")
+
+    for field in _BENCH_TASK_TYPE_REQUIRED_FIELDS.get(task_type, ()):
+        if not bench.get(field):
+            problems.append(f"{label}: task_type={task_type} 需要字段 {field}")
+
+    # 与 _step_validate 的落地检查保持一致：都用原始路径，不额外展开 ~，
+    # 否则预检放行而 validate 失败，反而更难排查。
+    problem_path = bench.get("problem_path")
+    if check_problem_path and isinstance(problem_path, str) and problem_path.strip():
+        if not os.path.exists(problem_path):
+            hint = _problem_path_dump_hint(task_type, bench, problem_path)
+            problems.append(f"{label}: problem_path 不存在: {problem_path}{hint}")
+
+    return problems
+
+
+def _emit_bench_config_error(problems: List[str], writer, message: str) -> None:
+    """bench 配置错误的统一出口，避免 code / recoverable 在多处漂移。"""
+    emit_error(
+        ValueError("; ".join(problems)),
+        code=ErrorCode.CONFIG_ERROR, recoverable=True,
+        stream_writer=writer, message=message,
+    )
+
+
+def _preflight_benches(benches: Any, group: str) -> Tuple[List[Any], List[str]]:
+    """按组校验 bench entry，返回 (通过的 bench, 问题列表)。
+
+    连数据文件是否存在一起校验，让配置问题在启动任何 vLLM 之前全部暴露。
+    """
+    usable: List[Any] = []
+    problems: List[str] = []
+    for index, bench in enumerate(benches):
+        found = _collect_bench_problems(
+            bench, _bench_label(bench, group, index), check_problem_path=True)
+        problems.extend(found)
+        if not found:
+            usable.append(bench)
+    return usable, problems
+
+
 def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     """验证步骤：检查必填字段、文件存在性和 JSONL 字段结构。"""
     from loopai.schema.states import get_missing_fields
@@ -284,20 +408,29 @@ def _step_validate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     from loopai.skills.Judger.utils.data import check_jsonl_fields
 
     if task_type == "code":
-        fmt = judger.get("eval_format_type", "")
-        if fmt == "mbpp":
-            required = ["text", "code", "task_id", "challenge_test_list", "test_list"]
-        elif fmt == "human-eval":
-            required = ["task_id", "prompt", "entry_point", "canonical_solution", "test"]
-        else:
-            required = ["task_id", "prompt", "entry_point", "canonical_solution", "test_list"]
-        ok, details = check_jsonl_fields(problem_path, required)
-        if not ok:
+        # 判分在 evalplus 官方镜像里跑，题目必须是它那份数据集（HumanEval+ / MBPP+）：
+        # task_id 前缀、必需字段、题目数量任何一条不对，判分都只会以 assert 收场。
+        # HumanEval+ 和 MBPP+ 的字段不完全一样，按 bench 指定的数据集分别检查。
+        from loopai.skills.Judger.utils.evaluate_code import (
+            check_problem_file, dataset_dump_hint, dataset_label, resolve_code_task)
+        try:
+            code_dataset = resolve_code_task(judger)
+        except ValueError as exc:
             emit_error(
-                ValueError(f"JSONL field validation failed: {json.dumps(details, ensure_ascii=False, indent=2)}"),
+                exc, code=ErrorCode.INVALID_INPUT, recoverable=True, stream_writer=writer,
+                message=("code bench 需要指定评测数据集：bench.format_type"
+                         "（只支持 humaneval+ / mbpp+）。"),
+            )
+
+        problems = check_problem_file(problem_path, code_dataset)
+        if problems:
+            emit_error(
+                ValueError(f"code problem file validation failed: {problems}"),
                 code=ErrorCode.INVALID_INPUT, recoverable=True,
                 stream_writer=writer,
-                message=f"Problem file {problem_path} has invalid fields for task type {task_type}.",
+                message=(f"评测集 {judger.get('bench_name', '')} 的 problem_path 不是 evalplus "
+                         f"{dataset_label(code_dataset)} 数据集格式：{'；'.join(problems)}。"
+                         f"可用 `{dataset_dump_hint(code_dataset)}` 生成一份。"),
             )
     elif task_type == "text2sql":
         required = ["task_id", "prompt", "db_id", "question", "ground_truth"]
@@ -355,7 +488,10 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
         current=state.get("current"), progress=0.0, message="正在启动本地 vLLM 服务",
         data={"model_path": model_path, "tensor_parallel_size": tensor_parallel_size}))
     try:
-        start_vllm_openai_api_server(tensor_parallel_size, gpu_memory_utilization, model_path)
+        vllm_proc, stop_event = start_vllm_openai_api_server(
+            tensor_parallel_size, gpu_memory_utilization, model_path,
+            vllm_served_model_name=state["judger"].get("eval_model_name"),
+        )
     except Exception as exc:
         logger.exception(f"[Judger] vLLM 启动失败")
         emit_error(
@@ -365,9 +501,44 @@ def _step_start_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
             message=f"vLLM startup failed: model={model_path}, tp_size={tensor_parallel_size}",
         )
     state["judger"]["eval_base_url"] = f"http://localhost:{DEFAULT_VLLM_PORT}/v1"
+    state["judger"]["vllm_port"] = DEFAULT_VLLM_PORT
+    state["judger"]["vllm_model_path"] = str(model_path)
+    state["judger"]["vllm_pid"] = getattr(vllm_proc, "pid", None)
+    state["judger"]["vllm_keep_alive"] = True
+    try:
+        from loopai.schema.model_pool import register_running_vllm
+        registered = register_running_vllm(
+            str(model_path),
+            state["judger"]["eval_base_url"],
+            name=f"eval:{state.get('task_id') or 'current'}",
+            task_id=str(state.get("task_id") or "") or None,
+            pid=getattr(vllm_proc, "pid", None),
+            port=DEFAULT_VLLM_PORT,
+            command=str(getattr(vllm_proc, "args", "") or ""),
+            workspace=Path.cwd(),
+            persist=True,
+        )
+        state["judger"]["vllm_model_pool_entry"] = registered.config_dict(include_secret=False)
+    except Exception as exc:
+        logger.warning("failed to register running vLLM in model pool: %s", exc)
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="vLLM 服务已启动",
         data={"base_url": state["judger"]["eval_base_url"]}))
+    return state
+
+
+def _step_retain_vllm(state: Dict[str, Any], writer) -> Dict[str, Any]:
+    """Compatibility replacement for cleanup: leave the serving process up."""
+    judger = state.setdefault("judger", {})
+    judger["vllm_keep_alive"] = True
+    writer(StreamEvent(
+        current=state.get("current"), progress=1.0,
+        message="评测完成，vLLM 服务已保留并注册到模型池",
+        data={
+            "base_url": judger.get("eval_base_url"),
+            "model_pool_entry": judger.get("vllm_model_pool_entry"),
+        },
+    ))
     return state
 
 
@@ -430,11 +601,66 @@ def _step_generate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     return state
 
 
+def _step_sanitize(state: Dict[str, Any], writer) -> Dict[str, Any]:
+    """从模型输出里提取可执行代码（仅 code）。
+
+    单独成一步而不是塞进 evaluate，是为了让"原始输出"和"提取后"都留档：排查
+    "评测挂掉到底是模型写错还是我们提错"时，这两个文件对比着看就够了 ——
+    不用像以前那样手动复现（线上 task 201 就是这么查的）。
+    """
+    from loopai.skills.Judger.utils.data import read_problems, stream_jsonl, write_jsonl
+    from loopai.skills.Judger.utils.sanitize import sanitize
+
+    judger = state.get("judger", {})
+    bench_name = judger.get("bench_name", "bench")
+    problem_path = judger["eval_problem_path"]
+    sample_path = judger["output_case_path"]
+
+    out_dir = (Path(str(state.get("output_dir", "."))) / str(state.get("task_id"))
+               / "judger" / writer.version_id / bench_name)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sanitized_path = str(out_dir / f"{bench_name}_sanitized.jsonl")
+
+    problems = read_problems(problem_path)
+    rows = []
+    method_counts: Dict[str, int] = {}
+    dropped_total = 0
+    for sample in stream_jsonl(sample_path):
+        problem = problems.get(sample["task_id"], {})
+        result = sanitize(
+            sample["completion"],
+            entry_point=problem.get("entry_point"),
+            prompt=problem.get("prompt"),
+        )
+        method_counts[result["extract_method"]] = method_counts.get(result["extract_method"], 0) + 1
+        dropped_total += result["dropped_statements"]
+        rows.append({
+            "task_id": sample["task_id"],
+            # 原始输出留着，方便和 solution 对比 —— 这正是这一步存在的意义
+            "completion": sample["completion"],
+            **result,
+        })
+
+    write_jsonl(sanitized_path, rows)
+    state["judger"]["output_sanitized_path"] = sanitized_path
+
+    logger.info(f"[Judger] sanitize: {len(rows)} 条，提取方式 {method_counts}，"
+                f"丢掉顶层语句 {dropped_total} 条")
+    writer(StreamEvent(
+        current=state.get("current"), progress=1.0, message="代码提取完成",
+        data={"output_sanitized_path": sanitized_path,
+              "extract_methods": method_counts,
+              "dropped_statements": dropped_total}))
+    return state
+
+
 def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
 
     """样本评测步骤：执行代码/执行 SQL，计算 pass@k。"""
 
-    from loopai.skills.Judger.utils.evaluate import run_evaluate_code, run_evaluate_text2sql
+    # code 的判分在 evalplus 官方镜像里跑（见 utils/evaluate_code.py）；
+    # text2sql 仍是进程内判分。
+    from loopai.skills.Judger.utils.evaluate_code import run_evaluate_code
 
     task_type = state.get("judger", {}).get("eval_task_type", "code")
 
@@ -445,6 +671,7 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
     if task_type == "code":
         result = run_evaluate_code(state, writer)
     elif task_type == "text2sql":
+        from loopai.skills.Judger.utils.evaluate import run_evaluate_text2sql
         result = run_evaluate_text2sql(state, writer)
     else:
         emit_error(
@@ -455,13 +682,17 @@ def _step_evaluate(state: Dict[str, Any], writer) -> Dict[str, Any]:
         )
 
     state["judger"]["output_result_path"] = result.get("result_path", "")
-    pass_at_k = result.get("pass_at_k", {})
-    state["judger"]["metrics"] = pass_at_k
+    if result.get("summary_path"):
+        state["judger"]["output_summary_path"] = result["summary_path"]
+    # code 走 evalplus 容器，指标已经算好（百分数口径）；text2sql 还是老的
+    # pass_at_k 字典（小数口径），两条路径在这里统一收口。
+    metrics = result.get("metrics") or dict(result.get("pass_at_k", {}))
+    state["judger"]["metrics"] = metrics
     writer(StreamEvent(
         current=state.get("current"), progress=1.0, message="评测完成",
         data={
             "output_result_path": state["judger"]["output_result_path"],
-            "metrics": json.dumps(pass_at_k, ensure_ascii=False) if pass_at_k else "",
+            "metrics": json.dumps(metrics, ensure_ascii=False) if metrics else "",
         }))
     return state
 
@@ -475,7 +706,33 @@ def _step_eval_general_text(state: Dict[str, Any], writer) -> Dict[str, Any]:
     """
 
     from loopai.skills.Judger.utils.eval_general_text import run_eval_general_text
-    return run_eval_general_text(state, writer)
+    state = run_eval_general_text(state, writer)
+    # Keep an externally started/evaluated vLLM endpoint available for the
+    # subsequent Obtainer rollout path.  The old runner used to clean up only
+    # at the end of code/text2sql; general-text now follows the same contract.
+    judger = state.get("judger") or {}
+    model_path = judger.get("eval_model_path") or judger.get("vllm_model_path")
+    base_url = judger.get("eval_base_url") or judger.get("vllm_base_url")
+    if model_path and base_url:
+        try:
+            from loopai.schema.model_pool import register_running_vllm
+            registered = register_running_vllm(
+                str(model_path),
+                str(base_url),
+                name=f"eval:{state.get('task_id') or 'current'}",
+                task_id=str(state.get("task_id") or "") or None,
+                pid=judger.get("vllm_pid"),
+                port=judger.get("vllm_port"),
+                command=judger.get("vllm_command"),
+                workspace=Path.cwd(),
+                persist=True,
+            )
+            judger["vllm_model_pool_entry"] = registered.config_dict(include_secret=False)
+            judger["vllm_keep_alive"] = True
+            state["judger"] = judger
+        except Exception as exc:
+            logger.warning("failed to register general-text vLLM in model pool: %s", exc)
+    return state
 
 
 def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
@@ -487,8 +744,9 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
         "start_vllm": _step_start_vllm,
         "format_data": _step_format_data,
         "generate": _step_generate,
+        "sanitize": _step_sanitize,
         "evaluate": _step_evaluate,
-        "kill_vllm_cleanup": _step_kill_vllm,
+        "kill_vllm_cleanup": _step_retain_vllm,
         "eval_general_text": _step_eval_general_text,
     }
     if step in dispatch:
@@ -504,29 +762,50 @@ def _run_step(step_name: str, state: Dict[str, Any], writer) -> Dict[str, Any]:
 
 
 def _apply_bench_to_state(state: Dict[str, Any], bench: Dict[str, Any]) -> None:
-    """将 bench entry 的字段注入到 state["judger"]，使标准 pipeline 可直接运行。"""
+    """将 bench entry 的字段注入到 state["judger"]，使标准 pipeline 可直接运行。
+
+    支持 per-bench 可选覆盖：case_num / batch_size / temperature / top_p /
+    top_k / min_p / max_tokens / enable_thinking 在 bench 里设置时覆盖全局默认值，
+    方便单个 bench 的特殊需求（例如某个评测集需要更低的 temperature 或关闭思考模式）。
+    """
     judger = state.setdefault("judger", {})
-    # 清除上一个 bench 的字段，避免残留
-    for k in ("eval_format_type", "eval_text2sql_dir",
+
+    # 1. 重置可覆盖字段到全局默认值（避免上一个 bench 的值残留到下一个）
+    defaults = state.get("_judger_override_defaults") or {}
+    for _, judger_key in _BENCH_OVERRIDE_MAP.items():
+        default_val = defaults.get(judger_key)
+        if default_val is not None:
+            judger[judger_key] = default_val
+        else:
+            judger.pop(judger_key, None)
+
+    # 2. 清除 bench 特有字段，避免残留
+    for k in ("format_type", "eval_text2sql_dir",
               "bench_dataflow_eval_type", "key_mapping"):
         judger.pop(k, None)
+
+    # 3. 必填字段（每个 bench 都必须有）
     judger["eval_task_type"] = bench.get("task_type", "code")
     judger["eval_problem_path"] = bench.get("problem_path", "")
+    # 题目文件现在就是 bench 给的这一份（不再有中间转换产物）；留着给 CLI 显示用。
+    judger["output_problem_path"] = judger["eval_problem_path"]
     judger["bench_name"] = bench.get("name", "")
-    if bench.get("case_num") is not None:
-        judger["eval_case_num"] = bench["case_num"]
-    else:
-        judger.setdefault("eval_case_num", 10)
-    if bench.get("batch_size") is not None:
-        judger["eval_batch_size"] = bench["batch_size"]
-    else:
-        judger.setdefault("eval_batch_size", 10)
+
+    # 4. bench 特有字段（可选）
+    if bench.get("format_type"):
+        # 原样搬到 judger 上（步骤只拿到 state，拿不到 bench 本身）：code 靠它选评测
+        # 数据集（humaneval+ / mbpp+）。
+        judger["format_type"] = bench["format_type"]
     if bench.get("text2sql_dir"):
         judger["eval_text2sql_dir"] = bench["text2sql_dir"]
     if bench.get("eval_type"):
         judger["bench_dataflow_eval_type"] = bench["eval_type"]
     if bench.get("key_mapping"):
         judger["key_mapping"] = bench["key_mapping"]
+    # 5. 可选覆盖字段（bench 里设置则覆盖全局，未设置保持全局默认）
+    for bench_key, judger_key in _BENCH_OVERRIDE_MAP.items():
+        if bench_key in bench and bench[bench_key] is not None:
+            judger[judger_key] = bench[bench_key]
 
 
 def _run_single_bench(
@@ -540,6 +819,8 @@ def _run_single_bench(
     task_type = bench["task_type"]
     if task_type == "general_text":
         steps = _GENERAL_TEXT_STEPS
+    elif task_type == "code":
+        steps = _CODE_STEPS
     else:
         steps = _CODE_TEXTSQL_STEPS
 
@@ -654,6 +935,9 @@ def run_judger_pipeline(
 
     state.setdefault("judger", {})
     resolve_judger_runtime_config(state, task_id=task_id)
+    state["_judger_override_defaults"] = {
+        key: state["judger"].get(key) for key in _BENCH_OVERRIDE_MAP.values()
+    }
 
     # task_id 优先用 state["task_id"]，回退到显式传参
     task_id = state.get("task_id") or task_id or ""
@@ -703,6 +987,13 @@ def run_judger_pipeline(
             stream_writer=writer,
             message="Both benchlist and extra_benchlist are empty. Please configure at least one bench.",
         )
+
+    _, primary_problems = _preflight_benches(benchlist, "benchlist")
+    if primary_problems:
+        _emit_bench_config_error(primary_problems, writer, "; ".join(primary_problems))
+    extra_benchlist, extra_problems = _preflight_benches(extra_benchlist, "extra_benchlist")
+    if extra_problems:
+        logger.warning("Skipping invalid extra benchmarks: %s", extra_problems)
 
     writer(StreamEvent(
         current="judger", progress=0.0, message="Judger pipeline started",

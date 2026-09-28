@@ -332,6 +332,20 @@ class Text2SQLSQLitePrepare(Operator):
         for row in batch:
             schema_sql = str(row.get("text2sql_schema") or "").strip()
             query_sql = str(row.get("text2sql_sql") or "").strip()
+            # sqlite3 accepts execute("") and executescript("") without an
+            # error. Missing field adapters must not produce "prepared" empty
+            # databases with empty SQL.
+            row["text2sql_sqlite_prepared"] = False
+            row["text2sql_sqlite_error"] = None
+            row["sql_execution_valid"] = False
+            row.pop("text2sql_database_path", None)
+            row.pop("sql_validation_scope", None)
+            if not _DDL.search(schema_sql):
+                row["text2sql_sqlite_error"] = "schema_has_no_create_table"
+                continue
+            if not _is_read_only_sql(query_sql):
+                row["text2sql_sqlite_error"] = "assistant_sql_not_read_only_query"
+                continue
             digest = hashlib.sha256(
                 f"{row.get('sample_id', '')}\0{schema_sql}".encode("utf-8")
             ).hexdigest()[:20]
@@ -364,6 +378,7 @@ class Text2SQLSQLitePrepare(Operator):
             row["question"] = self._question(row)
             row["db_id"] = db_id
             row["text2sql_database_path"] = str(db_path)
+            row["sql_validation_scope"] = "inline_fixture"
             accepted.append(row)
         return accepted
 
@@ -772,6 +787,7 @@ class Text2SQLSFTValidate(Operator):
             row["text2sql_valid"] = error is None
             row["text2sql_error"] = error
             row["sql_execution_valid"] = error is None
+            row["sql_validation_scope"] = "inline_fixture"
             row.pop("_qa_source_text", None)
             row.pop("text2sql_schema", None)
             row.pop("text2sql_sql", None)

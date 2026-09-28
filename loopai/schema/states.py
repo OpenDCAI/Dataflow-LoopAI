@@ -394,6 +394,35 @@ class ObtainerState(BaseModel):
 
 
 class JudgerState(BaseModel):
+    eval_enable_thinking: Optional[bool] = Field(
+        default=None,
+        title="评估模型思考模式",
+        description="通过 chat_template_kwargs 显式开启或关闭思考模式；不设置时跟随模型默认。",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"},
+    )
+    eval_max_tokens: int = Field(
+        default=16384,
+        title="评估模型最大输出 Token",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"},
+    )
+    eval_model_name: str = Field(
+        default="",
+        title="远程模型名称",
+        description="vLLM 对外提供的模型名称；留空时使用模型路径的最后一段。",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"},
+    )
+    benchmark: str = Field(
+        default="",
+        title="Benchmark Skill",
+        description="可插拔 benchmark skill 名称；为空时使用 benchlist。",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"},
+    )
+    lake: str = Field(
+        default="",
+        title="Benchmark 数据湖",
+        description="DataMixer warehouse 或 lake.yaml 指针，挂载为只读 benchmark 数据。",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"},
+    )
     eval_model_path: str = Field(
         default=None,
         title="评估模型路径",
@@ -515,6 +544,42 @@ class JudgerState(BaseModel):
 
 
 class AnalyzerState(BaseModel):
+    benchmark: str = Field(
+        default="",
+        title="Benchmark Skill",
+        description="可插拔 benchmark skill 名称；为空时沿用现有分析状态。",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"},
+    )
+    lake: str = Field(
+        default="",
+        title="Benchmark 数据湖",
+        description="DataMixer warehouse 或 lake.yaml 指针，挂载为只读 benchmark 数据。",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"},
+    )
+    dataset: str = Field(
+        default="",
+        title="Benchmark 数据集",
+        description="DataMixer catalog 中的数据集名称或 id。",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"},
+    )
+    snapshot_id: str = Field(
+        default="",
+        title="Benchmark Snapshot",
+        description="可选的 DataMixer snapshot id，用于固定评测数据版本。",
+        json_schema_extra={"ui_type": "text", "ui_group": "分析模型"},
+    )
+    sdk_worker: bool = Field(
+        default=False,
+        title="使用 Codex SDK Worker",
+        description="通过 benchmark skill + Codex SDK 执行评测/分析。",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "分析模型"},
+    )
+    judger_report: str = Field(
+        default="",
+        title="Judger Report",
+        description="SDK Analyzer 读取的 Judger structured report 路径。",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"},
+    )
     eval_result_path: str = Field(
         default="",
         title="评测结果路径",
@@ -528,11 +593,11 @@ class AnalyzerState(BaseModel):
     analyze_task_type: str = Field(
         default="code",
         title="分析任务类型",
-        description="分析任务类型, 支持代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text)",
+        description="分析任务类型, 支持代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text), 数学(math)",
         json_schema_extra={
             "ui_type": "list",
             "ui_group": "分析模型",
-            "allowed_values": ["code", "text2sql", "general_text"]
+            "allowed_values": ["code", "text2sql", "general_text", "math"]
         }
     )
 
@@ -731,6 +796,30 @@ class AnalyzerState(BaseModel):
         default="",
         title="数据构造建议路径",
         description="analyze_metric_report_node 生成的数据构造/优化建议文本路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_bundle_root: str = Field(
+        default="",
+        title="Math 报告总目录",
+        description="可选；留空时在当前 version_id 输出目录下创建数学评测最终报告目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_bundle_dir: str = Field(
+        default="",
+        title="Math 报告实际总目录",
+        description="Math 报告节点实际生成的总目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_dataset_dir: str = Field(
+        default="",
+        title="Math 数据集报告目录",
+        description="当前数学数据集五份人类可读报告所在目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_overview_path: str = Field(
+        default="",
+        title="Math 报告总览路径",
+        description="数学评测最终报告目录中的人类可读总览文件",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
     )
 
@@ -932,15 +1021,15 @@ class TrainerState(BaseModel):
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"},
     )
     verl_use_previous_best_model: bool = Field(
-        default=True,
-        title="使用上一轮最佳模型",
-        description="上一轮成功导出 Hugging Face 模型后，自动作为下一轮 GRPO 初始模型",
+        default=False,
+        title="固定使用待训练模型",
+        description="增量数据轮次始终使用 train_input_model_name；上一轮最佳模型不自动作为下一轮输入",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"},
     )
     verl_multi_round_enabled: bool = Field(
         default=True,
         title="启用 Verl 多轮衔接",
-        description="确保保存 checkpoint 并导出下一轮可直接加载的 Hugging Face 模型",
+        description="保存每轮 checkpoint 和训练结果，供评测与版本追踪使用",
         json_schema_extra={"ui_type": "toggle_switch", "ui_group": "训练模型"},
     )
     CUDA_VISIBLE_DEVICES: str = Field(
@@ -975,8 +1064,8 @@ class TrainerState(BaseModel):
     )
     train_input_model_name: str = Field(
         default="",
-        title="训练模型名称",
-        description="训练模型名称",
+        title="待训练模型",
+        description="每轮数据增量训练使用的固定基础模型；不会自动替换为上一轮 checkpoint",
         json_schema_extra={"ui_type": "text", "ui_group": "训练模型"}
     )
     trainer_persistent_worker: bool = Field(

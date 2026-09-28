@@ -180,8 +180,17 @@ def _merge_records(batch: Batch, records: list[dict], input_key: str,
     for rec in records:
         idx = rec.get(_IDX)
         if idx is None:
-            continue
-        by_idx[int(idx)] = rec
+            raise ValueError(
+                "DataFlow output lost __dm_idx; generated rows require new sample IDs "
+                "and explicit lineage, which this row-preserving bridge does not support"
+            )
+        index = int(idx)
+        if index < 0 or index >= len(batch) or index in by_idx:
+            raise ValueError(
+                "DataFlow output has duplicate or invalid __dm_idx; one-to-many "
+                "generation requires a separate dataset with explicit lineage"
+            )
+        by_idx[index] = rec
 
     out: Batch = []
     for i, row in enumerate(batch):

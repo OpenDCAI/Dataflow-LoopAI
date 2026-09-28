@@ -32,7 +32,7 @@ class WebPageActionAgent(BaseAgent):
     def __init__(
         self,
         browser_manager: PlaywrightBrowserManager,
-        model_name: str = "gpt-4o-mini",
+        model_name: Optional[str] = None,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.7,
@@ -49,6 +49,13 @@ class WebPageActionAgent(BaseAgent):
             temperature: LLM temperature
             prompt_template_dir: Prompt template directory
         """
+        from .model_pool import resolve_obtainer_codex_provider
+        provider = resolve_obtainer_codex_provider()
+        # Keep constructor arguments for source compatibility, but never let
+        # them select a task-scoped or vendor provider.
+        model_name = provider["model"]
+        base_url = provider["base_url"]
+        api_key = provider["api_key"]
         # Create Playwright action tools (MCP-based)
         playwright_tools = PlaywrightActionTools(browser_manager)
         # Tools will be initialized asynchronously, start with empty list
@@ -63,7 +70,7 @@ class WebPageActionAgent(BaseAgent):
             prompt_template_dir=prompt_template_dir,
         )
         
-        # Override prompt_loader to use obtainer_prompt.json
+        # Use the configured prompt directory.
         self.prompt_loader = PromptLoader(prompt_template_dir)
         self.browser_manager = browser_manager
         self.playwright_tools = playwright_tools
@@ -454,4 +461,3 @@ class WebPageActionAgent(BaseAgent):
                 "reasoning": f"Error: {str(e)}",
                 "confidence": 0.0,
             }
-

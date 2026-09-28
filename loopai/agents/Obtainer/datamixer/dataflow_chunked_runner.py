@@ -22,6 +22,10 @@ processing: the agent must never load the whole export into memory.
 from __future__ import annotations
 
 import argparse
+import fcntl
+from functools import wraps
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+import hashlib
 import json
 import os
 import re
@@ -70,8 +74,13 @@ def slice_input(input_path: Path, chunk_dir: Path, chunk_size: int) -> list[tupl
     current: Path | None = None
     handle = None
     written = 0
+    seen_ids: set[str] = set()
     try:
         for record in iter_jsonl(input_path):
+            sid = str(record["sample_id"])
+            if sid in seen_ids:
+                raise ChunkedRunnerError(f"input contains duplicate sample_id: {sid}")
+            seen_ids.add(sid)
             if current is None or written >= chunk_size:
                 if handle is not None:
                     handle.close()
@@ -112,12 +121,15 @@ def run_pipeline_chunk(
     *,
     python: str,
     prefix: str = PIPELINE_PREFIX,
+    lock_fd: int | None = None,
 ) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env["DATAFLOW_INPUT"] = str(chunk_file)
     env["DATAFLOW_CACHE_DIR"] = str(cache_dir)
     env["DATAFLOW_PREFIX"] = prefix
+    env["DATAFLOW_OUTPUT"] = str(cache_dir / "pipeline_output.jsonl")
+    env["DATAFLOW_RUN_ID"] = "chunk-" + hashlib.sha256(str(cache_dir).encode()).hexdigest()[:20]
     # DataFlow LLM operators route through the Starter model-pool default model
     # (response proxy), so the key/endpoint/model are injected here instead of
     # requiring an ad-hoc export before every full run.
@@ -130,13 +142,13 @@ def run_pipeline_chunk(
         if llm_cfg.get("api_url"):
             env.setdefault("DF_API_URL", llm_cfg["api_url"])
         if llm_cfg.get("model_name"):
-            env.setdefault("DF_MODEL", llm_cfg["model_name"])
+            env.setdefault("DF_MODEL_NAME", llm_cfg["model_name"])
     except Exception:
         pass
     stdout_path = cache_dir / "pipeline.stdout.log"
     stderr_path = cache_dir / "pipeline.stderr.log"
-    with stdout_path.open("w", encoding="utf-8") as out_fh, \
-         stderr_path.open("w", encoding="utf-8") as err_fh:
+    with stdout_path.open("a", encoding="utf-8") as out_fh, \
+         stderr_path.open("a", encoding="utf-8") as err_fh:
         proc = subprocess.run(
             [python, str(pipeline)],
             env=env,
@@ -144,6 +156,7 @@ def run_pipeline_chunk(
             stdout=out_fh,
             stderr=err_fh,
             text=True,
+            pass_fds=(lock_fd,) if lock_fd is not None else (),
         )
     if proc.returncode != 0:
         tail = _tail(stderr_path, 40) or _tail(stdout_path, 40)
@@ -182,6 +195,15 @@ def merge_chunk(
             )
         output_by_sid[sid] = record
 
+    input_ids = {str(source["sample_id"]) for source in iter_jsonl(input_path)}
+    unknown_ids = sorted(set(output_by_sid) - input_ids)
+    if unknown_ids:
+        raise ChunkedRunnerError(
+            f"processed chunk {processed_path.name} has sample_ids outside the input: "
+            + ", ".join(unknown_ids[:5])
+            + "; generated rows need an explicit append/lineage contract"
+        )
+
     dropped = 0
     for source in iter_jsonl(input_path):
         sid = str(source["sample_id"])
@@ -207,6 +229,23 @@ def merge_chunk(
     return dropped
 
 
+def _exclusive_run(function):
+    @wraps(function)
+    def locked(*args, **kwargs):
+        root = Path(kwargs["cache_root"]).resolve()
+        root.parent.mkdir(parents=True, exist_ok=True)
+        # Keep a stable inode outside the removable cache. Children inherit the
+        # lock, preventing duplicate resumes even if the coordinator is killed.
+        with (root.parent / (root.name + ".lock")).open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise ChunkedRunnerError("another runner or pipeline still owns this cache") from None
+            return function(*args, **kwargs, _lock_fd=lock.fileno())
+    return locked
+
+
+@_exclusive_run
 def run_chunked(
     *,
     input_path: Path,
@@ -216,6 +255,11 @@ def run_chunked(
     chunk_size: int = 10000,
     python: str | None = None,
     keep_cache: bool = False,
+    resume: bool = False,
+    workers: int = 1,
+    resource_manifest: Path | None = None,
+    max_chunk_attempts: int = 1,
+    _lock_fd: int | None = None,
 ) -> dict[str, Any]:
     started = time.time()
     input_path = input_path.resolve()
@@ -229,18 +273,54 @@ def run_chunked(
         raise ChunkedRunnerError(f"pipeline not found: {pipeline}")
     if chunk_size <= 0:
         raise ChunkedRunnerError("chunk_size must be positive")
+    if workers <= 0:
+        raise ChunkedRunnerError("workers must be positive")
+    if max_chunk_attempts <= 0:
+        raise ChunkedRunnerError("max_chunk_attempts must be positive")
+
+    def digest(path: Path) -> str:
+        with path.open("rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest()
+
+    def save(path: Path, value: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(path)
 
     chunk_dir = cache_root / "chunks"
-    if cache_root.exists():
-        shutil.rmtree(cache_root)
-    chunks = slice_input(input_path, chunk_dir, chunk_size)
+    contract = {"input": str(input_path), "input_sha256": digest(input_path),
+                "pipeline": str(pipeline), "pipeline_sha256": digest(pipeline),
+                "chunk_size": chunk_size, "python": python,
+                "resource_manifest_sha256": digest(resource_manifest) if resource_manifest else None}
+    manifest_path = cache_root / "run_manifest.json"
+    if resume and manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text())
+        if manifest.get("contract") != contract:
+            raise ChunkedRunnerError("resume input/pipeline/resource contract differs from cached run")
+        chunks = []
+        for item in manifest["chunks"]:
+            path = Path(item["path"])
+            if not path.is_file() or digest(path) != item["sha256"]:
+                raise ChunkedRunnerError(f"resume chunk changed or missing: {path}")
+            chunks.append((path, item["rows"]))
+    else:
+        if cache_root.exists() and any(cache_root.iterdir()):
+            raise ChunkedRunnerError("cache already exists; use --resume with its original input and pipeline")
+        chunks = slice_input(input_path, chunk_dir, chunk_size)
+        save(manifest_path, {"contract": contract, "chunks": [
+            {"path": str(path), "rows": count, "sha256": digest(path)} for path, count in chunks]})
 
     report: dict[str, Any] = {
         "ok": True,
+        "state": "running",
         "input": str(input_path),
         "pipeline": str(pipeline),
         "output": str(output_path),
         "chunk_size": chunk_size,
+        "workers": workers,
+        "resume": resume,
+        "max_chunk_attempts": max_chunk_attempts,
         "total_input_rows": sum(count for _, count in chunks),
         "total_output_rows": 0,
         "total_dropped_rows": 0,
@@ -250,39 +330,97 @@ def run_chunked(
     }
     added_fields: set[str] = set()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with output_path.open("w", encoding="utf-8") as out_fh:
-            for index, (chunk_file, input_rows) in enumerate(chunks):
-                cache_dir = cache_root / f"chunk_{index:05d}"
-                try:
-                    processed_path = run_pipeline_chunk(
-                        pipeline, chunk_file, cache_dir, python=python
-                    )
-                    dropped = merge_chunk(
-                        chunk_file, processed_path, out_fh, added_fields=added_fields
-                    )
-                except ChunkedRunnerError as exc:
-                    report["ok"] = False
-                    report["errors"].append(str(exc))
-                    break
-                output_rows = input_rows - dropped
-                report["chunks"].append({
-                    "index": index,
-                    "input_rows": input_rows,
-                    "output_rows": output_rows,
-                    "dropped_rows": dropped,
-                    "cache_dir": str(cache_dir),
-                    "processed_file": str(processed_path),
-                })
-                report["total_output_rows"] += output_rows
-                report["total_dropped_rows"] += dropped
-        if report["ok"]:
-            report["added_fields"] = sorted(added_fields)
-    except ChunkedRunnerError as exc:
-        report["ok"] = False
-        report["errors"].append(str(exc))
-    finally:
+
+    def process_chunk(index: int) -> dict:
+        chunk_file, input_rows = chunks[index]
+        cache_dir = cache_root / f"chunk_{index:05d}"
+        receipt_path = cache_dir / "completed.json"
+        if resume and receipt_path.is_file():
+            receipt = json.loads(receipt_path.read_text())
+            if (receipt.get("input_sha256") != digest(chunk_file)
+                    or receipt.get("pipeline_sha256") != contract["pipeline_sha256"]
+                    or receipt.get("index") != index or receipt.get("input_rows") != input_rows):
+                raise ChunkedRunnerError(f"completed chunk contract changed: {cache_dir}")
+            for file_key, hash_key in (("processed_file", "processed_sha256"), ("merged_file", "merged_sha256")):
+                path = Path(receipt[file_key])
+                if not path.is_file() or digest(path) != receipt[hash_key]:
+                    raise ChunkedRunnerError(f"completed chunk artifact changed: {path}")
+            return {**receipt, "reused_completed_chunk": True}
+        for attempt in range(max_chunk_attempts):
+            try:
+                processed_path = run_pipeline_chunk(pipeline, chunk_file, cache_dir, python=python, lock_fd=_lock_fd)
+                counts_path = cache_dir / "final_counts.json"
+                if counts_path.exists():
+                    counts = json.loads(counts_path.read_text())
+                    faults = {key: value for key, value in counts.items()
+                              if (key == "operational_fault_rows" or key.endswith("_operational_fault_rows"))
+                              and value}
+                    if faults:
+                        raise ChunkedRunnerError(
+                            f"pipeline reported operational faults {faults}; request caches preserved for retry")
+                break
+            except ChunkedRunnerError:
+                if attempt + 1 == max_chunk_attempts:
+                    raise
+                time.sleep(min(30, 5 * (attempt + 1)))
+        merged_path = cache_dir / "merged.jsonl"
+        chunk_fields: set[str] = set()
+        with merged_path.open("w", encoding="utf-8") as merged:
+            dropped = merge_chunk(chunk_file, processed_path, merged, added_fields=chunk_fields)
+        receipt = {"index": index, "input_rows": input_rows, "output_rows": input_rows - dropped,
+                   "input_sha256": digest(chunk_file), "pipeline_sha256": contract["pipeline_sha256"],
+                   "attempts_this_run": attempt + 1,
+                   "dropped_rows": dropped, "cache_dir": str(cache_dir),
+                   "processed_file": str(processed_path), "processed_sha256": digest(processed_path),
+                   "merged_file": str(merged_path), "merged_sha256": digest(merged_path),
+                   "added_fields": sorted(chunk_fields), "reused_completed_chunk": False}
+        save(receipt_path, receipt)
+        return receipt
+
+    completed: dict[int, dict] = {}
+    def progress() -> None:
+        report["chunks"] = [completed[i] for i in sorted(completed)]
+        report["completed_chunks"] = len(completed)
+        report["total_output_rows"] = sum(c["output_rows"] for c in completed.values())
+        report["total_dropped_rows"] = sum(c["dropped_rows"] for c in completed.values())
         report["duration_seconds"] = round(time.time() - started, 2)
+        save(cache_root / "progress.json", report)
+
+    try:
+        progress()
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            next_index = 0
+            pending = {}
+            while pending or (report["ok"] and next_index < len(chunks)):
+                while report["ok"] and next_index < len(chunks) and len(pending) < workers:
+                    pending[pool.submit(process_chunk, next_index)] = next_index
+                    next_index += 1
+                ready, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in ready:
+                    index = pending.pop(future)
+                    try:
+                        completed[index] = future.result()
+                    except Exception as exc:
+                        report["ok"] = False
+                        report["errors"].append(f"chunk {index}: {type(exc).__name__}: {exc}")
+                progress()
+        if report["ok"]:
+            temporary_output = output_path.with_suffix(output_path.suffix + ".partial")
+            with temporary_output.open("w", encoding="utf-8") as out_fh:
+                for index in range(len(chunks)):
+                    receipt = completed[index]
+                    with Path(receipt["merged_file"]).open(encoding="utf-8") as merged:
+                        shutil.copyfileobj(merged, out_fh)
+                    added_fields.update(receipt["added_fields"])
+            temporary_output.replace(output_path)
+            report["added_fields"] = sorted(added_fields)
+    except Exception as exc:
+        report["ok"] = False
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+    finally:
+        report["state"] = "completed" if report["ok"] else "failed"
+        report["duration_seconds"] = round(time.time() - started, 2)
+        progress()
         if report["ok"] and not keep_cache:
             shutil.rmtree(cache_root, ignore_errors=True)
     return report
@@ -310,6 +448,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="JSON report path (default: <output>.report.json)")
     parser.add_argument("--keep-cache", action="store_true",
                         help="keep chunk/cache scratch dir after success")
+    parser.add_argument("--resume", action="store_true", help="reuse verified completed chunks and preserve request caches")
+    parser.add_argument("--workers", type=int, default=1, help="maximum concurrent isolated chunk subprocesses")
+    parser.add_argument("--resource-manifest", type=Path, help="pin the database/resource manifest hash across resume")
+    parser.add_argument("--max-chunk-attempts", type=int, default=1,
+                        help="retry failed pipeline/operational-fault chunks while preserving their request caches")
     return parser
 
 
@@ -327,6 +470,10 @@ def main(argv: list[str] | None = None) -> int:
             chunk_size=args.chunk_size,
             python=args.python,
             keep_cache=args.keep_cache,
+            resume=args.resume,
+            workers=args.workers,
+            resource_manifest=args.resource_manifest,
+            max_chunk_attempts=args.max_chunk_attempts,
         )
     except ChunkedRunnerError as exc:
         report = {

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Standalone code/text2sql evaluation — no LangGraph dependency.
+"""Standalone text2sql evaluation — no LangGraph dependency.
 
 Extracted from ``loopai.agents.Judger.utils.oj.evaluate``,
 replaced ``get_stream_writer()`` with a passed-in ``writer`` parameter.
@@ -18,7 +18,6 @@ import numpy as np
 import tqdm
 
 from loopai.skills.Judger.utils.data import write_jsonl, stream_jsonl, read_problems
-from loopai.skills.Judger.utils.execution import check_correctness
 from loopai.skills.Judger.utils.execution_sql import compare_sql_wrapper
 from loopai.common.event_tool import StreamEvent
 from loopai.logger import get_logger
@@ -120,80 +119,6 @@ def _check_eval_output_health(
                 f"all sampled outputs are empty — check model/vLLM health."
             ),
         )
-
-
-def run_evaluate_code(state: Dict[str, Any], writer) -> Dict[str, Any]:
-    """评测代码样本，返回 pass@k 和 result_path。"""
-    state_task_id = state.get("task_id")
-    judger_state = state.get("judger", {})
-    output_dir = Path(state.get("output_dir"))
-    problem_path = judger_state["eval_problem_path"]
-    bench_name = judger_state.get("bench_name", Path(problem_path).stem)
-    test_case_path = str(
-        output_dir / str(state_task_id) / "judger" / writer.version_id
-        / bench_name / f"{bench_name}_sample.jsonl"
-    )
-    result_path = str(
-        output_dir / str(state_task_id) / "judger" / writer.version_id
-        / bench_name / f"{bench_name}_result.jsonl"
-    )
-    case_num = judger_state.get("eval_case_num", 10)
-    task_type = judger_state["eval_task_type"]
-
-    k = list(map(int, K.split(",")))
-    problems = read_problems(problem_path)
-    total_samples = len(problems) * case_num
-
-    with ThreadPoolExecutor(max_workers=N_WORKERS) as executor:
-        futures = []
-        completion_id = Counter()
-        n_samples = 0
-        results = defaultdict(list)
-
-        logger.info("Reading samples...")
-        for sample in tqdm.tqdm(stream_jsonl(test_case_path)):
-            task_id = sample["task_id"]
-            completion = sample["completion"]
-            args = (problems[task_id], completion, TIMEOUT, completion_id[task_id])
-            futures.append(executor.submit(check_correctness, *args))
-            completion_id[task_id] += 1
-            n_samples += 1
-            writer(StreamEvent(
-                current=state.get("current", "judger"),
-                progress=round(n_samples / total_samples, 1),
-                message=f"{task_type}任务样本提交进度",
-                data={"progress_detail": f"{n_samples}/{total_samples}"}))
-
-        assert len(completion_id) == len(problems), "Some problems are not attempted."
-
-        n_samples2 = 0
-        logger.info("Running test suites...")
-        for future in tqdm.tqdm(as_completed(futures), total=len(futures)):
-            result = future.result()
-            results[result["task_id"]].append((result["completion_id"], result))
-            n_samples2 += 1
-            writer(StreamEvent(
-                current=state.get("current", "judger"),
-                progress=round(n_samples2 / total_samples, 1),
-                message=f"{task_type}任务样本评测进度",
-                data={"progress_detail": f"{n_samples2}/{total_samples}"}))
-
-    pass_at_k = _calculate_pass_at_k(k, results)
-
-    def combine_results():
-        for sample in stream_jsonl(test_case_path):
-            task_id = sample["task_id"]
-            r = results[task_id].pop(0)
-            sample["result"] = r[1]["result"]
-            sample["passed"] = r[1]["passed"]
-            yield sample
-
-    logger.info(f"Writing results to {result_path}...")
-    write_jsonl(result_path, tqdm.tqdm(combine_results(), total=n_samples))
-    _write_evaluate_log(pass_at_k, result_path, test_case_path, problem_path)
-    _check_eval_output_health(result_path, task_type, writer=writer)
-
-    return {"pass_at_k": pass_at_k, "result_path": result_path}
 
 
 def run_evaluate_text2sql(state: Dict[str, Any], writer) -> Dict[str, Any]:

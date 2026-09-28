@@ -75,6 +75,39 @@ class MetricDispatcher:
         获取数据集的指标配置 (仅查表)。
         """
         
+        # New benchmark skills may provide an explicit metric plan.  Consult
+        # that contract first; the static one-eval mapping below remains a
+        # compatibility fallback for legacy gallery benchmarks.
+        try:
+            from loopai.skills.benchmarks import get_benchmark
+            plugin = get_benchmark(dataset_name)
+            manifest = plugin.manifest or {}
+            skill_plan = manifest.get("metric_plan") or manifest.get("metrics")
+            if isinstance(skill_plan, list) and skill_plan:
+                # A skill may provide either a compact list of names or a
+                # fully specified plan.  Preserve explicit priority/args so
+                # metric_score_node receives the contract authored by the
+                # benchmark, while retaining the legacy defaults for names.
+                if all(isinstance(item, dict) for item in skill_plan):
+                    result: list[dict[str, Any]] = []
+                    for index, item in enumerate(skill_plan):
+                        name = item.get("name")
+                        if not name:
+                            continue
+                        entry: dict[str, Any] = {
+                            "name": str(name),
+                            "priority": item.get("priority")
+                            or ("primary" if index == 0 else "secondary"),
+                        }
+                        if isinstance(item.get("args"), dict):
+                            entry["args"] = dict(item["args"])
+                        result.append(entry)
+                    if result:
+                        return result
+                return self._inflate_metrics([str(item) for item in skill_plan if item])
+        except Exception:
+            pass
+
         # 1. 预处理
         raw_name = dataset_name.lower().strip()
         normalized_name = self._normalize_key(raw_name)

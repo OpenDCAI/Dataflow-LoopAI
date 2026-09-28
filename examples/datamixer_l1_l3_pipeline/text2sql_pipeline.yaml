@@ -26,7 +26,6 @@ pipeline:
 
     - name: domain_classify
       args:
-        model: qwen3-14b-fp8
         labels: [text2sql]
         chunk_size: 1
         max_concurrency: 4
@@ -48,7 +47,6 @@ pipeline:
 
     - name: pt_to_sft_text2sql
       args:
-        model: qwen3-14b-fp8
         chunk_size: 1
         max_concurrency: 4
         max_input_chars: 12000

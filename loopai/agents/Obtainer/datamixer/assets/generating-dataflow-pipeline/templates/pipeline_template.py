@@ -3,6 +3,8 @@ Standard DataFlow Pipeline Template
 Follow this structure for all generated pipelines
 """
 
+import os
+
 from dataflow.operators.core_text import PromptedGenerator, PromptedFilter
 from dataflow.serving import APILLMServing_request
 from dataflow.utils.storage import FileStorage
@@ -27,8 +29,8 @@ class CustomPipeline:
 
         # LLM serving configuration
         self.llm_serving = APILLMServing_request(
-            api_url="https://api.openai.com/v1/chat/completions",
-            model_name="gpt-4o",
+            api_url=os.environ["DF_API_URL"],
+            model_name=os.environ["DF_MODEL_NAME"],
             max_workers=10
         )
 
@@ -38,12 +40,15 @@ class CustomPipeline:
 
     def forward(self):
         """
-        Execute pipeline steps sequentially.
-        Each step uses storage.step() to create checkpoint.
+        Execute the pipeline DAG in topological order.
+        Each node uses a branch-specific storage checkpoint. Conditional recovery
+        nodes run only after an explicit scale/quota gate reports a shortfall;
+        recovered rows are revalidated before a provenance-preserving join.
         """
-        # Add operator.run() calls here in execution order
+        # Add operator.run() calls here in dependency order. Materialize split,
+        # skip/activation, join, and per-node counts for every conditional branch.
         # Each run() should specify:
-        # - storage=self.storage.step()
+        # - the storage checkpoint for this DAG node/branch
         # - input_key (field from sample or previous step)
         # - output_key (new field to create)
         pass
