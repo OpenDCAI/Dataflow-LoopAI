@@ -14,7 +14,9 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -111,6 +113,7 @@ class DataStore:
         tokenizer: str | None = None,
         decontaminate: bool = True,
         contamination_threshold: float = 0.8,
+        io_workers: int = 1,
     ) -> IngestResult:
         """Ingest an iterable of records.
 
@@ -121,6 +124,8 @@ class DataStore:
         heuristic) when not supplied, and the tokenizer used is recorded.
         """
         from . import tokenizers
+        if io_workers < 1:
+            raise ValueError("io_workers must be positive")
         defaults = dict(defaults or {})
         batch_quality_level = None
         if "quality_level" in defaults:
@@ -188,24 +193,51 @@ class DataStore:
             from . import contam
 
             contamination_sets = contam.load_sets(self.root)
-        for content, merged in prepared:
-            read_rows += 1
-            if contamination_sets:
-                from . import contam
+        def accepted():
+            nonlocal read_rows, contaminated_rows
+            for content, merged in prepared:
+                read_rows += 1
+                if contamination_sets:
+                    from . import contam
+                    hit, source = contam.match(
+                        utils.extract_text(content), contamination_sets,
+                        threshold=contamination_threshold,
+                    )
+                    if hit:
+                        contaminated_rows += 1
+                        contam_sources[source or "unknown"] += 1
+                        continue
+                if "n_tokens" not in merged:
+                    merged["n_tokens"] = tok.count(utils.extract_text(content))
+                    merged.setdefault("tokenizer", tok.name)
+                yield content, merged
 
-                hit, source = contam.match(
-                    utils.extract_text(content),
-                    contamination_sets,
-                    threshold=contamination_threshold,
-                )
-                if hit:
-                    contaminated_rows += 1
-                    contam_sources[source or "unknown"] += 1
-                    continue
-            if "n_tokens" not in merged:
-                merged["n_tokens"] = tok.count(utils.extract_text(content))
-                merged.setdefault("tokenizer", tok.name)
-            cid, blob_written = self.cas.put_json(content)
+        def stored():
+            eligible = accepted()
+            if io_workers == 1:
+                for content, merged in eligible:
+                    cid, written = self.cas.put_json(content)
+                    yield merged, cid, written
+                return
+            # Only immutable blob I/O runs in threads. Catalog updates retain
+            # their input order, SQLite owner thread and transaction boundary.
+            with ThreadPoolExecutor(max_workers=io_workers) as pool:
+                while batch := list(islice(eligible, io_workers * 4)):
+                    futures, rows = {}, []
+                    for content, merged in batch:
+                        payload = utils.canonical_json(content)
+                        cid = utils.content_id(payload)
+                        if cid not in futures:
+                            futures[cid] = pool.submit(self.cas.put, payload)
+                        rows.append((merged, cid))
+                    counted = set()
+                    for merged, cid in rows:
+                        actual_cid, written = futures[cid].result()
+                        assert actual_cid == cid
+                        yield merged, cid, written and cid not in counted
+                        counted.add(cid)
+
+        for merged, cid, blob_written in stored():
             new += int(blob_written)
             dup += int(not blob_written)
             # unique salt per record keeps every occurrence as its own row
@@ -214,7 +246,7 @@ class DataStore:
             written_rows += int(created)
             merged_rows += int(not created)
             accepted_rows += 1
-            if read_rows % 2000 == 0:
+            if accepted_rows % 2000 == 0:
                 self.catalog.commit()
         self.catalog.commit()
         return IngestResult(

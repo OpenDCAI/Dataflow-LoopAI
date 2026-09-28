@@ -61,59 +61,36 @@
             <p class="feedback-line" :title="warehouseText">{{ warehouseText }}</p>
         </section>
 
-        <section class="status-column pipeline-column">
+        <section class="status-column acquisition-column">
             <header class="column-header">
                 <div>
                     <span class="column-kicker">02</span>
-                    <h3>WebAgent + 流水线</h3>
+                    <h3>数据获取任务</h3>
                 </div>
-                <span :class="['state-label', stateLevel(pipeline.status)]">{{ pipelineStatusText }}</span>
+                <span :class="['state-label', stateLevel(acquisitionState)]">{{ acquisitionStatusText }}</span>
             </header>
 
             <div class="agent-feedback">
-                <span :class="['status-dot', stateLevel(acquisition?.state)]"></span>
+                <span :class="['status-dot', stateLevel(acquisitionState)]"></span>
                 <div>
-                    <strong>Obtainer / WebAgent</strong>
+                    <strong>Dataset acquisition</strong>
                     <p :title="acquisitionFeedback">{{ acquisitionFeedback }}</p>
                 </div>
             </div>
 
-            <div class="queue-table">
-                <div class="queue-row queue-head">
-                    <span>队列</span><span>待处理</span><span>运行中</span><span>已处理</span><span>丢弃</span><span>失败</span>
-                </div>
-                <div class="queue-row">
-                    <strong>WebAgent</strong>
-                    <span>{{ exactNumber(campaignQueue.pending) }}</span>
-                    <span>{{ exactNumber(campaignQueue.running) }}</span>
-                    <span>{{ exactNumber(campaignQueue.succeeded) }}</span>
-                    <span>0</span>
-                    <span :class="{ failed: numberValue(campaignQueue.failed) }">{{ exactNumber(campaignQueue.failed) }}</span>
-                </div>
-                <div v-for="item in pipelineQueues" :key="item.key || item.name" class="queue-row">
-                    <strong :title="item.name">{{ queueLabel(item.name) }}</strong>
-                    <span>{{ exactNumber(item.pending) }}</span>
-                    <span>{{ exactNumber(item.running) }}</span>
-                    <span>{{ exactNumber(item.processed) }}</span>
-                    <span>{{ exactNumber(item.dropped) }}</span>
-                    <span :class="{ failed: numberValue(item.failed) }">{{ exactNumber(item.failed) }}</span>
-                </div>
-                <div v-if="pipelineQueues.length === 0" class="queue-empty">暂无后处理队列</div>
-            </div>
-
-            <div class="subsection compact-metrics pipeline-totals">
-                <div class="inline-metric"><span>WebAgent 总任务</span><strong>{{ exactNumber(campaignQueue.total) }}</strong></div>
-                <div class="inline-metric"><span>流水线已选数据</span><strong>{{ exactNumber(pipeline.selected) }}</strong></div>
-                <div class="inline-metric"><span>采集下载进度</span><strong>{{ exactNumber(acquisition?.download?.processed) }} / {{ exactNumber(acquisition?.download?.total) }}</strong></div>
+            <div class="subsection compact-metrics">
+                <div class="inline-metric"><span>运行目录</span><strong :title="acquisitionRun">{{ acquisitionRun || '-' }}</strong></div>
+                <div class="inline-metric"><span>已入湖数据集</span><strong>{{ exactNumber(acquisitionDatasets) }}</strong></div>
+                <div class="inline-metric"><span>下载进度</span><strong>{{ exactNumber(acquisitionDownload.processed) }} / {{ exactNumber(acquisitionDownload.total) }}</strong></div>
             </div>
 
             <div class="feedback-list">
-                <div v-for="(item, index) in pipelineFeedback" :key="`${item.source}-${index}`" class="feedback-row">
-                    <span :class="['status-dot', stateLevel(item.state)]"></span>
-                    <strong>{{ queueLabel(item.source) }}</strong>
+                <div v-for="(item, index) in acquisitionFeedbackRows" :key="`${item.source}-${index}`" class="feedback-row">
+                    <span :class="['status-dot', item.level]"></span>
+                    <strong>{{ item.source }}</strong>
                     <span :title="item.message">{{ item.message }}</span>
                 </div>
-                <p v-if="pipelineFeedback.length === 0" class="empty-line">等待 WebAgent 和持续流水线反馈</p>
+                <p v-if="acquisitionFeedbackRows.length === 0" class="empty-line">暂无获取任务反馈</p>
             </div>
         </section>
 
@@ -195,7 +172,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useLoopAI } from '@/stores/loopAI'
-import { getWebAgentOverview } from '@/services/obtainerLake'
+import { getDataMixerMonitor } from '@/services/obtainerLake'
 
 const loopAI = useLoopAI()
 const props = defineProps({
@@ -219,24 +196,18 @@ const taskId = computed(() => normalizeText(loopAI.currentTask?.task_id))
 const taskStatus = computed(() => loopAI.taskStatus || {})
 const taskState = computed(() => taskStatus.value.state || {})
 const obtainerState = computed(() => taskState.value.obtainer || {})
-const webcrawlerState = computed(() => taskState.value.webcrawler || {})
-const requestedWarehouse = computed(() => normalizeText(
-    obtainerState.value.warehouse || obtainerState.value.warehouse_root ||
-    webcrawlerState.value.warehouse || webcrawlerState.value.warehouse_root
-))
-const requestedCampaignId = computed(() => normalizeText(
-    obtainerState.value.webagent_campaign_id || obtainerState.value.campaign_id ||
-    webcrawlerState.value.webagent_campaign_id || webcrawlerState.value.campaign_id
-))
 
-const initialized = computed(() => overview.value?.initialized === true)
-const monitor = computed(() => overview.value?.monitor || {})
+const initialized = computed(() => Boolean(
+    overview.value && overview.value.ok !== false &&
+    (overview.value.warehouse || overview.value.config?.warehouse)
+))
+const monitor = computed(() => overview.value?.monitor || overview.value || {})
 const summary = computed(() => monitor.value.summary || {})
 const embedding = computed(() => monitor.value.embedding || {})
 const layerRows = computed(() => overview.value?.layers || [
-    { level: 'L1', label: '原始网页', count: 0, datasets: [] },
-    { level: 'L2', label: '预处理网页', count: 0, datasets: [] },
-    { level: 'L3', label: '初级 SFT', count: 0, datasets: [] }
+    { level: 'L1', label: '原始数据', count: 0, datasets: [] },
+    { level: 'L2', label: '规范化数据', count: 0, datasets: [] },
+    { level: 'L3', label: '训练数据', count: 0, datasets: [] }
 ])
 const lakeMetrics = computed(() => [
     { label: '数据集', value: summary.value.datasets },
@@ -249,21 +220,44 @@ const warehouseText = computed(() => {
     return overview.value?.warehouse || '数据湖已绑定'
 })
 
-const acquisition = computed(() => overview.value?.acquisition || null)
-const campaign = computed(() => overview.value?.campaign || null)
-const campaignQueue = computed(() => campaign.value?.queue || {})
-const pipeline = computed(() => overview.value?.pipeline || {})
-const pipelineQueues = computed(() => Array.isArray(pipeline.value.queues) ? pipeline.value.queues : [])
-const pipelineFeedback = computed(() => Array.isArray(pipeline.value.feedback) ? pipeline.value.feedback.slice(0, 5) : [])
-const pipelineStatusText = computed(() => ({
-    running: '持续运行', queued: '启动中', paused: '已暂停', completed: '已完成',
-    completed_with_errors: '部分失败', failed: '失败', idle: '等待启动'
-}[normalizeText(pipeline.value.status).toLowerCase()] || '等待启动'))
-const acquisitionFeedback = computed(() => acquisition.value?.phase_detail || (
-    initialized.value ? '等待 WebAgent 采集反馈' : '当前任务尚未启动 Obtainer'
+const acquisitionState = computed(() => normalizeText(
+    obtainerState.value.status || obtainerState.value.state || taskStatus.value.status
+).toLowerCase() || 'idle')
+const acquisitionStatusText = computed(() => ({
+    running: '运行中', queued: '启动中', background_started: '启动中',
+    completed: '已完成', completed_with_errors: '部分失败', failed: '失败',
+    interrupted: '已中断', idle: '等待启动'
+}[acquisitionState.value] || '等待启动'))
+const acquisitionRun = computed(() => normalizeText(
+    obtainerState.value.run_dir || obtainerState.value.run ||
+    obtainerState.value.acquisition_run || taskStatus.value.run_dir
 ))
+const acquisitionDatasets = computed(() => numberValue(
+    obtainerState.value.datasets_ingested || obtainerState.value.datasets ||
+    obtainerState.value.final_report?.datasets_ingested
+))
+const acquisitionDownload = computed(() => obtainerState.value.download || {})
+const acquisitionFeedback = computed(() => normalizeText(
+    obtainerState.value.message || obtainerState.value.phase_detail ||
+    taskStatus.value.message
+) || (initialized.value ? '等待数据获取任务反馈' : '当前任务尚未启动 Obtainer'))
+const acquisitionFeedbackRows = computed(() => {
+    const info = taskStatus.value.custom_info || {}
+    return Object.entries(info)
+        .filter(([key, value]) => {
+            const text = `${key} ${value?.message || ''} ${value?.current || ''}`.toLowerCase()
+            return text.includes('obtainer') || text.includes('acquisition') || text.includes('download')
+        })
+        .slice(-5)
+        .reverse()
+        .map(([key, value]) => ({
+            source: key.split('.').slice(-1)[0] || 'acquisition',
+            message: value?.message || value?.current || key,
+            level: value?.data?.error ? 'bad' : stateLevel(value?.state || value?.status)
+        }))
+})
 
-const dataflow = computed(() => overview.value?.dataflow_agent || {})
+const dataflow = computed(() => taskState.value.dataflow_agent || taskState.value.dataflow || {})
 const latestExports = computed(() => {
     const rows = monitor.value.latest?.exports
     return Array.isArray(rows) ? rows.slice(0, 3) : []
@@ -340,13 +334,9 @@ const copyText = async (text) => {
     }
 }
 const operationalActive = computed(() => {
-    const campaignStatus = normalizeText(campaign.value?.status).toLowerCase()
-    const pipelineStatus = normalizeText(pipeline.value?.status).toLowerCase()
     const dataflowStatus = normalizeText(dataflow.value?.state).toLowerCase()
     const backgroundActive = Boolean(
-        acquisition.value?.active ||
-        ['queued', 'running'].includes(campaignStatus) ||
-        ['queued', 'running'].includes(pipelineStatus) ||
+        ['queued', 'running', 'background_started'].includes(acquisitionState.value) ||
         dataflowStatus === 'running'
     )
     return props.running || backgroundActive
@@ -377,12 +367,6 @@ const stateLevel = (state) => {
     if (['failed', 'completed_with_errors', 'interrupted', 'error'].includes(value)) return 'bad'
     return 'idle'
 }
-const queueLabel = (name) => ({
-    webpage_to_pt: '正文提取', domain_classify: '领域分类', pt_to_sft_qa: 'SFT QA',
-    pt_to_sft_code: '代码 SFT', pt_to_sft_text2sql: 'Text2SQL', sft_validate: 'SFT 校验',
-    webagent: 'WebAgent'
-}[normalizeText(name)] || normalizeText(name) || '流水线')
-
 const taskFeedback = computed(() => {
     const info = taskStatus.value.custom_info || {}
     return Object.entries(info)
@@ -401,23 +385,11 @@ const taskFeedback = computed(() => {
 })
 
 const loadOverview = async () => {
-    const requestedTaskId = taskId.value
-    if (!requestedTaskId) {
-        overview.value = null
-        return
-    }
     try {
-        const response = await getWebAgentOverview({
-            lake: '.datamixer/lake.yaml',
-            task_id: requestedTaskId,
-            root: requestedWarehouse.value || undefined,
-            run_id: requestedCampaignId.value || undefined
-        })
-        if (taskId.value !== requestedTaskId) return
-        overview.value = response?.data || null
-        lastError.value = response?.data?.error || ''
+        const response = await getDataMixerMonitor({ lake: '.datamixer/lake.yaml' })
+        overview.value = response?.data || response || null
+        lastError.value = response?.data?.error || response?.error || ''
     } catch (error) {
-        if (taskId.value !== requestedTaskId) return
         overview.value = null
         lastError.value = error?.message || '状态读取失败'
     }
@@ -428,7 +400,7 @@ onMounted(() => {
     refreshTimer = window.setInterval(loadOverview, 10000)
 })
 
-watch([taskId, requestedWarehouse, requestedCampaignId], () => {
+watch(taskId, () => {
     overview.value = null
     lastError.value = ''
     loadOverview()
@@ -530,17 +502,7 @@ onBeforeUnmount(() => {
 .status-dot.running { background: #d99000; }
 .status-dot.bad { background: #d13438; }
 
-.queue-table { margin-top: 4px; border: 1px solid rgba(90, 45, 133, 0.12); overflow: hidden; }
-.queue-row { display: grid; grid-template-columns: minmax(72px, 1.5fr) repeat(5, minmax(38px, 0.65fr)); min-height: 27px; align-items: center; border-top: 1px solid rgba(90, 45, 133, 0.08); font-size: 10px; }
-.queue-row:first-child { border-top: 0; }
-.queue-row > * { min-width: 0; padding: 5px 4px; text-align: right; }
-.queue-row > :first-child { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.queue-head { background: rgba(90, 45, 133, 0.05); color: rgba(65, 65, 65, 0.62); font-size: 9px; }
-.queue-empty { padding: 7px; border-top: 1px solid rgba(90, 45, 133, 0.08); font-size: 10px; color: rgba(65, 65, 65, 0.58); }
 .failed { color: #b4232a; }
-.pipeline-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.pipeline-totals .inline-metric { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-.pipeline-totals .inline-metric strong { text-align: left; }
 
 .feedback-list { display: grid; gap: 5px; margin-top: 10px; }
 .feedback-row, .task-row { display: grid; grid-template-columns: 7px 68px minmax(0, 1fr); gap: 6px; align-items: center; font-size: 10px; }

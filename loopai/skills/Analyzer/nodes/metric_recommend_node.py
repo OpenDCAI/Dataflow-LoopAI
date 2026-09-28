@@ -137,6 +137,26 @@ def metric_recommend_node(state: LoopAIState):
             or "unknown"
         )
 
+    # Benchmark skills are the extensibility boundary.  Their manifest is
+    # recorded in state and may provide a metric plan; the legacy one-eval
+    # dispatcher remains only as a compatibility fallback for gallery entries.
+    benchmark_skill = None
+    try:
+        from loopai.skills.benchmarks import get_benchmark
+        benchmark_skill = get_benchmark(str(bench_name))
+        skill_manifest = dict(benchmark_skill.manifest or {})
+        state.setdefault("analyzer", {})["benchmark_skill"] = {
+            "name": benchmark_skill.name,
+            "version": benchmark_skill.version,
+            "task_type": benchmark_skill.task_type,
+            "analysis_dimensions": list(benchmark_skill.analysis_dimensions),
+            "eval_capabilities": list(benchmark_skill.eval_capabilities),
+            "guard_name": benchmark_skill.guard_name,
+            "manifest": skill_manifest,
+        }
+    except Exception:
+        benchmark_skill = None
+
     _emit(
         writer,
         "开始推荐指标",
@@ -148,11 +168,18 @@ def metric_recommend_node(state: LoopAIState):
     )
 
     recommended = []
+    if benchmark_skill is not None:
+        skill_metrics = (benchmark_skill.manifest or {}).get("metric_plan") or (benchmark_skill.manifest or {}).get("metrics")
+        if isinstance(skill_metrics, list):
+            recommended = skill_metrics
     try:
-        recommended = metric_dispatcher.get_metrics(bench_name) or []
+        dispatched = metric_dispatcher.get_metrics(bench_name)
+        # Keep the manifest-authored plan when a legacy dispatcher is
+        # unavailable (for example in a minimal SDK worker image).
+        if dispatched:
+            recommended = dispatched
     except Exception as e:
         logger.warning(f"[metric_recommend] dispatcher.get_metrics('{bench_name}') 失败: {e}")
-        recommended = []
 
     normalized = _normalize_metric_list(recommended)
 

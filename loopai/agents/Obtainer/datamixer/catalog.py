@@ -29,9 +29,9 @@ def validate_filter(expr: str) -> str:
 class Catalog:
     def __init__(self, db_path: str | Path):
         self.path = str(db_path)
-        # Every webagent worker owns a separate Catalog connection. WAL keeps
-        # reads concurrent while busy_timeout lets SQLite serialize the short
-        # ingest transactions instead of failing immediately with "locked".
+        # Each worker owns a separate Catalog connection. WAL keeps reads
+        # concurrent while busy_timeout lets SQLite serialize the short ingest
+        # transactions instead of failing immediately with "locked".
         self.conn = sqlite3.connect(self.path, timeout=30.0)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")

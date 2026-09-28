@@ -35,46 +35,23 @@ def _default_model_config() -> dict[str, Any]:
     return {
         "proxy_base_url": "",
         "proxy_api_key": "",
-        "default_model": "starter",
-        "codex_model": "codex",
-        "looper_model": "starter",
+        "default_model": "",
+        "codex_model": "",
+        "looper_model": "",
+        "medium_model": "",
+        "rollout_model": "",
         "default_tier": "medium",
         "embedding": _default_embedding_config(),
         "mineru": _default_mineru_config(),
-        "pool": [
-            {
-                "tier": "medium",
-                "name": "starter",
-                "api_key": "",
-                "base_url": "https://api.deepseek.com",
-                "model_name": "deepseek-v4-flash",
-                "maxworker": 1,
-                "wire_api": "chat",
-                "response_format": "",
-                "enabled": True,
-            },
-            {
-                "tier": "medium",
-                "name": "codex",
-                "api_key": "",
-                "base_url": "https://api.deepseek.com",
-                "model_name": "deepseek-v4-flash",
-                "maxworker": 1,
-                "wire_api": "chat",
-                "response_format": "",
-                "enabled": True,
-            },
-        ],
+        # No vendor/model is synthesized here.  Deployments must register
+        # concrete providers in the shared model pool.
+        "pool": [],
     }
 
 
 def _default_integrations_config() -> dict[str, Any]:
     return {
         "tavily": {"api_key": "env:TAVILY_API_KEY"},
-        "kaggle": {
-            "username": "env:KAGGLE_USERNAME",
-            "key": "env:KAGGLE_KEY",
-        },
         "rag": {"base_url": "", "api_key": "env:RAG_API_KEY"},
     }
 
@@ -95,7 +72,7 @@ class SystemConfig(BaseModel):
     integrations: dict[str, Any] = Field(
         default_factory=_default_integrations_config,
         title="外部服务配置",
-        description="Tavily、Kaggle 和 RAG 等外部服务的运行时凭据",
+        description="Tavily 和 RAG 等外部服务的运行时凭据",
         json_schema_extra={"ui_group": "集成配置"},
     )
     codex_workspace: str = Field(

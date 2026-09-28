@@ -858,7 +858,7 @@ def _commit_embedding_batch(
         if not rows:
             return 0
         for row, vector, text in zip(rows, vectors, texts):
-            if len(vector) == store.index.vectors.dim:
+            if vector:
                 store.index.vectors.add(row["record_id"], array("f", [float(v) for v in vector]))
             store.index.fulltext.add(row["record_id"], text)
         store.index.vectors.flush()
@@ -958,7 +958,7 @@ def index_datamixer_embeddings(
             )
             return
         for row, vector, text in zip(batch_rows, vectors, texts):
-            if len(vector) == store.index.vectors.dim:
+            if vector:
                 store.index.vectors.add(row["record_id"], array("f", [float(v) for v in vector]))
             store.index.fulltext.add(row["record_id"], text)
         rows.extend(batch_rows)

@@ -14,7 +14,6 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -276,6 +275,25 @@ def cmd_ingest(args) -> int:
     import time
 
     s = _open(args)
+    benchmark_set = getattr(args, "benchmark_set", None)
+    if benchmark_set:
+        from . import contam
+        # Explicit reference-data ingestion is separate from training ingest:
+        # a registered benchmark otherwise filters out its own records.
+        ds_id = s.catalog.resolve_dataset(args.dataset)
+        registered = next((item for item in contam.list_sets(s.root)
+                           if item.get("name") == benchmark_set), None)
+        if (not ds_id or not registered or
+                (registered.get("benchmark_dataset") or {}).get("id") != ds_id):
+            s.close()
+            return _fail(args, "--benchmark-set must name a guard linked to the existing target dataset")
+        if args.stage != "eval":
+            s.close()
+            return _fail(args, "--benchmark-set requires --stage eval; reference records are not training data")
+        for batch in s.catalog.iter_query(dataset_id=ds_id):
+            if any(row.get("stage") != "eval" for row in batch):
+                s.close()
+                return _fail(args, "--benchmark-set target contains records outside stage=eval; use a separate benchmark dataset")
     try:
         validation = _validate_ingest_payload(
             file_path=args.file,
@@ -324,6 +342,13 @@ def cmd_ingest(args) -> int:
         for row_number, record in enumerate(records, 1):
             if not isinstance(record, dict):
                 raise ValueError(f"ingest record {row_number} must be an object")
+            if benchmark_set:
+                if record.get("stage") not in (None, "", "eval"):
+                    raise ValueError(f"benchmark record {row_number} must use stage=eval")
+                # Keep references excluded by the usual contamination filter,
+                # even when their question is too short for n-gram matching.
+                record.update(stage="eval", is_contaminated=1,
+                              contam_source=benchmark_set, guard_only=True)
             row_domain = str(record.get("domain") or "").strip().casefold()
             batch_domain = str(defaults.get("domain") or "").strip().casefold()
             if row_domain == "finance" and batch_domain != "finance":
@@ -384,6 +409,8 @@ def cmd_ingest(args) -> int:
             content_key=args.content_key,
             allow_duplicates=args.allow_duplicates,
             tokenizer=args.tokenizer,
+            decontaminate=not bool(benchmark_set),
+            io_workers=getattr(args, "io_workers", 1),
         )
     except FileNotFoundError:
         s.close()
@@ -407,6 +434,9 @@ def cmd_ingest(args) -> int:
         "contam_sources": res.contam_sources,
         "quality_level": args.quality_level,
     }
+    if benchmark_set:
+        out["benchmark_set"] = benchmark_set
+        out["reference_only"] = True
     if dataset_card:
         out["dataset_card"] = dataset_card
     if validation.get("derived_fields"):
@@ -565,6 +595,204 @@ def cmd_apply_jsonl(args) -> int:
     return 0
 
 
+def _find_latest_badcase_questions(output_dir: str, task_id: str | None) -> str | None:
+    """Locate the newest ``badcase_questions_*.jsonl`` from the last Analyzer round.
+
+    Analyzer writes the manifest under ``<output_dir>/<task_id>/analyzer`` (and,
+    for Math reports, a nested bundle subdirectory), so we glob that subtree and
+    return the most recently modified file. When ``task_id`` is unknown we fall
+    back to scanning the whole output tree.
+    """
+    base = Path(output_dir or "./outputs").expanduser()
+    roots: list[Path] = []
+    if task_id:
+        roots.append(base / task_id / "analyzer")
+    roots.append(base)
+    seen: set[Path] = set()
+    candidates: list[Path] = []
+    for root in roots:
+        if not root.is_dir() or root in seen:
+            continue
+        seen.add(root)
+        candidates.extend(root.rglob("badcase_questions_*.jsonl"))
+    if not candidates:
+        return None
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    return str(latest)
+
+
+def _badcase_queries(path: str, *, field: str) -> list[dict]:
+    """Read the Analyzer bad-case manifest and keep one recall query per row."""
+    queries: list[dict] = []
+    for rec in read_jsonl(path):
+        if not isinstance(rec, dict):
+            continue
+        text = rec.get(field)
+        if not text or not str(text).strip():
+            continue
+        queries.append({
+            "question_id": rec.get("question_id") or rec.get("source_action_id"),
+            "query": str(text).strip(),
+            "domain": rec.get("domain"),
+            "capability_bucket": rec.get("capability_bucket"),
+        })
+    return queries
+
+
+def cmd_recall_badcases(args) -> int:
+    """Bad-case-driven multi-route recall + candidate outflow for DataFlowAgent.
+
+    Reads the last Analyzer round's ``badcase_questions_*.jsonl`` (auto-located
+    when ``--from`` is omitted), runs one recall per bad-case question over the
+    freshly-embedded lake, unions the hits (dedup by ``sample_id``), and writes
+    the candidate set to a flat JSONL that becomes the DataFlowAgent input.
+    ``--limit`` is the per-question top-k (recall breadth) the agent controls.
+    """
+    from . import utils
+
+    total_limit = getattr(args, "total_limit", None)
+    if total_limit is not None and total_limit <= 0:
+        return _fail(args, "--total-limit must be positive")
+    io_workers = getattr(args, "io_workers", 8)
+    if io_workers <= 0:
+        return _fail(args, "--io-workers must be positive")
+
+    src = args.source or _find_latest_badcase_questions(args.output_dir, args.task_id)
+    if not src:
+        return _fail(args, "no badcase_questions_*.jsonl found; pass --from explicitly")
+    if not Path(src).is_file():
+        return _fail(args, f"badcase questions file not found: {src}")
+    try:
+        queries = _badcase_queries(src, field=args.question_field)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return _fail(args, f"invalid JSONL in {src}: {e}")
+    if not queries:
+        return _fail(args, f"no usable '{args.question_field}' queries in {src}")
+
+    s = _open(args)
+
+    # Match query embeddings to the model that built the index. When a real
+    # encoder server is configured (e.g. bge via an OpenAI-compatible endpoint),
+    # embed the bad-case questions through it so query and document vectors
+    # share the same space and dimensionality; otherwise fall back to the
+    # dependency-free hashing embedder.
+    if not args.keyword and s.index.vector_config.get("backend") == "lancedb":
+        if getattr(args, "embed_model", "") and args.embed_model != s.index.vector_config["model"]:
+            s.close()
+            return _fail(args, "query embedding model differs from the persisted vector index")
+        if getattr(args, "embed_base_url", ""):
+            s.index.vectors.metadata["base_url"] = args.embed_base_url
+    elif not args.keyword and getattr(args, "embed_base_url", ""):
+        from loopai.skills.ObtainerCLI.index import _openai_compatible_embeddings
+
+        base_url = args.embed_base_url
+        api_key = getattr(args, "embed_api_key", "") or ""
+        model = getattr(args, "embed_model", "") or "BAAI/bge-small-zh-v1.5"
+
+        def _bge_query_embedder(text: str):
+            vectors = _openai_compatible_embeddings(
+                base_url=base_url, api_key=api_key, model=model, inputs=[text]
+            )
+            return vectors[0]
+
+        s.index.query_embedder = _bge_query_embedder
+
+    restrict = None
+    if args.filter:
+        try:
+            rows = s.catalog.query(where=args.filter, columns="sample_id")
+        except ValueError as e:
+            s.close()
+            return _fail(args, str(e))
+        restrict = {r["sample_id"] for r in rows}
+
+    # Multi-route recall: keep the best score per sample across all queries.
+    best_score: dict[str, float] = {}
+    hit_by: dict[str, str] = {}
+    per_query: list[dict] = []
+    for q in queries:
+        try:
+            if args.keyword:
+                hits = s.index.keyword_recall(q["query"], top_k=args.limit,
+                                              restrict=restrict)
+            else:
+                hits = s.index.semantic_recall(q["query"], top_k=args.limit,
+                                               restrict=restrict, min_sim=args.min_sim)
+        except Exception as e:  # index missing / embedding failure
+            s.close()
+            return _fail(args, f"recall failed for question {q.get('question_id')}: {e}")
+        per_query.append({"question_id": q["question_id"], "hits": len(hits)})
+        for sid, score in hits:
+            score = float(score)
+            if sid not in best_score or score > best_score[sid]:
+                best_score[sid] = score
+                hit_by[sid] = q["question_id"] or ""
+
+    union = sorted(best_score, key=lambda x: best_score[x], reverse=True)
+    recalled_before_limit = len(union)
+    if total_limit is not None:
+        union = union[:total_limit]
+    written = 0
+    field = args.field
+
+    def recalled_content():
+        from concurrent.futures import ThreadPoolExecutor
+        def load(smp):
+            try:
+                return s.get_content(smp["cid"])
+            except KeyError:
+                return None
+        with ThreadPoolExecutor(max_workers=io_workers) as pool:
+            for start in range(0, len(union), io_workers * 4):
+                # Catalog stays on its owner thread; only immutable CAS reads
+                # are concurrent. map preserves the ranked candidate order.
+                samples = [s.catalog.get_sample(sid) for sid in union[start:start + io_workers * 4]]
+                samples = [smp for smp in samples if smp]
+                yield from zip(samples, pool.map(load, samples))
+    try:
+        out_path = Path(args.out)
+        if out_path.parent and not out_path.parent.exists():
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as fh:
+            for smp, content in recalled_content():
+                sid = smp["sample_id"]
+                rec = {"sample_id": sid,
+                       field: utils.extract_text(content) if content else "",
+                       "recall_score": round(best_score[sid], 4),
+                       "recall_question_id": hit_by.get(sid) or None}
+                for k, v in smp.items():
+                    if k in _RESERVED_FIELDS or k == field or v is None:
+                        continue
+                    rec[k] = v
+                for k, v in (smp.get("tags") or {}).items():
+                    if k not in rec and v is not None:
+                        rec[k] = v
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                written += 1
+    except OSError as e:
+        s.close()
+        return _fail(args, f"failed to write {args.out}: {e}")
+    s.close()
+
+    result = {
+        "out": args.out,
+        "source": src,
+        "questions": len(queries),
+        "recalled": len(union),
+        "recalled_before_limit": recalled_before_limit,
+        "total_limit": total_limit,
+        "exported": written,
+        "mode": "keyword" if args.keyword else "semantic",
+        "limit": args.limit,
+        "per_query": per_query,
+    }
+    _emit(args, result,
+          lambda d: print(f"recalled {d['recalled']} candidates from "
+                          f"{d['questions']} bad-case questions -> "
+                          f"{d['exported']} rows in {d['out']}"))
+    return 0
+
+
 class _StopExport(Exception):
     """Internal: stop streaming once an export --limit is reached."""
 
@@ -629,6 +857,28 @@ def cmd_status(args) -> int:
         f"fulltext={d['index']['fulltext_docs']}"
     ))
     return 0
+
+
+def cmd_catalog_repair_indexes(args) -> int:
+    s = _open(args)
+    before = [str(row[0]) for row in s.catalog.conn.execute("PRAGMA quick_check")]
+    s.catalog.conn.execute("REINDEX")
+    s.catalog.conn.commit()
+    s.catalog.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    after = [str(row[0]) for row in s.catalog.conn.execute("PRAGMA quick_check")]
+    root = str(s.root)
+    s.close()
+    out = {
+        "warehouse": root,
+        "operation": "REINDEX",
+        "before": before,
+        "after": after,
+        "ok": after == ["ok"],
+    }
+    _emit(args, out, lambda d: print(
+        f"warehouse={d['warehouse']} operation={d['operation']} ok={d['ok']}"
+    ))
+    return 0 if out["ok"] else 1
 
 
 def cmd_dist(args) -> int:
@@ -985,6 +1235,11 @@ def cmd_contam_add(args) -> int:
     s = _open(args)
     try:
         workers = max(1, int(args.workers or _default_decontam_workers()))
+        # Reject invalid scope before register() can create or replace the set.
+        # Otherwise a failed command leaves a guard that later affects ingest.
+        scope = getattr(args, "filter", None)
+        if scope:
+            s.catalog.count(where=scope)
         benchmark_dataset = None
         benchmark_dataset_arg = getattr(args, "benchmark_dataset", None)
         if benchmark_dataset_arg:
@@ -1004,6 +1259,7 @@ def cmd_contam_add(args) -> int:
             against=[args.name],
             threshold=args.threshold,
             apply=True,
+            where=scope,
             workers=workers,
             batch_size=args.batch_size,
         )
@@ -1256,7 +1512,7 @@ def cmd_codex_check(args) -> int:
 def cmd_dataflow_agent_run(args) -> int:
     from . import codex
     from .dataflow_agent import run_dataflow_agent
-    s = _open(args)
+    s = _open(args) if not args.input_file else None
     try:
         rep = run_dataflow_agent(
             s,
@@ -1272,11 +1528,17 @@ def cmd_dataflow_agent_run(args) -> int:
             apply=args.apply,
             recipe_path=args.recipe,
             mix_plan_path=args.mix_plan,
+            skeleton_path=args.skeleton,
+            input_file=args.input_file,
+            full_input_file=args.full_input_file,
+            resume_thread_id=args.resume_thread_id,
         )
     except (KeyError, ValueError, FileNotFoundError, codex.CodexError) as e:
-        s.close()
+        if s:
+            s.close()
         return _fail(args, str(e))
-    s.close()
+    if s:
+        s.close()
 
     def txt(d):
         ar = d.get("agent_result", {})
@@ -1304,295 +1566,6 @@ def cmd_dataflow_agent_run(args) -> int:
                 print(f"merged    : {d['merge']}")
     _emit(args, rep, txt)
     return 0
-
-
-def cmd_webagent_list(args) -> int:
-    from .webagents import available
-
-    rows = [spec.__dict__ for spec in available()]
-    _emit(args, {"webagents": rows}, lambda d: print("\n".join(
-        f"{item['name']:<20} v{item['version']:<8} "
-        f"{item['input_type']} -> {item['output_type']}\n"
-        f"  {item['description']}"
-        for item in d["webagents"]
-    )))
-    return 0
-
-
-def _read_webagent_queries(args) -> list[str]:
-    queries = [str(item).strip() for item in (args.query or []) if str(item).strip()]
-    if args.query_file:
-        path = Path(args.query_file).expanduser()
-        if not path.exists():
-            raise FileNotFoundError(f"query file not found: {path}")
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("{"):
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise ValueError(
-                        f"invalid JSON at {path}:{line_number}: {exc}"
-                    ) from None
-                query = str(row.get("query") or "").strip() if isinstance(row, dict) else ""
-            else:
-                query = line
-            if not query:
-                raise ValueError(f"empty query at {path}:{line_number}")
-            queries.append(query)
-    if not queries:
-        raise ValueError("provide at least one --query or --query-file")
-    return queries
-
-
-def _webcrawler_config_from_args(args):
-    from .webagents.webcrawler_dm import WebCrawlerDMConfig
-
-    tavily_env = getattr(args, "tavily_api_key_env", "TAVILY_API_KEY")
-    tavily_key = os.environ.get(tavily_env, "") if tavily_env else ""
-    return WebCrawlerDMConfig(
-        model=args.model,
-        max_steps=args.max_steps,
-        soft_step_limit=args.soft_step_limit,
-        max_search_calls=args.max_search_calls,
-        max_pages=args.max_pages,
-        max_depth=args.max_depth,
-        max_links_per_page=args.max_links_per_page,
-        search_provider=args.search_provider,
-        search_results=args.search_results,
-        github_token_env=args.github_token_env,
-        search_timeout=args.search_timeout,
-        tavily_api_key=tavily_key,
-        search_llm_summary=not getattr(args, "no_search_llm_summary", False),
-        search_summary_results=getattr(args, "search_summary_results", 5),
-        search_summary_chars=getattr(args, "search_summary_chars", 4000),
-        proxy=getattr(args, "proxy", "") or "",
-        use_env_proxy=not getattr(args, "no_env_proxy", False),
-        browser_backend=args.browser_backend,
-        use_playwright_stealth=not args.no_stealth,
-        headless=not args.show_browser,
-        same_domain_only=not args.allow_cross_domain,
-        respect_robots_txt=not args.ignore_robots,
-        request_delay=args.request_delay,
-        timeout=args.timeout,
-        max_retries=args.max_retries,
-        max_html_bytes=args.max_html_bytes,
-        page_cache_entries=getattr(args, "page_cache_entries", 64),
-        license=args.license,
-    )
-
-
-def cmd_webagent_run(args) -> int:
-    from .webagents import create
-    from .models import ModelPool
-
-    s = _open(args)
-    try:
-        if not args.model:
-            args.model = ModelPool(s.root).default_name()
-        if not args.model:
-            raise ValueError(
-                "webagent has no resolved default model; start managed acquisition or pass --model"
-            )
-        queries = _read_webagent_queries(args)
-        config = _webcrawler_config_from_args(args)
-        agent = create(args.name, config=config)
-        report = agent.run_many(queries, store=s, dataset=args.dataset)
-    except (KeyError, ValueError, FileNotFoundError, RuntimeError) as exc:
-        s.close()
-        return _fail(args, str(exc))
-    s.close()
-
-    def txt(data):
-        print(
-            f"webagent {data['webagent']} v{data['version']}: "
-            f"{data['succeeded']}/{data['inputs']} succeeded, "
-            f"pages={data['pages_fetched']}, ingested={data['pages_ingested']} "
-            f"({data['elapsed_s']}s)"
-        )
-        for index, result in enumerate(data["results"], 1):
-            urls = result.get("selected_urls") or [result.get("selected_url")]
-            urls = [url for url in urls if url]
-            print(
-                f"  {index:>2}. steps={result['agent_steps']:<2} "
-                f"pages={result['pages_fetched']:<2} roots={len(urls)}"
-            )
-            for url in urls:
-                print(f"      -> {url}")
-        for error in data["errors"]:
-            print(f"  ! {error['query']}: {error['error']}")
-
-    _emit(args, report, txt)
-    return 0 if report["failed"] == 0 else 1
-
-
-def cmd_webagent_campaign_start(args) -> int:
-    from dataclasses import asdict
-    from .models import ModelPool
-    from .webagents import CampaignConfig, WebAgentCampaignRunner
-
-    s = _open(args)
-    root = s.root
-    s.close()
-    if not args.model:
-        args.model = ModelPool(root).default_name()
-    if not args.model:
-        return _fail(
-            args,
-            "webagent campaign has no resolved default model; start managed acquisition or pass --model",
-        )
-    web_config = _webcrawler_config_from_args(args)
-    persisted_web_config = asdict(web_config)
-    persisted_web_config["tavily_api_key"] = ""
-    config = CampaignConfig(
-        webagent=args.name,
-        model=args.model,
-        expand_model=args.expand_model or args.model,
-        subquery_count=args.subquery_count,
-        workers=args.workers,
-        batch_size=args.batch_size,
-        task_retries=args.task_retries,
-        dataset=args.dataset,
-        tavily_api_key_env=args.tavily_api_key_env,
-        webagent_config=persisted_web_config,
-        auto_pipeline=(
-            str(Path(args.pipeline).expanduser().resolve())
-            if args.auto_process else ""
-        ),
-        focus_keywords=list(args.focus_keywords),
-        pipeline_model=args.pipeline_model or args.model,
-        l2_dataset=args.l2_dataset or f"{args.dataset}_l2_pt",
-        l3_dataset=args.l3_dataset or f"{args.dataset}_l3_sft",
-        pipeline_batch_size=args.pipeline_batch_size,
-        pipeline_extractor=args.pipeline_extractor,
-        pipeline_mineru_gpu=args.pipeline_mineru_gpu,
-        pipeline_mineru_url=args.pipeline_mineru_url or "",
-        pipeline_mineru_python=args.pipeline_mineru_python or "",
-        pipeline_mineru_model=args.pipeline_mineru_model or "",
-        pipeline_mineru_transport=args.pipeline_mineru_transport or "",
-    )
-    if args.detach and args.enqueue_only:
-        return _fail(args, "--detach and --enqueue-only cannot be used together")
-
-    runner = WebAgentCampaignRunner(root)
-    try:
-        report = runner.start(
-            args.query,
-            config,
-            enqueue_only=args.enqueue_only or args.detach,
-        )
-        if args.detach:
-            log_dir = Path(root) / ".loopai" / "campaign_logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            stdout_path = log_dir / f"{report['run_id']}.stdout.log"
-            stderr_path = log_dir / f"{report['run_id']}.stderr.log"
-            cmd = [
-                sys.executable,
-                "-m",
-                "loopai.agents.Obtainer.datamixer",
-                "--root",
-                str(root),
-                "--json",
-                "webagent",
-                "campaign",
-                "resume",
-                str(report["run_id"]),
-            ]
-            with stdout_path.open("ab") as stdout, stderr_path.open("ab") as stderr:
-                proc = subprocess.Popen(
-                    cmd,
-                    cwd=str(Path.cwd()),
-                    env=os.environ.copy(),
-                    stdout=stdout,
-                    stderr=stderr,
-                    start_new_session=True,
-                )
-            runner.queue.set_executor(str(report["run_id"]), proc.pid)
-            report.update({
-                "status": "queued",
-                "detached": True,
-                "executor_pid": proc.pid,
-                "stdout": str(stdout_path),
-                "stderr": str(stderr_path),
-            })
-    except (KeyError, ValueError, FileNotFoundError, RuntimeError) as exc:
-        runner.close()
-        return _fail(args, str(exc))
-    runner.close()
-
-    def txt(data):
-        queue = data["queue"]
-        print(
-            f"campaign {data['run_id']} status={data['status']} "
-            f"tasks={queue['total']} succeeded={queue['succeeded']} "
-            f"failed={queue['failed']} pending={queue['pending']}"
-        )
-        print(f"queue: {data['queue_path']}")
-        for task in data.get("tasks", []):
-            result = task.get("result") or {}
-            urls = result.get("selected_urls") or [result.get("selected_url")]
-            urls = [url for url in urls if url]
-            print(
-                f"  [{task['status']:<9}] {task['position']:>2} "
-                f"{task['query']} roots={len(urls)}"
-            )
-            for url in urls:
-                print(f"      -> {url}")
-
-    _emit(args, report, txt)
-    return 0 if report["status"] not in {"failed", "completed_with_errors"} else 1
-
-
-def cmd_webagent_campaign_status(args) -> int:
-    from .webagents import WebAgentCampaignRunner
-
-    s = _open(args)
-    root = s.root
-    s.close()
-    runner = WebAgentCampaignRunner(root)
-    try:
-        report = runner.status(
-            args.run_id,
-            include_tasks=args.tasks,
-            task_status=args.task_status,
-            limit=args.limit,
-        )
-    except KeyError as exc:
-        runner.close()
-        return _fail(args, str(exc))
-    runner.close()
-    _emit(args, report, lambda data: print(
-        f"campaign {data['run_id']} status={data['status']}\n"
-        f"queue={data['queue']}\npath={data['queue_path']}"
-    ))
-    return 0
-
-
-def cmd_webagent_campaign_resume(args) -> int:
-    from .webagents import WebAgentCampaignRunner
-
-    s = _open(args)
-    root = s.root
-    s.close()
-    runner = WebAgentCampaignRunner(root)
-    try:
-        report = runner.resume(
-            args.run_id,
-            workers=args.workers,
-            max_tasks=args.batch_size,
-            retry_failed=args.retry_failed,
-        )
-    except (KeyError, ValueError, RuntimeError) as exc:
-        runner.close()
-        return _fail(args, str(exc))
-    runner.close()
-    _emit(args, report, lambda data: print(
-        f"campaign {data['run_id']} status={data['status']} "
-        f"workers={data.get('workers')} queue={data['queue']}"
-    ))
-    return 0 if report["status"] != "completed_with_errors" else 1
 
 
 def cmd_pipeline_run(args) -> int:
@@ -1794,13 +1767,42 @@ def cmd_snapshot_diff(args) -> int:
 
 def cmd_index_build(args) -> int:
     s = _open(args)
-    res = s.index.rebuild(
-        s, vector=not args.fulltext_only, fulltext=not args.vector_only
-    )
-    s.close()
+    try:
+        if args.backend == "lancedb":
+            if args.fulltext_only or not args.vector_only:
+                raise ValueError("LanceDB requires --vector-only; no full-text build is performed")
+            from .vector_db import build_lance_index
+            res = build_lance_index(
+                s, base_url=args.embed_base_url, model=args.embed_model,
+                text_field=args.text_field, where=args.filter, batch_size=args.batch_size,
+                api_key=args.embed_api_key, query_prefix=args.query_prefix,
+                embedding_revision=args.embedding_revision,
+            )
+        else:
+            res = s.index.rebuild(
+                s, vector=not args.fulltext_only, fulltext=not args.vector_only,
+                io_workers=getattr(args, "io_workers", 8),
+            )
+    except (ValueError, RuntimeError, ImportError) as exc:
+        return _fail(args, str(exc))
+    finally:
+        s.close()
     _emit(args, res, lambda d: print(
         f"indexed {d['indexed']} samples "
         f"(vectors={d['vectors']}, fulltext_docs={d['fulltext_docs']})"))
+    return 0
+
+
+def cmd_index_disable_fulltext(args) -> int:
+    from .vector_db import disable_fulltext
+    if not args.yes:
+        return _fail(args, "stop all index writers first, then pass --yes to archive only derived FTS files")
+    s = _open(args)
+    try:
+        result = disable_fulltext(s.root)
+    finally:
+        s.close()
+    _emit(args, result, lambda d: print(json.dumps(d, ensure_ascii=False)))
     return 0
 
 
@@ -1951,6 +1953,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("schema", help="print the unified tag schema contract")
     sp.set_defaults(func=cmd_schema)
 
+    catalog = sub.add_parser("catalog", help="catalog maintenance").add_subparsers(
+        dest="sub", required=True)
+    a = catalog.add_parser(
+        "repair-indexes",
+        help="rebuild SQLite catalog indexes and verify integrity",
+    )
+    a.set_defaults(func=cmd_catalog_repair_indexes)
+
     # dataset group
     ds = sub.add_parser("dataset", help="dataset registry").add_subparsers(
         dest="sub", required=True)
@@ -1986,12 +1996,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=schema.QUALITY_LEVELS,
     )
     sp.add_argument("--content-key", default="content")
+    sp.add_argument("--benchmark-set", default=None,
+                    help="ingest evaluation references into the dataset linked to this guard; requires --stage eval")
     sp.add_argument("--dataset-card", dest="dataset_card", default=None,
                     help="Markdown dataset card to register under dataset_cards/ before ingest")
     sp.add_argument("--derived-field", dest="derived_field", action="append", default=[],
                     help="derived field that must exist and be non-empty in every normalized row; repeatable")
     sp.add_argument("--source-row-count", dest="source_row_count", type=int, default=None,
                     help="expected normalized row count, used to ensure derivation did not drop rows")
+    sp.add_argument("--io-workers", type=int, default=1,
+                    help="bounded concurrent content-blob writes; catalog remains ordered and single-threaded")
     sp.add_argument("--allow-duplicates", dest="allow_duplicates",
                     action="store_true",
                     help="keep every record as its own sample (preserve "
@@ -2091,6 +2105,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="rows exported for the agent's trial run")
     a.add_argument("--trial-rows-per-dataset", type=int, default=None,
                    help="maximum trial rows from each selected dataset")
+    a.add_argument("--input-file", default=None,
+                   help="direct JSONL input file (skips lake export)")
+    a.add_argument("--full-input-file", default=None,
+                   help="direct JSONL for full run (defaults to --input-file if omitted)")
+    a.add_argument("--resume-thread-id", default=None,
+                   help="continue a previous DataFlow Codex thread with this target and work directory")
     a.add_argument("--recipe", default=None,
                    help="export recipe.yaml: full input is sampled per bucket to "
                         "ceil(bucket_target * 1.5) rows instead of a whole-lake export")
@@ -2101,191 +2121,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="deprecated: the DataFlow agent now only delivers the "
                         "trial-verified pipeline; the upper layer runs the chunked "
                         "scaffold over full_input.jsonl and merges with apply-jsonl")
+    a.add_argument("--skeleton", default=None,
+                   help="fixed skeleton pipeline the agent must fill in; locks "
+                        "pre-steps (validate/filter) and post-steps (rollout "
+                        "difficulty / strong-model graded retry), leaving only "
+                        "the front-normalization and middle-shaping regions editable")
     a.set_defaults(func=cmd_dataflow_agent_run)
-
-    wa = sub.add_parser(
-        "webagent", help="registered query-to-web DataMixer input agents"
-    ).add_subparsers(dest="sub", required=True)
-    a = wa.add_parser("list", help="list registered web-agent plugins")
-    a.set_defaults(func=cmd_webagent_list)
-    a = wa.add_parser("run", help="run a web-agent and ingest raw pages as L1")
-    a.add_argument("name", help="registered web-agent plugin name")
-    a.add_argument("--query", action="append", default=[],
-                   help="input query; repeat for multiple inputs")
-    a.add_argument("--query-file", default=None,
-                   help="plain text or JSONL file containing queries")
-    a.add_argument("--dataset", default="domain_data_acquisition_l1",
-                   help="target DataMixer L1 dataset")
-    a.add_argument("--model", default=None,
-                   help="DataMixer model-pool name; omitted uses the resolved Codex default")
-    a.add_argument("--max-steps", type=int, default=30,
-                   help="maximum model tool steps per query")
-    a.add_argument("--soft-step-limit", type=int, default=16,
-                   help="signal the LLM to submit all verified relevant roots after this many steps")
-    a.add_argument("--max-search-calls", type=int, default=4,
-                   help="maximum LLM search calls before it must inspect or submit existing roots")
-    a.add_argument("--max-pages", type=int, default=1000,
-                   help="maximum raw pages materialized per query")
-    a.add_argument("--max-depth", type=int, default=2,
-                   help="related-link traversal depth after URL submission")
-    a.add_argument("--max-links-per-page", type=int, default=1000)
-    a.add_argument("--search-provider", default="auto",
-                   choices=["auto", "baidu", "bing", "github", "tavily", "duckduckgo_html"])
-    a.add_argument("--search-results", type=int, default=8)
-    a.add_argument("--github-token-env", default="GITHUB_TOKEN")
-    a.add_argument("--search-timeout", type=float, default=15.0)
-    a.add_argument("--tavily-api-key-env", default="TAVILY_API_KEY",
-                   help="environment variable containing the Tavily key")
-    a.add_argument("--no-search-llm-summary", action="store_true",
-                   help="disable per-result LLM summaries and URL rubrics")
-    a.add_argument("--search-summary-results", type=int, default=5,
-                   help="maximum results per provider graded by the LLM rubric")
-    a.add_argument("--search-summary-chars", type=int, default=4000,
-                   help="maximum fetched webpage characters supplied per result")
-    a.add_argument("--browser-backend", default="auto",
-                   choices=["auto", "httpx", "playwright"])
-    a.add_argument("--proxy", default="",
-                   help="explicit HTTP/SOCKS proxy; env proxies are used by default")
-    a.add_argument("--no-env-proxy", action="store_true",
-                   help="do not read HTTPS_PROXY/HTTP_PROXY/ALL_PROXY")
-    a.add_argument("--no-stealth", action="store_true",
-                   help="disable playwright-stealth when Playwright is used")
-    a.add_argument("--show-browser", action="store_true",
-                   help="run Playwright headed instead of headless")
-    a.add_argument("--allow-cross-domain", action="store_true",
-                   help="allow crawler-tool links outside the submitted page's site")
-    a.add_argument("--ignore-robots", action="store_true",
-                   help="ignore robots.txt (disabled by default for responsible crawling)")
-    a.add_argument("--request-delay", type=float, default=0.5,
-                   help="minimum per-host delay in seconds")
-    a.add_argument("--timeout", type=float, default=25.0)
-    a.add_argument("--max-retries", type=int, default=2)
-    a.add_argument("--max-html-bytes", type=int, default=4_000_000)
-    a.add_argument("--page-cache-entries", type=int, default=64,
-                   help="bounded recent-page cache entries (default: 64)")
-    a.add_argument("--license", default="unknown",
-                   help="license/provenance label for collected pages")
-    a.set_defaults(func=cmd_webagent_run)
-
-    campaign = wa.add_parser(
-        "campaign", help="expand one query into a persistent concurrent task queue"
-    ).add_subparsers(dest="campaign_action", required=True)
-    a = campaign.add_parser("start", help="expand, enqueue, and drain a campaign")
-    a.add_argument(
-        "name",
-        nargs="?",
-        default="domain_data_acquisition",
-        help="registered web-agent plugin name (defaults to domain_data_acquisition)",
-    )
-    a.add_argument("--query", required=True,
-                   help="one broad query that the expansion LLM will decompose")
-    a.add_argument("--dataset", default="domain_data_acquisition_l1")
-    a.add_argument("--model", default=None,
-                   help="DataMixer model-pool name; omitted uses the resolved Codex default")
-    a.add_argument("--expand-model", default=None,
-                   help="optional separate model-pool name for query expansion")
-    a.add_argument("--subquery-count", type=int, default=24,
-                   help="number of focused subgoals to enqueue (default: 24)")
-    a.add_argument("--workers", type=int, default=4,
-                   help="concurrent webagent workers (default: 4)")
-    a.add_argument("--batch-size", type=int, default=0,
-                   help="tasks to process in this invocation; 0 drains the queue")
-    a.add_argument("--task-retries", type=int, default=1,
-                   help="requeue a failed task this many times")
-    a.add_argument("--enqueue-only", action="store_true",
-                   help="expand and persist tasks without starting workers")
-    a.add_argument(
-        "--detach",
-        action="store_true",
-        help="return after enqueueing and drain the WebAgent/pipeline queues in a background process",
-    )
-    a.add_argument("--auto-process", action="store_true",
-                   help="stream each new L1 row through persistent L2/L3 stage queues")
-    a.add_argument(
-        "--pipeline",
-        default="examples/datamixer_l1_l3_pipeline/pipeline.yaml",
-        help="pipeline YAML used by --auto-process",
-    )
-    a.add_argument(
-        "--focus-keywords",
-        action="append",
-        default=[],
-        help=(
-            "WebAgent exploration keyword passed into domain_classify's LLM "
-            "judgement; items unrelated to these keywords are filtered out by "
-            "topic_quality_filter (repeatable)"
-        ),
-    )
-    a.add_argument("--pipeline-model", default=None,
-                   help="model-pool name for classification and QA; defaults to --model")
-    a.add_argument("--l2-dataset", default=None)
-    a.add_argument("--l3-dataset", default=None)
-    a.add_argument("--pipeline-batch-size", type=int, default=8)
-    a.add_argument(
-        "--pipeline-extractor",
-        choices=["pipeline", "auto", "mineru", "legacy"],
-        default="pipeline",
-        help="override webpage_to_pt engine or keep the YAML setting",
-    )
-    a.add_argument("--pipeline-mineru-gpu", default="0")
-    a.add_argument("--pipeline-mineru-url", default="",
-                   help="MinerU-HTML HTTP service URL (default: http://127.0.0.1:7986)")
-    a.add_argument("--pipeline-mineru-python", default="",
-                   help="MinerU-HTML python executable for the embedded worker; empty uses the project default")
-    a.add_argument("--pipeline-mineru-model", default="",
-                   help="MinerU-HTML model path; empty uses the project default")
-    a.add_argument("--pipeline-mineru-transport", default="",
-                   help="MinerU-HTML transport: auto/http/worker; empty keeps the pipeline YAML setting")
-    a.add_argument("--max-steps", type=int, default=30)
-    a.add_argument("--soft-step-limit", type=int, default=12,
-                   help="campaign long-tail guard before the hard 30-step limit")
-    a.add_argument("--max-search-calls", type=int, default=4)
-    a.add_argument("--max-pages", type=int, default=1000,
-                   help="maximum raw pages materialized per subgoal")
-    a.add_argument("--max-depth", type=int, default=2)
-    a.add_argument("--max-links-per-page", type=int, default=1000)
-    a.add_argument("--search-provider", default="auto",
-                   choices=["auto", "baidu", "bing", "github", "tavily", "duckduckgo_html"])
-    a.add_argument("--search-results", type=int, default=8)
-    a.add_argument("--github-token-env", default="GITHUB_TOKEN")
-    a.add_argument("--search-timeout", type=float, default=12.0)
-    a.add_argument("--tavily-api-key-env", default="TAVILY_API_KEY")
-    a.add_argument("--no-search-llm-summary", action="store_true")
-    a.add_argument("--search-summary-results", type=int, default=5)
-    a.add_argument("--search-summary-chars", type=int, default=4000)
-    a.add_argument("--browser-backend", default="auto",
-                   choices=["auto", "httpx", "playwright"])
-    a.add_argument("--proxy", default="",
-                   help="explicit HTTP/SOCKS proxy; prefer an env var for resumable campaigns")
-    a.add_argument("--no-env-proxy", action="store_true")
-    a.add_argument("--no-stealth", action="store_true")
-    a.add_argument("--show-browser", action="store_true")
-    a.add_argument("--allow-cross-domain", action="store_true")
-    a.add_argument("--ignore-robots", action="store_true")
-    a.add_argument("--request-delay", type=float, default=0.5)
-    a.add_argument("--timeout", type=float, default=25.0)
-    a.add_argument("--max-retries", type=int, default=2)
-    a.add_argument("--max-html-bytes", type=int, default=4_000_000)
-    a.add_argument("--page-cache-entries", type=int, default=64)
-    a.add_argument("--license", default="unknown")
-    a.set_defaults(func=cmd_webagent_campaign_start)
-
-    a = campaign.add_parser("status", help="inspect queue and campaign progress")
-    a.add_argument("run_id")
-    a.add_argument("--tasks", action="store_true", help="include task rows")
-    a.add_argument("--task-status", default=None,
-                   choices=["pending", "running", "succeeded", "failed"])
-    a.add_argument("--limit", type=int, default=100)
-    a.set_defaults(func=cmd_webagent_campaign_status)
-
-    a = campaign.add_parser("resume", help="reset abandoned running tasks and resume")
-    a.add_argument("run_id")
-    a.add_argument("--workers", type=int, default=None)
-    a.add_argument("--batch-size", type=int, default=None,
-                   help="tasks to process in this resume; default uses campaign setting")
-    a.add_argument("--retry-failed", action="store_true",
-                   help="reset terminal failed tasks and enqueue them again")
-    a.set_defaults(func=cmd_webagent_campaign_resume)
 
     sm = sub.add_parser("sample", help="inspect a sample").add_subparsers(
         dest="sub", required=True)
@@ -2358,6 +2199,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--ngram", type=int, default=13)
     a.add_argument("--threshold", type=float, default=0.8,
                    help="overlap threshold for automatic removal from existing samples")
+    a.add_argument("--filter", default=None,
+                   help="limit automatic decontamination to this catalog filter (default: whole catalog)")
     a.add_argument("--workers", type=int, default=None,
                    help="parallel workers for automatic decontamination")
     a.add_argument("--batch-size", dest="batch_size", type=int, default=512,
@@ -2435,10 +2278,24 @@ def build_parser() -> argparse.ArgumentParser:
     ix = sub.add_parser("index", help="vector + full-text index (L3)"
                         ).add_subparsers(dest="sub", required=True)
     a = ix.add_parser("build", help="(re)build indexes from the catalog")
+    a.add_argument("--io-workers", type=int, default=8,
+                   help="bounded blob readers for legacy-flat build (default 8); index writes remain ordered")
     a.add_argument("--vector-only", action="store_true")
     a.add_argument("--fulltext-only", action="store_true")
+    a.add_argument("--backend", choices=["legacy-flat", "lancedb"], default="legacy-flat")
+    a.add_argument("--embed-base-url", default=os.getenv("OBTAINERCLI_EMBED_BASE_URL", ""))
+    a.add_argument("--embed-model", default=os.getenv("OBTAINERCLI_EMBED_MODEL_NAME", ""))
+    a.add_argument("--embed-api-key", default=os.getenv("OBTAINERCLI_EMBED_API_KEY", ""))
+    a.add_argument("--text-field", default="canonical_problem", help="task-only field; no fallback")
+    a.add_argument("--filter", default=None)
+    a.add_argument("--batch-size", type=int, default=64)
+    a.add_argument("--query-prefix", default="")
+    a.add_argument("--embedding-revision", default="")
     a.set_defaults(func=cmd_index_build)
     a = ix.add_parser("stats"); a.set_defaults(func=cmd_index_stats)
+    a = ix.add_parser("disable-fulltext", help="disable FTS and recoverably archive its derived files")
+    a.add_argument("--yes", action="store_true")
+    a.set_defaults(func=cmd_index_disable_fulltext)
 
     sp = sub.add_parser("recall", help="semantic / keyword sample recall")
     sp.add_argument("--query", default=None, help="semantic (vector) query")
@@ -2448,6 +2305,42 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--min-sim", type=float, default=-1.0)
     sp.add_argument("--preview", action="store_true")
     sp.set_defaults(func=cmd_recall)
+
+    sp = sub.add_parser("recall-badcases",
+                        help="multi-route recall from Analyzer bad-case questions "
+                             "-> candidate JSONL for DataFlowAgent")
+    sp.add_argument("--io-workers", type=int, default=8,
+                    help="bounded concurrent candidate blob reads (default 8); preserves ranked output order")
+    sp.add_argument("--from", dest="source", default=None,
+                    help="badcase_questions_*.jsonl; defaults to the latest Analyzer round")
+    sp.add_argument("--out", required=True, help="candidate JSONL output path")
+    sp.add_argument("--limit", type=int, default=6000,
+                    help="per-question recall top-k (recall breadth)")
+    sp.add_argument("--total-limit", type=int, default=None,
+                    help="maximum unique candidates after multi-route deduplication and ranking")
+    sp.add_argument("--filter", default=None,
+                    help="restrict recall to a scalar filter (e.g. domain routing)")
+    sp.add_argument("--min-sim", type=float, default=-1.0,
+                    help="minimum cosine similarity for semantic recall")
+    sp.add_argument("--keyword", action="store_true",
+                    help="use keyword (FTS5) recall instead of semantic (vector)")
+    sp.add_argument("--question-field", default="question",
+                    help="field in the manifest holding the recall query text")
+    sp.add_argument("--field", default="raw_content",
+                    help="text column DataFlow reads as input_key")
+    sp.add_argument("--embed-base-url", default=os.getenv("OBTAINERCLI_EMBED_BASE_URL", ""),
+                    help="OpenAI-compatible embedding server for query vectors "
+                         "(match the model that built the index, e.g. bge); "
+                         "empty = use the built-in hashing embedder")
+    sp.add_argument("--embed-model", default=os.getenv("OBTAINERCLI_EMBED_MODEL_NAME", ""),
+                    help="embedding model name sent to the embedding server")
+    sp.add_argument("--embed-api-key", default=os.getenv("OBTAINERCLI_EMBED_API_KEY", ""),
+                    help="optional bearer token for the embedding server")
+    sp.add_argument("--output-dir", default=os.getenv("OUTPUT_DIR", "./outputs"),
+                    help="base output dir used to auto-locate the Analyzer manifest")
+    sp.add_argument("--task-id", default=os.getenv("TASK_ID", ""),
+                    help="task id used to auto-locate the Analyzer manifest")
+    sp.set_defaults(func=cmd_recall_badcases)
 
     sp = sub.add_parser("serve", help="launch the web console (L6)")
     sp.add_argument("--host", default="127.0.0.1")

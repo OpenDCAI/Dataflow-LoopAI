@@ -45,8 +45,6 @@ system:
   starter_model_name: ""
   starter_base_url: ""
   tavily_api_key: ""
-  kaggle_username: ""
-  kaggle_key: ""
 ```
 
 这些字段主要用于：

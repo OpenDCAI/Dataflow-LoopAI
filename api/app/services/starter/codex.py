@@ -31,6 +31,21 @@ FALLBACK_CODEX_HOME = Path.home() / ".codex"
 DEFAULT_CODEX_SANDBOX_MODE = "danger-full-access"
 ALLOWED_CODEX_SANDBOX_MODES = {"read-only", "workspace-write", "danger-full-access"}
 CODEX_RUNNER_STREAM_LIMIT = 1024 * 1024
+
+
+def _codex_runner_command() -> list[str]:
+    """Select a runnable Codex worker command.
+
+    Use the checked-in runner's installed node_modules directly when present;
+    this avoids Yarn project-state/lockfile checks in minimal deployments.
+    """
+    node = shutil.which("node")
+    loader = CODEX_RUNNER_DIR / "node_modules" / "tsx" / "dist" / "loader.mjs"
+    entrypoint = CODEX_RUNNER_DIR / "src" / "index.ts"
+    sdk = CODEX_RUNNER_DIR / "node_modules" / "@openai" / "codex-sdk" / "package.json"
+    if node and loader.is_file() and entrypoint.is_file() and sdk.is_file():
+        return [node, "--import", str(loader), str(entrypoint)]
+    return ["corepack", "yarn", "dev"]
 CODEX_CONFIG_ROOT_OVERRIDES = [
     ("codex_model_provider", "model_provider"),
 ]
@@ -340,24 +355,16 @@ async def load_starter_system_config() -> dict[str, Any]:
     if isinstance(system_config, dict):
         system_config = dict(system_config)
         pool = StarterModelPool(system_config)
-        entry = pool.codex_entry()
-        if entry is not None:
-            if pool.has_proxy():
-                provider = pool.resolve_proxy_provider(entry.name, tier=entry.tier)
-                if provider is not None:
-                    system_config["codex_base_url"] = provider.base_url
-                    system_config["codex_api_key"] = provider.api_key
-                    system_config["codex_model"] = provider.model
-                    system_config["codex_wire_api"] = "responses"
-                    system_config.setdefault("codex_model_provider", "loopai_model_pool_proxy")
-                    system_config.setdefault("codex_provider_name", "LoopAI Model Pool Proxy")
-                    system_config.setdefault("codex_api_key_env_key", "CODEX_API_KEY")
-                    system_config.setdefault("codex_supports_websockets", False)
-            else:
-                system_config["codex_base_url"] = entry.base_url
-                system_config["codex_api_key"] = entry.resolved_api_key()
-                system_config["codex_model"] = entry.model_name
-                system_config["codex_wire_api"] = entry.wire_api
+        provider = pool.resolve_role_provider("codex")
+        if provider is not None:
+            system_config["codex_base_url"] = provider.base_url
+            system_config["codex_api_key"] = provider.api_key
+            system_config["codex_model"] = provider.model
+            system_config["codex_wire_api"] = "responses"
+            system_config.setdefault("codex_model_provider", "loopai_model_pool_proxy")
+            system_config.setdefault("codex_provider_name", "LoopAI Model Pool Proxy")
+            system_config.setdefault("codex_api_key_env_key", "CODEX_API_KEY")
+            system_config.setdefault("codex_supports_websockets", False)
         return system_config
     return {}
 
@@ -1140,9 +1147,7 @@ class CodexStarterService:
             proc: asyncio.subprocess.Process | None = None
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "corepack",
-                    "yarn",
-                    "dev",
+                    *_codex_runner_command(),
                     prompt,
                     cwd=str(CODEX_RUNNER_DIR),
                     env=env,

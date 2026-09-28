@@ -11,7 +11,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 def test_download_manifest_exports_huggingface_rows(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import download
 
-    manifest = tmp_path / "searchagent_manifest.json"
+    manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
             {
@@ -85,7 +85,7 @@ def test_download_huggingface_sets_hub_endpoint_from_existing_mirror(monkeypatch
 def test_download_manifest_caps_zero_max_rows_per_dataset(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import download
 
-    manifest = tmp_path / "searchagent_manifest.json"
+    manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
             {
@@ -127,7 +127,7 @@ def test_download_manifest_caps_zero_max_rows_per_dataset(tmp_path, monkeypatch)
 def test_download_manifest_caps_oversized_max_rows_per_dataset(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import download
 
-    manifest = tmp_path / "searchagent_manifest.json"
+    manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
             {
@@ -169,7 +169,7 @@ def test_download_manifest_caps_oversized_max_rows_per_dataset(tmp_path, monkeyp
 def test_download_manifest_truncates_huggingface_rows_at_byte_cap(tmp_path, monkeypatch):
     from loopai.skills.ObtainerCLI import download
 
-    manifest = tmp_path / "searchagent_manifest.json"
+    manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
             {
@@ -236,7 +236,7 @@ def test_cli_download_manifest_emits_json(tmp_path, monkeypatch, capsys):
             "download",
             "manifest",
             "--manifest",
-            str(tmp_path / "searchagent_manifest.json"),
+            str(tmp_path / "manifest.json"),
             "--output-root",
             str(tmp_path / "downloads"),
             "--limit",

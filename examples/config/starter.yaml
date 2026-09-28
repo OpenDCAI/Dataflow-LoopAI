@@ -6,13 +6,15 @@ system:
     default_model: "medium"
     codex_model: "A"
     looper_model: "B"
+    medium_model: "B"
+    rollout_model: ""
     default_tier: "medium"
     pool:
       - tier: "high"
         name: "A"
         api_key: "env:LOOPAI_HIGH_MODEL_API_KEY"
         base_url: "http://123.129.219.111:3000/v1"
-        model_name: "gpt-4o-mini"
+        model_name: "<configure-high-model>"
         maxworker: 2
         wire_api: "responses"
         response_format: ""
@@ -21,7 +23,7 @@ system:
         name: "B"
         api_key: "env:LOOPAI_MEDIUM_MODEL_API_KEY"
         base_url: "http://123.129.219.111:3000/v1"
-        model_name: "gpt-4o-mini"
+        model_name: "<configure-medium-model>"
         maxworker: 4
         wire_api: "chat"
         response_format: ""
@@ -30,7 +32,7 @@ system:
         name: "C"
         api_key: "env:LOOPAI_LOW_MODEL_API_KEY"
         base_url: "http://123.129.219.111:3000/v1"
-        model_name: "gpt-4o-mini"
+        model_name: "<configure-low-model>"
         maxworker: 8
         wire_api: "chat"
         response_format: ""
@@ -38,14 +40,11 @@ system:
   integrations:
     tavily:
       api_key: "env:TAVILY_API_KEY"
-    kaggle:
-      username: "env:KAGGLE_USERNAME"
-      key: "env:KAGGLE_KEY"
     rag:
       base_url: ""
       api_key: "env:RAG_API_KEY"
-  codex_workspace: "/home/lpc/repos/Dataflow-LoopAI"
-  codex_home: "/home/lpc/repos/Dataflow-LoopAI/codex_home"
+  codex_workspace: "/jizhicfs/hymiezhao/lpc/repos/xbr/code/Dataflow-LoopAI"
+  codex_home: "/jizhicfs/hymiezhao/lpc/repos/xbr/cz/.codex"
   codex_run_timeout_ms: 300000
   codex_use_project_config: false
 
@@ -79,8 +78,8 @@ default_states:
 
   # ObtainerCLI/DataMixer context for acquisition, processing, and final export.
   obtainer:
-    model_path: "gpt-4o-mini" # if empty, will use starter model
-    base_url: "http://123.129.219.111:3000/v1" # if empty, will use starter base_url
+    model_path: "" # resolved from the Starter model pool Codex role
+    base_url: "" # resolved from the shared response proxy
     temperature: 0.7
     search_engine: "tavily" # tavily, duckduckgo, jina
     max_urls: 6
@@ -131,5 +130,5 @@ default_states:
     verl_selection_mode: "max"
     verl_max_actor_ckpt_to_keep: 10
     verl_inherit_previous_config: true
-    verl_use_previous_best_model: true
+    verl_use_previous_best_model: false
     verl_multi_round_enabled: true

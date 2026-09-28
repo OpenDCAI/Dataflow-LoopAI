@@ -57,12 +57,9 @@ class ReasoningMathPipeline:
             cache_type="jsonl",
         )
         self.llm_serving = APILLMServing_request(
-            api_url=os.environ.get(
-                "DATAFLOW_API_URL",
-                "http://127.0.0.1:8855/responseProxy/v1/chat/completions",
-            ),
+            api_url=os.environ["DF_API_URL"],
             key_name_of_api_key="DF_API_KEY",
-            model_name=os.environ.get("DATAFLOW_MODEL", "dataflow"),
+            model_name=os.environ["DF_MODEL_NAME"],
             max_workers=10,
         )
 

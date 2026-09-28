@@ -1,13 +1,13 @@
 """Record-level topic quality validation for per-item LLM gates.
 
 Batch ``dm ingest`` is metadata-driven and writes every row directly into the
-lake. Per-record quality approval is a downstream concern: the WebAgent L2
+lake. Per-record quality approval is a downstream concern: the
 ``topic_quality_filter`` operator validates that a passing row carries a
 classifier label (focus relevance decided by ``domain_classify`` against the
-campaign's exploration keywords) plus at least ``min_semantic_signals``
+acquisition focus keywords) plus at least ``min_semantic_signals``
 distinct semantic categories whose evidence can be found in the row's original
 content. No vertical (e.g. finance) is hard-wired, so the same operator follows
-whichever topic the WebAgent is exploring. Source names, URLs, and dataset
+whichever acquisition topic is configured. Source names, URLs, and dataset
 aliases are provenance only and never decide whether a row qualifies.
 """
 from __future__ import annotations
@@ -159,10 +159,10 @@ def validate_topic_records(
     min_classifier_confidence: float = 0.8,
     min_signal_confidence: float = 0.7,
 ) -> tuple[list[dict], dict]:
-    """Validate rows whose LLM judgement must match the WebAgent's focus.
+    """Validate rows whose LLM judgement must match the acquisition focus.
 
     Relevance itself is decided by ``domain_classify`` (which received the
-    campaign's ``focus_keywords``): a row with an empty label list is unrelated
+    configured ``focus_keywords``): a row with an empty label list is unrelated
     and is rejected here.  Everything else is deterministic admission on the
     classifier identity, confidence floor and grounded semantic signals, with
     no vertical-specific vocabulary.

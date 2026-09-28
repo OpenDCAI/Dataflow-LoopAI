@@ -74,7 +74,7 @@ prompt_registry.register(
   "add_bench_request": 是否用户自备了数据集作为benchmark 需要我们帮忙配置好参数(bool类型),没有这个需求则为 False,
   "domain": ["math", "medical", ...],  # 评测任务的领域，如 ["text", "math", "code", "reasoning", ...]，可以写多个标签，只要是相关的领域都可以，注意同一个标签可以写多个不同的别名，以方便检索时匹配，包括但不限于简写等
   "specific_benches": ["gsm8k", "mmlu", ...],  # 由用户提出的必须评测的指定 benchmark 列表，没有则填写 None
-  "model_path": ["gpt-4o", "local://qwen", ...],  # 被测模型名或本地路径，从用户给的文字描述中寻找，没有则填写 None
+  "model_path": ["<pool-entry>", "local://model", ...],  # 被测模型名或本地路径，从用户给的文字描述中寻找，没有则填写 None
   "special_request": "其他无法结构化但依旧重要的需求文本"  # 其他无法结构化但依旧重要的需求,用文字记录用于后续处理
 }}
 """

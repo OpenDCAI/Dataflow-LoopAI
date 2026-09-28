@@ -7,6 +7,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -220,3 +222,51 @@ def test_chat_endpoint_routes_to_responses_upstream_through_pool():
     assert payload["choices"][0]["message"]["content"] == "pong"
     assert _LLMHandler.calls[-1]["path"] == "/v1/responses"
     assert _LLMHandler.calls[-1]["body"]["model"] == "upstream-model"
+
+
+@pytest.mark.parametrize("config_variable", ["STARTER_CONFIG", "STARTER_CONFIG_PATH"])
+def test_explicit_proxy_pool_routes_without_shared_database(tmp_path, monkeypatch, config_variable):
+    import api.app.services.responseProxy.proxy as proxy_module
+
+    async def unexpected_database_read():
+        raise AssertionError("isolated proxy must not read the shared configuration database")
+
+    server, base_url = _start_server()
+    system = _system(base_url, "chat")
+    system["model"]["pool"][0]["api_key"] = "env:TEST_PROXY_UPSTREAM_KEY"
+    config = tmp_path / "starter.json"
+    config.write_text(json.dumps({"system": system}))
+    monkeypatch.delenv("STARTER_CONFIG", raising=False)
+    monkeypatch.delenv("STARTER_CONFIG_PATH", raising=False)
+    monkeypatch.setenv(config_variable, str(config))
+    monkeypatch.setenv("TEST_PROXY_UPSTREAM_KEY", "isolated-upstream-key")
+    monkeypatch.setattr(proxy_module, "load_starter_system_config", unexpected_database_read)
+
+    async def exercise():
+        service = await ResponseProxyService.create()
+        return await service.forward_chat_request({
+            "model": "medium", "messages": [{"role": "user", "content": "ping"}],
+        })
+
+    try:
+        mode, payload, status = asyncio.run(exercise())
+    finally:
+        server.shutdown()
+    assert (mode, status) == ("json", 200)
+    assert payload["choices"][0]["message"]["content"] == "pong"
+    assert _LLMHandler.calls[-1]["body"]["model"] == "upstream-model"
+    assert _LLMHandler.calls[-1]["authorization"] == "Bearer isolated-upstream-key"
+    assert "isolated-upstream-key" not in config.read_text()
+
+
+def test_proxy_without_explicit_config_keeps_database_pool(monkeypatch):
+    import api.app.services.responseProxy.proxy as proxy_module
+
+    async def database_config():
+        return _system("http://shared.example/v1", "responses")
+
+    monkeypatch.delenv("STARTER_CONFIG", raising=False)
+    monkeypatch.delenv("STARTER_CONFIG_PATH", raising=False)
+    monkeypatch.setattr(proxy_module, "load_starter_system_config", database_config)
+    service = asyncio.run(ResponseProxyService.create())
+    assert service.model_pool.find_entry("medium").base_url == "http://shared.example/v1"

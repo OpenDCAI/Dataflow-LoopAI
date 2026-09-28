@@ -60,13 +60,32 @@ class CustomLLMCaller(BaseLLMCaller):
             )
 
         self.agent_role = agent_role   # 保存 agent 的真实角色名
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
+        # Analyzer metric calls are always routed through Starter's medium
+        # role.  A caller-provided model is treated only as an alias when it
+        # exists in the pool; legacy URL/key arguments are never authoritative.
+        try:
+            from loopai.schema.model_pool import StarterModelPool, load_starter_system_config_sync
+            pool = StarterModelPool(load_starter_system_config_sync(prefer_db=True) or {})
+            requested = None
+            candidate = str(model_name or "").strip()
+            candidate_entry = pool.get_entry_by_name(candidate) if candidate else None
+            if candidate_entry is not None and candidate_entry.tier == "medium":
+                requested = candidate
+            provider = pool.resolve_role_provider("medium", requested=requested)
+        except Exception:
+            provider = None
+        if provider is not None:
+            self.model_name = provider.model
+            self.base_url = provider.base_url.rstrip("/")
+            self.api_key = provider.api_key or ""
+        else:
+            self.base_url = ""
+            self.api_key = ""
         timeout_s = int(os.getenv("OE_TIMEOUT_S") or os.getenv("DF_TIMEOUT_S") or 60)
         if timeout_s <= 0:
             timeout_s = 60
-        if not self.model_name:
-            self.model_name = os.getenv("DF_MODEL_NAME") or os.getenv("OE_MODEL_NAME") or "gpt-4o"
+        if not self.model_name or not self.base_url:
+            raise RuntimeError("Analyzer metric caller requires a medium model-pool provider")
         self._client = httpx.AsyncClient(
             timeout=timeout_s,
             headers={

@@ -30,11 +30,18 @@ class WebPageReader(BaseAgent):
     
     def __init__(
         self,
-        model_name: str = "gpt-4o-mini",
+        model_name: Optional[str] = None,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.7,
     ):
+        from .model_pool import resolve_obtainer_codex_provider
+        provider = resolve_obtainer_codex_provider()
+        # Keep constructor arguments for source compatibility, but never let
+        # them select a task-scoped or vendor provider.
+        model_name = provider["model"]
+        base_url = provider["base_url"]
+        api_key = provider["api_key"]
         super().__init__(
             model_name=model_name,
             base_url=base_url,
@@ -42,7 +49,7 @@ class WebPageReader(BaseAgent):
             temperature=temperature,
             prompt_template_dir=None,  # Will use default
         )
-        # Override prompt_loader to use obtainer_prompt.json
+        # Use the standard markdown prompt directory.
         self.prompt_loader = PromptLoader()
     
     def init_graph(self, **kwargs):
@@ -70,11 +77,12 @@ class WebPageReader(BaseAgent):
         logger.info(f"[WebPageReader] Analyzing page: {url}")
         
         # Prepare prompts
-        system_prompt = self.prompt_loader.get_prompt(
-            "obtainer_prompt",
-            "webpage_reader_prompt",
-            prompt_type="system"
-        ) or "You are a web analysis agent that extracts download links from web pages."
+        # PromptLoader exposes ``__call__(prompt_type, prompt_name)``; use the
+        # canonical loader API so this node can actually reach its LLM path.
+        try:
+            system_prompt = self.prompt_loader("system", "webpage_reader_prompt")
+        except (AssertionError, KeyError):
+            system_prompt = "You are a web analysis agent that extracts download links from web pages."
         
         # Limit text content to avoid token limits
         compact_text = text_content[:16000]
@@ -82,14 +90,17 @@ class WebPageReader(BaseAgent):
         # Limit discovered URLs
         urls_block = "\n".join(discovered_urls[:100])
         
-        task_prompt = self.prompt_loader.get_prompt(
-            "obtainer_prompt",
-            "webpage_reader_prompt",
-            prompt_type="task",
-            objective=objective,
-            urls_block=urls_block,
-            text_content=compact_text,
-        )
+        try:
+            task_prompt = self.prompt_loader("task", "webpage_reader_prompt").format(
+                objective=objective,
+                urls_block=urls_block,
+                text_content=compact_text,
+            )
+        except (AssertionError, KeyError):
+            task_prompt = (
+                f"Objective: {objective}\nLinks:\n{urls_block}\n"
+                f"Page text:\n{compact_text}\nReturn the required JSON action plan."
+            )
         
         # Create messages
         from langchain_core.messages import SystemMessage, HumanMessage
@@ -142,4 +153,3 @@ class WebPageReader(BaseAgent):
                 "is_relevant": False,
                 "discovered_urls": discovered_urls[:100],
             }
-

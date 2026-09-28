@@ -25,8 +25,6 @@ def build_obtainer_rag_config(
     api_key: str,
     tavily_api_key: str = "",
     rag_api_key: str = "",
-    kaggle_username: str = "",
-    kaggle_key: str = "",
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Assemble obtainer & RAG related config from OmegaConf cfg.
@@ -63,8 +61,6 @@ def build_obtainer_rag_config(
 
     # External keys
     obtainer_config["obtainer_tavily_api_key"] = tavily_api_key or ""
-    obtainer_config["obtainer_kaggle_username"] = kaggle_username or ""
-    obtainer_config["obtainer_kaggle_key"] = kaggle_key or ""
 
     # RAG config
     rag_config: Dict[str, Any] = {}
@@ -84,6 +80,5 @@ def build_obtainer_rag_config(
             rag_config["obtainer_rag_api_key"] = rag_api_key
 
     return obtainer_config, rag_config
-
 
 

@@ -281,7 +281,7 @@ def test_next_round_inherits_hyperparameters_but_replaces_dynamic_fields(tmp_pat
     assert config["loopai_round"]["inherited_previous_config"] is True
 
 
-def test_new_round_promotes_previous_exported_hf_model_and_clears_outputs(tmp_path: Path) -> None:
+def test_new_round_keeps_configured_model_and_clears_outputs(tmp_path: Path) -> None:
     model = tmp_path / "exported-model"
     model.mkdir()
     (model / "config.json").write_text("{}", encoding="utf-8")
@@ -313,8 +313,9 @@ def test_new_round_promotes_previous_exported_hf_model_and_clears_outputs(tmp_pa
 
     assert trainer["trainer_parent_version_id"] == "round-1"
     assert trainer["trainer_round_index"] == 2
-    assert trainer["train_input_model_name"] == str(model.resolve())
-    assert trainer["trainer_model_inheritance"]["applied"] is True
+    assert trainer["train_input_model_name"] == "/models/base"
+    assert trainer["trainer_model_inheritance"]["applied"] is False
+    assert "data_incremental_mode" in trainer["trainer_model_inheritance"]["reason"]
     assert trainer["_trainer_previous_config"] == previous_config
     assert "train_config" not in trainer
     assert "update_model_path" not in trainer
@@ -604,8 +605,8 @@ def test_two_prepare_rounds_convert_new_data_and_inherit_model_and_yaml(
     assert second_approval["trainer_version_id"] != first_approval["trainer_version_id"]
     assert second_trainer["trainer_parent_version_id"] == first_approval["trainer_version_id"]
     assert second_trainer["trainer_round_index"] == 2
-    assert second_trainer["train_input_model_name"] == str(exported_model.resolve())
-    assert second_config["overrides"]["actor_rollout_ref.model.path"] == str(exported_model.resolve())
+    assert second_trainer["train_input_model_name"] == "/models/base"
+    assert second_config["overrides"]["actor_rollout_ref.model.path"] == "/models/base"
     assert second_config["loopai_round"]["inherited_previous_config"] is True
     assert second_config["loopai_round"]["parent_version_id"] == first_approval["trainer_version_id"]
     assert second_trainer["verl_source_dataset_path"] == str(second_source)

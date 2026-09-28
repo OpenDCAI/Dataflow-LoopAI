@@ -77,9 +77,9 @@ def _apply_states_config(
 def _sync_model_pool_services_to_lake(config_obj: dict[str, Any]) -> None:
     """Sync model-pool embedding/MinerU-HTML service config into .datamixer/lake.yaml.
 
-    The lake pointer is the shared source of truth consumed by ObtainerCLI,
-    the embedding indexer and the WebAgent pipeline, so saving the model pool
-    must keep it in sync. Missing pointer / malformed values are non-fatal.
+    The lake pointer is the shared source of truth consumed by ObtainerCLI and
+    the embedding indexer, so saving the model pool must keep it in sync.
+    Missing pointer / malformed values are non-fatal.
     """
     try:
         system_config = config_obj.get("system") or {}

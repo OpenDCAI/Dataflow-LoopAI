@@ -12,7 +12,7 @@ REPO_ROOT = HERE.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from loopai.agents.Obtainer.datamixer.models import ModelPool
+from loopai.agents.Obtainer.datamixer.models import ModelPool, system_operator_model_name
 from loopai.agents.Obtainer.datamixer.operators import load_pipeline, run_pipeline
 from loopai.agents.Obtainer.datamixer.store import DataStore
 
@@ -49,8 +49,16 @@ def _records(manifest_path: Path):
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--warehouse", required=True)
-    parser.add_argument("--model-source-warehouse", required=True)
-    parser.add_argument("--model", default="qwen3-14b-fp8")
+    parser.add_argument(
+        "--model-source-warehouse",
+        default=None,
+        help="Optional legacy warehouse containing a model alias; Starter's model pool is authoritative.",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Optional Starter rollout/medium alias (defaults to the resolved model-pool operator role).",
+    )
     parser.add_argument(
         "--manifest", default=str(HERE / "source_pages" / "manifest.jsonl")
     )
@@ -64,9 +72,21 @@ def main() -> int:
 
     store = DataStore.init(args.warehouse)
     try:
-        source_pool = ModelPool(args.model_source_warehouse)
         target_pool = ModelPool(store.root)
-        target_pool.add(source_pool.get(args.model))
+        model_alias = args.model or system_operator_model_name()
+        if not model_alias:
+            raise RuntimeError(
+                "No DataFlow operator model resolved; configure Starter's rollout/medium model pool role."
+            )
+        # Keep the warehouse registry as a compatibility cache only.  The
+        # actual endpoint and credentials are resolved from Starter at call
+        # time by ModelPool.get().
+        if args.model_source_warehouse:
+            source_pool = ModelPool(args.model_source_warehouse)
+            try:
+                target_pool.add(source_pool.get(model_alias))
+            except KeyError:
+                pass
 
         dataset_id = store.catalog.resolve_dataset("webpage_demo_l1")
         if dataset_id is None:
@@ -92,7 +112,7 @@ def main() -> int:
                 if args.mineru_backend is not None:
                     op.setdefault("args", {})["mineru_backend"] = args.mineru_backend
             if op.get("name") in {"domain_classify", "pt_to_sft_qa"}:
-                op.setdefault("args", {})["model"] = args.model
+                op.setdefault("args", {})["model"] = model_alias
         result = run_pipeline(store, pipeline_spec, batch_size=10)
 
         counts = {}

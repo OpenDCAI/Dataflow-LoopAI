@@ -32,9 +32,11 @@ from .store import read_jsonl
 RESERVED_FIELDS = {"content", "sample_id", "dataset_id", "cid", "created_at",
                    "version", "tags", "tags_json", "embedding"}
 
-# Hard-coded per-turn budget for the DataFlow agent Codex session. Five hours so
-# the agent can finish the full (not just trial) processing on large datasets.
+# Per-turn budget for planning, trial repairs and independent reviews. Full
+# processing belongs to the upper layer after the trial passes its release gate.
 DATAFLOW_AGENT_TIMEOUT = 18000
+
+PIPELINE_REVIEW_WEIGHTS = {"D1": 15, "D2": 25, "D3": 20, "D4": 12, "D5": 16, "D6": 12}
 
 
 def _write_dataflow_status(path: Path, **updates: Any) -> dict[str, Any]:
@@ -63,21 +65,27 @@ def parse_llm_scalar_score(value: Any, *, minimum: int = 1, maximum: int = 5) ->
     if value is None:
         raise ValueError("LLM score response is missing")
     text = str(value).strip()
-    answer_blocks = re.findall(r"<answer>(.*?)</answer>", text, flags=re.DOTALL | re.IGNORECASE)
-    if answer_blocks:
-        # Use the LAST <answer> block (innermost), which is the model's actual answer.
-        # The API helper may wrap thinking/reasoning + answer tags around the model output
-        # where content already has <answer> tags, creating nested wrapping.
-        # Strip all <answer></answer> tags from the extracted text to get the raw score.
-        text = re.sub(r'</?answer\s*>', '', answer_blocks[-1], flags=re.IGNORECASE).strip()
-    else:
-        # Strip any remaining <answer>/</answer> tags before parsing
-        text = re.sub(r'</?answer\s*>', '', text, flags=re.IGNORECASE).strip()
-        text = re.sub(r'answer\s*>', '', text, flags=re.IGNORECASE).strip()
-        text = re.sub(
-            r"<think>.*?</think>", "", text,
-            flags=re.DOTALL | re.IGNORECASE,
-        ).strip()
+    # Reasoning may mention literal <answer> tags. Remove it before looking for
+    # answer boundaries, and never extract a score from unfinished reasoning.
+    text = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", text,
+                  flags=re.DOTALL | re.IGNORECASE).strip()
+    if re.search(r"</?think\b", text, flags=re.IGNORECASE):
+        raise ValueError("LLM score response must end in one integer; incomplete reasoning")
+    tags = list(re.finditer(r"</?answer\s*>", text, flags=re.IGNORECASE))
+    if tags:
+        # DataFlow may wrap an already tagged answer when reasoning_content is
+        # present. Accept nested shells, but reject siblings/multiple answers.
+        depth = len(tags) // 2
+        closing = [tag.group().startswith("</") for tag in tags]
+        if not depth or closing != [False] * depth + [True] * depth:
+            raise ValueError("LLM score response has multiple or malformed answer blocks")
+        text = text[tags[0].start():tags[-1].end()]
+        for _ in range(depth):
+            wrapped = re.fullmatch(r"<answer\s*>(.*?)</answer\s*>", text,
+                                   flags=re.DOTALL | re.IGNORECASE)
+            if wrapped is None:
+                raise ValueError("LLM score response must end in one integer")
+            text = wrapped.group(1).strip()
     match = re.fullmatch(r"([+-]?\d+)", text)
     if not match:
         raise ValueError("LLM score response must end in one integer")
@@ -87,6 +95,42 @@ def parse_llm_scalar_score(value: Any, *, minimum: int = 1, maximum: int = 5) ->
             f"LLM score {score} is outside the allowed range {minimum}-{maximum}"
         )
     return score
+
+
+def parse_llm_audit_score(value: Any, *, minimum: int = 1, maximum: int = 5) -> tuple[dict[str, Any], int]:
+    """Read one complete audit JSON and one score, preserving answer shells.
+
+    Some judges emit an <audit> prefix without a closing tag. The JSON decoder
+    determines the exact object boundary; omitted answer/think tags are never
+    repaired. DataFlow's additional outer <answer> shell is supported.
+    """
+    if value is None:
+        raise ValueError("LLM audit response is missing")
+    text = re.sub(r"<think\b[^>]*>.*?</think\s*>", "", str(value),
+                  flags=re.DOTALL | re.IGNORECASE).strip()
+    if re.search(r"</?think\b", text, flags=re.IGNORECASE):
+        raise ValueError("LLM audit response has incomplete reasoning")
+    markers = list(re.finditer(r"<audit\s*>", text, flags=re.IGNORECASE))
+    if len(markers) != 1:
+        raise ValueError("LLM audit response must contain exactly one audit object")
+    marker = markers[0]
+    prefix = text[:marker.start()]
+    if not re.fullmatch(r"(?:\s*<answer\s*>\s*)*", prefix, flags=re.IGNORECASE):
+        raise ValueError("LLM audit response has unexpected content before audit")
+    body = text[marker.end():].lstrip()
+    try:
+        audit, end = json.JSONDecoder().raw_decode(body)
+    except ValueError as exc:
+        raise ValueError("LLM audit response has incomplete or invalid JSON") from exc
+    if not isinstance(audit, dict):
+        raise ValueError("LLM audit must be a JSON object")
+    suffix = re.sub(r"^\s*</audit\s*>", "", body[end:], count=1,
+                    flags=re.IGNORECASE).strip()
+    scalar = prefix + suffix
+    if not re.fullmatch(r"(?:\s*</?answer\s*>\s*)*[+-]?\d+(?:\s*</?answer\s*>\s*)*",
+                        scalar, flags=re.IGNORECASE):
+        raise ValueError("LLM audit response must end in exactly one integer score")
+    return audit, parse_llm_scalar_score(scalar, minimum=minimum, maximum=maximum)
 
 
 def dataflow_pipeline_skill_asset() -> Path:
@@ -224,6 +268,9 @@ Required pipeline behavior:
 Deliver a complete pipeline `.py` file, the trial output JSONL, the trial input
 JSONL, and a summary `.md` file.
 
+The pipeline is constructed around records that already exist in the input
+JSONL. Inspect, filter, normalize, rewrite, or enrich those records as needed.
+
 你是 DataMixer 的 **DataFlow 后处理 agent**（dataflow agent），负责把 L1 -> L2
 -> L3 链路上的数据通过 DataFlow operator 链处理成 **L4**（质量过滤、去重、
 规范化、安全、SFT 有效性），默认情况下 L4 是生产出湖的数据源；若用户明确
@@ -335,26 +382,11 @@ def operator_llm_config_from_starter() -> dict[str, str]:
     The key is returned so the Codex runner can receive it via ``DF_API_KEY``;
     callers must not include it in prompts or JSON output.
 
-    The serving endpoint/model follow the Starter model-pool **default model**
-    (read from the persisted system config, DB preferred), so DataFlow LLM
-    operators run through the same response proxy as every other agent.
+    The serving endpoint/model follow the Starter model-pool rollout/medium
+    role (read from the persisted system config, DB preferred), so DataFlow
+    LLM operators run through the same response proxy as every other agent.
     """
     from loopai.schema.model_pool import load_starter_system_config_sync
-
-    explicit_url = os.environ.get("DF_API_URL", "").strip()
-    explicit_model = os.environ.get("DF_MODEL_NAME", "").strip()
-    if explicit_url or explicit_model:
-        if not explicit_url or not explicit_model:
-            raise CodexError(
-                "DF_API_URL and DF_MODEL_NAME must be set together for a "
-                "DataFlow operator LLM override"
-            )
-        return {
-            "api_url": _chat_completions_url(explicit_url),
-            "model_name": explicit_model,
-            "api_key_env": "DF_API_KEY",
-            "api_key": os.environ.get("DF_API_KEY", ""),
-        }
 
     root = _project_root()
     db_path = (root / "api" / "db" / "db.sqlite3") if root else None
@@ -367,46 +399,46 @@ def operator_llm_config_from_starter() -> dict[str, str]:
     model_value = system.get("model")
     has_explicit_pool = (
         isinstance(model_value, list)
-        or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
+        or (isinstance(model_value, dict) and isinstance(
+            model_value.get("pool") or model_value.get("models") or model_value.get("entries"), list
+        ))
     )
     if has_explicit_pool:
         pool = StarterModelPool(system)
-        entry = pool.default_entry()
-        if entry is not None:
-            provider = pool.resolve_proxy_provider(entry.name, tier=entry.tier)
-            if provider is not None:
-                return {
-                    "api_url": chat_completions_url(provider.base_url),
-                    "model_name": provider.model,
-                    "api_key_env": "DF_API_KEY",
-                    "api_key": provider.api_key,
-                }
-    # Legacy fallback (no explicit model pool): flat starter.yaml keys.
-    root = _project_root()
-    starter = root / "starter.yaml" if root else None
-    doc = {}
-    if starter and starter.exists():
-        try:
-            import yaml
-            doc = yaml.safe_load(starter.read_text(encoding="utf-8")) or {}
-        except Exception:
-            doc = {}
-    system = doc.get("system") or {}
-    obtainer = (doc.get("default_states") or {}).get("obtainer") or {}
-    base_url = system.get("starter_base_url") or obtainer.get("base_url") or ""
-    model = (
-        system.get("starter_model_name")
-        or system.get("starter_model_path")
-        or obtainer.get("model_path")
-        or "gpt-4o-mini"
+        # DataFlow operators are driven by the medium role.  A live Judger
+        # vLLM registration is preferred for rollout difficulty screening;
+        # otherwise resolve_role_provider falls back to the configured medium
+        # entry (and then the default entry when medium is unavailable).
+        requested_rollout = os.environ.get("DATAFLOW_ROLLOUT_MODEL", "").strip() or None
+        provider = pool.resolve_role_provider("rollout", requested=requested_rollout)
+        if provider is not None and provider.base_url:
+            return {
+                "api_url": chat_completions_url(provider.base_url),
+                "model_name": provider.model,
+                "api_key_env": "DF_API_KEY",
+                "api_key": provider.api_key,
+            }
+        raise CodexError(
+            "DataFlow operator could not resolve a usable rollout provider from the Starter model pool"
+        )
+    # A child process may receive an already-resolved tuple via environment
+    # variables only when no Starter pool is configured at all.  This keeps
+    # standalone subprocess transport working without allowing it to override
+    # an explicit pool.
+    explicit_url = os.environ.get("DF_API_URL", "").strip()
+    explicit_model = os.environ.get("DF_MODEL_NAME", "").strip()
+    if explicit_url or explicit_model:
+        if not explicit_url or not explicit_model:
+            raise CodexError("DF_API_URL and DF_MODEL_NAME must be set together")
+        return {
+            "api_url": _chat_completions_url(explicit_url),
+            "model_name": explicit_model,
+            "api_key_env": "DF_API_KEY",
+            "api_key": os.environ.get("DF_API_KEY", ""),
+        }
+    raise CodexError(
+        "DataFlow operator requires a Starter model pool medium/rollout provider"
     )
-    api_key = system.get("starter_api_key") or obtainer.get("api_key") or ""
-    return {
-        "api_url": _chat_completions_url(str(base_url)),
-        "model_name": str(model),
-        "api_key_env": "DF_API_KEY",
-        "api_key": str(api_key or ""),
-    }
 
 
 def export_trial_jsonl(store, *, dataset: str | None, where: str | None,
@@ -628,16 +660,38 @@ def build_dataflow_agent_prompt(
     operator_llm: dict[str, str] | None = None,
     full_jsonl: Path | None = None,
     bucket_plan: list[dict[str, Any]] | None = None,
+    skeleton_path: Path | str | None = None,
 ) -> str:
     op_llm = operator_llm or {}
     op_llm_block = (
         "For DataFlow LLM-based operators, instantiate APILLMServing_request with:\n"
         f'- api_url="{op_llm.get("api_url", "")}"\n'
-        f'- model_name="{op_llm.get("model_name", "gpt-4o-mini")}"\n'
+        f'- model_name="{op_llm.get("model_name", "")}"\n'
         f'- key_name_of_api_key="{op_llm.get("api_key_env", "DF_API_KEY")}"\n'
         "Do not use the Codex planning model as the DataFlow operator model.\n"
     )
+    skeleton_block = ""
+    if skeleton_path:
+        skeleton_block = (
+            "\nFIXED SKELETON CONTRACT (mandatory):\n"
+            f"- You MUST base the pipeline on the skeleton at: {skeleton_path}\n"
+            "- The skeleton has TWO LOCKED regions and TWO AGENT-EDITABLE regions.\n"
+            "- LOCKED (do NOT modify, reorder, or drop): the pre-steps "
+            "RuleValidate -> RuleFilter, and the post-steps "
+            "TestModelRolloutDifficulty -> StrongModelGradedRetry.\n"
+            "- You may ONLY edit code inside the two blocks marked "
+            "`# === AGENT-EDITABLE (FRONT) ===` (multi-source field "
+            "normalization) and `# === AGENT-EDITABLE (MIDDLE) ===` "
+            "(data reshaping / LLM reshaping / native CoT augmentation / "
+            "low-quality answer regeneration).\n"
+            "- Reasoning/CoT must be NATIVE: never coach the model to 'write a "
+            "detailed CoT'; let it solve the problem directly. Reuse rollout "
+            "artifacts as CoT instead of regenerating. Preserve gold_answer.\n"
+            "- Deliver the filled-in skeleton as pipeline_path; keep the locked "
+            "regions byte-for-byte unless a lock explicitly exposes a knob.\n"
+        )
     return f"""You are the DataMixer DataFlow planning agent.
+{skeleton_block}
 
 Use the installed `generating-dataflow-pipeline` skill from the Codex skills
 directory. Read it on demand and use it as a reference for this task.
@@ -656,6 +710,14 @@ Task:
 - Text/input field: {field}
 - Work directory: {work_dir}
 - Full input JSONL reserved for the upper layer: {full_jsonl}
+
+Do not launch the full processing; deliver only a reviewed, passing trial.
+Write summary.md for the candidate's trial and review evidence. The outer CLI
+owns status.json, stdout.json and process_result.json: do not create, overwrite
+or finalize those lifecycle files. During independent review the managed run
+is still running and stdout may be empty; the CLI finalizes them after your
+final JSON returns. Tell reviewers this lifecycle contract so they assess
+candidate completeness from pipeline/trial/summary/review artifacts.
 
 {op_llm_block}
 
@@ -676,6 +738,13 @@ Return one final JSON object with:
 
 The summary must include the pipeline review decision and paths to
 `pipeline_review.json` and `pipeline_review.md`.
+Write both reports beside the delivered pipeline. The JSON report must contain
+`dimensions` keyed by D1-D6, each with integer `raw_score` (0-4), numeric
+`weighted_score`, boolean `blocked`, list `redlines`, and nonempty `evidence`.
+Include numeric `total` and `decision` computed using the review skill's weights.
+A failed review is a repair checkpoint: revise the pipeline, rerun the affected
+trial stages, and repeat all six independent reviews. Do not change only the
+reported decision or scores. A successful trial must contain at least one row.
 It must also include the pipeline-skill curation status and resulting skill/case
 paths when promotion was attempted.
 
@@ -730,8 +799,13 @@ def _audit_processed(
                 f"{label} row {row_number} ({sample_id}) dropped original "
                 "input fields: " + ", ".join(missing_fields[:5])
             )
-        # A DataFlow refinement pipeline is allowed to transform field values
-        # (e.g. normalize text, compute scores); only losing a field is fatal.
+        changed_fields = sorted(key for key, value in source.items() if row[key] != value)
+        if changed_fields:
+            raise CodexError(
+                f"{label} row {row_number} ({sample_id}) changed original input fields: "
+                + ", ".join(changed_fields[:5])
+                + "; write generated or normalized content to new derived fields"
+            )
         added_fields.update(set(row) - set(source))
     if reported_out is not None and len(output_ids) != reported_out:
         raise CodexError(
@@ -760,6 +834,49 @@ def _audit_processed(
         "original_fields_preserved": True,
         "added_fields": sorted(added_fields),
     }
+
+
+def audit_pipeline_review(pipeline_path: Path) -> dict[str, Any]:
+    """Verify release arithmetic and redlines from the on-disk six-way review."""
+    review_path = pipeline_path.parent / "pipeline_review.json"
+    markdown_path = pipeline_path.parent / "pipeline_review.md"
+    try:
+        report = json.loads(review_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CodexError(f"pipeline review is missing or invalid: {review_path}") from exc
+    if not markdown_path.is_file() or not markdown_path.read_text(encoding="utf-8").strip():
+        raise CodexError(f"pipeline review markdown is missing or empty: {markdown_path}")
+    dimensions = report.get("dimensions") if isinstance(report, dict) else None
+    if not isinstance(dimensions, dict) or set(dimensions) != set(PIPELINE_REVIEW_WEIGHTS):
+        raise CodexError("pipeline review must include all six dimensions D1-D6")
+    total = 0.0
+    blocked = bool(report.get("blocked") or report.get("redlines"))
+    for name, weight in PIPELINE_REVIEW_WEIGHTS.items():
+        dimension = dimensions[name]
+        if not isinstance(dimension, dict):
+            raise CodexError(f"pipeline review {name} must be an object")
+        raw = dimension.get("raw_score")
+        if type(raw) is not int or not 0 <= raw <= 4:
+            raise CodexError(f"pipeline review {name} raw_score must be an integer from 0 to 4")
+        weighted = dimension.get("weighted_score")
+        expected = raw / 4 * weight
+        if type(weighted) not in (int, float) or not math.isclose(weighted, expected, abs_tol=1e-6):
+            raise CodexError(f"pipeline review {name} weighted_score does not match raw_score")
+        if not isinstance(dimension.get("blocked"), bool) or not isinstance(dimension.get("redlines"), list):
+            raise CodexError(f"pipeline review {name} must declare blocked and redlines")
+        if not isinstance(dimension.get("evidence"), list) or not dimension["evidence"]:
+            raise CodexError(f"pipeline review {name} must cite evidence")
+        blocked = blocked or dimension["blocked"] or bool(dimension["redlines"])
+        total += expected
+    claimed_total = report.get("total")
+    if type(claimed_total) not in (int, float) or not math.isclose(claimed_total, total, abs_tol=1e-6):
+        raise CodexError("pipeline review total does not match dimension scores")
+    decision = ("Blocked" if blocked else "release" if total >= 85 else
+                "fix_then_release" if total >= 70 else "rework" if total >= 50 else "reject")
+    if report.get("decision") != decision:
+        raise CodexError(f"pipeline review decision must be {decision} for total={total}, blocked={blocked}")
+    return {"decision": decision, "total": total, "blocked": blocked,
+            "json_path": str(review_path), "markdown_path": str(markdown_path)}
 
 
 def validate_dataflow_agent_result(
@@ -824,8 +941,8 @@ def validate_dataflow_agent_result(
 
     if not result["ok"] or result["errors"]:
         raise CodexError("dataflow agent result must set ok=true with no errors")
-    if not isinstance(result["trial_rows_out"], int) or result["trial_rows_out"] < 0:
-        raise CodexError("dataflow agent trial_rows_out must be a non-negative integer")
+    if type(result["trial_rows_out"]) is not int or result["trial_rows_out"] < 1:
+        raise CodexError("dataflow agent trial_rows_out must be a positive integer")
 
     processed_path = _resolve_agent_artifact(
         run_dir, result["processed_jsonl"], name="processed_jsonl"
@@ -840,6 +957,13 @@ def validate_dataflow_agent_result(
     result["output_audit"] = trial_audit
 
     if result["mode"] == "trial_run":
+        review = audit_pipeline_review(pipeline_path)
+        if review["decision"] != "release":
+            raise CodexError(
+                f"pipeline review has not passed: {review['decision']} ({review['total']}/100); "
+                "repair the pipeline, rerun the trial and repeat all six independent reviews"
+            )
+        result["review_gate"] = review
         # The DataFlow agent only delivers the trial-verified pipeline; the
         # upper-layer starter runs the full input through the chunked runner.
         result["deliverable"] = {
@@ -892,13 +1016,17 @@ def run_dataflow_agent(
     apply: bool = False,
     recipe_path: str | Path | None = None,
     mix_plan_path: str | Path | None = None,
+    skeleton_path: str | Path | None = None,
+    input_file: str | Path | None = None,
+    full_input_file: str | Path | None = None,
+    resume_thread_id: str | None = None,
 ) -> dict[str, Any]:
     if not model:
         raise CodexError("dataflow agent-run requires --model")
     if not target.strip():
         raise ValueError("dataflow agent-run requires --target")
 
-    root = Path(store.root)
+    root = Path(store.root) if store else Path.cwd()
     run_dir = Path(work_dir) if work_dir else root / "runs" / "dataflow_agent"
     run_dir.mkdir(parents=True, exist_ok=True)
     status_path = run_dir / "status.json"
@@ -918,19 +1046,34 @@ def run_dataflow_agent(
         "full_output_rows": 0,
         "current_operator": "",
         "attempt": 0,
-        "feedback": "正在导出 DataFlowAgent 试运行输入",
+        "continuation_required": False,
+        "thread_id": resume_thread_id,
+        "feedback": "正在导出 DataFlowAgent 试运行输入" if not input_file else "使用外部输入文件",
         "error": "",
     }
     _write_dataflow_status(status_path, **base_status)
     trial_jsonl = run_dir / "trial_input.jsonl"
     try:
-        exported = export_trial_jsonl(
-            store, dataset=dataset, where=where, field=field,
-            out=trial_jsonl, limit=trial_rows,
-            per_dataset_limit=trial_rows_per_dataset,
-        )
-        if exported <= 0:
-            raise ValueError("no rows matched dataset/filter for DataFlow trial")
+        if input_file:
+            # Direct file mode: skip lake export, use provided file
+            import shutil
+            input_path = Path(input_file)
+            if not input_path.exists():
+                raise FileNotFoundError(f"--input-file not found: {input_file}")
+            shutil.copy2(input_path, trial_jsonl)
+            exported = sum(1 for _ in read_jsonl(trial_jsonl))
+            if exported <= 0:
+                raise ValueError(f"--input-file is empty: {input_file}")
+        else:
+            if not store:
+                raise ValueError("dataflow agent-run requires either --input-file or a loaded lake")
+            exported = export_trial_jsonl(
+                store, dataset=dataset, where=where, field=field,
+                out=trial_jsonl, limit=trial_rows,
+                per_dataset_limit=trial_rows_per_dataset,
+            )
+            if exported <= 0:
+                raise ValueError("no rows matched dataset/filter for DataFlow trial")
         _write_dataflow_status(
             status_path,
             phase="planning",
@@ -940,7 +1083,16 @@ def run_dataflow_agent(
         )
         full_jsonl = run_dir / "full_input.jsonl"
         bucket_plan: list[dict[str, Any]] | None = None
-        if recipe_path or mix_plan_path:
+        if input_file:
+            # Direct file mode: use provided full_input_file or fallback to input_file
+            import shutil
+            full_src = Path(full_input_file) if full_input_file else Path(input_file)
+            if not full_src.exists():
+                raise FileNotFoundError(f"full input file not found: {full_src}")
+            shutil.copy2(full_src, full_jsonl)
+            full_exported = sum(1 for _ in read_jsonl(full_jsonl))
+            scope = f"direct file: {full_src.name}"
+        elif recipe_path or mix_plan_path:
             if recipe_path:
                 bucket_plan = bucket_export_plan_from_recipe(recipe_path)
             else:
@@ -965,13 +1117,13 @@ def run_dataflow_agent(
             input_rows=exported,
             full_input_rows=full_exported,
             feedback=(
-                "正在规划 DataFlow operator 链（试跑成功后自动全量处理）"
+                "正在规划 DataFlow operator 链（评审通过后交付，上层负责全量处理）"
                 if bucket_plan is None
-                else f"按桶 1.5x 缓冲导出完成（{scope}），等待试跑后全量处理"
+                else f"按桶 1.5x 缓冲导出完成（{scope}），等待试跑与发布评审"
             ),
         )
 
-        spec = ModelPool(store.root).get(model)
+        spec = ModelPool(root).get(model)
         prov = provider_from_model(spec)
         prompt = build_dataflow_agent_prompt(
             target=target,
@@ -982,6 +1134,7 @@ def run_dataflow_agent(
             operator_llm=operator_llm_config_from_starter(),
             full_jsonl=full_jsonl.resolve() if full_jsonl else None,
             bucket_plan=bucket_plan,
+            skeleton_path=skeleton_path,
         )
         operator_llm = operator_llm_config_from_starter()
         if operator_llm.get("api_key"):
@@ -989,8 +1142,9 @@ def run_dataflow_agent(
         agent_result: dict[str, Any] | None = None
         validation_error: CodexError | None = None
         current_prompt = prompt
-        thread_id: str | None = None
+        thread_id = str(resume_thread_id or "").strip() or None
         df_home = ensure_dataflow_codex_home()
+        continuation_required = False
         for attempt in range(3):
             _write_dataflow_status(
                 status_path,
@@ -998,14 +1152,38 @@ def run_dataflow_agent(
                 attempt=attempt + 1,
                 feedback=f"DataFlowAgent 第 {attempt + 1} 次规划/试运行（交付 pipeline，全量由上层执行）",
             )
-            agent_result = run_via_sdk(
-                current_prompt,
-                prov,
-                cwd=str(root),
-                timeout=DATAFLOW_AGENT_TIMEOUT,
-                thread_id=thread_id,
-                codex_home_override=df_home,
-            )
+            try:
+                agent_result = run_via_sdk(
+                    current_prompt,
+                    prov,
+                    cwd=str(root),
+                    timeout=DATAFLOW_AGENT_TIMEOUT,
+                    thread_id=thread_id,
+                    codex_home_override=df_home,
+                )
+            except CodexError as exc:
+                thread_id = getattr(exc, "thread_id", None) or thread_id
+                transient = re.search(
+                    r"\b(?:429|502|503|504)\b|system_cpu_overloaded|stream disconnected|connection reset",
+                    str(exc), re.IGNORECASE,
+                )
+                _write_dataflow_status(status_path, thread_id=thread_id, error=str(exc))
+                if not transient or not thread_id or attempt == 2:
+                    raise
+                _write_dataflow_status(
+                    status_path, phase="recovering", feedback="上游暂时故障，保留原线程和缓存后重试",
+                )
+                time.sleep(15 * (attempt + 1))
+                current_prompt = (
+                    f"{prompt}\nThe previous SDK turn was interrupted by a transient upstream "
+                    "service failure. Resume from the durable artifacts and request cache in this "
+                    "same thread. Check for any still-running trial process before relaunching it. "
+                    "Reuse verified successful calls, retry missing calls, and continue the required "
+                    "repairs and independent reviews. This interruption is not a quality rejection."
+                )
+                continue
+            thread_id = str(agent_result.get("thread_id") or thread_id or "").strip() or None
+            _write_dataflow_status(status_path, thread_id=thread_id)
             try:
                 agent_result = validate_dataflow_agent_result(
                     agent_result,
@@ -1015,10 +1193,42 @@ def run_dataflow_agent(
                     full_jsonl=full_jsonl.resolve() if full_jsonl else None,
                 )
                 validation_error = None
+                continuation_required = False
+                review_path = Path(agent_result["pipeline_path"]).parent / "pipeline_review.json"
+                if agent_result["mode"] == "planned_only" and review_path.is_file():
+                    try:
+                        review = audit_pipeline_review(Path(agent_result["pipeline_path"]))
+                        continuation_required = review["decision"] != "release"
+                        feedback = f"Review decision is {review['decision']} ({review['total']}/100)."
+                    except CodexError as exc:
+                        continuation_required = True
+                        feedback = str(exc)
+                    if continuation_required:
+                        checkpoint = run_dir / "review_checkpoints" / f"attempt_{attempt + 1}.json"
+                        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                        checkpoint.write_text(json.dumps({
+                            "thread_id": thread_id, "agent_result": agent_result,
+                            "review_report": review_path.read_text(encoding="utf-8"),
+                            "feedback": feedback,
+                        }, ensure_ascii=False, indent=2), encoding="utf-8")
+                        _write_dataflow_status(
+                            status_path, phase="reviewing", continuation_required=True,
+                            feedback=feedback + " 评审未通过，继续修复当前线程",
+                        )
+                        if attempt < 2 and thread_id:
+                            current_prompt = (
+                                f"{prompt}\n{feedback}\n"
+                                "The previous planned_only result is a repair checkpoint, not delivery. "
+                                "Read the failed review, fix feasible findings, rerun the affected trial "
+                                "stages, and repeat all six independent reviews on the final artifacts. "
+                                "Preserve previous review evidence. Do not lower criteria, relabel scores, "
+                                "or run full-volume processing. If a concrete external dependency still "
+                                "blocks progress after mitigation attempts, report the dependency and evidence."
+                            )
+                            continue
                 break
             except CodexError as exc:
                 validation_error = exc
-                thread_id = str(agent_result.get("thread_id") or "").strip() or None
                 _write_dataflow_status(
                     status_path,
                     phase="validating",
@@ -1029,7 +1239,10 @@ def run_dataflow_agent(
                     break
                 current_prompt = (
                     f"{prompt}\nThe previous result failed validation: {exc}\n"
-                    "Correct the result and return the required final JSON object."
+                    "Finish the operator decision and required trial work. "
+                    "Correct the underlying artifacts and return the required final JSON object. "
+                    "If review or trial acceptance failed, repair the pipeline, rerun the trial, "
+                    "and repeat all six independent reviews; do not merely relabel the result."
                 )
         if validation_error is not None or agent_result is None:
             raise validation_error or CodexError("dataflow agent returned no result")
@@ -1055,11 +1268,14 @@ def run_dataflow_agent(
             output_rows=output_rows,
             dropped_rows=dropped_rows,
             failed_rows=failed_rows,
-            full_output_rows=output_rows,
+            full_output_rows=(int(full_audit.get("output_rows") or agent_result.get("full_rows_out") or 0)
+                              if agent_result.get("mode") == "full_run" else 0),
             error="",
             feedback=(
                 "试跑成功，已交付 pipeline；全量由上层用 chunk 脚手架执行"
                 if delivering
+                else "评审尚未通过，保留线程与检查点供继续修复" if continuation_required
+                else "试跑尚未交付，正在记录阻塞与已完成工作" if agent_result.get("mode") == "planned_only"
                 else ("全量处理完成，正在写回数据湖" if apply else "全量处理完成，正在生成结果")
             ),
         )
@@ -1107,6 +1323,8 @@ def run_dataflow_agent(
             "trial_jsonl": str(trial_jsonl.resolve()),
             "trial_rows_exported": exported,
             "mode": agent_result.get("mode"),
+            "thread_id": thread_id,
+            "continuation_required": continuation_required,
             "full_jsonl": str(full_jsonl.resolve()) if full_jsonl else None,
             "full_rows_exported": int(full_audit.get("input_rows") or full_exported),
             "full_rows_out": int(full_audit.get("output_rows") or agent_result.get("full_rows_out") or 0),
@@ -1117,14 +1335,15 @@ def run_dataflow_agent(
             "upstream": {
                 "delivered_pipeline": bool(delivering),
                 "full_input_jsonl": str(full_jsonl.resolve()) if full_jsonl else None,
-                "chunked_run_command": chunked_cmd,
-                "apply_command": apply_cmd,
+                "chunked_run_command": chunked_cmd if delivering else None,
+                "apply_command": apply_cmd if delivering else None,
             },
         }
         _write_dataflow_status(
             status_path,
             state="completed" if agent_result.get("ok") else "completed_with_errors",
             phase="completed",
+            continuation_required=continuation_required,
             applied_rows=int((merge or {}).get("updated") or 0),
             feedback=str(agent_result.get("summary") or "DataFlowAgent 已完成"),
         )

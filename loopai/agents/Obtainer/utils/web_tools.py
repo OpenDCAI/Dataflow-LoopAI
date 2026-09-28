@@ -2,7 +2,6 @@ import os
 import re
 from typing import Dict, List, Any, Optional
 import httpx
-import asyncio
 
 from loopai.logger import get_logger
 
@@ -69,53 +68,89 @@ class WebTools:
         tavily_api_key: str = None,
         max_results: int = 10,
     ) -> Dict[str, Any]:
-        """Return provider, attempts, and structured search results.
-
-        Tavily and ``auto`` both fall back through Bing, Baidu, and the
-        DuckDuckGo HTML endpoint. Direct-provider rows retain stable URLs so
-        callers can fetch pages and run their own LLM summary layer.
-        """
+        """Return structured results without loading a discovery-agent runtime."""
         if isinstance(query, (list, tuple)):
             query = ", ".join([str(x) for x in query if x])
         elif not isinstance(query, str):
             query = str(query)
         engine = str(search_engine or "auto").strip().lower()
-        provider = {
-            "duckduckgo": "duckduckgo_html",
-            "google": "auto",
-            "jina": "auto",
-        }.get(engine, engine)
-        if provider not in {
-            "auto", "baidu", "bing", "github", "tavily", "duckduckgo_html"
-        }:
-            provider = "auto"
+        limit = max(1, min(int(max_results or 10), 30))
+        attempts: List[Dict[str, Any]] = []
+        key = tavily_api_key or os.getenv("TAVILY_API_KEY", "")
 
-        from loopai.agents.Obtainer.datamixer.webagents.webcrawler_dm import (
-            WebCrawlerDMConfig,
-            WebSearchClient,
-        )
+        if engine in {"auto", "tavily"} and key:
+            try:
+                async with WebTools._create_httpx_client(timeout=20.0) as client:
+                    response = await client.post(
+                        "https://api.tavily.com/search",
+                        json={
+                            "api_key": key,
+                            "query": query,
+                            "search_depth": "advanced",
+                            "include_answer": False,
+                            "include_raw_content": False,
+                            "max_results": limit,
+                        },
+                    )
+                    response.raise_for_status()
+                    raw_rows = response.json().get("results", [])
+                rows = [
+                    {
+                        "title": item.get("title") or "无标题",
+                        "url": item.get("url") or "",
+                        "content": item.get("content") or "",
+                        "snippet": item.get("content") or "",
+                        "provider": "tavily",
+                    }
+                    for item in raw_rows[:limit]
+                    if isinstance(item, dict) and item.get("url")
+                ]
+                attempts.append({"provider": "tavily", "status": "ok", "results": len(rows)})
+                if rows:
+                    return {
+                        "query": query,
+                        "provider": "tavily",
+                        "provider_attempts": attempts,
+                        "attempts": attempts,
+                        "results": rows,
+                    }
+            except Exception as exc:
+                attempts.append({"provider": "tavily", "status": "error", "error": str(exc)})
+        elif engine == "tavily":
+            attempts.append({"provider": "tavily", "status": "missing_api_key"})
 
-        config = WebCrawlerDMConfig(
-            search_provider=provider,
-            search_results=max(1, min(int(max_results or 10), 30)),
-            tavily_api_key=tavily_api_key or os.getenv("TAVILY_API_KEY", ""),
-            search_llm_summary=False,
-        )
-        client = WebSearchClient(config)
-        rows = await asyncio.to_thread(client.search, query, config.search_results)
-        logger.info(
-            "[WebSearch] provider=%s results=%s attempts=%s",
-            client.primary_provider(),
-            len(rows),
-            client.last_attempts,
-        )
-        attempts = list(client.last_attempts)
+        try:
+            from urllib.parse import quote
+
+            async with WebTools._create_httpx_client(timeout=30.0) as client:
+                response = await client.get(
+                    f"https://s.jina.ai/{quote(query)}",
+                    headers={"Accept": "application/json"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+            raw_rows = payload.get("data", []) if isinstance(payload, dict) else []
+            rows = [
+                {
+                    "title": item.get("title") or "无标题",
+                    "url": item.get("url") or "",
+                    "content": item.get("content") or item.get("description") or "",
+                    "snippet": item.get("content") or item.get("description") or "",
+                    "provider": "jina",
+                }
+                for item in raw_rows[:limit]
+                if isinstance(item, dict) and item.get("url")
+            ]
+            attempts.append({"provider": "jina", "status": "ok", "results": len(rows)})
+        except Exception as exc:
+            attempts.append({"provider": "jina", "status": "error", "error": str(exc)})
+            rows = []
         return {
             "query": query,
-            "provider": client.primary_provider(),
+            "provider": "jina" if rows else "",
             "provider_attempts": attempts,
             "attempts": attempts,
-            "results": [row.to_dict() for row in rows],
+            "results": rows,
         }
 
     @staticmethod

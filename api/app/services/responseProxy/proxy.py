@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 from typing import Any, AsyncIterator
@@ -12,6 +13,7 @@ from loopai.schema.model_pool import (
     ModelPoolEntry,
     StarterModelPool,
     chat_completions_url,
+    load_starter_system_config_sync,
     mask_secret,
     normalize_v1_base_url,
     responses_url,
@@ -77,7 +79,7 @@ def _extract_text_content(value: Any) -> str:
 def _normalize_upstream_v1(base_url: str) -> str:
     trimmed = (base_url or "").strip().rstrip("/")
     if not trimmed:
-        return "https://api.deepseek.com/v1"
+        return ""
     if trimmed.endswith("/v1"):
         return trimmed
     return f"{trimmed}/v1"
@@ -646,11 +648,39 @@ class ResponseProxyService:
 
     @classmethod
     async def create(cls) -> "ResponseProxyService":
+        # CLI workers already honor explicit per-process Starter configs. A
+        # dedicated proxy must resolve the same pool instead of the shared DB.
+        if os.getenv("STARTER_CONFIG") or os.getenv("STARTER_CONFIG_PATH"):
+            return cls(system_config=load_starter_system_config_sync())
         return cls(system_config=await load_starter_system_config())
 
     def _resolve_pool_entry(self, request_body: dict[str, Any]) -> ModelPoolEntry | None:
         requested = str(request_body.get("model") or "").strip()
         return self.model_pool.find_entry(requested or None)
+
+    def _model_pool_resolution_error(
+        self,
+        request_body: dict[str, Any],
+        entry: ModelPoolEntry | None,
+    ) -> bytes | None:
+        """Return a structured error when a configured pool cannot resolve an alias.
+
+        Legacy request/system endpoint fields remain readable by the internal
+        resolver for compatibility, but public proxy calls must not use them
+        when a Starter pool is configured.  This prevents an unknown model
+        name (or a caller-supplied base_url) from bypassing pool routing.
+        """
+        requested = str(request_body.get("model") or "").strip()
+        if self.model_pool.entries and requested and entry is None:
+            return _json_dumps({
+                "error": {
+                    "message": f"model '{requested}' is not registered in the Starter model pool",
+                    "type": "model_not_registered",
+                    "code": "model_not_registered",
+                    "model": requested,
+                }
+            }).encode("utf-8")
+        return None
 
     def _resolve_upstream(self, request_body: dict[str, Any]) -> tuple[str, str, str | None, ModelPoolEntry | None]:
         entry = self._resolve_pool_entry(request_body)
@@ -667,7 +697,7 @@ class ResponseProxyService:
             request_body.get("base_url")
             or self.system_config.get("codex_base_url")
             or self.system_config.get("base_url")
-            or "https://api.deepseek.com"
+            or ""
         )
         api_key = (
             request_body.get("api_key")
@@ -1189,6 +1219,9 @@ class ResponseProxyService:
         body: dict[str, Any],
     ) -> tuple[str, Any, int]:
         upstream_v1, api_key, default_model, entry = self._resolve_upstream(body)
+        model_error = self._model_pool_resolution_error(body, entry)
+        if model_error is not None:
+            return "error", model_error, 400
         started = self.runtime_store.start(entry, endpoint="responses", stream=bool(body.get("stream")))
         semaphore = self.runtime_store.semaphore_for(entry)
         body = dict(body)
@@ -1338,6 +1371,9 @@ class ResponseProxyService:
 
     async def forward_chat_request(self, body: dict[str, Any]) -> tuple[str, Any, int]:
         upstream_v1, api_key, default_model, entry = self._resolve_upstream(body)
+        model_error = self._model_pool_resolution_error(body, entry)
+        if model_error is not None:
+            return "error", model_error, 400
         started = self.runtime_store.start(entry, endpoint="chat/completions", stream=bool(body.get("stream")))
         semaphore = self.runtime_store.semaphore_for(entry)
         body = dict(body)

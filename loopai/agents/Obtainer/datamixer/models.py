@@ -71,7 +71,13 @@ def _system_model_pool():
 
     system = load_starter_system_config_sync(prefer_db=True)
     model_value = system.get("model")
-    if not (isinstance(model_value, dict) and isinstance(model_value.get("pool"), list)):
+    if not (
+        isinstance(model_value, list)
+        or (
+            isinstance(model_value, dict)
+            and isinstance(model_value.get("pool") or model_value.get("models") or model_value.get("entries"), list)
+        )
+    ):
         return None
     return StarterModelPool(system)
 
@@ -85,14 +91,39 @@ def system_default_model_name() -> str:
     return entry.name if entry else ""
 
 
+def system_operator_model_name() -> str:
+    """Starter pool alias for DataFlow/DataMixer LLM operators.
+
+    A retained Judger vLLM is preferred for rollout screening; otherwise the
+    shared role resolver supplies medium and finally the configured default.
+    """
+    pool = _system_model_pool()
+    if pool is None:
+        return ""
+    entry, _, _ = pool.resolve_role_entry("rollout")
+    return entry.name if entry else ""
+
+
+def system_operator_model_aliases() -> set[str]:
+    pool = _system_model_pool()
+    if pool is None:
+        return set()
+    aliases: set[str] = set()
+    for role in ("rollout", "medium"):
+        entry, _, _ = pool.resolve_role_entry(role)
+        if entry is not None:
+            aliases.update(entry.aliases())
+    return aliases
+
+
 def resolve_from_system_pool(name: str) -> "ModelSpec | None":
     """Resolve a Starter (system) model-pool entry into a proxy-routed ModelSpec.
 
     The DataMixer warehouse ``models.json`` is a thin registry; the
     authoritative endpoints/keys live in the system model pool and are applied
     at call time by the LLM client.  This fallback lets any system pool name be
-    used (webagent kernel, expander, pipeline LLM operators) without a separate
-    warehouse registration.
+    used by the DataMixer LLM operators without a separate warehouse
+    registration.
     """
     from loopai.schema.model_pool import responses_url
 
@@ -110,7 +141,10 @@ def resolve_from_system_pool(name: str) -> "ModelSpec | None":
         api_url=responses_url(str(provider.base_url or "")),
         api_key=str(provider.api_key or ""),
         response_format="response",
-        model=str(entry.model_name),
+        # The response proxy routes by the registered alias.  The actual
+        # upstream model name is retained in ``provider.upstream_model_name``
+        # and must never be sent by DataMixer directly.
+        model=str(provider.model),
         max_tokens=DEFAULTS["max_tokens"],
     )
 

@@ -8,6 +8,7 @@ from omegaconf import OmegaConf
 
 from loopai.agents.Obtainer.nodes.webpage_dataset_node import webpage_dataset_node
 from loopai.schema.states import LoopAIState
+from loopai.schema.model_pool import StarterModelPool, load_starter_system_config_sync
 from langchain_core.messages import HumanMessage
 
 # Get script directory
@@ -17,25 +18,22 @@ CONFIG_PATH = PROJECT_ROOT / "examples" / "config" / "starter.yaml"
 
 # Load configuration from YAML
 cfg = OmegaConf.load(str(CONFIG_PATH))
+default_states = cfg.get("default_states", {})
+obtainer_defaults = default_states.get("obtainer", {})
 
-# Read API key from file if exists
-api_key = None
-api_key_path = Path(cfg.starter.api_key_path)
-if not api_key_path.is_absolute():
-    api_key_path = SCRIPT_DIR / api_key_path
-if api_key_path.exists():
-    with open(api_key_path, 'r') as f:
-        api_key = f.read().strip()
-else:
-    api_key = os.getenv('API_KEY', 'empty')
+# Resolve the Obtainer Codex provider exclusively from Starter's model pool.
+system = load_starter_system_config_sync(starter_config=CONFIG_PATH, prefer_db=False)
+provider = StarterModelPool(system).resolve_role_provider("codex")
+if provider is None:
+    raise RuntimeError("Starter model pool has no Codex provider")
 
 # Get obtainer configuration from config file
-obtainer_model_path = cfg.default_states.get('obtainer_model_path', 'gpt-4o-mini')
-obtainer_base_url = cfg.default_states.get('obtainer_base_url', cfg.starter.base_url)
-obtainer_api_key = cfg.default_states.get('obtainer_api_key', '') or api_key
-obtainer_temperature = float(cfg.default_states.get('obtainer_temperature', 0.7))
-obtainer_category = cfg.default_states.get('obtainer_category', 'PT').upper()
-obtainer_debug = cfg.default_states.get('obtainer_debug', False)
+obtainer_model_path = provider.model
+obtainer_base_url = provider.base_url
+obtainer_api_key = provider.api_key
+obtainer_temperature = float(obtainer_defaults.get('temperature', 0.7))
+obtainer_category = obtainer_defaults.get('category', 'PT').upper()
+obtainer_debug = default_states.get('obtainer_debug', False)
 
 # Output directory
 output_dir = os.getenv('OUTPUT_DIR', str(PROJECT_ROOT / 'output' / 'webpage_dataset_outputs'))
@@ -80,16 +78,17 @@ initial_state = LoopAIState(
     output_dir=output_dir,
     automated_query=test_query,
     messages=[HumanMessage(content=test_query)],
-    obtainer_model_path=obtainer_model_path,
-    obtainer_base_url=obtainer_base_url,
-    obtainer_api_key=obtainer_api_key,
-    obtainer_temperature=obtainer_temperature,
-    obtainer_category=obtainer_category,
+    obtainer={
+        "model_path": obtainer_model_path,
+        "base_url": obtainer_base_url,
+        "temperature": obtainer_temperature,
+        "category": obtainer_category,
+        "webpage_collect_jsonl_path": webpage_data_path if webpage_data_path else '',
+        "webpage_collect_urls_visited": webpage_urls if webpage_urls else [],
+            "max_records_per_page": int(obtainer_defaults.get('max_records_per_page', os.getenv('MAX_RECORDS_PER_PAGE', '10'))),
+            "min_relevance_score": float(obtainer_defaults.get('min_relevance_score', os.getenv('MIN_RELEVANCE_SCORE', '0.7'))),
+    },
     obtainer_debug=obtainer_debug,
-    webpage_collect_jsonl_path=webpage_data_path if webpage_data_path else '',
-    webpage_collect_urls_visited=webpage_urls if webpage_urls else [],
-    obtainer_max_records_per_page=int(cfg.default_states.get('obtainer_max_records_per_page', os.getenv('MAX_RECORDS_PER_PAGE', '10'))),
-    obtainer_min_relevance_score=float(cfg.default_states.get('obtainer_min_relevance_score', os.getenv('MIN_RELEVANCE_SCORE', '0.7'))),
     prompt_template_dir=None,  # Use default
 )
 
@@ -176,4 +175,3 @@ except Exception as e:
     import traceback
     traceback.print_exc()
     exit(1)
-

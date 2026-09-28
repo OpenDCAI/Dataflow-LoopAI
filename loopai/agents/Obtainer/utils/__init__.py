@@ -3,11 +3,8 @@ __all__ = [
     'WebTools', 
     'QueryGenerator', 
     'SummaryAgent', 
-    'DownloadMethodDecisionAgent',
     'HuggingFaceManager',
-    'KaggleManager',
     'HuggingFaceDecisionAgent',
-    'KaggleDecisionAgent',
     'WebPageReader',
     'URLSelector',
     'CategoryClassifier',
@@ -17,6 +14,7 @@ __all__ = [
     'PlaywrightActionTools',
     'WebPageActionAgent',
     'WebPageDataSaver',
+    'resolve_obtainer_codex_provider',
 ]
 
 
@@ -33,21 +31,12 @@ def __getattr__(name):
     if name == "SummaryAgent":
         from .summary_agent import SummaryAgent
         return SummaryAgent
-    if name == "DownloadMethodDecisionAgent":
-        from .download_method_decision import DownloadMethodDecisionAgent
-        return DownloadMethodDecisionAgent
     if name == "HuggingFaceManager":
         from .hf_manager import HuggingFaceManager
         return HuggingFaceManager
-    if name == "KaggleManager":
-        from .kaggle_manager import KaggleManager
-        return KaggleManager
     if name == "HuggingFaceDecisionAgent":
         from .hf_decision_agent import HuggingFaceDecisionAgent
         return HuggingFaceDecisionAgent
-    if name == "KaggleDecisionAgent":
-        from .kaggle_decision_agent import KaggleDecisionAgent
-        return KaggleDecisionAgent
     if name == "WebPageReader":
         from .webpage_reader import WebPageReader
         return WebPageReader
@@ -73,4 +62,7 @@ def __getattr__(name):
     if name == "WebPageDataSaver":
         from .webpage_data_saver import WebPageDataSaver
         return WebPageDataSaver
+    if name == "resolve_obtainer_codex_provider":
+        from .model_pool import resolve_obtainer_codex_provider
+        return resolve_obtainer_codex_provider
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

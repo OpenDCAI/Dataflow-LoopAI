@@ -34,6 +34,10 @@ stage-level counts exist and the pipeline is not auditable.
   numbers.
 - Determine whether failed records are discarded or are rewritten by an LLM
   and mixed back into output without revalidation.
+- For format/style-only recovery, verify that its branch activates only after a
+  measured main-path scale shortfall and that recovered rows pass the same
+  downstream gates before a provenance-preserving join. Semantic-quality,
+  correctness, grounding, and safety failures must not enter this branch.
 - Measure empty answers, repetition, truncation, meta-talk, and refusals;
   combined degradation must be below 1%.
 - Independently inspect at least one output record per dataset.
@@ -55,6 +59,12 @@ Read at least five official benchmark examples before comparison.
 - Check coverage of the benchmark's measured capability dimensions.
 - Measure unrelated chat, refusal, translation, and role-play contamination;
   it must be below 2%.
+- If benchmark decontamination is claimed, require offline known-positive and
+  distinct-negative controls through the actual matching function. Include short
+  tasks and source records whose derived fields were rewritten. Registration
+  counts and zero hits on the trial alone do not demonstrate detection efficacy;
+  report false negatives and the exact benchmark split covered. Held-out control
+  records must never enter generation requests or training output.
 
 Redline: answer format is incompatible with the evaluation script, or the
 generated task type is fundamentally different.
@@ -68,11 +78,20 @@ and fields actually available from upstream.
 - Verify semantic alignment; for example, a question slot must not receive an
   answer field after cross-dataset renaming.
 - Question-generation inputs must not leak target answers.
+- When model output becomes the assistant training target, verify that the
+  strong teacher received only the canonical task/context, with no injected
+  system prompt, hint, gold answer, rubric, reasoning/style/format instruction,
+  schema, or training-data metacomment.
+- Every LLM answer judge must receive the canonical question, candidate answer,
+  and standard/gold answer together. Inspect the actual assembled request, not
+  only constructor arguments.
 - Required context must be present and not silently truncated. Long inputs need
   an explicit truncation strategy.
 
 Redline: unresolved placeholders, empty critical fields, or target-answer
-leakage into a question-generation operator.
+leakage into a question-generation or training-target-generation operator; an
+LLM answer judge missing any of question, candidate answer, or gold answer; or
+prompted model text silently used as the final training target.
 
 ## D5: Reasoning regeneration and filtering (weight 16)
 
@@ -88,6 +107,11 @@ When reasoning is required:
   right answer; error rate must be below 10%.
 - Compare retained and rejected difficulty distributions to detect systematic
   removal of hard tasks.
+- For verifiable tasks, inspect the target-model difficulty branch: no more than
+  four prompt-transparent rollouts per sample, `all_correct` removed from both
+  SFT and GRPO, and `all_wrong` always routed to an independent strong-model
+  rollout diagnosis. Hard-but-valid records may return; broken, ambiguous,
+  unsolvable, bad-gold, and inconclusive records must not silently pass.
 - Ensure reasoning format matches the target training template.
 
 When reasoning is not required, check that long CoT was not forcibly injected

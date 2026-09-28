@@ -65,22 +65,21 @@ def webpage_dataset_node(state: LoopAIState) -> LoopAIState:
     
     # Initialize components
     try:
-        # Get configuration from state or use defaults
-        model_name = state.get("obtainer", {}).get("model_path") or state.get("analyze_model_path")
-        base_url = state.get("obtainer", {}).get("base_url") or state.get("analyze_base_url")
-        api_key = state.get("obtainer", {}).get("api_key") or state.get("analyze_api_key")
-        temperature = state.get("obtainer", {}).get("temperature", 0.7)
-        
-        if not model_name or not base_url or not api_key:
-            logger.error("Missing required configuration for webpage dataset node")
-            state["exception"] = "Missing model configuration (model_name, base_url, api_key)"
-            return state
+        # All Obtainer LLM calls use the shared Starter Codex role.  Task state
+        # is intentionally not a provider source.
+        from loopai.agents.Obtainer.utils.model_pool import resolve_obtainer_codex_provider
+        provider = resolve_obtainer_codex_provider()
+        model_name = provider["model"]
+        base_url = provider["base_url"]
+        api_key = provider["api_key"]
+        obtainer_cfg = state.get("obtainer", {}) if isinstance(state.get("obtainer"), dict) else {}
+        temperature = obtainer_cfg.get("temperature", 0.7)
         
         # Initialize prompt loader
         prompt_loader = PromptLoader(state.get("prompt_template_dir"))
         
         # Get category (PT or SFT)
-        category = state.get("obtainer", {}).get("category", "PT").upper()
+        category = obtainer_cfg.get("category", "PT").upper()
         
         # Output directory
         output_dir = state.get("output_dir", "./output")
@@ -88,11 +87,11 @@ def webpage_dataset_node(state: LoopAIState) -> LoopAIState:
         os.makedirs(dataset_dir, exist_ok=True)
         
         # Get webpage data source (from webpage_collect_node or directly from URLs)
-        webpage_data_path = state.get("obtainer", {}).get("webpage_collect_jsonl_path", "")
-        webpage_urls = state.get("obtainer", {}).get("webpage_collect_urls_visited", [])
+        webpage_data_path = obtainer_cfg.get("webpage_collect_jsonl_path", "")
+        webpage_urls = obtainer_cfg.get("webpage_collect_urls_visited", [])
         
         # Run async workflow
-        debug_mode = state.get("obtainer_debug", False)
+        debug_mode = state.get("obtainer_debug", obtainer_cfg.get("debug", False))
         result = asyncio.run(_webpage_dataset_workflow(
             user_query=user_query,
             model_name=model_name,
@@ -104,9 +103,9 @@ def webpage_dataset_node(state: LoopAIState) -> LoopAIState:
             output_dir=dataset_dir,
             webpage_data_path=webpage_data_path,
             webpage_urls=webpage_urls,
-            max_records_per_page=state.get("obtainer_max_records_per_page", 10),  # These might not be in obtainer dict
-            min_relevance_score=state.get("obtainer_min_relevance_score", 0.7),  # These might not be in obtainer dict
-            dataset_concurrent_limit=state.get("obtainer_dataset_concurrent_limit", 5),  # These might not be in obtainer dict
+            max_records_per_page=obtainer_cfg.get("max_records_per_page", state.get("obtainer_max_records_per_page", 10)),
+            min_relevance_score=obtainer_cfg.get("min_relevance_score", state.get("obtainer_min_relevance_score", 0.7)),
+            dataset_concurrent_limit=obtainer_cfg.get("dataset_concurrent_limit", state.get("obtainer_dataset_concurrent_limit", 5)),
             debug_mode=debug_mode,
         ))
         
@@ -639,4 +638,3 @@ Return a JSON object with the following structure:
 }}
 
 If no relevant content found, return: {{"records": [], "reason": "详细说明为什么没有找到相关内容"}}"""
-

@@ -486,9 +486,9 @@ PAGE = r"""<!doctype html>
         <div><label class="f" data-i18n="f.format">response format</label><select id="m_fmt">
           <option value="openaichat">openaichat</option><option value="response">response</option>
         </select></div></div>
-      <label class="f" data-i18n="f.apiUrl">api url</label><input id="m_url" placeholder="https://api.openai.com/v1/chat/completions">
+      <label class="f" data-i18n="f.apiUrl">api url</label><input id="m_url" placeholder="http://127.0.0.1:8855/responseProxy/v1">
       <div class="row"><div><label class="f" data-i18n="f.apiKey">api key (or env:VAR)</label><input id="m_key" placeholder="env:OPENAI_API_KEY"></div>
-        <div><label class="f" data-i18n="f.modelId">provider model id</label><input id="m_model" placeholder="gpt-4o-mini"></div></div>
+        <div><label class="f" data-i18n="f.modelId">provider model id</label><input id="m_model" placeholder="model-pool entry"></div></div>
       <label class="f" data-i18n="f.note">note</label><input id="m_note">
       <div class="row"><div><label class="f" data-i18n="f.maxConc">max concurrency</label><input id="m_conc" type="number" value="64"></div>
         <div><label class="f" data-i18n="f.temperature">temperature</label><input id="m_temp" type="number" step="0.1" value="0"></div></div>

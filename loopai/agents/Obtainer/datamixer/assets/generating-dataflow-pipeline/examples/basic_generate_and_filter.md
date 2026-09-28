@@ -49,12 +49,14 @@ Field flow:
 ### 3. Reasoning Summary
 - Task is straightforward: generate text → filter by quality
 - PromptedGenerator chosen over FormatStrPromptedGenerator because only one input field needed
-- No need for additional operators (Text2MultiHopQAGenerator, KBC trio, etc.) as they don't match requirements
+- No need for additional operators (for example, Text2MultiHopQAGenerator) as they don't match requirements
 - Field dependencies satisfied: generated_description created before being filtered
 - Only 1 prompt-driven generator used (well within limit)
 
 ### 4. Complete Standard Pipeline Code
 ```python
+import os
+
 from dataflow.operators.core_text import PromptedGenerator, PromptedFilter
 from dataflow.serving import APILLMServing_request
 from dataflow.utils.storage import FileStorage
@@ -72,8 +74,8 @@ class ProductDescriptionPipeline:
         )
 
         self.llm_serving = APILLMServing_request(
-            api_url="https://api.openai.com/v1/chat/completions",
-            model_name="gpt-4o",
+            api_url=os.environ["DF_API_URL"],
+            model_name=os.environ["DF_MODEL_NAME"],
             max_workers=10
         )
 

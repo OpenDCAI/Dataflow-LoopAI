@@ -1,5 +1,9 @@
 # ObtainerCLI DataMixer 使用文档
 
+> lite 版本获取 worker 使用 Hugging Face 数据集；优先选择 2025/2026 创建或更新的数据集，
+> 支持多数据集批量下载、JSONL 规范化、入湖和索引构建；下文仍保留的
+> 历史命令说明不适用于 lite 版本。
+
 ObtainerCLI 的数据湖能力由 DataMixer 完整承载。公开生产命令面只有：
 
 ```bash
@@ -7,7 +11,10 @@ loopai-obtainercli dm --root /path/to/warehouse <datamixer-command> --json
 loopai-obtainercli dm --lake .loopai/lake.yaml <datamixer-command> --json
 ```
 
-`searchagent` 和 `download manifest` 是 acquisition worker 内部的数据采集桥，用于发现和下载候选数据集。正常产品流程中，外层 Codex 不应直接调用它们，而应启动 `dataset-acquisition-agent`。worker 会与 `domain_data_acquisition`（旧名 `webcrawler_dm`）并行启动：前者发现 hosted datasets，后者采集垂域权威网页为 L1；两条流都必须保留状态与产物。下载完成后，初始化、入湖、处理、索引、召回、配比、出湖、snapshot 和 lineage 都必须回到 `loopai-obtainercli dm ...`。
+`download manifest` 仍是 worker 内部的数据下载桥，用于处理调用方提供的
+manifest。正常产品流程中，外层 Codex 不应直接调用它，而应启动
+`dataset-acquisition-agent`。下载完成后，初始化、入湖、处理、索引、召回、出湖、snapshot
+和 lineage 都必须回到 `loopai-obtainercli dm ...`。
 
 ## 1. 环境与事件
 
@@ -64,9 +71,8 @@ namespace: loopai
 loopai-obtainercli dm --lake .loopai/lake.yaml stats --json
 ```
 
-`lake.yaml` 还会持久化不含凭据的 Obtainer 运行上下文：选择的垂域采集
-WebAgent、模型名、并发/子目标默认值、最近 acquisition run 和 campaign id。
-因此正常工作流应使用 `--lake`，无需反复填写 warehouse；但 acquisition 的
+`lake.yaml` 还会持久化不含凭据的 Obtainer 运行上下文：模型名和最近的
+acquisition run。因此正常工作流应使用 `--lake`，无需反复填写 warehouse；但 acquisition 的
 `start`、`status` 和 `resume` 必须显式复用同一个 `--run` 路径：
 
 ```bash
@@ -99,9 +105,8 @@ loopai-obtainercli dm lake load \
 loopai-obtainercli dm lake current --link .loopai/lake.yaml
 ```
 
-解除数据湖与已结束 task/run 的绑定（清空 `obtainer_active_task_id`、
-`obtainer_active_acquisition_run`、`obtainer_active_campaign_id`、
-`obtainer_active_l1_dataset`，保留 WebAgent 模型/并发等默认值），新任务重跑前应执行一次，
+解除数据湖与已结束 task/run 的绑定（清空 `obtainer_active_task_id` 和
+`obtainer_active_acquisition_run`），新任务重跑前应执行一次，
 避免残留的旧 task_id 让 agent 误判数据湖状态：
 
 ```bash
@@ -120,11 +125,12 @@ loopai-obtainercli dm lake delete --link .loopai/lake.yaml
 loopai-obtainercli dm lake delete --link .loopai/lake.yaml --delete-warehouse --yes
 ```
 
-## 3. 数据搜集、下载与入湖 Worker
+## 3. Hugging Face 数据搜集与入湖 Worker
 
-Analyzer 报告进入 Codex SDK 后，应启用 Obtainer skill，并优先用
-`dataset-acquisition-agent` 启动隔离 worker。外层 Codex 不需要直接编排
-SearchAgent、download 和 ingest 细节。
+Analyzer 报告进入 Codex SDK 后，使用 `dataset-acquisition-agent` 启动隔离
+worker。Worker 在 Hugging Face Hub 按关键词和 `lastModified` 排序查找多个
+数据集，优先选择 2025/2026 创建或更新的数据集；每个数据集单独规范化为
+JSONL、入湖，全部完成后统一构建 DataMixer 索引。
 
 ```bash
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent start \
@@ -135,7 +141,6 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-
   --target-datasets 8 \
   --max-rows-per-dataset 100000 \
   --max-bytes-per-dataset 2147483648 \
-  --discovery-mode auto \
   --json
 ```
 
@@ -156,28 +161,13 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-
   --json
 ```
 
-默认不要传 `--model`；worker 会从 Starter 模型池读取配置好的 Codex 默认模型。
-只有用户明确要求本次覆盖模型时才使用 `--model`。
-每次 start/resume 的返回值与 `thread.json` 都会记录 `resolved_model`、
-`webagent_model` 和 `model_source`（`codex_default` 或
-`operator_override`）；CLI 会将该同一模型注册到当前 DataMixer warehouse
-供 WebAgent 使用，不能静默回退到本地 vLLM。
+默认不要传 `--model`；worker 会从 Starter 模型池读取 Codex 默认模型。每次
+start/resume 的返回值与 `thread.json` 都会记录 `resolved_model` 和
+`model_source`。
 
-Worker 内部策略会要求：先把报告解析成明确搜集意图，候选列表先与原始需求
-校对并写 rejections，再下载；单数据集最多 100000 行，且本地 JSONL
-输出默认最多 2GiB；下载后规范 JSONL；
-入湖必须走 DataMixer `ingest` 或 `agent-ingest`；最终写 `final_report.json`。
-数据集别名不构成 finance 领域证据；`--domain finance` 只是批次级 metadata，
-不会在入湖时触发逐条 LLM 审批。数据集 agent 的入湖是批量路径：`dm ingest`
-按批次 metadata（含必填 `--quality-level`）把全部规范化行直接写入湖，不逐条
-approve/drop。逐条质量审批属于后处理：WebAgent 的 L2 `domain_classify` 会
-收到 campaign 的探索关键词（`--focus-keywords`），LLM 只接受与该主题直接相关、
-且带有 grounded 语义信号的条目，随后由 `topic_quality_filter` 按置信度与信号
-阈值把关。生产出湖前必须完成 DataFlowAgent 后处理（`dm dataflow
-agent-run`，产出 L4 数据）；湖内每个能力桶可用量至少为出湖目标的 1.5 倍，
-且 L4 最终规模达标后才允许调用 `sft-export-agent`。若用户明确指定 L3 出湖，
-则跳过 L4 门，L3 数据可直接出湖。来源 URI、数据集 ID 和
-source 名称只作为 provenance 与质量报告审计信息，不参与接受或拒绝。
+Worker 会在 run 目录写入候选、过滤、下载、规范化、入湖和索引报告，并以
+`final_report.json` 汇总 Hugging Face 数据集 ID、更新时间、JSONL 路径、行数、
+入湖结果和索引结果。单数据集默认最多 100000 行、2GiB JSONL。
 
 金融入湖示例：
 
@@ -191,25 +181,7 @@ loopai-obtainercli dm --root /data/lakes/finance/warehouse ingest sec_finance \
   --json
 ```
 
-记录的分域标注（如 `domain_classify` 标签与语义信号）作为 provenance 保留在
-行标签中，不构成出湖接受或拒绝的依据。出湖质量由后处理主线把关：先完成
-DataFlowAgent 后处理（`dm dataflow agent-run`，产出 L4 数据），湖内每个能力桶
-可用量至少为出湖目标的 1.5 倍，且 L4 最终规模达标后才允许调用
-`sft-export-agent`。若用户明确指定 L3 出湖，则跳过 L4 门，L3 数据可直接出湖。
-
-底层 SearchAgent 与下载命令仍保留为采集桥，但只供 worker 内部调用或人工调试。
-外层 Codex 在正常工作流中不要创建 task JSON、不要直接调用 `searchagent`，也不要直接调用 `download manifest`。
-
-检查 `searchagent_manifest.json` 后，先剔除不相关数据集并写 filtered manifest
-和 rejection report，再下载候选数据集。采集桥对单个数据集最多写出 100000 行和 2GiB 本地 JSONL：
-
-```bash
-loopai-obtainercli dm --root /data/lakes/code_sft/warehouse dataset-acquisition-agent status \
-  --run ./outputs/acquisition_run \
-  --json
-```
-
-worker 内部的 `download manifest` 会强制执行单数据集 100000 行上限和 2GiB 输出文件上限；即使传 `--max-rows 0`、更大的行数，或过大的 `--max-bytes-per-dataset`，也会按安全上限写出。达到字节上限时会中断当前数据集下载、保留已写出的部分 JSONL，并在结果里报告 `truncated`、`truncated_reason`、`rows_written` 和 `bytes_written`。生产 SFT 的最终规模、配比和出湖必须继续通过 DataMixer recipe 完成，不能把下载阶段的多个文件拼接为最终训练集。
+下载完成后，主 agent 可继续运行 DataFlowAgent 对入湖数据做后处理。
 
 ## 4. 入湖
 
@@ -295,9 +267,32 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recall \
   --json
 ```
 
-后处理阶段是必须要使用 dataflowagent 的，不要手工盲选单个 DataFlow operator。`dataflow agent-run` 会让 Codex SDK 先导出试跑样本、按 DataFlow-Skills 规则规划算子链、生成并试跑 pipeline；**试跑成功即交付**（`mode=trial_run`，交付物 = `pipeline.py` + 试跑输出 `trial_processed.jsonl`）。**全量执行由上层 Codex 负责**：拿到交付的 pipeline 后，用 chunk 脚手架跑 `full_input.jsonl`，产出 `full_processed.jsonl`（L4），再按 `sample_id` 用 `apply-jsonl` merge 回 DataMixer。不要让 dataflowagent 自己跑全量或 merge。agent-run 返回的 `upstream.chunked_run_command` / `upstream.apply_command` 直接给出上层要执行的命令。
+进 DataFlowAgent 之前，先按 bad case 题目做多路召回,得到候选集再交给
+DataFlowAgent（不要把整湖直接喂进去）。这一步由 `recall-badcases` 一步完成：
+读 bad case 题目 JSONL，逐条 `question` 多路召回，命中按 `sample_id` 并集去重，
+直接出湖成候选输入 JSONL。`--from` 省略时自动定位 Analyzer 最新一轮的
+`badcase_questions_*.jsonl`；召回数量由 `--limit` 控制，默认 6000。
 
-**按桶 1.5x 缓冲导出，不是全量导出。** `agent-run` 尽量带上出湖 `--recipe`（recipe.yaml）或 `--mix-plan`（mix_plan.json）：full input 会按每个桶 `ceil(bucket_target * 1.5)` 行、固定 seed 抽样导出（桶内可用行不足则全取），避免对全湖十几万行做冗余后处理。处理范围就是 `full_input.jsonl` 本身，禁止上层/agent 自行重新全量导出或扩大范围。
+```bash
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recall-badcases \
+  --out ./outputs/obtainer/recall_candidates.jsonl \
+  --limit 6000 \
+  --json
+# 显式指定题目文件 / domain 路由 / 相似度阈值 / 关键词召回：
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recall-badcases \
+  --from ./outputs/<task>/analyzer/.../badcase_questions_<ts>.jsonl \
+  --filter "domain = 'code' AND task_type = 'SFT'" \
+  --min-sim 0.3 \
+  --out ./outputs/obtainer/recall_candidates.jsonl \
+  --json
+```
+
+召回产物即 DataFlowAgent 的 `full_input.jsonl`，每行带 `recall_score` 和
+`recall_question_id` 便于追溯。
+
+后处理阶段必须使用 DataFlowAgent。`dataflow agent-run` 导出试跑样本，规划算子链并试跑；**非空试跑输出通过六维发布评审后才交付**（`mode=trial_run`，交付物为 `pipeline.py` 和 `trial_processed.jsonl`）。代码校验每维评分、总分至少 85、无红线以及 `release` 决策。**全量执行由上层 Codex 负责**：使用 chunk 脚手架处理 `full_input.jsonl`，再按 `sample_id` 用 `apply-jsonl` 合并回 DataMixer。仅已发布的 trial 会提供 `upstream.chunked_run_command` / `upstream.apply_command`。
+
+带失败评审的 `planned_only` 会在三次 SDK 调用预算内自动续接同一线程，失败证据保存在 `review_checkpoints/`。若预算用尽，返回 `continuation_required=true` 和 `thread_id`，表示仍需处理；这不是质量交付成功。上层应读取评审，使用 `--resume-thread-id <thread_id>`、新 `--work-dir` 和具体修复目标继续运行。服务等外部阻塞应记录实际尝试和失败证据。
 
 **质量评估必须使用 DataFlow 的 LLM 评估算子**（`PromptedEvaluator` / `PromptedFilter` 等），不得因耗时或成本而退化成纯启发式规则打分；只有任务本身没有 LLM 打分语义、或 LLM serving 不可用时才允许规则算子兜底并说明具体原因。不得覆盖原始字段和值；后训练内容需要构造或改写时，使用生成算子写入新的派生字段，再使用 LLM 评估算子打分和筛选生成内容。
 
@@ -309,61 +304,33 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recall \
 
 自定义标签过滤使用受控 `json_extract(tags_json, '$."tag_name"')` 形式。
 
-## 6. 生产 SFT 出湖 Worker
+benchmark 参考记录先创建独立 dataset，再用 `contam add --benchmark-dataset`
+关联该 dataset；训练去污的 `--filter` 应限定当前任务。导入参考记录时使用
+`ingest <dataset> --benchmark-set <guard> --stage eval --quality-level L3 --file <jsonl>`。
+此入口只接受 guard 已关联且不含非 eval 记录的 dataset，避免参考记录被自己的
+guard 过滤；写入 `guard_only=true`、`is_contaminated=1` 和 `contam_source`。
+普通训练导入仍执行全部去污规则。不能将此参数用于训练源。
 
-生产 SFT 出湖必须使用 DataMixer recipe，但外层 Codex 不再直接手写和反复
-调用 `recipe validate/plan/preview/export`。使用单命令 wrapper 启动隔离的
-内部 Codex SDK worker；wrapper 会把 DataMixer recipe、schema、snapshot、
-纯 Alpaca 校验和失败处理规则注入到 worker 上下文。
+## 6. 生产 SFT 出湖
 
-启动新 worker：
-
-```bash
-loopai-obtainercli dm --root /data/lakes/code_sft/warehouse sft-export-agent start \
-  --run ./outputs/code_failure_repair_sft_v1 \
-  --analysis-report ./outputs/analyzer_report.md \
-  --format alpaca \
-  --target-records 100000 \
-  --out ./outputs/code_failure_repair_sft_v1/export
-```
-
-`start` 默认把内部 Codex SDK worker 放到后台运行，立即返回 PID、日志路径
-和 run 目录。只有需要阻塞等待时才加 `--foreground`。
-
-查看状态：
+DataFlowAgent 完成后，主 agent 直接运行 DataMixer recipe 命令完成规划和出湖：
 
 ```bash
-loopai-obtainercli dm --root /data/lakes/code_sft/warehouse sft-export-agent status \
-  --run ./outputs/code_failure_repair_sft_v1
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recipe validate ./recipe.yaml --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recipe plan ./recipe.yaml --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recipe preview ./recipe.yaml --per-bucket 3 --json
+loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recipe export ./recipe.yaml \
+  --out ./outputs/code_failure_repair_sft_v1/export --snapshot --json
 ```
 
-在同一个内部 Codex thread 上继续修复：
-
-```bash
-loopai-obtainercli dm --root /data/lakes/code_sft/warehouse sft-export-agent resume \
-  --run ./outputs/code_failure_repair_sft_v1 \
-  --message "Remove buckets whose output falls back to text, then re-export."
-```
-
-默认不要传 `--model`；worker 会从 Starter 模型池读取配置好的 Codex 默认模型。
-只有用户明确要求本次覆盖模型时才使用 `--model`。
-
-`resume` 同样默认后台运行；外层 Codex 用 `status` 轮询，不需要长时间占住
-上下文。
-
-外层 Codex 只负责监督：读取 `status.json` 和 `final_report.json`，决定
-`resume` 当前 worker，还是 `start` 一个新 worker。详细 recipe 规划、schema
-修复、DataFlow 规范化、`recipe export --snapshot`、manifest/snapshot/digest
-记录和最终 JSONL 校验都由 worker wrapper 内部策略控制。
-
-Wrapper 对 Alpaca SFT 的硬约束包括：
+Recipe 对 Alpaca SFT 的约束包括：
 
 - 最终训练 JSONL 每行只能有 `instruction`、`input`、`output`。
 - `output.sources` 禁止使用 `text`、`raw_content`、`content` 或整段记录 fallback。
 - `instruction == output` 必须阻断。
 - 若 Q/A 混在单个 text 字段里，必须先用 DataMixer/DataFlow 规范化，或排除该 bucket。
 - 若 Analyzer 或用户没有明确 SFT 规模，默认至少 `100000` records。
-- failure taxonomy 配比必须依赖语义标签，如 `bug_type=syntax/logic/runtime/assertion`。
+- failure taxonomy 过滤必须依赖语义标签，如 `bug_type=syntax/logic/runtime/assertion`。
 - 所有成功出湖必须有 manifest、recipe fingerprint、dataset digest 和 snapshot id。
 
 ## 7. Lineage 与 Snapshot
@@ -374,4 +341,4 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse snapshot list --json
 loopai-obtainercli dm --root /data/lakes/code_sft/warehouse lineage list --json
 ```
 
-最终汇报至少包含：warehouse 路径、SearchAgent manifest、下载 manifest、入湖数据集、处理命令、index/recall 检查、recipe fingerprint、snapshot id、export manifest 和导出路径。
+最终汇报至少包含：warehouse 路径、候选/下载 manifest、入湖数据集、处理命令、index/recall 检查、recipe fingerprint、snapshot id、export manifest 和导出路径。

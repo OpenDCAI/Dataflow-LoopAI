@@ -59,7 +59,7 @@ class AgentEvent:
         Args:
             chunk (Any): The chunk to update the state with. 
             ```
-            e.g. {'messages': [HumanMessage(content='你好', additional_kwargs={}, response_metadata={}, id='0a834fe0-ee4b-49a2-996f-32d6fdc679c3'), AIMessage(content='你好！我是一个智能 Agent 助理，能够帮助您完成各种任务。', additional_kwargs={}, response_metadata={'finish_reason': 'stop', 'model_name': 'deepseek-chat', 'system_fingerprint': 'fp_ffc7281d48_prod0820_fp8_kvcache'}, id='run--90052c42-32d0-4282-8d98-4c52374c5363', usage_metadata={'input_tokens': 548, 'output_tokens': 82, 'total_tokens': 630, 'input_token_details': {'cache_read': 512}, 'output_token_details': {}})]}
+            e.g. {'messages': [HumanMessage(content='你好'), AIMessage(content='你好！我是一个智能 Agent 助理。', response_metadata={'finish_reason': 'stop', 'model_name': '<pool-entry>'})]}
             ```
         """
         diff = {}

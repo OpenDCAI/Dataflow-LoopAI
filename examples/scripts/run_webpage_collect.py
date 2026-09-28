@@ -7,6 +7,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 from loopai.agents.Obtainer.nodes.webpage_collect_node import webpage_collect_node
 from loopai.schema.states import LoopAIState
+from loopai.schema.model_pool import StarterModelPool, load_starter_system_config_sync
 from langchain_core.messages import HumanMessage
 # Get script directory
 SCRIPT_DIR = Path(__file__).parent
@@ -15,39 +16,40 @@ CONFIG_PATH = PROJECT_ROOT / "examples" / "config" / "starter.yaml"
 
 # Load configuration from YAML
 cfg = OmegaConf.load(str(CONFIG_PATH))
+default_states = cfg.get("default_states", {})
+obtainer_defaults = default_states.get("obtainer", {})
 
-# Read API key from file if exists
-api_key = None
-api_key_path = Path(cfg.starter.api_key_path)
-if not api_key_path.is_absolute():
-    api_key_path = SCRIPT_DIR / api_key_path
-if api_key_path.exists():
-    with open(api_key_path, 'r') as f:
-        api_key = f.read().strip()
-else:
-    api_key = os.getenv('API_KEY', 'empty')
+# Resolve the Obtainer Codex provider exclusively from Starter's model pool.
+system = load_starter_system_config_sync(starter_config=CONFIG_PATH, prefer_db=False)
+provider = StarterModelPool(system).resolve_role_provider("codex")
+if provider is None:
+    raise RuntimeError("Starter model pool has no Codex provider")
 
 # Read Tavily API key
 tavily_api_key = None
-tavily_api_key_path = Path(cfg.starter.tavily_api_key_path)
-if not tavily_api_key_path.is_absolute():
-    tavily_api_key_path = SCRIPT_DIR / tavily_api_key_path
-if tavily_api_key_path.exists():
-    with open(tavily_api_key_path, 'r') as f:
-        tavily_api_key = f.read().strip()
+system_integrations = cfg.get("system", {}).get("integrations", {})
+tavily_cfg = system_integrations.get("tavily", {}) if system_integrations else {}
+tavily_api_key_path_value = tavily_cfg.get("api_key_path") or os.getenv("TAVILY_API_KEY_PATH")
+if tavily_api_key_path_value:
+    tavily_api_key_path = Path(str(tavily_api_key_path_value))
+    if not tavily_api_key_path.is_absolute():
+        tavily_api_key_path = SCRIPT_DIR / tavily_api_key_path
+    if tavily_api_key_path.exists():
+        with open(tavily_api_key_path, 'r') as f:
+            tavily_api_key = f.read().strip()
 
 elif os.getenv('TAVILY_API_KEY'):
     tavily_api_key = os.getenv('TAVILY_API_KEY')
 
 # Get obtainer configuration from config file
-obtainer_model_path = cfg.default_states.get('obtainer_model_path', 'gpt-4o-mini')
-obtainer_base_url = cfg.default_states.get('obtainer_base_url', cfg.starter.base_url)
-obtainer_api_key = cfg.default_states.get('obtainer_api_key', '') or api_key
-obtainer_temperature = float(cfg.default_states.get('obtainer_temperature', 0.7))
+obtainer_model_path = provider.model
+obtainer_base_url = provider.base_url
+obtainer_api_key = provider.api_key
+obtainer_temperature = float(obtainer_defaults.get('temperature', 0.7))
 obtainer_tavily_api_key = tavily_api_key if tavily_api_key else ''
-obtainer_max_exploration_depth = int(cfg.default_states.get('obtainer_max_exploration_depth', 5))
-obtainer_max_jina_urls = int(cfg.default_states.get('obtainer_max_jina_urls', 50))
-obtainer_debug = cfg.default_states.get('obtainer_debug', False)
+obtainer_max_exploration_depth = int(obtainer_defaults.get('max_exploration_depth', 5))
+obtainer_max_jina_urls = int(obtainer_defaults.get('max_jina_urls', 50))
+obtainer_debug = default_states.get('obtainer_debug', False)
 
 # Output directory
 output_dir = os.getenv('OUTPUT_DIR', str(PROJECT_ROOT / 'output' / 'webpage_collect_outputs'))
@@ -77,15 +79,16 @@ initial_state = LoopAIState(
     output_dir=output_dir,
     automated_query=test_query,
     messages=[HumanMessage(content=test_query)],
-    obtainer_model_path=obtainer_model_path,
-    obtainer_base_url=obtainer_base_url,
-    obtainer_api_key=obtainer_api_key,
-    obtainer_temperature=obtainer_temperature,
-    obtainer_tavily_api_key=obtainer_tavily_api_key,
-    obtainer_max_exploration_depth=obtainer_max_exploration_depth,
-    obtainer_max_jina_urls=obtainer_max_jina_urls,
+    obtainer={
+        "model_path": obtainer_model_path,
+        "base_url": obtainer_base_url,
+        "temperature": obtainer_temperature,
+        "tavily_api_key": obtainer_tavily_api_key,
+        "max_exploration_depth": obtainer_max_exploration_depth,
+        "max_jina_urls": obtainer_max_jina_urls,
+        "proxy": os.getenv('OBTAINER_PROXY') or os.getenv('HTTP_PROXY') or os.getenv('HTTPS_PROXY') or os.getenv('ALL_PROXY') or '',
+    },
     obtainer_debug=obtainer_debug,
-    obtainer_proxy=os.getenv('OBTAINER_PROXY') or os.getenv('HTTP_PROXY') or os.getenv('HTTPS_PROXY') or os.getenv('ALL_PROXY') or '',
     prompt_template_dir=None,  # Use default
 )
 
@@ -158,4 +161,3 @@ except Exception as e:
     import traceback
     traceback.print_exc()
     exit(1)
-

@@ -43,9 +43,29 @@ class ConfigGenerator:
         self.top_p = top_p
         self.llm = None
         self.prompt_loader = PromptLoader()
-        
+        # Trainer's configuration agent is always Codex-backed.  Resolve the
+        # provider from Starter's shared model pool even when callers still
+        # pass legacy connection arguments, so no task can silently bypass the
+        # response proxy.
+        provider = None
+        try:
+            from loopai.schema.model_pool import StarterModelPool, load_starter_system_config_sync
+            provider = StarterModelPool(load_starter_system_config_sync(prefer_db=True) or {}).resolve_role_provider("codex")
+        except Exception:
+            provider = None
+        if provider is not None:
+            self.model_path = provider.model
+            self.base_url = provider.base_url
+            self.api_key = provider.api_key
+        elif model_path or base_url or api_key:
+            raise RuntimeError(
+                "Trainer ConfigGenerator requires a configured Starter Codex model-pool provider"
+            )
+
         # 如果提供了模型参数，则初始化LLM
         if model_path and base_url and api_key:
+            self._init_llm()
+        elif self.model_path and self.base_url and self.api_key:
             self._init_llm()
     
     def _init_llm(self):
@@ -67,7 +87,7 @@ class ConfigGenerator:
         self, 
         task_description: str,
         dataset_path: str,
-        model_name: str = "qwen2.5-7b",
+        model_name: str | None = None,
         output_dir: str = "./output",
         template_path: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -177,7 +197,7 @@ class ConfigGenerator:
         """获取备用YAML配置模板"""
         return {
             # 模型配置
-            "model_name_or_path": "qwen2.5-7b-instruct",
+            "model_name_or_path": "",
             "trust_remote_code": True,
             
             # 训练方法
@@ -248,6 +268,8 @@ class ConfigGenerator:
         output_dir: str,
     ) -> Dict[str, Any]:
         """根据任务描述定制配置"""
+        if not str(model_name or "").strip():
+            raise ValueError("train_input_model_name is required; configure the training base model explicitly")
         config = template.copy()
         
         # 基础设置（适配YAML格式）

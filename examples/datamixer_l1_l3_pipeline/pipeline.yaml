@@ -26,16 +26,12 @@ pipeline:
         min_words: 40
         max_words: 60000
 
-    # Per-item LLM domain judgement.  The campaign injects its exploration
-    # keywords into focus_keywords (--focus-keywords ...): the model only
-    # admits items directly related to that focus and emits grounded
-    # semantic_signals as evidence, so the chain follows whatever topic the
-    # WebAgent explored instead of a hard-wired vertical (e.g. finance).
+    # Per-item LLM domain judgement. The model admits items directly related to
+    # the configured focus and emits grounded semantic_signals as evidence.
     # Batching records here can let an LLM cite one item's evidence for
     # another item, so keep chunk_size=1.
     - name: domain_classify
       args:
-        model: qwen3-14b-fp8
         focus_keywords: []
         chunk_size: 1
         max_concurrency: 4
@@ -59,7 +55,6 @@ pipeline:
 
     - name: pt_to_sft_qa
       args:
-        model: qwen3-14b-fp8
         chunk_size: 2
         max_concurrency: 4
         max_input_chars: 12000

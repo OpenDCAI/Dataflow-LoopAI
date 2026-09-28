@@ -7,6 +7,9 @@ setup(
     package_data={
         "loopai": [
             "agents/Obtainer/datamixer/assets/**/*",
+            "skills/benchmarks/*/manifest.json",
+            "skills/benchmarks/*/SKILL.md",
+            "skills/benchmarks/*/benchmark.py",
         ],
     },
     include_package_data=False,
@@ -24,13 +27,9 @@ setup(
         "PyYAML>=6.0",
         "httpx>=0.24.0",
         "chromadb>=0.4.0",
-        "ddgs",
         # Download dependencies
         "huggingface_hub>=0.20.0",
         "datasets>=2.14.0",
-        "kaggle>=1.5.0",
-        "kagglehub>=0.2.0",
-        "playwright>=1.40.0",
         "tenacity>=8.2.0",
         "requests>=2.31.0",
         "transformers>=4.30.0",

@@ -11,9 +11,8 @@ __version__ = "0.1.0"
 
 from .store import DataStore
 from .recipe import Recipe, load_recipe, parse_recipe
-from . import webagents
 
 __all__ = [
-    "DataStore", "Recipe", "load_recipe", "parse_recipe", "webagents",
+    "DataStore", "Recipe", "load_recipe", "parse_recipe",
     "__version__",
 ]

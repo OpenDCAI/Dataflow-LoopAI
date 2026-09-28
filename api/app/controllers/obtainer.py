@@ -14,8 +14,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..models.body import response_body
-from ..utils.obtainer.monitor import _export_preview, probe_embedding_health
-from ..utils.obtainer.web_pipeline import build_web_pipeline_overview
+from ..utils.obtainer.monitor import probe_embedding_health
 from loopai.skills.ObtainerCLI.monitor_state import read_monitor_state, start_background_rebuild
 from loopai.skills.ObtainerCLI.datamixer_adapter import warehouse_root
 from loopai.skills.ObtainerCLI.lake_manager import (
@@ -107,16 +106,6 @@ def _datamixer_command_payload() -> dict[str, Any]:
                 ],
             },
             {
-                "key": "orchestrator",
-                "label": "Obtainer Orchestrator",
-                "commands": [
-                    "obtainer-orchestrator start --run outputs/obtainer_run --objective DATA_SHAPE --keywords KW --target-datasets N --message INTENT",
-                    "obtainer-orchestrator status --run outputs/obtainer_run",
-                    "obtainer-orchestrator resume --run outputs/obtainer_run --message WHY",
-                    "obtainer-orchestrator stop --run outputs/obtainer_run",
-                ],
-            },
-            {
                 "key": "ingest",
                 "label": "Ingest",
                 "commands": [
@@ -163,8 +152,6 @@ def _datamixer_command_payload() -> dict[str, Any]:
                     "recipe plan /path/to/recipe.yaml",
                     "recipe preview /path/to/recipe.yaml",
                     "recipe export /path/to/recipe.yaml --snapshot",
-                    "sft-export-agent start --run outputs/obtainer_sft_export --analysis-report outputs/analyzer_report.md",
-                    "sft-export-agent status --run outputs/obtainer_sft_export",
                 ],
             },
             {
@@ -296,90 +283,6 @@ async def get_lake_monitor(lake: str | None = None):
     try:
         lake_path = _resolve_lake_path(lake)
         data = read_monitor_state(warehouse_root(lake_path), lake=lake_path)
-    except Exception as exc:
-        return response_body(code=400, status="error", message=str(exc))()
-    return response_body(data=data)()
-
-
-@router.get(
-    "/webagent/overview",
-    operation_id="getObtainerWebAgentOverview",
-    summary="获取 WebAgent 到 L3 数据流水线的实时概览",
-)
-async def get_webagent_overview(
-    lake: str | None = None,
-    root: str | None = None,
-    run_id: str | None = None,
-    task_id: str | None = None,
-):
-    """Read current queue/pipeline state for the active-task dashboard."""
-    try:
-        lake_path = _resolve_lake_path(lake)
-        lake_pointer = current_lake_pointer(link_path=lake_path)
-        context = lake_pointer.get("obtainer_context") or {}
-        warehouse = _resolve_datamixer_root(lake=lake, root=root)
-        data = build_web_pipeline_overview(
-            warehouse,
-            run_id=run_id,
-            acquisition_run=str(context.get("obtainer_active_acquisition_run") or "") or None,
-            lake_context=context,
-            project_root=REPO_ROOT,
-            task_id=task_id,
-            explicit_binding=bool(root or run_id),
-        )
-        initialized = bool(data.get("initialized"))
-        bound_warehouse = str(data.get("warehouse") or "")
-        pointer_warehouse = str(lake_pointer.get("warehouse") or "")
-        pointer_matches = bool(
-            initialized
-            and bound_warehouse
-            and pointer_warehouse
-            and Path(bound_warehouse).expanduser().resolve()
-            == Path(pointer_warehouse).expanduser().resolve()
-        )
-        data["lake"] = {
-            "lake_config": lake_pointer.get("lake_config") if pointer_matches else None,
-            "lake_root": (
-                lake_pointer.get("lake_root") if pointer_matches
-                else str(Path(bound_warehouse).parent) if initialized and bound_warehouse
-                else None
-            ),
-            "warehouse": bound_warehouse if initialized else None,
-            "loaded": bool(
-                initialized and bound_warehouse
-                and (Path(bound_warehouse) / "datamixer.toml").is_file()
-            ),
-        }
-        data["monitor"] = (
-            read_monitor_state(
-                bound_warehouse,
-                lake=lake_path if pointer_matches else None,
-            )
-            if data.get("initialized") else None
-        )
-        # Keep the dashboard's headline counts consistent with what the agents
-        # read: monitor_state is a cache and can lag behind the live catalog.
-        live_summary = data.get("summary") or {}
-        monitor = data.get("monitor")
-        if isinstance(monitor, dict) and live_summary.get("datasets") is not None:
-            monitor.setdefault("summary", {})["datasets"] = int(live_summary["datasets"])
-            monitor["summary"]["records"] = int(live_summary.get("records") or 0)
-        # Live-enrich cached export rows with manifest-backed descriptions so the
-        # task card can show recipe/records/buckets without waiting on a cache rebuild.
-        if isinstance(monitor, dict):
-            latest = monitor.setdefault("latest", {})
-            cached_exports = latest.get("exports")
-            if isinstance(cached_exports, list):
-                enriched = []
-                for row in cached_exports:
-                    if isinstance(row, dict):
-                        row = dict(row)
-                        if not row.get("description"):
-                            row["description"] = _export_preview(row).get("description")
-                        enriched.append(row)
-                    else:
-                        enriched.append(row)
-                latest["exports"] = enriched
     except Exception as exc:
         return response_body(code=400, status="error", message=str(exc))()
     return response_body(data=data)()

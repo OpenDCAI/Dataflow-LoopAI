@@ -95,7 +95,16 @@ def _system_runtime(state: Optional[Dict[str, Any]], kwargs: Dict[str, Any]) -> 
         os.getenv("TASK_ID"),
         state.get("task_id") if isinstance(state, dict) else None,
     )
-    return load_system_runtime_config(task_id)
+    runtime = load_system_runtime_config(task_id)
+    if runtime:
+        return runtime
+    # Standalone CLI/worker runs may not have DB_PATH/TASK_ID.  The Starter
+    # YAML is still the authoritative model-pool source in that mode.
+    try:
+        from loopai.schema.model_pool import load_starter_system_config_sync
+        return load_starter_system_config_sync(prefer_db=True) or {}
+    except Exception:
+        return {}
 
 
 def _needs_llm(analyzer: Dict[str, Any], kwargs: Dict[str, Any]) -> bool:
@@ -124,76 +133,50 @@ def resolve_analyzer_runtime_config(
     state: Optional[Dict[str, Any]],
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Resolve Analyzer runtime values from kwargs, env, state, defaults.
+    """Resolve Analyzer runtime values from the shared Starter model pool.
 
-    Priority is kwargs > env > state["analyzer"] > default, except
-    ANALYZER_API_KEY is env-priority by design and only falls back to config
-    for legacy compatibility.
+    Codex is used for orchestration and medium for concrete analysis calls;
+    credentials never come from Analyzer task state.
     """
     analyzer = _analyzer(state)
     system_runtime = _system_runtime(state, kwargs)
 
     pool = StarterModelPool(system_runtime)
-    pooled_request = _first_non_empty(
+    # Analyzer has two distinct model roles: Codex for orchestration/SDK
+    # workers and medium for concrete scoring/labeling.  Both are resolved by
+    # the shared StarterModelPool; medium falls back to the default entry.
+    codex_provider = pool.resolve_role_provider("codex")
+    requested_mid = _first_non_empty(
+        kwargs.get("analyzer_mid_model"),
+        kwargs.get("mid_model"),
         kwargs.get("analyzer_model"),
         kwargs.get("model"),
-        system_runtime.get("analyzer_model"),
-        system_runtime.get("analyze_model"),
-        analyzer.get("analyze_model_path"),
-        analyzer.get("model"),
-        pool.default_model,
+        system_runtime.get("analyzer_mid_model"),
+        system_runtime.get("mid_model"),
+        analyzer.get("analyzer_mid_model"),
     )
-    pooled_entry = pool.find_entry(pooled_request or None, tier=pool.default_tier)
-    pooled_model = ""
-    pooled_base_url = ""
-    pooled_api_key = ""
-    if pooled_entry is not None:
-        if pool.has_proxy():
-            provider = pool.resolve_proxy_provider(pooled_request or pooled_entry.name, tier=pooled_entry.tier)
-            if provider is not None:
-                pooled_model = provider.model
-                pooled_base_url = provider.base_url
-                pooled_api_key = provider.api_key
-        else:
-            pooled_model = pooled_entry.model_name
-            pooled_base_url = pooled_entry.base_url
-            pooled_api_key = pooled_entry.resolved_api_key()
+    mid_entry = pool.get_entry_by_name(requested_mid) if requested_mid else None
+    if mid_entry is None or mid_entry.tier != "medium":
+        requested_mid = None
+    mid_provider = pool.resolve_role_provider(
+        "medium",
+        requested=requested_mid,
+    )
+    pooled_model = mid_provider.model if mid_provider else ""
+    pooled_base_url = mid_provider.base_url if mid_provider else ""
+    pooled_api_key = mid_provider.api_key if mid_provider else ""
+    codex_model = codex_provider.model if codex_provider else ""
+    codex_base_url = codex_provider.base_url if codex_provider else ""
 
-    env_api_key = os.getenv("ANALYZER_API_KEY")
-    system_api_key = _first_non_empty(
-        system_runtime.get("analyzer_api_key"),
-        system_runtime.get("analyze_api_key"),
-        pooled_api_key,
-        system_runtime.get("api_key"),
-    )
-    legacy_api_key = analyzer.get("analyze_api_key") or analyzer.get("api_key")
-    api_key = _first_non_empty(
-        kwargs.get("analyzer_api_key"),
-        kwargs.get("api_key"),
-        system_api_key,
-        env_api_key,
-        legacy_api_key,
-    )
+    api_key = pooled_api_key
 
     model = _first_non_empty(
-        kwargs.get("analyzer_model"),
-        kwargs.get("model"),
-        system_runtime.get("analyzer_model"),
-        system_runtime.get("analyze_model"),
+        # Explicit model aliases are retained only when they resolve to a
+        # registered medium entry; otherwise the role resolver is canonical.
         pooled_model,
-        os.getenv("ANALYZER_MODEL"),
-        analyzer.get("analyze_model_path"),
-        analyzer.get("model"),
     )
     base_url = _first_non_empty(
-        kwargs.get("analyzer_base_url"),
-        kwargs.get("base_url"),
-        system_runtime.get("analyzer_base_url"),
-        system_runtime.get("analyze_base_url"),
         pooled_base_url,
-        os.getenv("ANALYZER_BASE_URL"),
-        analyzer.get("analyze_base_url"),
-        analyzer.get("base_url"),
     )
     task_id = _first_non_empty(
         kwargs.get("thread_id"),
@@ -238,9 +221,11 @@ def resolve_analyzer_runtime_config(
         raise ValueError("analyze_request_timeout_seconds must be greater than 0")
 
     require_api_key = kwargs.get("require_api_key")
-    needs_llm = bool(require_api_key) if require_api_key is not None else bool(model or base_url)
+    needs_llm = bool(require_api_key) if require_api_key is not None else bool(model or base_url or _needs_llm(analyzer, kwargs))
+    if needs_llm and mid_provider is None and codex_provider is None:
+        raise RuntimeError("Analyzer requires a configured Starter model pool (medium role)")
     if needs_llm and not api_key:
-        raise RuntimeError("missing required env: ANALYZER_API_KEY")
+        raise RuntimeError("missing API key for the configured Analyzer model-pool provider")
 
     if isinstance(state, dict):
         if task_id and not state.get("task_id"):
@@ -269,6 +254,22 @@ def resolve_analyzer_runtime_config(
     if output_dir:
         analyzer["output_dir"] = output_dir
     analyzer["analyze_request_timeout_seconds"] = request_timeout_seconds
+    analyzer["codex_model"] = codex_model
+    analyzer["codex_base_url"] = codex_base_url
+    analyzer["mid_model"] = model or pooled_model
+    analyzer["model_resolution"] = {
+        "codex": {
+            "model": codex_model,
+            "base_url": codex_base_url,
+            "resolved": bool(codex_provider),
+        },
+        "medium": {
+            "model": pooled_model,
+            "base_url": pooled_base_url,
+            "resolved": bool(mid_provider),
+            "fallback": bool(mid_provider.fallback) if mid_provider else False,
+        },
+    }
     if task_id and version_id and output_dir:
         analyzer["runtime_output_dir"] = str(
             Path(str(output_dir))
@@ -287,17 +288,14 @@ def resolve_analyzer_runtime_config(
         "db_path": db_path,
         "analyzer_model": model,
         "analyzer_base_url": base_url,
+        "analyzer_codex_model": codex_model,
+        "analyzer_codex_base_url": codex_base_url,
+        "analyzer_mid_model": model or pooled_model,
+        "analyzer_mid_base_url": pooled_base_url,
+        "analyzer_model_resolution": analyzer.get("model_resolution", {}),
         "analyze_request_timeout_seconds": request_timeout_seconds,
         "has_analyzer_api_key": bool(api_key),
         "api_key_source": (
-            "kwargs"
-            if _first_non_empty(kwargs.get("analyzer_api_key"), kwargs.get("api_key"))
-            else "system"
-            if system_api_key
-            else "env"
-            if env_api_key
-            else "legacy_config"
-            if legacy_api_key
-            else None
+            "starter_model_pool_proxy" if api_key else None
         ),
     }

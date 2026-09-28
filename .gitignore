@@ -47,6 +47,7 @@ datamixer.toml
 # 本地运行产物
 /envs/
 /model/
+/models/GLM-5.3-Flash-NVFP4/
 /pkgs/
 /tools/
 /.cache/

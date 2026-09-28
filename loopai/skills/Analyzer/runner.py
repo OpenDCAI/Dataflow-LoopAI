@@ -34,6 +34,47 @@ from .state_bridge import load_analyzer_state_from_configer
 ANALYZER_NODE_NAMES = ANALYZER_PIPELINE_STEPS
 
 
+def _normalize_critique_samples_per_tag(value: Any) -> Any:
+    text = str(value).strip().lower()
+    if text == "full":
+        return "full"
+    try:
+        limit = int(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("critique_samples_per_tag must be a positive integer or 'full'") from exc
+    if limit < 1:
+        raise ValueError("critique_samples_per_tag must be at least 1 or 'full'")
+    return limit
+
+
+def _attach_benchmark_skill_metadata(state: Dict[str, Any]) -> None:
+    """Attach plugin metadata to deterministic Analyzer state when available.
+
+    This is intentionally side-effect free: the SDK worker is optional, while
+    existing Math/General-Text pipelines still benefit from the same
+    benchmark contract in their reports and checkpoints.
+    """
+    analyzer = state.get("analyzer") if isinstance(state.get("analyzer"), dict) else {}
+    judger = state.get("judger") if isinstance(state.get("judger"), dict) else {}
+    name = analyzer.get("benchmark") or analyzer.get("bench_name") or judger.get("benchmark") or judger.get("bench_name")
+    if not name:
+        return
+    try:
+        from loopai.skills.benchmarks import get_benchmark
+        plugin = get_benchmark(str(name))
+    except Exception:
+        return
+    analyzer["benchmark_skill"] = {
+        "name": plugin.name,
+        "version": plugin.version,
+        "task_type": plugin.task_type,
+        "analysis_dimensions": list(plugin.analysis_dimensions),
+        "eval_capabilities": list(plugin.eval_capabilities),
+        "guard_name": plugin.guard_name,
+        "manifest": dict(plugin.manifest or {}),
+    }
+
+
 def _latest_runtime_version(task_id: str, node_name: str = "analyzer") -> Optional[str]:
     try:
         import os
@@ -120,6 +161,7 @@ def run_analyzer_standalone(
     checkpoint_path: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
     analyze_batch_size: Optional[int] = None,
+    critique_samples_per_tag: Optional[Any] = None,
     version_id: Optional[str] = None,
     force_new_version: bool = False,
     emit_status: bool = True,
@@ -228,10 +270,15 @@ def run_analyzer_standalone(
 
     if state is None:
         state = load_analyzer_state_from_configer(task_id=runtime["thread_id"])
+    _attach_benchmark_skill_metadata(state)
     if analyze_batch_size is not None:
         if int(analyze_batch_size) < 1:
             raise ValueError("analyze_batch_size must be at least 1")
         state.setdefault("analyzer", {})["analyze_batch_size"] = int(analyze_batch_size)
+    if critique_samples_per_tag is not None:
+        state.setdefault("analyzer", {})["critique_samples_per_tag"] = (
+            _normalize_critique_samples_per_tag(critique_samples_per_tag)
+        )
 
     writer = kwargs.get("writer")
     if writer is None:
@@ -341,6 +388,7 @@ def run_analyzer_standalone_payload(
     checkpoint_path: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
     analyze_batch_size: Optional[int] = None,
+    critique_samples_per_tag: Optional[Any] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Run Analyzer and return the unified success/error payload."""
@@ -353,6 +401,7 @@ def run_analyzer_standalone_payload(
             checkpoint_path=checkpoint_path,
             baseline_result_path=baseline_result_path,
             analyze_batch_size=analyze_batch_size,
+            critique_samples_per_tag=critique_samples_per_tag,
             **kwargs,
         )
     except (ValueError, TypeError) as exc:
@@ -403,6 +452,7 @@ def resume_analyzer_standalone(
     checkpoint_path: Optional[str] = None,
     baseline_result_path: Optional[str] = None,
     analyze_batch_size: Optional[int] = None,
+    critique_samples_per_tag: Optional[Any] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """Explicit in-process continuation entry point."""
@@ -415,5 +465,6 @@ def resume_analyzer_standalone(
         checkpoint_path=checkpoint_path,
         baseline_result_path=baseline_result_path,
         analyze_batch_size=analyze_batch_size,
+        critique_samples_per_tag=critique_samples_per_tag,
         **kwargs,
     )

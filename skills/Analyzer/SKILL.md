@@ -3,6 +3,10 @@
 ## Purpose
 Analyzer Skill is the Codex/Agent-facing capability for running LoopAI Analyzer independently. It analyzes evaluation outputs, writes Analyzer reports, emits stream events, returns unified success/error payloads, and can compare current results with a historical baseline.
 
+模型来源统一为 Starter 模型池：Analyzer SDK/编排使用 `codex` 角色，具体指标、
+数学 LLMaJ 标注和报告分析使用 `medium` 角色；没有 medium entry 时回退池的
+默认模型。运行时会在 state/report 中记录两种角色的解析来源和 fallback 状态。
+
 ## Python Implementation
 The Python skill layer and Analyzer business implementation live in:
 
@@ -20,9 +24,35 @@ run(state=None, resume=False, from_node=None, baseline_result_path=None)
 resume_run(state=None, from_node=None, baseline_result_path=None)
 ```
 
-`run(...)` is the Codex/sub-agent process entry. It emits the unified LoopAI
-payload to stdout and exits, matching the latest Judger skill pattern. For
-in-process calls use `run_analyzer_standalone(...)`.
+Analyzer also supports a pluggable benchmark skill through the Codex SDK. This
+mode is selected by `benchmark=...`, `lake=...`, or `sdk_worker=True`; existing
+state-only calls continue to use the deterministic Analyzer implementation.
+
+The CLI keeps that split: `loopai-analyzer start/resume` without SDK options
+uses the deterministic path, while `--benchmark`, `--lake`, `--judger-report`,
+`--run`, or `--sdk-worker` selects the benchmark worker. Use `list` or
+`--list-benchmarks` to inspect discovered skills.
+
+```python
+from loopai.skills.Analyzer import run
+run(
+    benchmark="humaneval",
+    judger_report="outputs/judger/final_report.json",
+    lake=".datamixer/lake.yaml",
+    run_dir="outputs/analyzer-sdk",
+)
+```
+
+Benchmark skills are discovered from `loopai/skills/benchmarks/<name>/` (or a
+path in `LOOPAI_BENCHMARK_PATHS`) using `manifest.json`, `SKILL.md`, and an
+optional `benchmark.py`. SDK runs write `thread.json`, `status.json`, and
+`final_report.json`; DataMixer mounts are read-only and carry dataset, snapshot,
+contamination-guard, and lineage metadata into the report.
+
+For state-only compatibility runs, `run(...)` remains the Codex/sub-agent
+process entry that emits the unified LoopAI payload and exits. SDK benchmark
+runs return the structured worker report directly (the CLI prints it). For
+in-process deterministic calls use `run_analyzer_standalone(...)`.
 
 Use `resume_run(...)` for continuation. It always passes `resume=True` and
 selects the latest incomplete version checkpoint for the task. A normal
@@ -67,6 +97,8 @@ Supported options:
 - `--baseline-result-path`
 - `--print-result`
 - `--list-nodes`
+- `--list-benchmarks`
+- `--benchmark`, `--judger-report`, `--lake`, `--dataset`, `--model`, `--run`, `--snapshot-id`, `--sdk-worker`
 - `--stream-stdout`
 - `--request-timeout-seconds` (default: `300`)
 
@@ -141,9 +173,14 @@ Standalone selects the pipeline from `analyzer.analyze_task_type`:
 
 `eval_model -> analyze_result -> draw_conclusion -> finish`
 
-General text uses its existing metric pipeline:
+General text and Math use the metric pipeline:
 
 `metric_recommend -> metric_score -> analyze_metric_report -> finish`
+
+Math does not reuse the Code/Text2SQL OJ evidence parser. It uses
+`numerical_match`, `math_verify`, or `choice_accuracy` for deterministic answer
+scoring, then applies a Math-specific capability taxonomy to structured
+step-level error evidence.
 
 The in-memory state still carries:
 
@@ -174,7 +211,7 @@ counts, pass rates, and failure distributions. A single string
 }
 ```
 
-Do not combine `code`, `text2sql`, and general-text results in one Analyzer
+Do not combine `code`, `text2sql`, `math`, and general-text results in one Analyzer
 route; each task type keeps its own analysis rules.
 
 ## Data Bucket Strategy
@@ -187,7 +224,18 @@ confidence, severity, transfer value, learnability prior, and data cost.
 diagnostic queue. Each actionable bucket is capped by default at 50%, and the
 plan explicitly requires pilot-training gains to update later rounds.
 
-Analyzer keeps three independent bucket routes:
+Bucket counts and construction counts have different meanings:
+
+- `count` / `observed_count` counts every failed case exactly once, including
+  cases that require review.
+- For Code, Text2SQL, and General Text, `actionable_count` counts cases that
+  pass their evidence gates. For Math, every resolved model error is actionable:
+  strong step evidence produces step-level repair data, while weaker evidence
+  produces whole-case contrastive data.
+- `critique_samples_per_tag` controls only how many one-line critiques are read
+  for semantic profiling. It never changes either population count.
+
+Analyzer keeps four independent bucket routes:
 
 - Code: output contract, syntax/completion, interface/scope, semantic logic,
   boundary robustness, and runtime efficiency.
@@ -196,6 +244,52 @@ Analyzer keeps three independent bucket routes:
 - General Text: instruction/format following, relevance/intent, factuality and
   grounding, reasoning consistency, completeness/coverage, language quality,
   and safety/refusal boundaries.
+- Math: answer extraction/format, arithmetic, algebra/symbolic manipulation,
+  problem modeling, strategy/theorem selection, multi-step consistency, and
+  verification/completeness.
+
+Math uses a two-level structure. Capability buckets determine the recommended
+training allocation; algebra, geometry, probability/statistics, calculus,
+number theory, and combinatorics are reported as `domain_breakdown` values
+inside each capability. Each metric failure must resolve to either a concrete
+model-error bucket or `评测异常`. Exact grounded evidence produces step-level
+repair data; weaker evidence keeps the concrete tag and produces whole-case
+contrastive data. `评测异常` enters Metric regression with zero model-training
+budget. If labeling retries still cannot produce a concrete route, Analyzer
+stops report generation and resumes the same version instead of publishing a
+`待诊断` result.
+
+Math writes a human-readable delivery bundle under the version-scoped Analyzer
+directory:
+
+```text
+<runtime_output_dir>/数学评测最终报告/<dataset_name>/
+```
+
+The bundle always contains five ordered text reports:
+
+- `01_数据集背景与评测概览.txt`: dataset background, field mapping, and metric overview.
+- `02_完整分析与审计报告.txt`: full bad-case audit followed by the same five-part analysis
+  contract as Code/Text2SQL: failure taxonomy, data acquisition, training
+  recipe, evaluation improvements, and next-iteration priorities.
+- `03_最终报告.txt`: concise background, evaluation result, major failure
+  modes, and recommended bucket allocation.
+- `04_模型改进建议.txt`: prioritized model and Metric improvements.
+- `05_数据爬取与构造建议.txt`: detailed acquisition and construction instructions.
+
+The parent bundle also contains `总览.txt`. Math creates all five reports by
+default; the Code/Text2SQL suggestion toggles do not remove files from this
+bundle. Set `math_report_bundle_root` only when a caller needs a custom bundle
+location.
+
+Math reports are deliberately text-only and must not embed raw JSON or internal
+action payloads. The only public structured artifact is
+`oj_records_enriched_*.json` or `.jsonl`: it preserves every Judger record and
+adds only `overall_error_tag` and `short_critique` to failed rows. Confidence,
+evidence, review status, and construction actions stay in runtime state and the
+version-scoped checkpoint. A downstream direct-repair adapter can consume this
+enriched OJ without external data selection, but must still verify answers,
+deduplicate rows, and prevent benchmark contamination.
 
 General Text uses structured evaluator labels and reasons first. Empty answers,
 verifiable format violations, and obvious refusal patterns provide deterministic

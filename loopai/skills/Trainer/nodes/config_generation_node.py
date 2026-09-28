@@ -27,7 +27,7 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
         state: LoopAIState 对象，需要包含：
             - train_input_task_description: 训练任务描述
             - train_input_dataset_path: 训练数据集路径
-            - train_input_model_name: 基础模型名称（可选，默认 qwen2.5-7b-instruct）
+            - train_input_model_name: 基础模型名称（必填）
             - train_input_config_template_path: 配置模板路径（可选）
             - output_dir: 输出目录
     
@@ -55,7 +55,9 @@ def config_generation_node(state: LoopAIState) -> LoopAIState:
         logger.info(f"数据集路径: {dataset_path}")
         
         # 获取可选参数
-        model_name = state.get('trainer', {}).get('train_input_model_name', 'qwen2.5-7b-instruct')
+        model_name = state.get('trainer', {}).get('train_input_model_name')
+        if not model_name:
+            raise ValueError("缺少训练底座模型 (train_input_model_name)")
         template_path = state.get('trainer', {}).get('train_input_config_template_path')
         training_output_dir = os.path.abspath(
             state.get('trainer', {}).get('output_dir') or './output/training'

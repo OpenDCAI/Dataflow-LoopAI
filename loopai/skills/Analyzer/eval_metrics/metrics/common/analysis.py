@@ -16,6 +16,33 @@ class MockState:
         # LLMCaller accesses self.state.request.model
         self.request = type("MockRequest", (), {"model": model_name})()
 
+
+def _medium_provider_values(model_name: str, base_url: str | None, api_key: str | None):
+    """Resolve the Analyzer metric caller exclusively from Starter's medium role.
+
+    ``model_name`` is accepted only as a pool alias selector.  Endpoint and
+    credentials are always taken from the resolved provider so legacy task
+    state or environment variables cannot bypass the response proxy.
+    """
+    try:
+        from loopai.schema.model_pool import StarterModelPool, load_starter_system_config_sync
+        system = load_starter_system_config_sync(prefer_db=True) or {}
+        pool = StarterModelPool(system)
+        requested = None
+        candidate = str(model_name or "").strip()
+        candidate_entry = pool.get_entry_by_name(candidate) if candidate else None
+        if candidate_entry is not None and candidate_entry.tier == "medium":
+            requested = candidate
+        provider = pool.resolve_role_provider("medium", requested=requested)
+        if provider is not None:
+            return provider.model, provider.base_url, provider.api_key
+    except Exception:
+        pass
+    # No configured pool means there is no valid Analyzer LLM provider.  Keep
+    # the empty values so callers return their normal missing-credential error
+    # instead of silently using a legacy endpoint.
+    return "", "", ""
+
 @register_metric(
     name="case_study_analyst",
     desc="通用抽样诊断器 (LLM-based)",
@@ -34,7 +61,7 @@ def compute_case_study_analyst(preds: List[Any], refs: List[Any], **kwargs) -> D
             target_group (str): 'positive' | 'negative' | 'mixed'，默认 'negative'
             instruction (str): 分析指令
             auto_prompt (bool): 是否启用自动 Prompt 优化
-            model_name (str): LLM 模型名称，默认 "gpt-4o"
+            model_name (str): LLM 模型名称；未提供时由模型池 medium 角色解析
             api_key (str): OpenAI API Key
             base_url (str): OpenAI Base URL
     """
@@ -47,9 +74,10 @@ def compute_case_study_analyst(preds: List[Any], refs: List[Any], **kwargs) -> D
     is_en = lang.startswith("en")
     
     # LLM Config
-    model_name = kwargs.get("model_name", "gpt-4o")
-    api_key = kwargs.get("api_key") or os.environ.get("OE_API_KEY")
-    base_url = kwargs.get("base_url") or os.environ.get("OE_API_BASE")
+    model_name = kwargs.get("model_name") or ""
+    api_key = kwargs.get("api_key")
+    base_url = kwargs.get("base_url")
+    model_name, base_url, api_key = _medium_provider_values(model_name, base_url, api_key)
     
     # Try to retrieve real state from kwargs (if passed by caller)
     real_state = kwargs.get("state", None)
@@ -168,7 +196,7 @@ def compute_case_study_analyst(preds: List[Any], refs: List[Any], **kwargs) -> D
             tool_manager=None,
             agent_role="case_study_analyst",
             model_name=model_name,
-            base_url=base_url or "http://123.129.219.111:3000/v1", # fallback
+            base_url=base_url or "",
             api_key=api_key,
             temperature=0.7
         )
@@ -256,9 +284,10 @@ def compute_metric_summary_analyst(preds: List[Any], refs: List[Any], **kwargs) 
         }
         
     # 2. 准备 LLM 调用
-    model_name = kwargs.get("model_name", "gpt-4o")
-    api_key = kwargs.get("api_key") or os.environ.get("OE_API_KEY", "sk-xxx")
-    base_url = kwargs.get("base_url") or os.environ.get("OE_API_BASE", "http://123.129.219.111:3000/v1")
+    model_name = kwargs.get("model_name") or ""
+    api_key = kwargs.get("api_key")
+    base_url = kwargs.get("base_url")
+    model_name, base_url, api_key = _medium_provider_values(model_name, base_url, api_key)
     
     # Try to retrieve real state from kwargs (if passed by caller)
     real_state = kwargs.get("state", None)

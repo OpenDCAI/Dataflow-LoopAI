@@ -106,10 +106,7 @@ def _runtime_api_key(cfg: dict) -> str:
     return (
         cfg.get("analyze_api_key")
         or os.getenv("_LOOPAI_ANALYZER_RUNTIME_API_KEY")
-        or os.getenv("ANALYZER_API_KEY")
-        or os.getenv("analyzer_api_key")
-        or os.getenv("DEEPSEEK_API_KEY")
-        or "EMPTY"
+        or ""
     )
 
 def init_model(state: LoopAIState) -> ChatOpenAI:
@@ -455,7 +452,7 @@ def build_obtainer_stats(
         "fail_bias_tags": fail_bias_tags[:15],
         "representative_failure_samples": sample_briefs,
         "actionable_bucket_top": [
-            [row["label"], row["count"]]
+            [row["label"], row.get("actionable_count", row["count"])]
             for row in allocation_plan.get("buckets", [])
         ],
         "allocation_plan": allocation_plan,
@@ -868,6 +865,18 @@ def draw_conclusion_node(state: LoopAIState):
             for k, v in first.items()
         }
     summary["task_type"] = task_type  
+    # Carry the shared benchmark-skill contract through the legacy
+    # deterministic report path as well.  This lets Obtainer/Trainer audit the
+    # exact benchmark, guard, and lake lineage used for the run.
+    benchmark_skill = cfg.get("benchmark_skill") or summary.get("benchmark_skill") or {}
+    benchmark_guard = cfg.get("benchmark_guard") or summary.get("benchmark_guard") or {}
+    benchmark_lineage = cfg.get("benchmark_lineage") or summary.get("benchmark_lineage") or {}
+    summary["benchmark_skill"] = benchmark_skill
+    summary["benchmark_guard"] = benchmark_guard
+    summary["benchmark_lineage"] = benchmark_lineage
+    final_json["benchmark_skill"] = benchmark_skill
+    final_json["benchmark_guard"] = benchmark_guard
+    final_json["benchmark_lineage"] = benchmark_lineage
     final_json["dataset"] = {
         "name": dataset_name,
         "task_type": task_type,

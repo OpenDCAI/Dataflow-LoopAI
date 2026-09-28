@@ -8,14 +8,13 @@ import time
 from pathlib import Path
 
 from loopai.agents.Obtainer.datamixer import codex
-from loopai.agents.Obtainer.datamixer.models import ModelPool, ModelSpec
-from loopai.schema.model_pool import responses_url
 
 from .errors import ObtainerCliError
-from .sft_export_agent import _json_read, _json_write, _resolve_provider, _workspace
 from .download import MAX_BYTES_PER_DATASET
+from .worker_runtime import _json_read, _json_write, _resolve_provider, _workspace
 
-DEFAULT_TARGET_DATASETS = 1
+DEFAULT_TARGET_DATASETS = 3
+MIN_TARGET_DATASETS = 2
 DEFAULT_MAX_ROWS_PER_DATASET = 100000
 DEFAULT_MAX_BYTES_PER_DATASET = MAX_BYTES_PER_DATASET
 DEFAULT_MIN_TIMEOUT_SECONDS = 3600
@@ -33,8 +32,7 @@ def _resolved_model_metadata(
     """Make default-vs-override resolution explicit and durable."""
     meta = dict(provider_meta)
     resolved = str(meta.get("upstream_model_name") or provider.get("model") or "").strip()
-    webagent_model = str(meta.get("model_pool_name") or requested_model or "").strip()
-    if not resolved or not webagent_model:
+    if not resolved:
         raise ObtainerCliError(
             "OBTAINERCLI_MODEL_RESOLUTION_FAILED",
             "could not resolve a Codex-default model for the acquisition worker",
@@ -43,182 +41,57 @@ def _resolved_model_metadata(
         )
     meta.update({
         "resolved_model": resolved,
-        "webagent_model": webagent_model,
         "model_source": "operator_override" if requested_model else "codex_default",
     })
     return meta
-
-
-
-def _focus_keywords_arg(focus_keywords: list[str] | None) -> str:
-    """Render the --focus-keywords CLI lines, or nothing when undeclared."""
-    values = [str(item).strip() for item in (focus_keywords or []) if str(item).strip()]
-    return "".join(f"    --focus-keywords {value} \\\n" for value in values)
-
-
-def _ensure_webagent_model(warehouse: Path, provider: dict, provider_meta: dict) -> str:
-    """Register the resolved Codex provider under the WebAgent pool name.
-
-    DataMixer WebAgent accepts a warehouse model-pool name, whereas the inner
-    worker receives a resolved provider.  Keeping this bridge in one place
-    prevents a blank context from silently selecting a local vLLM model.
-    """
-    warehouse.mkdir(parents=True, exist_ok=True)
-    name = str(provider_meta["webagent_model"])
-    spec = ModelSpec(
-        name=name,
-        api_url=responses_url(str(provider.get("base_url") or "")),
-        api_key=str(provider.get("api_key") or ""),
-        response_format="response",
-        model=str(provider_meta["resolved_model"]),
-        note="Managed by ObtainerCLI from the resolved Codex default model.",
-    )
-    pool = ModelPool(warehouse)
-    pool.add(spec)
-    pool.set_default(name)
-    return name
 
 
 def _with_model_resolution(result: dict, provider_meta: dict) -> dict:
     """Expose the same resolution record from start, resume, and worker runs."""
     result.update({
         key: provider_meta.get(key, "")
-        for key in ("resolved_model", "webagent_model", "model_source")
+        for key in ("resolved_model", "model_source")
     })
     return result
 
 
 def _policy_text() -> str:
-    return """# Dataset acquisition worker policy
+    return """# Hugging Face dataset acquisition
 
-You are LoopAI's dataset acquisition agent. Your job is to discover relevant
-dataset candidates, prune unrelated sources, download selected datasets,
-normalize records, write dataset cards, validate derived fields, ingest accepted
-datasets into DataMixer, and write final_report.json.
+Find several relevant datasets on the Hugging Face Hub, favoring datasets
+created or updated during 2025-2026. Use the Hub dataset catalog and metadata:
+`huggingface_hub.HfApi().list_datasets(search=..., sort="lastModified", direction=-1)`
+and inspect each candidate with `dataset_info`. Record the dataset id, config,
+split, revision, `created_at`/`last_modified`, license, and why it matches the
+objective. Prefer recent candidates; use an older one only when its metadata
+shows it is the best available match.
 
-Hard rules:
+For each selected dataset, use `datasets.load_dataset` (streaming when useful)
+or the ObtainerCLI HF manifest downloader, then write a normalized JSONL file.
+Keep the original row fields and add stable `source_dataset`, `source_uri`, and
+`split` fields. Keep one JSONL and one ingest record per source dataset.
 
-1. All lakehouse operations after downloaded files exist must use:
-   {python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} <datamixer-command> --json
-2. Do not use legacy Obtainer lake/table/sample/index commands.
-3. For every normal acquisition, start two complementary discovery streams at
-   the same time:
-   - Run Obtainer SearchAgent to discover hosted datasets and construct the
-     provider-download candidate manifest.
-   - Run DataMixer's registered `domain_data_acquisition` campaign (legacy alias
-     `webcrawler_dm`) to collect authoritative vertical-domain resource pages as
-     L1 raw HTML in the target warehouse.
-   SearchAgent and WebAgent cover different source types; neither substitutes
-   for the other. Start WebAgent with `--detach --auto-process`: its persistent
-   L1 -> L2 -> L3 queues begin consuming each accepted page immediately. Do not
-   wait for the WebAgent campaign to finish before downloading, normalizing, or
-   ingesting the hosted-dataset stream. Wait only for the SearchAgent artifact
-   needed by `download manifest`, then keep polling the WebAgent campaign while
-   the other work continues. Keep their artifacts, failures, and accepted
-   outputs separate in the final report.
-   WebAgent terminal state is not a completion gate for this worker. Continuously
-   evaluate current per-bucket lake record/token counts and quality gates. Once
-   they satisfy the plan, record `lake_ready=true` plus the observed counts and
-   gate evidence in `final_report.json`, then finish the worker's bounded work so
-   the outer agent can immediately start postprocessing, indexing, recipe
-   planning, and export while WebAgent continues producing data. Never wait for
-   empty WebAgent queues or a terminal campaign state.
-   The outer CLI resolves and registers the Codex-default DataMixer model
-   before this worker starts. Read its durable name from `thread.json`; never
-   select a local model or invent credentials. Do not begin `download manifest`
-   until `webagent_start.json` exists; a WebAgent launch blocker is terminal.
-4. Before discovery, write `manifest/data_mix_plan.json`. It must contain the
-   current objective/failure taxonomy, `target_datasets`, a non-empty `buckets`
-   list, each bucket's `name`, `weight`, `target_datasets`, `search_objectives`,
-   `quality_gates`, and a concrete `rationale`. Weights must sum to 1.0. Use it
-   to make SearchAgent task JSON domain-specific and to prevent one capability
-   from crowding out the planned mix. Include the plan and observed acquisition
-   mix in `final_report.json`.
-5. Use Obtainer SearchAgent and `download manifest` as the acquisition
-   bridge when appropriate:
-   {python_executable} -m loopai.skills.ObtainerCLI.cli searchagent ...
-   {python_executable} -m loopai.skills.ObtainerCLI.cli download manifest ...
-   For multi-domain acquisition requests, first write a task JSON with one
-   isolated task per capability domain (for example text2sql, math, code), then
-   call SearchAgent once with `--task-json <path> --parallelism <n>`. Keep each
-   task's objective and search_keywords domain-specific so one domain cannot
-   crowd out another.
-6. If direct web/Hugging Face/Kaggle discovery is more appropriate for the
-   caller's instruction, write an equivalent manifest yourself and continue.
-7. Before downloading, compare the candidate list against the original user
-   request and Analyzer report. Remove clearly unrelated datasets and write
-   both a filtered manifest and a rejection report with exact reasons.
-8. Each single dataset is capped at {max_rows_per_dataset} rows and
-   {max_bytes_per_dataset} output bytes. Do not bypass these caps. Smaller
-   sampled downloads are allowed for broad acquisition, but record sampled_rows,
-   rows_written, bytes_written, max_rows_effective, max_bytes_effective, and
-   cap/truncation status in the manifest/report. For `download manifest`,
-   `--limit` caps candidate items to try, `--max-rows` caps rows per dataset,
-   and `--max-bytes-per-dataset` caps local JSONL output bytes per dataset. If
-   the byte cap is reached, keep the partial JSONL and report `truncated`,
-   `truncated_reason`, `rows_written`, and `bytes_written`.
-9. Normalize each downloaded dataset to JSONL before ingest. Each row must
-   preserve source_uri, source_dataset/source_dataset_id, split, and enough
-   payload fields for later SFT/PT processing.
-10. For every accepted dataset, write a Markdown dataset card before ingest and
-   register it during ingest with `--dataset-card <path>`. The card must live in
-   this run's manifest directory first and describe source, license, split,
-   row count, original fields, derived fields, derivation rules, validation
-   checks, intended training use, and known risks.
-11. You may add dataset-specific derived fields during normalization, but only
-   by adding fields. Never drop, overwrite, or rename original payload fields.
-   The normalized JSONL must preserve the same row count as the selected source
-   rows. For complex embedded formats, derive explicit training-ready fields:
-   parse step traces into reasoning fields, flatten multi-turn conversations
-   into messages/dialogue/instruction-response fields, combine question with
-   options/evidence/schema blocks into prompt/input fields, and keep gold
-   labels/answers as separate fields.
-12. If derived fields are added, every derived field must be non-empty for every
-   row. Pass `--derived-field <name>` for each derived field and
-   `--source-row-count <n>` to `dm ingest` so DataMixer validates this before
-   writing. If validation fails, fix the normalizer or reject the dataset; do
-   not ingest partial rows.
-13. If the user request or Analyzer report explicitly names a benchmark type to
-   collect (for example "collect HumanEval-style code problems", "BIRD SQL
-   pairs", or any named eval/test set), treat that dataset as evaluation-only
-   and register it in the DataMixer benchmark registration layer BEFORE any
-   acquisition or ingest:
-   {python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} contam add --name <benchmark> --file <file> --json
-   The registration makes downstream ingest and export decontamination exclude
-   those rows and prevents benchmark leakage into training data. Do not rely
-   on a later `decontaminate` pass alone to decide what to register.
-14. Ingest every accepted dataset through DataMixer `ingest` or `agent-ingest`
-   with complete tags: source platform, source dataset id, source URL or URI,
-   license if known, language if known, domain, task_type, processing_level,
-   quality_level, source_kind, split, loop_uuid/version_id when provided, and
-   acquisition_run. Choose quality_level explicitly for every dataset: L1 for
-   raw webpages, L2 for extracted/parsed/basic-cleaned source data, L3
-   for standard SFT/DPO/training samples (regular hosted SFT/training datasets
-   must be L3, not L1), and L4 only for output explicitly refined by an
-   internal data-lake pipeline. When uncertain, choose the lower applicable
-   level and explain the uncertainty; never omit the parameter.
-15. After ingest, run DataMixer status, dataset list, stats, representative query,
-   and index build when useful for downstream recall.
-16. Write final_report.json with `lake_ready`, per-bucket planned-versus-observed
-    record/token counts, quality-gate evidence, SearchAgent and WebAgent commands/statuses,
-    WebAgent campaign id and L1 datasets, candidates, filtered list, rejections,
-    downloads, dataset card paths, derived field specs, validation outcomes,
-    ingests, each dataset's selected quality_level and selection rationale,
-    DataMixer command summaries, before/after counts, lineage/manifest paths,
-    and blockers.
-17. Do not mark ok=true if no dataset was ingested, if accepted datasets are
-    unrelated to the request, if any accepted dataset lacks a registered md
-    dataset card, if derived field validation failed, if row count changed
-    during derivation, or if required source/provenance tags are missing.
-18. Do not read or print secret/key files.
-19. Per-record quality approval belongs to post-processing: the WebAgent L2
-    `domain_classify` step receives the campaign `--focus-keywords` and the LLM
-    judgement accepts only items directly related to that focus, backed by
-    grounded semantic signals; `topic_quality_filter` then enforces a
-    confidence/signal threshold on that evidence. No vertical (e.g. finance)
-    is hard-wired, so the same chain follows whichever topic the WebAgent
-    explored.
+Use the DataMixer CLI for lake operations. Register every normalized JSONL as a
+separate dataset, preserve its HF provenance, and run `index build` after all
+selected datasets are ingested so the complete multi-dataset lake is searchable.
+
+Ingest every accepted dataset with an explicit quality_level, normally L3 for
+normalized source records: `ingest <dataset_name> --file <normalized.jsonl>
+--content-key <content_field> --quality-level L3`. On a high-latency filesystem,
+`--io-workers 16` permits bounded concurrent immutable blob writes while keeping
+catalog transactions and sample ordering on one thread. Preserve source domain
+values in raw_content/source_domain if they conflict with the requested lake domain.
+
+Write `manifest/candidates.json`, `manifest/filtered_manifest.json`, and
+`manifest/rejections.json` before downloading, then write download/ingest/index
+reports and `final_report.json` under the run directory. The final report should
+include selected dataset ids, freshness metadata, normalized JSONL paths, row
+counts, ingest results, and index results.
+
+DataMixer command form: `{python_executable} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} ... --json`.
+Honor the per-dataset row and byte limits supplied by the caller.
 """
+
 
 
 def _worker_codex_home() -> Path:
@@ -268,6 +141,7 @@ def _worker_env(
     env["HF_ENDPOINT"] = hf_endpoint
     env["HF_HUB_ENDPOINT"] = hf_endpoint
     env.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    env.setdefault("STARTER_CONFIG", (base or os.environ).get("STARTER_CONFIG", ""))
     return env
 
 
@@ -313,7 +187,7 @@ def _record_thread_started(run_dir: Path, payload: dict) -> None:
     if state.get("thread_id") != thread_id:
         state["thread_id"] = thread_id
         state["updated_at"] = time.time()
-        _json_write(run_dir / STATE_FILE, state)
+    _json_write(run_dir / STATE_FILE, state)
     status = _json_read(run_dir / STATUS_FILE)
     status["thread_id"] = thread_id
     status["updated_at"] = time.time()
@@ -362,206 +236,48 @@ def build_start_prompt(
     target_datasets: int,
     max_rows_per_dataset: int,
     max_bytes_per_dataset: int,
-    discovery_mode: str,
     extra_message: str,
-    focus_keywords: list[str] | None = None,
 ) -> str:
-    focus_keywords_arg = _focus_keywords_arg(focus_keywords)
-    policy = _policy_text().format(
+    return f"""{_policy_text().format(
         warehouse=str(warehouse),
         max_rows_per_dataset=max_rows_per_dataset,
         max_bytes_per_dataset=max_bytes_per_dataset,
         python_executable=codex.loopai_python_executable(),
-    )
-    return f"""{policy}
+    )}
 
-# Task
+# Acquisition task
 
-Read the Analyzer report(s) and caller objective, discover relevant dataset
-candidates, prune unrelated candidates before download, download selected
-datasets, normalize them to JSONL, and ingest them into the existing DataMixer
-warehouse.
+Search the Hugging Face Hub for {target_datasets} relevant datasets for this
+objective. Start with `HfApi.list_datasets(search=..., sort="lastModified",
+direction=-1)`, inspect each result with `HfApi.dataset_info`, and prioritize
+datasets whose `created_at` or `lastModified` is in 2025 or 2026. Use the
+dataset page at `https://huggingface.co/datasets/<id>` to confirm the card,
+configs, splits, revision and license. Record the freshness evidence and
+selection reason for every candidate.
+
+Download the selected datasets with `datasets.load_dataset` or the HF manifest
+downloader, normalize each source split to its own JSONL file, then register
+each JSONL as a separate DataMixer dataset. Preserve the original fields and
+add `source_dataset`, `source_uri`, and `split` fields. Run `index build` after
+all datasets are ingested so the complete multi-dataset lake is indexed.
 
 Analyzer report paths:
 {_analysis_block(analysis_reports)}
-Warehouse:
-- {warehouse}
+Objective: {objective or 'Infer from Analyzer report.'}
+Keywords: {keywords or 'Infer from Analyzer report.'}
+Target datasets: {target_datasets}
+Extra caller instruction: {extra_message or '- none'}
 
-Run directory:
-- {run_dir}
-
-Objective:
-- {objective or 'Infer from Analyzer report.'}
-
-Keywords:
-- {keywords or 'Infer from Analyzer report.'}
-
-Target datasets:
-- {target_datasets}
-
-Per-dataset row cap:
-- {max_rows_per_dataset}
-
-Per-dataset output byte cap:
-- {max_bytes_per_dataset}
-
-Discovery mode:
-- {discovery_mode}
-
-Required artifacts:
-- candidates manifest: {run_dir}/manifest/candidates.json
-- filtered manifest: {run_dir}/manifest/filtered_manifest.json
-- rejections: {run_dir}/manifest/rejections.json
-- SearchAgent task JSON: {run_dir}/manifest/tasks.json
-- SearchAgent manifest: {run_dir}/manifest/searchagent/searchagent_manifest.json
-- acquisition mix plan: {run_dir}/manifest/data_mix_plan.json
-- WebAgent launch result: {run_dir}/manifest/webagent_start.json
-- WebAgent campaign status: {run_dir}/manifest/webagent_campaign_status.json
-- dataset cards: {run_dir}/manifest/dataset_cards/*.md
-- derived-field specs/validation: {run_dir}/manifest/derived_fields.json
-- downloads: {run_dir}/downloads/
-- ingest report: {run_dir}/manifest/ingest_results.json
-- final report: {run_dir}/final_report.json
-
-Required discovery procedure:
-1. Create `{run_dir}/manifest/data_mix_plan.json` before creating discovery
-   tasks. It must record the planned capability/domain proportions from the
-   current request and Analyzer failure taxonomy, the `target_datasets` budget,
-   planned count per bucket, source/quality gates, and rationale. Then create
-   `{run_dir}/manifest/tasks.json` with a top-level `tasks` list, where every
-   task belongs to a planned bucket. Read
-   `{run_dir}/thread.json` and use its non-empty `webagent_model` exactly as
-   `$WEBAGENT_MODEL`; it was registered from the resolved Codex default before
-   this worker started. Do not select a different entry from `dm model list`.
-   If this value is absent, write `webagent_model_missing` to final_report and
-   fail the run after recording the blocker; do not continue with SearchAgent
-   or a direct-download fallback.
-2. When `$WEBAGENT_MODEL` is available, launch SearchAgent and WebAgent in
-   parallel. The WebAgent command must return after its durable campaign and
-   streaming L1 -> L2 -> L3 consumers are started. Wait for SearchAgent only;
-   do not wait for WebAgent campaign completion before continuing:
-
-```bash
-(
-  {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli searchagent \
-    --query "{objective or keywords or 'dataset acquisition'}" \
-    --task-json {run_dir}/manifest/tasks.json \
-    --output-root {run_dir}/manifest/searchagent \
-    --parallelism 3 \
-    --max-results-per-source {max(target_datasets, 5)} \
-    --no-deepsearch \
-    --json > {run_dir}/manifest/searchagent_start.json
-) &
-SEARCHAGENT_PID=$!
-(
-  {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} \
-    webagent campaign start domain_data_acquisition \
-    --query "{objective or keywords or 'dataset acquisition'}" \
-    --dataset {run_dir.name}_web_l1 \
-    --model "$WEBAGENT_MODEL" \
-    --subquery-count {max(4, min(24, target_datasets))} \
-    --workers 4 \
-    --auto-process \
-    --detach \
-{focus_keywords_arg}    --search-provider tavily \
-    --json > {run_dir}/manifest/webagent_start.json
-) &
-WEBAGENT_PID=$!
-wait "$SEARCHAGENT_PID"; SEARCHAGENT_EXIT=$?
-wait "$WEBAGENT_PID"; WEBAGENT_LAUNCH_EXIT=$?
-```
-
-   If `TAVILY_API_KEY` is unavailable, use `--search-provider auto` for the
-   WebAgent command and record the provider choice. A failed WebAgent launch or
-   a failed persistent processing queue is terminal; a still-running campaign
-   is not. It must never be replaced by a direct-download fallback.
-3. Read `{run_dir}/manifest/searchagent/searchagent_manifest.json` and
-   `{run_dir}/manifest/webagent_start.json`. Use `dm webagent campaign status
-   <run-id> --json` to write `{run_dir}/manifest/webagent_campaign_status.json`.
-   Preserve the WebAgent campaign id, selected URLs, L1 dataset names, and
-   L1/L2/L3 counts if an automatic pipeline was requested. Do not copy WebAgent
-   HTML into the provider download manifest; it is already in DataMixer. Continue
-   hosted-data filtering/download/ingest as soon as SearchAgent completes. Do
-   not defer it until WebAgent reaches a terminal state. After each ingest,
-   compare current per-bucket record/token counts and quality evidence with
-   `data_mix_plan.json`. When they pass, write `lake_ready=true` and the evidence
-   to `final_report.json`; do not wait for WebAgent completion or empty queues
-   before completing this worker and handing downstream work back to the caller.
-4. Read `{run_dir}/manifest/searchagent/searchagent_manifest.json`. Copy or
-   transform its `candidates`/`download_list` into `{run_dir}/manifest/candidates.json`.
-   Do not inspect `{run_dir}/manifest/tasks/`; SearchAgent does not write there.
-   Preserve SearchAgent metadata. Do not hand-write this file with `echo`.
-   Keep an oversampled candidate pool: if SearchAgent produced
-   `{max(target_datasets * 5, target_datasets + 10, 10)}` or fewer candidates,
-   keep all of them; otherwise keep at least
-   `{max(target_datasets * 5, target_datasets + 10, 10)}` relevant candidates
-   and record every removed candidate with a concrete reason in
-   `{run_dir}/manifest/rejections.json`.
-5. Download only through this manifest command shape:
-
-```bash
-   {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli download manifest \
-     --manifest {run_dir}/manifest/candidates.json \
-     --output-root {run_dir}/downloads \
-     --limit {max(target_datasets * 5, target_datasets + 10, 10)} \
-     --max-rows {max_rows_per_dataset} \
-     --max-bytes-per-dataset {max_bytes_per_dataset} \
-     --json
-```
-6. Wait for the download command to exit. Do not read
-   `{run_dir}/downloads/download_results.json` while the command is still
-   running. If the command does not exit successfully or the result file is
-   missing, write an `ok=false` blocker with the command, status, exit code,
-   stdout, and stderr; do not infer success from partial files.
-7. After download completes, read `{run_dir}/downloads/download_results.json`.
-   Use only non-empty `records_jsonl` paths from that report for ingest. Do not
-   guess raw parquet, JSON, or nested download paths. A zero-byte JSONL file is
-   not a successful download.
-8. For each accepted downloaded JSONL, ingest with this exact DataMixer shape:
-   {codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli dm --root {warehouse} ingest <dataset_name> \
-     --file <records_jsonl> \
-     --dataset-card <dataset_card_md> \
-     --source <source_platform> \
-     --license <license_or_unknown> \
-     --domain <domain> \
-     --task-type <task_type> \
-     --quality-level <L1|L2|L3|L4> \
-     --processing-level <processing_level> \
-     --source-kind <source_platform> \
-     --source-uri <source_url_or_uri> \
-     --split <split> \
-     --tag source_dataset_id=<source_dataset_id> \
-     --tag acquisition_run={run_dir.name} \
-     --json
-   `<dataset_name>` is required and must appear immediately after `ingest`.
-   Do not omit `<dataset_name>`. Top-level
-   `{codex.loopai_python_executable()} -m loopai.skills.ObtainerCLI.cli ingest`
-   is invalid. Do not use non-existent ingest flags such as
-   `--source-dataset-id` or `--source-url`; put those values in
-   `--tag source_dataset_id=<source_dataset_id>` and `--source-uri ...`.
-   `dm ingest` is the batch lake path: it writes every normalized row with the
-   batch metadata and the chosen `--quality-level`; it does not run per-record
-   LLM approval and it never drops rows. Do not attempt to emulate a per-record
-   quality gate before ingest, and do not use `--domain finance` as if it
-   triggered per-row reclassification - it is only batch-level metadata.
-   Production export runs only
-   after the DataFlowAgent post-processing stage completes and the L4 dataset
-   scale meets the recipe target with at least 1.5x in-lake redundancy per
-   bucket. A dataset alias, source name, or URL is never evidence for
-   `--domain finance`; provenance remains metadata only. Preserve the final
-   export quality report path in final_report.json.
-
-Extra caller instruction:
-{extra_message or '- none'}
-
-Proceed end-to-end. Return concise JSON with ok, final_report, datasets_ingested,
-warehouse, and blockers.
+Write `manifest/candidates.json`, `manifest/filtered_manifest.json`, and
+`manifest/rejections.json` before downloading. Keep download, ingest, and index
+reports plus `final_report.json` under the run directory. Honor the per-dataset
+row and byte limits: {max_rows_per_dataset} rows and
+{max_bytes_per_dataset} bytes.
 """
 
 
+
 def build_resume_prompt(*, run_dir: Path, message: str) -> str:
-    state = _json_read(run_dir / STATE_FILE)
-    focus_keywords_arg = _focus_keywords_arg(state.get("focus_keywords"))
     return f"""{_policy_text().format(warehouse='the warehouse recorded in thread.json', max_rows_per_dataset=DEFAULT_MAX_ROWS_PER_DATASET, max_bytes_per_dataset=DEFAULT_MAX_BYTES_PER_DATASET, python_executable=codex.loopai_python_executable())}
 
 # Resume task
@@ -569,14 +285,13 @@ def build_resume_prompt(*, run_dir: Path, message: str) -> str:
 Continue the dataset acquisition worker run recorded at:
 - {run_dir}
 
-Read thread.json, status.json, final_report.json if present, manifests,
-download results, ingest results, and logs. Apply this caller instruction:
+Read the existing run state, HF manifests, normalized JSONL files, download /
+ingest / index reports, and logs. Apply this caller instruction:
 
 {message}
 
-Keep the same hard policy. If a previous candidate list or ingest was wrong,
-write corrected manifests/rejections and continue from the safest consistent
-step. Return concise JSON in the final response.
+Continue the HF search/acquisition, normalization, multi-dataset ingest, and
+index build from the last consistent step. Return concise JSON.
 """
 
 
@@ -590,12 +305,11 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     start.add_argument("--objective", default="")
     start.add_argument("--keywords", default="")
     start.add_argument(
-        "--focus-keywords",
-        action="append",
-        default=[],
-        help="WebAgent exploration keyword passed to the LLM quality judgement (repeatable)",
+        "--target-datasets",
+        type=int,
+        default=DEFAULT_TARGET_DATASETS,
+        help="number of Hugging Face datasets to collect (minimum 2)",
     )
-    start.add_argument("--target-datasets", type=int, default=DEFAULT_TARGET_DATASETS)
     start.add_argument(
         "--max-rows-per-dataset",
         type=int,
@@ -608,7 +322,6 @@ def _parse(argv: list[str]) -> argparse.Namespace:
         default=DEFAULT_MAX_BYTES_PER_DATASET,
         help="maximum local JSONL output bytes per dataset; partial files are kept and reported when capped",
     )
-    start.add_argument("--discovery-mode", choices=["auto", "searchagent", "codex-web"], default="auto")
     start.add_argument("--model", default="")
     start.add_argument("--timeout", type=int, default=0, help="Codex worker timeout in seconds; 0 means scale by target datasets")
     start.add_argument("--message", default="")
@@ -645,192 +358,63 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _command_result(payload: dict) -> dict:
-    """Unwrap ObtainerCLI/DataMixer JSON envelopes without guessing text logs."""
-    current = payload if isinstance(payload, dict) else {}
-    for _ in range(3):
-        nested = current.get("result")
-        if not isinstance(nested, dict):
-            break
-        current = nested
-    return current
-
-
-def _campaign_success_count(payload: dict) -> int:
-    queue = payload.get("queue") if isinstance(payload.get("queue"), dict) else {}
-    values = (
-        queue.get("succeeded"),
-        payload.get("succeeded"),
-        payload.get("pages_ingested"),
-        payload.get("l1_count"),
-    )
-    for value in values:
-        try:
-            if int(value or 0) > 0:
-                return int(value)
-        except (TypeError, ValueError):
-            continue
-    return 0
-
-
-def _validate_data_mix_plan(run_dir: Path, target_datasets: int) -> tuple[dict, list[dict]]:
-    path = run_dir / "manifest" / "data_mix_plan.json"
-    plan = _json_read(path)
-    issues: list[dict] = []
-    if not plan:
-        return plan, [{"code": "data_mix_plan_missing", "artifact": str(path)}]
-
-    buckets = plan.get("buckets")
-    if not isinstance(buckets, list) or not buckets:
-        return plan, [{"code": "data_mix_buckets_missing", "artifact": str(path)}]
-
-    weights = 0.0
-    planned_datasets = 0
-    names: set[str] = set()
-    for index, bucket in enumerate(buckets):
-        if not isinstance(bucket, dict):
-            issues.append({"code": "data_mix_bucket_invalid", "index": index})
-            continue
-        name = str(bucket.get("name") or "").strip()
-        if not name:
-            issues.append({"code": "data_mix_bucket_name_missing", "index": index})
-        elif name in names:
-            issues.append({"code": "data_mix_bucket_duplicate", "name": name})
-        names.add(name)
-        try:
-            weight = float(bucket.get("weight"))
-        except (TypeError, ValueError):
-            weight = 0.0
-        if weight <= 0:
-            issues.append({"code": "data_mix_bucket_weight_invalid", "name": name, "weight": bucket.get("weight")})
-        weights += weight
-        try:
-            bucket_target = int(bucket.get("target_datasets"))
-        except (TypeError, ValueError):
-            bucket_target = -1
-        if bucket_target < 0:
-            issues.append({"code": "data_mix_bucket_target_invalid", "name": name})
-        else:
-            planned_datasets += bucket_target
-        if not bucket.get("search_objectives"):
-            issues.append({"code": "data_mix_search_objectives_missing", "name": name})
-        if not bucket.get("quality_gates"):
-            issues.append({"code": "data_mix_quality_gates_missing", "name": name})
-        if not str(bucket.get("rationale") or "").strip():
-            issues.append({"code": "data_mix_rationale_missing", "name": name})
-
-    if abs(weights - 1.0) > 0.01:
-        issues.append({"code": "data_mix_weights_invalid", "actual": round(weights, 6), "expected": 1.0})
-    declared_target = plan.get("target_datasets")
-    try:
-        declared_target_int = int(declared_target)
-    except (TypeError, ValueError):
-        declared_target_int = 0
-    if declared_target_int != int(target_datasets):
-        issues.append({
-            "code": "data_mix_target_mismatch",
-            "expected": int(target_datasets),
-            "actual": declared_target,
-        })
-    if planned_datasets != int(target_datasets):
-        issues.append({
-            "code": "data_mix_bucket_targets_mismatch",
-            "expected": int(target_datasets),
-            "actual": planned_datasets,
-        })
-    return plan, issues
-
-
 def _validate_successful_run_artifacts(run_dir: Path) -> dict:
-    """Verify that an ``ok=true`` worker really launched both discovery streams."""
+    # The SDK worker must leave a report, a resolved runtime model, and the
+    # multi-dataset/index artifacts promised by the acquisition contract.
     state = _json_read(run_dir / STATE_FILE)
+    _json_write(run_dir / STATE_FILE, state)
     final_report = _json_read(run_dir / "final_report.json")
-    search_manifest = _json_read(run_dir / "manifest" / "searchagent" / "searchagent_manifest.json")
-    web_start_raw = _json_read(run_dir / "manifest" / "webagent_start.json")
-    web_status_raw = _json_read(run_dir / "manifest" / "webagent_campaign_status.json")
-    web_start = _command_result(web_start_raw)
-    web_status = _command_result(web_status_raw)
     issues: list[dict] = []
-    warnings: list[dict] = []
-    data_mix_plan, data_mix_issues = _validate_data_mix_plan(
-        run_dir,
-        int(state.get("target_datasets") or DEFAULT_TARGET_DATASETS),
+    if not final_report:
+        issues.append({"code": "final_report_missing", "artifact": "final_report.json"})
+    elif final_report.get("ok") is not True:
+        issues.append({"code": "final_report_not_ok"})
+    if not state.get("resolved_model"):
+        issues.append({"code": "resolved_model_missing", "artifact": STATE_FILE})
+    datasets = final_report.get("datasets_ingested")
+    if datasets is None:
+        datasets = final_report.get("datasets")
+    if isinstance(datasets, list):
+        dataset_count = len(datasets)
+    else:
+        try:
+            dataset_count = int(datasets or 0)
+        except (TypeError, ValueError):
+            dataset_count = 0
+    if dataset_count < 2:
+        issues.append({"code": "multiple_datasets_missing", "minimum": 2})
+    index_result = (
+        final_report.get("index")
+        or final_report.get("index_result")
+        or final_report.get("index_build")
+        or final_report.get("index_stats")
     )
-    issues.extend(data_mix_issues)
-
-    for key in ("resolved_model", "webagent_model", "model_source"):
-        if not state.get(key):
-            issues.append({"code": f"{key}_missing", "artifact": STATE_FILE})
-    if not search_manifest:
-        issues.append({"code": "searchagent_manifest_missing", "artifact": "manifest/searchagent/searchagent_manifest.json"})
-    elif search_manifest.get("ok") is False:
-        issues.append({"code": "searchagent_failed", "detail": search_manifest.get("errors")})
-
-    start_run_id = str(web_start.get("run_id") or "")
-    status_run_id = str(web_status.get("run_id") or "")
-    dataset = str(web_start.get("dataset") or web_status.get("dataset") or "")
-    if not web_start_raw:
-        issues.append({"code": "webagent_start_missing", "artifact": "manifest/webagent_start.json"})
-    if not start_run_id:
-        issues.append({"code": "webagent_campaign_id_missing", "artifact": "manifest/webagent_start.json"})
-    if not web_status_raw:
-        issues.append({"code": "webagent_campaign_status_missing", "artifact": "manifest/webagent_campaign_status.json"})
-    if start_run_id and status_run_id and start_run_id != status_run_id:
-        issues.append({"code": "webagent_campaign_id_mismatch", "start": start_run_id, "status": status_run_id})
-    if not dataset:
-        issues.append({"code": "webagent_l1_dataset_missing"})
-    success_count = max(_campaign_success_count(web_start), _campaign_success_count(web_status))
-    if success_count <= 0:
-        issues.append({"code": "webagent_l1_evidence_missing", "detail": "campaign has no succeeded task/pages/L1 count"})
-    terminal_status = str(web_status.get("status") or web_start.get("status") or "").lower()
-    if terminal_status in {"failed", "completed_with_errors", "cancelled"}:
-        failure = {
-            "code": "webagent_campaign_failed",
-            "status": terminal_status,
-            "error": web_status.get("error") or web_start.get("error"),
-        }
-        # A terminal campaign is not a completion gate for the dataset batch
-        # path as long as L1 evidence was produced; record it as a warning.
-        if success_count > 0:
-            warnings.append(failure)
-        else:
-            issues.append(failure)
-
+    if not index_result and final_report.get("index_built") is not True:
+        issues.append({"code": "index_build_missing"})
     evidence = {
         "ok": not issues,
         "resolved_model": state.get("resolved_model") or "",
-        "webagent_model": state.get("webagent_model") or "",
         "model_source": state.get("model_source") or "",
-        "searchagent_manifest": str(run_dir / "manifest" / "searchagent" / "searchagent_manifest.json"),
-        "campaign_id": start_run_id or status_run_id,
-        "l1_dataset": dataset,
-        "l1_success_count": success_count,
-        "campaign_status": terminal_status,
-        "data_mix_plan": str(run_dir / "manifest" / "data_mix_plan.json"),
-        "planned_mix": data_mix_plan,
         "issues": issues,
-        "warnings": warnings,
+        "warnings": [],
     }
     _json_write(run_dir / "acceptance_report.json", evidence)
     if final_report.get("ok") is True:
         final_report.update({
             "resolved_model": evidence["resolved_model"],
-            "webagent_model": evidence["webagent_model"],
             "model_source": evidence["model_source"],
-            "webagent_campaign_id": evidence["campaign_id"],
-            "webagent_l1_dataset": evidence["l1_dataset"],
-            "webagent_l1_success_count": evidence["l1_success_count"],
-            "data_mix_plan": evidence["data_mix_plan"],
-            "planned_mix": evidence["planned_mix"],
             "acquisition_acceptance": evidence,
         })
         _json_write(run_dir / "final_report.json", final_report)
     return evidence
 
 
+
 def _status_payload(run_dir: Path) -> dict:
     status = _json_read(run_dir / STATUS_FILE)
     state = _json_read(run_dir / STATE_FILE)
+    if state:
+        _json_write(run_dir / STATE_FILE, state)
     final_report = _json_read(run_dir / "final_report.json")
     active_pid = status.get("pid") if isinstance(status, dict) else None
     worker_alive = _pid_alive(active_pid) if active_pid else False
@@ -1115,7 +699,6 @@ def _run_worker(
     state["updated_at"] = time.time()
     state["provider"] = provider_meta
     state["resolved_model"] = provider_meta.get("resolved_model", state.get("resolved_model", ""))
-    state["webagent_model"] = provider_meta.get("webagent_model", state.get("webagent_model", ""))
     state["model_source"] = provider_meta.get("model_source", state.get("model_source", ""))
     _json_write(run_dir / STATE_FILE, state)
     _json_write(run_dir / "logs" / f"codex_result_{int(time.time())}.json", result)
@@ -1188,12 +771,10 @@ def _save_initial_state(
     max_bytes_per_dataset: int,
     objective: str,
     keywords: str,
-    discovery_mode: str,
     provider_meta: dict,
     python_executable: str = "",
     node_bin_dir: str = "",
     task_id: str = "",
-    focus_keywords: list[str] | None = None,
 ) -> None:
     now = time.time()
     state = _json_read(run_dir / STATE_FILE)
@@ -1208,13 +789,8 @@ def _save_initial_state(
         "max_bytes_per_dataset": max_bytes_per_dataset,
         "objective": objective,
         "keywords": keywords,
-        "discovery_mode": discovery_mode,
-        "focus_keywords": [
-            str(item).strip() for item in (focus_keywords or []) if str(item).strip()
-        ],
         "provider": provider_meta,
         "resolved_model": provider_meta.get("resolved_model", ""),
-        "webagent_model": provider_meta.get("webagent_model", ""),
         "model_source": provider_meta.get("model_source", ""),
         "task_id": task_id or state.get("task_id", ""),
         "runtime": {
@@ -1284,7 +860,7 @@ def run_agent(argv: list[str], *, root: str, task_id: str = "") -> dict:
         max_bytes = args.max_bytes_per_dataset
         if max_bytes <= 0 or max_bytes > DEFAULT_MAX_BYTES_PER_DATASET:
             max_bytes = DEFAULT_MAX_BYTES_PER_DATASET
-        target_datasets = max(args.target_datasets, DEFAULT_TARGET_DATASETS)
+        target_datasets = max(args.target_datasets, MIN_TARGET_DATASETS)
         timeout = _resolve_timeout(args.timeout, target_datasets=target_datasets)
         python_executable = args.python_executable or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
         node_bin_dir = args.node_bin_dir or os.environ.get("LOOPAI_NODE_BIN_DIR", "")
@@ -1292,7 +868,6 @@ def run_agent(argv: list[str], *, root: str, task_id: str = "") -> dict:
         provider_meta = _resolved_model_metadata(
             prov, provider_meta, requested_model=args.model or ""
         )
-        _ensure_webagent_model(warehouse, prov, provider_meta)
         _save_initial_state(
             run_dir=run_dir,
             warehouse=warehouse,
@@ -1302,12 +877,10 @@ def run_agent(argv: list[str], *, root: str, task_id: str = "") -> dict:
             max_bytes_per_dataset=max_bytes,
             objective=args.objective,
             keywords=args.keywords,
-            discovery_mode=args.discovery_mode,
             provider_meta=provider_meta,
             python_executable=python_executable,
             node_bin_dir=node_bin_dir,
             task_id=task_id,
-            focus_keywords=args.focus_keywords,
         )
         prompt = build_start_prompt(
             warehouse=warehouse,
@@ -1318,9 +891,7 @@ def run_agent(argv: list[str], *, root: str, task_id: str = "") -> dict:
             target_datasets=target_datasets,
             max_rows_per_dataset=max_rows,
             max_bytes_per_dataset=max_bytes,
-            discovery_mode=args.discovery_mode,
             extra_message=args.message,
-            focus_keywords=args.focus_keywords,
         )
         if not args.dry_run:
             prompt_path = run_dir / "worker_prompt.md"
@@ -1362,6 +933,7 @@ def run_agent(argv: list[str], *, root: str, task_id: str = "") -> dict:
                 hint="Use `dataset-acquisition-agent start --run ...` first.",
                 exit_code=2,
             )
+        _json_write(run_dir / STATE_FILE, state)
         warehouse = Path(state.get("warehouse") or root or "").expanduser().resolve()
         runtime = state.get("runtime") if isinstance(state.get("runtime"), dict) else {}
         python_executable = args.python_executable or runtime.get("python_executable") or os.environ.get("LOOPAI_PYTHON_EXECUTABLE", "")
@@ -1373,7 +945,6 @@ def run_agent(argv: list[str], *, root: str, task_id: str = "") -> dict:
             prov, provider_meta,
             requested_model=args.model or "",
         )
-        _ensure_webagent_model(warehouse, prov, provider_meta)
         if not args.dry_run:
             active = _active_run_status(run_dir)
             if active:
@@ -1438,6 +1009,7 @@ def run_agent(argv: list[str], *, root: str, task_id: str = "") -> dict:
                 hint="worker-run is internal; use start/resume from the outer process.",
                 exit_code=2,
             )
+        _json_write(run_dir / STATE_FILE, state)
         warehouse = Path(state.get("warehouse") or root or "").expanduser().resolve()
         requested_model = args.model or str(state.get("provider", {}).get("model_pool_name") or "")
         prov, provider_meta = _resolve_provider(warehouse, requested_model or None)
@@ -1445,7 +1017,6 @@ def run_agent(argv: list[str], *, root: str, task_id: str = "") -> dict:
             prov, provider_meta,
             requested_model=args.model or "",
         )
-        _ensure_webagent_model(warehouse, prov, provider_meta)
         prompt_path = Path(args.prompt)
         if not prompt_path.exists():
             raise ObtainerCliError(

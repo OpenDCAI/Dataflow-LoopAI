@@ -9,8 +9,8 @@ import requests
 
 DATA_PATH = "./src/js/i18n.js"
 SOURCE_PREFIX = "./src"
-BASE_URL = "https://api.deepseek.com"
-MODEL = "deepseek-chat"
+BASE_URL = os.getenv("LOOPAI_MODEL_POOL_PROXY_URL", "")
+MODEL = os.getenv("LOOPAI_MODEL_POOL_TRANSLATOR", "")
 LOCAL_PATTERN = r"local\([\"'`]([^\"'`]+)[\"'`]\)"
 CHUNK_SIZE = 100
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from .verl_launcher import build_verl_launch
+from .qwen_eos import normalize_qwen3_eos_metadata
 
 
 def _has_model_weights(path: Path) -> bool:
@@ -33,6 +34,7 @@ def export_verl_checkpoint(
 
     target_dir = checkpoint_root / "merged_huggingface"
     if target_dir.is_dir() and _has_model_weights(target_dir):
+        normalize_qwen3_eos_metadata(target_dir)
         return str(target_dir)
 
     training_cmd, cwd, env = build_verl_launch(config_path, app_config)
@@ -70,4 +72,7 @@ def export_verl_checkpoint(
         )
     if not _has_model_weights(target_dir):
         raise RuntimeError(f"Verl merger completed but no Hugging Face weights were found in {target_dir}")
+    # The merger copies model metadata from the Base checkpoint. Normalize the
+    # Qwen3 chat EOS on the exported artifact as well.
+    normalize_qwen3_eos_metadata(target_dir)
     return str(target_dir)

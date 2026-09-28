@@ -22,7 +22,7 @@ class MathReasoningSFTPipeline:
         serving = APILLMServing_request(
             api_url=os.environ["DF_API_URL"],
             key_name_of_api_key="DF_API_KEY",
-            model_name=os.environ.get("DF_MODEL_NAME", "qwen-plus"),
+            model_name=os.environ["DF_MODEL_NAME"],
             max_workers=8,
         )
         def normalize(df):

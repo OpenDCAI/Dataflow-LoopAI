@@ -68,7 +68,7 @@ class PromptLoader:
                 has_nested_structure = any(k in prompt_dict for k in ['system', 'task'])
                 
                 if has_nested_structure:
-                    # Nested structure (like obtainer_prompt.json)
+                    # Nested prompt files
                     # Merge prompts by prompt_type (system, task, etc.)
                     for prompt_type, prompts in prompt_dict.items():
                         if prompt_type not in self.prompt_dict:

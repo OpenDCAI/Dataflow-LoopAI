@@ -23,6 +23,8 @@ When a task needs scoring or generation based on **multiple fields together** (i
 
 ## Standard Pipeline Snippet
 ```python
+import os
+
 from dataflow.operators.core_text import FormatStrPromptedGenerator, GeneralFilter
 from dataflow.serving import APILLMServing_request
 from dataflow.utils.storage import FileStorage
@@ -41,8 +43,8 @@ class ScoringPipeline:
         )
 
         self.llm_serving = APILLMServing_request(
-            api_url="https://api.openai.com/v1/chat/completions",
-            model_name="gpt-4o",
+            api_url=os.environ["DF_API_URL"],
+            model_name=os.environ["DF_MODEL_NAME"],
             max_workers=10
         )
 

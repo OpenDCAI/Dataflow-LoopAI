@@ -180,9 +180,9 @@ model:
   pool:
     - tier: "medium"
       name: "default"
-      api_key: "xxx"
-      base_url: "https://api.deepseek.com"
-      model_name: "deepseek-v4-flash"
+      api_key: "env:LOOPAI_MEDIUM_MODEL_API_KEY"
+      base_url: "<upstream-provider-v1>"
+      model_name: "<medium-model-name>"
       maxworker: 1
       wire_api: "chat"
       response_format: ""
@@ -193,7 +193,7 @@ After the service starts, most other settings can be completed or adjusted from 
 
 Configuration notes:
 
-* `proxy_base_url` is useful when you need to convert an OpenAI-compatible Chat Completions endpoint into a Responses-style endpoint for models such as `deepseek-v4-flash`.
+* `proxy_base_url` is the single gateway endpoint used by every Agent; upstream provider details stay in `model.pool`.
 * `default_model` points to the `name` field of an entry in `model.pool`, and is usually the default API model used by nodes.
 * `codex_model` is the model used by the starter.
 
@@ -298,7 +298,7 @@ Skill-specific notes:
 
 * **Judger Skill**: for local model evaluation, install `vllm` in a separate environment and set `judger.eval_vllm_env_path` to the Python executable, for example `/path/to/miniconda3/envs/loopai-vllm/bin/python`. When `judger.eval_base_url` is empty, Judger uses this interpreter to start a local vLLM OpenAI-compatible API server in a subprocess, with parameters such as `eval_vllm_port`, `eval_vllm_tensor_parallel_size`, `eval_vllm_gpu_memory_utilization`, and `eval_env_configs`. If you already run a compatible service yourself, set `judger.eval_base_url` and Judger will use that service instead.
 * **Analyzer Skill**: Analyzer calls an OpenAI-compatible chat endpoint through `analyzer.analyze_base_url`, `analyzer.analyze_model_path`, and `analyzer.analyze_api_key`. For local analysis, you can serve the analysis model with vLLM in the same vLLM environment and point `analyze_base_url` to it. Analyzer does not currently start vLLM by itself.
-* **ObtainerCLI/DataMixer**: this is the only supported data workflow. Use `skills/obtainer/SKILL.md`, `docs/OBTAINERCLI_USAGE.md`, and `python -m loopai.skills.ObtainerCLI.cli` for hosted-dataset and webpage acquisition, download, normalization, lake ingest, cleaning, deduplication, quality processing, schema mapping, recipe planning, and final training-data export. Retired standalone data agents must not be scheduled. Managed workers resolve model endpoints from the warehouse model pool, `CODEX_*`/`DEEPSEEK_*` environment variables, or the starter system config.
+* **ObtainerCLI/DataMixer**: this is the only supported data workflow. Use `skills/obtainer/SKILL.md`, `docs/OBTAINERCLI_USAGE.md`, and `python -m loopai.skills.ObtainerCLI.cli` for Hugging Face dataset search, multi-dataset download, JSONL normalization, lake ingest, shared indexing, cleaning, deduplication, quality processing, schema mapping, recipe planning, and final training-data export. Managed workers resolve model endpoints from the warehouse model pool, `CODEX_*`/`DEEPSEEK_*` environment variables, or the starter system config.
 * **Trainer Skill**: local training normally requires `LLaMA-Factory` or `verl`. Set `trainer.train_framework` to `llamafactory` or `verl`. For LlamaFactory, set `trainer.llamafactory_dir` to the LLaMA-Factory repository and `trainer.llamafactory_env_path` to the environment root or `bin` directory, for example `/path/to/miniconda3/envs/loopai-llamafactory/bin`. For verl, provide `verl_dir` and `verl_env_path` in the trainer or system config. Trainer launches the selected framework as a managed subprocess, streams logs back to LoopAI, and keeps the Skill call in the foreground until training completes, fails, or is cancelled.
 
 These fields can be provided through the WebUI Configer flow, in node state, or in `starter.yaml` under the corresponding `judger`, `analyzer`, `obtainer`, `trainer`, or `system` sections.
@@ -336,8 +336,8 @@ LoopAI organizes its main runtime around **independent and composable nodes**, w
 
 ### 🤖 ObtainerCLI/DataMixer
 
-* Discovers hosted datasets and collects domain webpages through managed acquisition workers
-* Downloads, normalizes, and ingests data into the DataMixer warehouse with dataset cards and lineage
+* Searches and acquires Hugging Face datasets, prioritizing datasets created or updated in 2025/2026
+* Downloads multiple datasets independently, normalizes each to JSONL, ingests each into DataMixer, and builds a shared index
 * Cleans, deduplicates, validates, and maps heterogeneous data
 * Plans DataMixer recipes and exports final training-ready datasets
 

@@ -19,6 +19,7 @@ from . import scorers  # noqa: F401 - side effect: register model-based scorers
 from . import dataflow  # noqa: F401 - side effect: register the DataFlow bridge
 from . import webpage  # noqa: F401 - side effect: register webpage/PT/SFT ops
 from . import domain  # noqa: F401 - side effect: register domain-specific L3 ops
+from . import text2sql  # noqa: F401 - side effect: register source-database context
 from .dataflow import (
     DataFlowBridge,
     DataFlowStorage,

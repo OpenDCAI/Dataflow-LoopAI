@@ -1,7 +1,8 @@
-from .events import AgentEvent, StreamEvent
 from .model_pool import (
     DEFAULT_PROXY_API_KEY,
     DEFAULT_TIER,
+    MODEL_ROLES,
+    ROLE_ALIASES,
     TIERS,
     ModelPoolEntry,
     ResolvedModelProvider,
@@ -14,10 +15,21 @@ from .model_pool import (
     mask_secret,
     normalize_v1_base_url,
     normalize_wire_api,
+    register_model_pool_entry,
+    register_running_vllm,
     resolve_secret,
     responses_url,
     starter_config_candidates,
 )
+
+
+def __getattr__(name):
+    # Event schemas depend on the optional LangChain runtime.  Keep model-pool
+    # imports usable in dependency-light CLI/worker images.
+    if name in {"AgentEvent", "StreamEvent"}:
+        from .events import AgentEvent, StreamEvent
+        return {"AgentEvent": AgentEvent, "StreamEvent": StreamEvent}[name]
+    raise AttributeError(name)
 from .system import SystemConfig, get_system_config_schema
 from .system_runtime import (
     LEGACY_STATE_CREDENTIAL_FIELDS,
@@ -40,6 +52,8 @@ __all__ = [
     "StreamEvent",
     "DEFAULT_PROXY_API_KEY",
     "DEFAULT_TIER",
+    "MODEL_ROLES",
+    "ROLE_ALIASES",
     "TIERS",
     "ModelPoolEntry",
     "ResolvedModelProvider",
@@ -54,6 +68,8 @@ __all__ = [
     "mask_secret",
     "normalize_v1_base_url",
     "normalize_wire_api",
+    "register_model_pool_entry",
+    "register_running_vllm",
     "resolve_secret",
     "responses_url",
     "starter_config_candidates",

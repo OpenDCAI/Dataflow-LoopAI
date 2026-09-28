@@ -117,7 +117,9 @@ def _proxy_spec_if_available(spec: ModelSpec) -> ModelSpec:
     model_value = system.get("model")
     has_explicit_pool = (
         isinstance(model_value, list)
-        or (isinstance(model_value, dict) and isinstance(model_value.get("pool") or model_value.get("models"), list))
+        or (isinstance(model_value, dict) and isinstance(
+            model_value.get("pool") or model_value.get("models") or model_value.get("entries"), list
+        ))
     )
     if not has_explicit_pool:
         return spec

@@ -2,7 +2,13 @@
 
 ## Purpose
 
-无 LangGraph 的独立评测流水线。支持三种任务类型：
+无 LangGraph 的独立评测技能。默认通过 Codex SDK 调度可插拔 benchmark；
+
+Judger 的 agent/评测编排模型固定解析 Starter 模型池的 `codex` 角色，不再读取
+独立厂商模型默认值。被测模型的 vLLM 属于评测对象而不是 Judger agent 模型：
+评测结束后默认保活，并以 `judger.vllm` entry 注册回 Starter 模型池，供后续
+Obtainer DataFlow rollout/难度筛选使用。
+旧的步骤实现仅作为兼容组件。支持三种任务类型：
 
 - **code** — 代码生成评测（human-eval / mbpp），计算 pass@k
 - **text2sql** — SQL 生成评测，SQLite 执行校验
@@ -24,6 +30,27 @@ python -c "from loopai.skills.Judger import run; run()"
 ```bash
 DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 ```
+
+For a benchmark-skill run, pass the benchmark directly. This invokes the
+Codex SDK worker without constructing a task-type-specific pipeline:
+
+```bash
+loopai-judger start --benchmark humaneval \
+  --predictions outputs/predictions.jsonl \
+  --lake .datamixer/lake.yaml \
+  --run outputs/judger-sdk
+```
+
+`loopai-judger list` (or `--list-benchmarks`) lists all built-in, legacy, and
+user-provided benchmark skills. `start`/`resume` also accept the legacy
+`--resume`/`--from-step` flags for command-line compatibility; benchmark runs
+themselves are always dispatched through the SDK worker.
+
+Skills are discovered from `loopai/skills/benchmarks/<name>/`. Existing
+Configer `benchlist` entries are adapted into independent workers, so adding a
+benchmark only requires a skill directory. Each run records `thread.json`,
+`status.json`, and `final_report.json`; DataMixer benchmark data is mounted
+read-only and its guard/lineage metadata is preserved.
 
 ## Configuration
 
@@ -111,60 +138,63 @@ DB_PATH=api/db/db.sqlite3 TASK_ID=<task_id> loopai-judger
 3. configer_update_task("judger", {"benchlist": [...], "eval_model_path": "..."}, task_id="<task_id>")
 ```
 
-## Pipeline
+## Worker contract
 
-每个 bench entry 独立跑一遍完整流水线：
+每个 bench entry 都解析为一个独立 benchmark skill，并由 Codex SDK 执行。
+Judger 不根据 `task_type` 拼接固定步骤；skill 的 `manifest.json`、`SKILL.md`
+和可选 `benchmark.py` 提供输入契约、评估能力与失败分析维度。Configer
+中的 `benchlist` / `extra_benchlist` 只是 worker 请求清单，执行结果仍按主/附加
+任务分别收集。
+
+每个 worker 至少写入：
 
 ```
-对每个 bench:
-  _apply_bench_to_state → 注入 bench 字段到 state["judger"]
-  → 按 task_type 选流水线:
-    code/text2sql: validate → kill_vllm → start_vllm → format_data → generate → evaluate → kill_vllm_cleanup → finish
-    general_text:  validate → eval_general_text → finish
-  → 收集结果到 bench_result / extra_bench_result
+<run>/
+  thread.json
+  worker_prompt.md
+  status.json
+  final_report.json
 ```
+
+如果传入 DataMixer lake，benchmark 记录以只读方式挂载，并将 dataset id、
+snapshot、contamination guard 和 lineage 写入 `final_report.json`。
+
+旧的 `loopai.skills.Judger.runner` 步骤函数仅为已有集成保留，不是主入口。
 
 ## Output
 
-### stdout（emit_success）
+### stdout（SDK worker）
 
 ```json
 {
   "ok": true,
-  "data": {
-    "bench_result": [
-      {"bench_name": "gsm8k", "task_type": "general_text",
-       "output_result_path": "...", "metrics": {"accuracy": 0.94}}
-    ],
-    "extra_bench_result": [
-      {"bench_name": "human_eval", "task_type": "code",
-       "output_result_path": "...", "metrics": {"pass@1": 0.85}}
-    ],
-    "metrics": {"gsm8k": {"accuracy": 0.94}, "human_eval": {"pass@1": 0.85}}
-  }
+  "status": "completed",
+  "bench_result": [{"bench_name": "humaneval", "metrics": {"pass@1": 0.85}}],
+  "extra_bench_result": [],
+  "metrics": {"humaneval": {"pass@1": 0.85}},
+  "benchmark_guard": {"name": "humaneval"},
+  "lineage": {"warehouse": "..."}
 }
 ```
 
 ### 目录结构
 
 ```
-outputs/<task_id>/
-├── judger/
-│   └── <version_id>/
-│       ├── gsm8k/                      ← bench_name 子目录
-│       │   ├── text_eval_summary_*.json
-│       │   └── gsm8k_*_steps/
-│       ├── human_eval/
-│       │   ├── human_eval_sample.jsonl
-│       │   ├── human_eval_result.jsonl
-│       │   └── log.txt
-│       └── bird_dev/
-└── judger.pkl
+outputs/judger-sdk/
+├── final_report.json
+├── status.json
+├── humaneval/
+│   ├── thread.json
+│   ├── worker_prompt.md
+│   └── final_report.json
+└── mbpp/
 ```
 
-### Configer 持久化
+### Configer / state 传递
 
-`_save_task_progress` 写入 `state.judger.bench_result` 和 `state.judger.extra_bench_result`，Analyzer 从中读取。
+SDK worker 返回的 aggregate report 同时包含 `bench_result` 和
+`extra_bench_result`，并在进程内 state 中写回同名字段，Analyzer 可直接读取。
+需要写回任务库时，由上层编排器用 Configer 持久化这两个结构化字段。
 
 ## Error Handling
 

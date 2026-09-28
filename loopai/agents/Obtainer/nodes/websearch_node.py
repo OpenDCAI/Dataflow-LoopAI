@@ -118,16 +118,15 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
     
     # Initialize components
     try:
-        # Get configuration from state or use defaults
-        model_name = state.get("obtainer", {}).get("model_path") or state.get("analyze_model_path")
-        base_url = state.get("obtainer", {}).get("base_url") or state.get("analyze_base_url")
-        api_key = state.get("obtainer", {}).get("api_key") or state.get("analyze_api_key")
-        temperature = state.get("obtainer", {}).get("temperature", 0.7)
-        
-        if not model_name or not base_url or not api_key:
-            logger.error("Missing required configuration for websearch node")
-            state["exception"] = "Missing model configuration (model_name, base_url, api_key)"
-            return state
+        # All Obtainer LLM calls use the shared Starter Codex role.  Task state
+        # is intentionally not a provider source.
+        from loopai.agents.Obtainer.utils.model_pool import resolve_obtainer_codex_provider
+        provider = resolve_obtainer_codex_provider()
+        model_name = provider["model"]
+        base_url = provider["base_url"]
+        api_key = provider["api_key"]
+        obtainer_cfg = state.get("obtainer", {}) if isinstance(state.get("obtainer"), dict) else {}
+        temperature = obtainer_cfg.get("temperature", 0.7)
         
         # Initialize prompt loader
         prompt_loader = PromptLoader(state.get("prompt_template_dir"))
@@ -135,10 +134,10 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
         # Initialize RAG Manager with independent RAG configuration
         rag_persist_dir = state.get("output_dir", "./output") + "/rag_db"
         # Use RAG-specific API config if provided, otherwise fallback to obtainer config
-        rag_api_base_url = state.get("obtainer", {}).get("rag_api_base_url") or base_url
-        rag_api_key = state.get("obtainer", {}).get("rag_api_key") or api_key
-        rag_embed_model = state.get("obtainer", {}).get("rag_embed_model") or None
-        rag_collection_name = state.get("obtainer", {}).get("rag_collection_name", "rag_collection")
+        rag_api_base_url = obtainer_cfg.get("rag_api_base_url") or base_url
+        rag_api_key = obtainer_cfg.get("rag_api_key") or api_key
+        rag_embed_model = obtainer_cfg.get("rag_embed_model") or None
+        rag_collection_name = obtainer_cfg.get("rag_collection_name", "rag_collection")
         rag_manager = RAGManager(
             api_base_url=rag_api_base_url,
             api_key=rag_api_key,
@@ -167,7 +166,7 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
             api_key=api_key,
             temperature=temperature,
             prompt_loader=prompt_loader,
-            max_download_subtasks=state.get("obtainer", {}).get("max_download_subtasks"),
+            max_download_subtasks=obtainer_cfg.get("max_download_subtasks"),
         )
         
         # Initialize URL Selector for intelligent URL selection
@@ -180,22 +179,22 @@ def websearch_node(state: LoopAIState) -> LoopAIState:
         )
         
         # Get Tavily API key from state or environment
-        tavily_api_key = state.get("obtainer", {}).get("tavily_api_key", "") or os.getenv("TAVILY_API_KEY", "")
+        tavily_api_key = obtainer_cfg.get("tavily_api_key", "") or os.getenv("TAVILY_API_KEY", "")
         
         # Run async workflow
-        debug_mode = state.get("obtainer_debug", False)
+        debug_mode = state.get("obtainer_debug", obtainer_cfg.get("debug", False))
         result = asyncio.run(_websearch_workflow(
             user_query=user_query,
             query_generator=query_generator,
             summary_agent=summary_agent,
             rag_manager=rag_manager,
             url_selector=url_selector,
-            search_engine=state.get("obtainer", {}).get("search_engine", "tavily"),
-            max_urls=state.get("obtainer", {}).get("max_urls", 10),
-            max_depth=state.get("obtainer", {}).get("max_depth", 4),  # Maximum exploration depth
-            concurrent_limit=state.get("obtainer", {}).get("concurrent_limit", 10),  # Concurrent URL processing
-            topk_urls=state.get("obtainer", {}).get("topk_urls", 5),  # Top-k URLs to select from each page
-            url_timeout=state.get("obtainer", {}).get("url_timeout", 60),  # Timeout in seconds for each URL exploration
+            search_engine=obtainer_cfg.get("search_engine", "tavily"),
+            max_urls=obtainer_cfg.get("max_urls", 10),
+            max_depth=obtainer_cfg.get("max_depth", 4),  # Maximum exploration depth
+            concurrent_limit=obtainer_cfg.get("concurrent_limit", 10),  # Concurrent URL processing
+            topk_urls=obtainer_cfg.get("topk_urls", 5),  # Top-k URLs to select from each page
+            url_timeout=obtainer_cfg.get("url_timeout", 60),  # Timeout in seconds for each URL exploration
             tavily_api_key=tavily_api_key if tavily_api_key else None,
             debug_mode=debug_mode,
             event_name=state['current'],
@@ -612,4 +611,3 @@ async def _websearch_workflow(
             "urls_visited": [],
             "crawled_pages": [],
         }
-
