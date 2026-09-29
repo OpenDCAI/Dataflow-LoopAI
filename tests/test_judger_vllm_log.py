@@ -110,6 +110,9 @@ def test_start_writes_header_with_served_model_name(tmp_path, monkeypatch):
     # 头部记录了实际启动命令，模型名对不上时一眼能看出来
     assert "--served-model-name Qwen3-8B" in content
     assert "--model /models/Qwen3-8B" in content
+    # 必须显式声明采样来源是 vllm：默认的 auto 会让模型目录 generation_config.json
+    # 里的 max_new_tokens（Qwen3-8B-Base 是 2048）压掉请求传的 eval_max_tokens。
+    assert "--generation-config vllm" in content
     assert "served_model_name=Qwen3-8B" in content
 
 

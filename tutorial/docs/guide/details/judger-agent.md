@@ -15,7 +15,8 @@ bench（`benchlist` / `extra_benchlist`）。
     `humaneval+` / `mbpp+` 走 **evalplus 官方镜像**（`ganler/evalplus:latest`）判
     HumanEval+ / MBPP+；`livecodebench` 走 `livecodebench:latest`，**生成和判分都在
     容器里**（容器通过 `--vllm_base_url` 回调本机 vLLM）。两者都产出 pass@k
-  - `text2sql`：进程内执行 SQL 对比结果，产出 pass@k
+  - `text2sql`：宿主生成模型回答，`loopai-bird-eval:dev` 容器在 BIRD SQLite
+    数据库上执行预测 SQL 与标准 SQL，比较结果并产出 pass@k
   - `general_text`：One-Eval DataFlowEvalTool 子进程
   - `math`：`math-eval-loopai` Docker 评测器
 - 产出样本、分数与结构化结果，供 Analyzer 使用
@@ -130,7 +131,7 @@ scenario。
 | `eval_top_p` | `0.95` | top-p 采样累计概率阈值 | `JUDGER_TOP_P` |
 | `eval_top_k` / `eval_min_p` / `eval_presence_penalty` | `-1` / `0.0` / `0.0` | 采样参数（math 会用） | `JUDGER_TOP_K` / `JUDGER_MIN_P` / `JUDGER_PRESENCE_PENALTY` |
 | `eval_enable_thinking` | 不设置 | 是否开启思考模式（Qwen3 的 `enable_thinking`）；`true`/`false` 通过 `chat_template_kwargs` 显式开关，不设置跟随模型默认 | `JUDGER_ENABLE_THINKING` |
-| `eval_max_tokens` | `16384` | 最大输出 token 数（含推理 token） | `JUDGER_MAX_TOKENS` |
+| `eval_max_tokens` | `16384` | 最大输出 token 数（含推理 token）；vLLM 启动带 `--generation-config vllm`，模型 `generation_config.json` 的 `max_new_tokens` 不再覆盖此值 | `JUDGER_MAX_TOKENS` |
 | `eval_batch_size` | `10` | 宿主 `generate` 阶段批大小；只对 code 的 evalplus 分支和 text2sql 生效 | `JUDGER_BATCH_SIZE` |
 | `eval_case_num` | `10` | 每问题样本数 | `JUDGER_CASE_NUM` |
 | `eval_vllm_tensor_parallel_size` | `1` | vLLM 张量并行大小 | `JUDGER_TENSOR_PARALLEL_SIZE` |
@@ -139,14 +140,14 @@ scenario。
 
 ## 流水线步骤
 
-完整步骤列表：`validate`、`kill_vllm`、`start_vllm`、`generate`、`sanitize`、
-`evaluate`、`evaluate_livecodebench`、`kill_vllm_cleanup`、`eval_general_text`、
-`evaluate_math`、`finish`。
+完整步骤列表：`validate`、`kill_vllm`、`start_vllm`、`generate`、`evaluate`、
+`evaluate_livecodebench`、`kill_vllm_cleanup`、`eval_general_text`、`evaluate_math`、
+`finish`。
 
 每个 bench 独立跑一遍：
 
 ```
-code:          validate → kill_vllm → start_vllm → generate → sanitize → evaluate
+code:          validate → kill_vllm → start_vllm → generate → evaluate
                → kill_vllm_cleanup → finish
 code(lcb):     validate → kill_vllm → start_vllm → evaluate_livecodebench
                → kill_vllm_cleanup → finish
@@ -164,12 +165,11 @@ math:          validate → kill_vllm → start_vllm → evaluate_math → kill_
   `eval_base_url`；日志落盘到 `<output_dir>/<task_id>/judger/<version_id>/vllm.log`。
 - `generate`：按 `batch_size` 分批调 vLLM 采样（**并发度**，不影响分数），写
   `<bench_name>_sample.jsonl`。只有 code 的 evalplus 分支和 text2sql 走这一步。
-- `sanitize`（仅 code 的 evalplus 分支）：用自研提取器从模型输出里抽可执行代码，写
-  `<bench_name>_sanitized.jsonl`。**只用于留档对比，不在判分路径上** —— 判分时的抽取
-  各归各的后端（evalplus 用镜像里的 `evalplus.sanitize`，LiveCodeBench 用它自己的
-  `extract_code`）。
-- `evaluate`：code 的 evalplus 分支走官方容器（`evalplus.sanitize` +
-  `evalplus.evaluate`），text2sql 走进程内 SQL 执行，产出结果与 metrics。
+- `evaluate`：**code 的 evalplus 分支的代码提取和判分都在官方容器里**（
+  `evalplus.sanitize` + `evalplus.evaluate`，宿主机不做提取）；text2sql 将生成的
+  JSONL 和 BIRD 数据库只读挂入本地 `bird_eval` 容器，执行 SQL 并回写结果与
+  metrics。容器输出实时透传终端；code 判分看起来卡住时可以配合
+  `docker top <容器ID>` 看是不是单核 100% 在跑 `evalplus.sanitize`。
 - `evaluate_livecodebench`：LCB 分支的生成 + 判分，整段在 `livecodebench:latest` 里
   （宿主机没有 generate / sanitize）。容器用 `--network host` 连宿主机的 vLLM，把
   结果写在挂进去的 `/app/output`，宿主机读回来转成 Judger 的契约文件。宿主机不参与
@@ -198,6 +198,11 @@ math:          validate → kill_vllm → start_vllm → evaluate_math → kill_
 字段缺了、前缀不对、题数不对，都会在 `validate` 阶段 `emit_error`
 （`INVALID_INPUT`，消息里点名缺哪些字段/多少行，并给出导出命令）。原始 HumanEval、
 原始/sanitized MBPP 都不是这个格式，会被当场拦下。
+
+`base_input`（原题自带的用例）和 `plus_input`（evalplus 生成的扩展输入）是同一份代码
+要跑的两套测试：`base` 宽、`plus` 严，同一份代码两套都跑，得出 `base_status` /
+`plus_status`。plus 通过必然 base 通过，反之不然。主指标 `pass@1` 取 plus 口径，
+`base_pass@1` 作对照（实测 Qwen3-8B：base 61.59% vs plus 56.10%）。
 
 数据集不在仓库里（`data/` 被 gitignore），每个环境导出一次：
 
@@ -261,6 +266,18 @@ bench 样例：
 | `question` | 自然语言问题 | |
 | `ground_truth` | 标准 SQL | |
 
+`generate` 已将模型原始回答写入 `<bench>_sample.jsonl` 的 `completion`，并从题目
+文件复制 `ground_truth`、`question`，根据 `text2sql_dir` 与 `db_id` 写入 `db_file`。
+`evaluate` 调用 `utils/evaluate_bird.py`：先核对每题有 `case_num` 条样本，再检查
+`loopai-bird-eval:dev` 镜像；若本机没有此镜像，就从
+`loopai/skills/Judger/docker/bird_eval` 自动构建。容器只负责执行与比较 SQL，
+不加载模型。它把逐条判定写到 `<bench>_result.jsonl`，将题数、样本数、pass@k、
+容器内 Python/SQLite 版本写到 `<bench>_summary.json`。`case_num=1` 时汇总中还有
+`execution_accuracy_percent`（BIRD EX 百分数）。目前不计算 BIRD 的难度分组或 VES。
+Dockerfile 和评测入口的手动构建、试跑方法见
+[`bird_eval/README.md`](../../../../loopai/skills/Judger/docker/bird_eval/README.md)。
+`setup.py` 仅把这些文件打包到 Python 安装包；安装时不会构建镜像。
+
 ### `general_text` 任务
 
 通用 JSONL，**字段名不强制**：配置了 `key_mapping` 就直接用，否则由
@@ -270,9 +287,22 @@ bench 样例：
 
 ### `math` 任务
 
-本地 JSON / JSONL / Parquet，字段别名会被自动归一化：问题支持
+**没有固定数据集清单**，也不按数据集名去 HuggingFace 拉取：只要是本地 JSON /
+JSONL / Parquet，字段别名会被自动归一化 —— 问题支持
 `problem`/`question`/`prompt`/`query`/`input`，答案支持
-`answer`/`target`/`final_answer`/`solution`。
+`answer`/`target`/`final_answer`/`solution`。AIME / MATH(-500) / GSM8K / AMC 这类
+「题干 + 数值或 LaTeX 答案」的数据集都能直接跑，不需要传数据集名。
+
+判分在 `math-eval-loopai` 镜像里用 `math_verify` 做 LaTeX 等价比较：
+
+- 标准答案先取 `####` 后缀（GSM8K 风格），再取 `\boxed{...}`，都没有就用原字符串
+- 模型输出必须带 `\boxed{...}`（prompt 里已要求），取不到就记
+  `[No boxed answer found]`，该样本判错并拉低 `format_rate`
+
+要注意的是：`answer` 必须是能和 `\boxed{...}` 里那点内容直接比较的答案。选择题只有在
+`answer` 就是字母/数值时才对得上 —— 存的是选项序号或整段选项文本时会全判错；需要执行
+代码才能判分的数据集也不属于这条流水线（走 `code` 分支）。metrics 见
+`skills/Judger/SKILL.md`。
 
 ## 输入与输出
 
@@ -287,15 +317,13 @@ bench 样例：
 └── <version_id>/
     └── <bench_name>/
         ├── <bench>_sample.jsonl                       ← 模型原始输出
-        ├── <bench>_sanitized.jsonl                    ← 自研提取器留档（不参与判分，仅 evalplus 分支）
         ├── <bench>_sample-sanitized.jsonl             ← evalplus 官方抽取（判分输入，仅 evalplus 分支）
         ├── <bench>_sample-sanitized_eval_results.json ← evalplus 原始判定（仅 evalplus 分支）
         │                                              （新版镜像写成 .eval_results.json，两种都认）
         ├── <model_repr>/                              ← LCB 分支：容器写的原生产物
         │   └── Scenario.<scenario>_<n>_<temperature>[_eval_all].json
         ├── <bench>_result.jsonl                       ← 逐样本判定（带 Analyzer 判因读的 passed）
-        ├── <bench>_summary.json                       ← pass@k 汇总
-        └── log.txt                                    ← text2sql 的 pass@k 日志
+        └── <bench>_summary.json                       ← pass@k 汇总；text2sql 还记录 EX 与环境版本
 ```
 
 各任务类型的 metrics 口径：
@@ -304,7 +332,7 @@ bench 样例：
 | --- | --- |
 | `code`（evalplus） | 百分数：`pass@1`（plus 口径，主指标）、`base_pass@1`、`plus_pass@1`、`passed`、`samples`、`failed_task_count` |
 | `code`（LiveCodeBench） | 百分数：`pass@1`（主指标）和其余 `pass@k`，没有 `base_` / `plus_` 前缀；题数、样本数、`failed_task_count` 只在 `<bench>_summary.json` |
-| `text2sql` | 小数：`pass@1` / `pass@10` / `pass@100` |
+| `text2sql` | 小数：`pass@1` / `pass@10` / `pass@100`（仅输出 `case_num >= k` 的项）；`case_num=1` 时 BIRD EX 百分数在 summary 中 |
 | `math` | 百分数：`pass@n`、`average@n`、`majority_vote@n`、`format_rate`（n = `case_num`） |
 | `general_text` | 评测器返回的统计（如 `accuracy`） |
 
