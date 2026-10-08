@@ -14,16 +14,23 @@ from loopai.logger import get_logger
 logger = get_logger()
 
 
-def _init_model(model_path: str, base_url: str, api_key: str,
-                temperature: float = 0, top_p: float = 0.95):
-    return ChatOpenAI(
-        model=model_path,
+def _init_model(model_name: str, base_url: str, api_key: str,
+                temperature: float = 0, top_p: float = 0.95,
+                max_tokens: int = 16384, enable_thinking=None):
+    # 这里要的是 vLLM **上架的名字**，不是模型路径：vllm_starter 用
+    # --served-model-name 把名字钉成了 eval_model_name（默认取路径最后一段），
+    # 发完整路径会被 vLLM 判成 404。名字由 runtime_config 统一给出。
+    kwargs = dict(
+        model=model_name,
         api_key=api_key,
         base_url=base_url,
         temperature=temperature,
         top_p=top_p,
-        max_tokens=16384,
+        max_tokens=max_tokens,
     )
+    if enable_thinking is not None:
+        kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": bool(enable_thinking)}}
+    return ChatOpenAI(**kwargs)
 
 
 def run_generate_code(state: Dict[str, Any], writer) -> str:
@@ -32,11 +39,13 @@ def run_generate_code(state: Dict[str, Any], writer) -> str:
     judger_state = state.get("judger", {})
 
     model = _init_model(
-        model_path=judger_state["eval_model_path"],
+        model_name=judger_state["eval_model_name"],
         base_url=judger_state["eval_base_url"],
         api_key=judger_state.get("eval_api_key", "EMPTY"),
         temperature=judger_state["eval_temperature"],
         top_p=judger_state["eval_top_p"],
+        max_tokens=judger_state.get("eval_max_tokens", 16384),
+        enable_thinking=judger_state.get("eval_enable_thinking"),
     )
     logger.info(f"模型路径:-> base_url: {judger_state['eval_base_url']}")
 
@@ -106,11 +115,13 @@ def run_generate_text2sql(state: Dict[str, Any], writer) -> str:
     state_task_id = state.get("task_id")
 
     model = _init_model(
-        model_path=judger_state["eval_model_path"],
+        model_name=judger_state["eval_model_name"],
         base_url=judger_state["eval_base_url"],
         api_key="EMPTY",
         temperature=judger_state["eval_temperature"],
         top_p=judger_state["eval_top_p"],
+        max_tokens=judger_state.get("eval_max_tokens", 16384),
+        enable_thinking=judger_state.get("eval_enable_thinking"),
     )
 
     output_dir = Path(state.get("output_dir"))

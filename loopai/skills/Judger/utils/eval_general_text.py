@@ -73,15 +73,20 @@ def _write_jsonl(path: Path, rows: List[Dict[str, Any]]):
 
 
 def _build_model_config(cfg: Dict[str, Any]) -> ModelConfig:
+    enable_thinking = cfg.get("eval_enable_thinking")
+    extra_body = {}
+    if enable_thinking is not None:
+        extra_body["chat_template_kwargs"] = {"enable_thinking": bool(enable_thinking)}
     return ModelConfig(
         model_name_or_path=cfg.get("eval_model_path") or "dummy",
         is_api=bool(cfg.get("is_api", False)),
         api_url=cfg.get("eval_base_url", ""),
         api_key=cfg.get("eval_api_key", "EMPTY"),
+        api_extra_body=extra_body,
         temperature=float(cfg.get("eval_temperature", 0.0)),
-        top_p=float(cfg.get("eval_top_p", 1.0)),
+        top_p=float(cfg.get("eval_top_p", 0.95)),
         tensor_parallel_size=int(cfg.get("eval_vllm_tensor_parallel_size", 1)),
-        max_tokens=int(cfg.get("eval_max_tokens", cfg.get("max_tokens", 2048))),
+        max_tokens=int(cfg.get("eval_max_tokens",16384)),
         gpu_memory_utilization=cfg.get("eval_vllm_gpu_memory_utilization", 0.9),
     )
 

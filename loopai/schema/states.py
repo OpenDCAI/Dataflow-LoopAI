@@ -397,40 +397,29 @@ class JudgerState(BaseModel):
     eval_model_path: str = Field(
         default=None,
         title="评估模型路径",
-        description="评估模型路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
     )
-    # eval_base_url: str = Field(
-    #    default=None,
-    #    title="评估模型 Base URL",
-    #    description="评估模型 Base URL，未设置或为空的时候，将会尝试通过本地开启vllm",
-    #    json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
-    # )
-    # eval_api_key: str = Field(
-    #    default="EMPTY",
-    #    title="评估模型 API Key",
-    #    description="评估模型 API Key",
-    #    json_schema_extra={"ui_type": "password", "ui_group": "评估模型"}
-    # )
+    eval_api_key: str = Field(
+        default="EMPTY", title="评估模型 API Key",
+        description="远程 vLLM API Key",
+        json_schema_extra={"ui_type": "password", "ui_group": "评估模型"}
+    )
     eval_temperature: float = Field(
         default=0,
         title="评估模型温度",
-        description="评估模型温度",
         json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
     eval_top_p: float = Field(
         default=0.95,
         title="评估模型 Top P",
-        description="评估模型 Top P",
         json_schema_extra={"ui_type": "slider", "max": 1, "ui_group": "评估模型"}
     )
-    # eval_format_type: str = Field(
-    #    default=None,
-    #    title="评估模型问题格式化类型",
-    #    description="评估模型问题格式化类型，如果为空或None将不进入格式化节点，改格式化方式可以用户自由定义，目前支持\"human-eval\"和\"mbpp\"，格式化后的文件将存至output_dir定义的目录下",
-    #    json_schema_extra={"ui_type": "list",
-    #                       "ui_group": "评估模型", "allowed_values": ["human-eval"]}
-    # )
+    eval_enable_thinking: Optional[bool] = Field(
+        default=None,
+        title="评估模型思考模式",
+        description="是否开启评估模型的思考模式（如 Qwen3 的 enable_thinking）。不设置时跟随模型默认；设为 True/False 会通过 chat_template_kwargs 显式开启/关闭。",
+        json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
+    )
     eval_batch_size: int = Field(
         default=10,
         title="评估模型批量大小",
@@ -443,40 +432,48 @@ class JudgerState(BaseModel):
         description="评估模型每个问题的样例生成数量",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
+    eval_max_tokens: int = Field(
+        default=16384,
+        title="评估模型最大输出 Token",
+        description="评估模型生成样本时的最大输出 token 数（含思考模式的推理 token）",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
+    )
+    eval_model_name: str = Field(default="", title="远程模型名称",
+        description="vLLM /v1/models 中暴露的模型名；留空使用模型路径",
+        json_schema_extra={"ui_type": "text", "ui_group": "评估模型"})
+    eval_top_k: int = Field(default=-1, title="评估模型 Top K",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"})
+    eval_min_p: float = Field(default=0.0, title="评估模型 Min P",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"})
+    eval_presence_penalty: float = Field(default=0.0, title="评估模型 Presence Penalty",
+        json_schema_extra={"ui_type": "number", "ui_group": "评估模型"})
     eval_vllm_tensor_parallel_size: int = Field(
-        default=2,
+        default=1,
         title="vllm本地启动参数——tensor_parallel_size",
-        description="vllm本地启动参数——tensor_parallel_size，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
+        description="vllm本地启动参数——tensor_parallel_size，用于本地启动vllm服务",
         json_schema_extra={"ui_type": "number", "ui_group": "评估模型"}
     )
     eval_vllm_gpu_memory_utilization: float = Field(
         default=0.9,
         title="vllm本地启动参数——gpu_memory_utilization",
-        description="vllm本地启动参数——gpu_memory_utilization，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效",
+        description="vllm本地启动参数——gpu_memory_utilization，用于本地启动vllm服务",
         json_schema_extra={"ui_type": "slider", "ui_group": "评估模型"}
     )
-    # 统一vllm配置删除 默认使用本地解释器
-    # eval_vllm_env_path: str = Field(
-    #    default="",
-    #    title="vllm本地启动参数——启动环境",
-    #    description="vllm本地启动参数——启动环境，用于本地启动vllm服务的参数之一，当参数eval_base_url未设置或为空时生效，为空时默认为当前环境启动。参数需要具体到python目录，格式应为<path>/miniconda3/envs/<env_name>/bin/python",
-    #    json_schema_extra={"ui_type": "file_path", "ui_group": "评估模型"}
-    # )
     benchlist: List[Dict[str, Any]] = Field(
         default_factory=list,
         title="主任务评测集",
-        description="主任务评测集列表，每个元素包含 name、task_type、problem_path 等字段",
+        description="主任务评测集列表，每个元素包含 name、task_type、problem_path 等字段；可选覆盖全局生成参数：case_num、batch_size、temperature、top_p、max_tokens、enable_thinking",
         json_schema_extra={"ui_type": "bench_list", "ui_group": "评估模型", "nested_allowed_values": {
-            "task_type": ["code", "text2sql", "general_text"],
+            "task_type": ["code", "text2sql", "general_text", "math"],
             "eval_type": ["key2_qa", "key2_q_ma", "key3_q_choices_a", "key3_q_choices_as", "key3_q_a_rejected", "key1_text_score"]
         }}
     )
     extra_benchlist: List[Dict[str, Any]] = Field(
         default_factory=list,
         title="附加任务评测集",
-        description="附加任务评测集列表，格式同 benchlist。失败不影响主任务",
+        description="附加任务评测集列表，格式同 benchlist（同样支持 case_num/batch_size/temperature/top_p/max_tokens/enable_thinking 覆盖）。失败不影响主任务",
         json_schema_extra={"ui_type": "bench_list", "ui_group": "评估模型", "nested_allowed_values": {
-            "task_type": ["code", "text2sql", "general_text"],
+            "task_type": ["code", "text2sql", "general_text", "math"],
             "eval_type": ["key2_qa", "key2_q_ma", "key3_q_choices_a", "key3_q_choices_as", "key3_q_a_rejected", "key1_text_score"]
         }}
     )
@@ -485,7 +482,7 @@ class JudgerState(BaseModel):
         title="主任务评测结果",
         description="主任务 bench 评测结果列表，供 Analyzer 读取",
         json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型", "nested_allowed_values": {
-            "task_type": ["code", "text2sql", "general_text"],
+            "task_type": ["code", "text2sql", "general_text", "math"],
             "eval_type": ["key2_qa", "key2_q_ma", "key3_q_choices_a", "key3_q_choices_as", "key3_q_a_rejected", "key1_text_score"]
         }}
     )
@@ -494,7 +491,7 @@ class JudgerState(BaseModel):
         title="附加任务评测结果",
         description="附加任务 bench 评测结果列表，供 Analyzer 读取",
         json_schema_extra={"ui_type": "textarea", "ui_group": "评估模型", "nested_allowed_values": {
-                    "task_type": ["code", "text2sql", "general_text"],
+                    "task_type": ["code", "text2sql", "general_text", "math"],
                     "eval_type": ["key2_qa", "key2_q_ma", "key3_q_choices_a", "key3_q_choices_as", "key3_q_a_rejected", "key1_text_score"]
         }}
     )
@@ -504,14 +501,6 @@ class JudgerState(BaseModel):
         description="评测任务指定运行GPU",
         json_schema_extra={"ui_type": "text", "ui_group": "评估模型"}
     )
-    # ===== 通用文本 / DataFlow Eval =====
-
-    # is_api: bool = Field(
-    #    default=False,
-    #    title="是否 API 模式",
-    #    description="是否通过 API 调用模型",
-    #    json_schema_extra={"ui_type": "toggle_switch", "ui_group": "评估模型"}
-    # )
 
 
 class AnalyzerState(BaseModel):
@@ -528,11 +517,11 @@ class AnalyzerState(BaseModel):
     analyze_task_type: str = Field(
         default="code",
         title="分析任务类型",
-        description="分析任务类型, 支持代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text)",
+        description="分析任务类型, 支持代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text), 数学(math)",
         json_schema_extra={
             "ui_type": "list",
             "ui_group": "分析模型",
-            "allowed_values": ["code", "text2sql", "general_text"]
+            "allowed_values": ["code", "text2sql", "general_text", "math"]
         }
     )
 
@@ -732,6 +721,52 @@ class AnalyzerState(BaseModel):
         title="数据构造建议路径",
         description="analyze_metric_report_node 生成的数据构造/优化建议文本路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_bundle_root: str = Field(
+        default="",
+        title="Math 报告总目录",
+        description="可选；留空时在当前 version_id 输出目录下创建数学评测最终报告目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_bundle_dir: str = Field(
+        default="",
+        title="Math 报告实际总目录",
+        description="Math 报告节点实际生成的总目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_dataset_dir: str = Field(
+        default="",
+        title="Math 数据集报告目录",
+        description="当前数学数据集报告目录；多 rollout 输入额外生成五档分析和训练阶段评估",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_overview_path: str = Field(
+        default="",
+        title="Math 报告总览路径",
+        description="数学评测最终报告目录中的人类可读总览文件",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_rollout_report_path: str = Field(
+        default="", title="Math Rollout 五档分析路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_training_stage_report_path: str = Field(
+        default="", title="Math SFT/RL 训练阶段评估路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_training_plan_path: str = Field(
+        default="", title="Math SFT/RL 训练领域 JSON 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_sft_completion_thresholds: Dict[str, float] = Field(
+        default_factory=dict, title="Math SFT 转段门槛",
+        description="二分转段规则：正确率默认至少90%、格式率95%、截断率最多5%、全错组最多5%；是可调整的工程规则，不认证训练历史"
+    )
+    math_rollout_input: Dict[str, Any] = Field(default_factory=dict, description="多轮 Math Judger 输入的题目、轮次和 rollout 对齐元数据")
+    math_rollout_summary: Dict[str, Any] = Field(default_factory=dict, description="Math rollout 全量统计、短评覆盖和训练阶段初筛证据")
+    math_rl_readiness_thresholds: Dict[str, float] = Field(
+        default_factory=dict, title="Math RL 初筛门槛",
+        description="可覆盖 rollout 正确率、混合组占比、格式率、截断率和评测异常率门槛；仅工程初筛，不是 SFT 完成标准"
     )
 
 
@@ -1477,7 +1512,6 @@ class LoopAIState(MessagesState):
     judger: Annotated[Dict[str, Any], merge_dict]
     bench: Annotated[Any, replace_value]
     # eval_model_path: str
-    # eval_base_url: str
     # eval_api_key: str
     # eval_temperature: float = 0
     # eval_top_p: float = 0.95

@@ -1,113 +1,67 @@
+# Copyright 2020 The HuggingFace Datasets Authors and the current dataset script contributor.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This code is adapted from OpenAI's release
+# https://github.com/openai/human-eval/blob/master/human_eval/execution.py
+
 import contextlib
 import faulthandler
 import io
 import multiprocessing
 import os
-import re
 import platform
 import signal
 import tempfile
-from typing import Dict, Optional, List
-from loopai.logger import get_logger
-
-logger = get_logger()
-
-"""提取python代码"""
-def filter_code(solution_str: str):
-    python_pattern = r'```python(.*?)```'
-    matches = list(re.finditer(python_pattern, solution_str, re.DOTALL))
-    
-    if not matches:
-        logger.error("[Error] No valid PYTHON tags found")
-        return solution_str
-    
-    # logger.info(f"[Parsed SQL]: {matches[-1].group(1).strip()}")
-    return matches[-1].group(1).strip()
-
-"""s1为生成代码，s2为提示词"""
-def add_import(s1, s2):
-    if s1.startswith(('def', ' def')):
-        """
-        从 s2 中查找 "def" 的位置
-        find() 会返回 "def" 第一次出现时的起始索引
-        如果找不到，会返回 -1
-        提取 s2 中 "def" 之前的内容,只有在找到 "def" 的情况下才进行提取,并将提取出的内容加到 s1 的前面
-        """
-        def_index_in_s2 = s2.find("def")  
-        if def_index_in_s2 != -1:
-            prefix_from_s2 = s2[:def_index_in_s2]
-            new_s1 = prefix_from_s2 + s1.lstrip()
-            return new_s1
-        else:
-            return s1.lstrip()
-
-    else:
-        return s1.lstrip()
-
-def unsafe_execute(problem: Dict, completion: str, timeout: float, result: List[str]):
-    with create_tempdir():
-
-        """These system calls are needed when cleaning up tempdir."""
-        import os
-        import shutil
-
-        rmtree = shutil.rmtree
-        rmdir = os.rmdir
-        chdir = os.chdir
-
-        """Disable functionalities that can make destructive changes to the test."""
-        reliability_guard()
-        """被测试代码"""
-        completion = filter_code(completion)
-        test_script = f"{add_import(completion, problem['prompt'])}\n\n"
-
-        """进入口"""
-        entry_point = problem['entry_point']
-        
-        """拼接测试用例为测试用例代码"""
-        test_code = "def check(candidate):\n"
-        for test_item in problem["test_list"]:
-            test_code = test_code + "    " + test_item.replace(entry_point, "candidate") + "\n"
-
-        """Construct the check program and run it."""
-        check_program = (
-            test_script.lstrip()
-            + "\n"
-            + test_code
-            + "\n"
-            + f"check({entry_point})"
-        )
-        try:
-            exec_globals = {}
-            with swallow_io():
-                with time_limit(timeout):
-                    """WARNING
-                    This program exists to execute untrusted model-generated code. Although
-                    it is highly unlikely that model-generated code will do something overtly
-                    malicious in response to this test suite, model-generated code may act
-                    destructively due to a lack of model capability or alignment.
-                    Users are strongly encouraged to sandbox this evaluation suite so that it
-                    does not perform destructive actions on their host or network. For more
-                    information on how OpenAI sandboxes its code, see the accompanying paper.
-                    Once you have read this disclaimer and taken appropriate precautions,
-                    uncomment the following line and proceed at your own risk:
-                    """
-                    exec(check_program, exec_globals)
-            result.append("passed")
-        except TimeoutException:
-            result.append("timed out")
-        except BaseException as e:
-            result.append(f"failed: {e}")
-
-        """Needed for cleaning up."""
-        shutil.rmtree = rmtree
-        os.rmdir = rmdir
-        os.chdir = chdir
 
 
-def check_correctness(
-    problem: Dict, completion: str, timeout: float, completion_id: Optional[int] = None
-) -> Dict:
+BASE_IMPORTS = """from itertools import accumulate, chain, combinations, count, permutations, product, groupby, islice, repeat
+from copy import deepcopy
+from string import ascii_lowercase
+from math import floor, log2, log10, sqrt, comb, gcd, ceil, inf, isqrt
+from collections import defaultdict, deque, Counter
+from bisect import bisect, bisect_left, bisect_right, insort
+from heapq import heappush, heappop, heapify, merge
+from functools import reduce, cache, lru_cache
+from random import randrange, shuffle
+from operator import itemgetter, sub
+from re import search as re_search  # Assuming 're' refers to a regex search
+from os.path import commonprefix
+from typing import List, Tuple, Dict, Set, Optional, Union, Any, Callable, Iterable, Iterator, Generator
+import copy
+import string
+import math
+import collections
+import bisect
+import heapq
+import functools
+import random
+import itertools
+import operator
+import re
+import numpy as np
+import pandas as pd
+from math import log, prod  # 'log' and 'prod' are functions in the math module
+from collections import deque, defaultdict, Counter, OrderedDict
+from itertools import accumulate, permutations, combinations, product, groupby, islice, chain, repeat, zip_longest, cycle
+from functools import lru_cache, reduce, partial
+# from sortedcontainers import SortedList, SortedDict, SortedSet
+# import sortedcontainers
+from operator import iand
+import sys
+"""
+
+def check_correctness(check_program, timeout=3):
     """
     Evaluates the functional correctness of a completion by running the test
     suite provided in the problem.
@@ -115,11 +69,10 @@ def check_correctness(
     :param completion_id: an optional completion ID so we can match
         the results later even if execution finishes asynchronously.
     """
-
     manager = multiprocessing.Manager()
     result = manager.list()
 
-    p = multiprocessing.Process(target=unsafe_execute, args=(problem, completion, timeout, result))
+    p = multiprocessing.Process(target=unsafe_execute, args=(check_program, result, timeout))
     p.start()
     p.join(timeout=timeout + 1)
     if p.is_alive():
@@ -128,16 +81,44 @@ def check_correctness(
     if not result:
         result.append("timed out")
 
-    return dict(
-        task_id=problem["task_id"],
-        passed=result[0] == "passed",
-        result=result[0],
-        completion_id=completion_id,
-    )
+    return result[0] == "passed"
+
+
+def unsafe_execute(check_program, result, timeout):
+
+    with create_tempdir():
+
+        # These system calls are needed when cleaning up tempdir.
+        import os
+        import shutil
+
+        rmtree = shutil.rmtree
+        rmdir = os.rmdir
+        chdir = os.chdir
+
+        # Disable functionalities that can make destructive changes to the test.
+        reliability_guard()
+
+        # Run program.
+        try:
+            exec_globals = {}
+            with swallow_io():
+                with time_limit(timeout):
+                    exec(check_program, exec_globals)
+            result.append("passed")
+        except TimeoutException:
+            result.append("timed out")
+        except BaseException as e:
+            result.append(f"failed: {e}")
+
+        # Needed for cleaning up.
+        shutil.rmtree = rmtree
+        os.rmdir = rmdir
+        os.chdir = chdir
 
 
 @contextlib.contextmanager
-def time_limit(seconds: float):
+def time_limit(seconds):
     def signal_handler(signum, frame):
         raise TimeoutException("Timed out!")
 
@@ -157,6 +138,7 @@ def swallow_io():
             with redirect_stdin(stream):
                 yield
 
+
 @contextlib.contextmanager
 def create_tempdir():
     with tempfile.TemporaryDirectory() as dirname:
@@ -172,13 +154,13 @@ class WriteOnlyStringIO(io.StringIO):
     """StringIO that throws an exception when it's read from"""
 
     def read(self, *args, **kwargs):
-        raise IOError
+        raise OSError
 
     def readline(self, *args, **kwargs):
-        raise IOError
+        raise OSError
 
     def readlines(self, *args, **kwargs):
-        raise IOError
+        raise OSError
 
     def readable(self, *args, **kwargs):
         """Returns True if the IO object can be read."""
@@ -204,7 +186,7 @@ def chdir(root):
         os.chdir(cwd)
 
 
-def reliability_guard(maximum_memory_bytes: Optional[int] = None):
+def reliability_guard(maximum_memory_bytes=None):
     """
     This disables various destructive functions and prevents the generated code
     from interfering with the test (e.g. fork bomb, killing other processes,

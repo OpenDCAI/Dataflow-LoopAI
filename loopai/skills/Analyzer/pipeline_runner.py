@@ -21,6 +21,7 @@ ANALYZER_PIPELINE_STEPS = (
 GENERAL_ANALYZER_PIPELINE_STEPS = (
     "metric_recommend",
     "metric_score",
+    "math_llmaj_label",
     "analyze_metric_report",
     "finish",
 )
@@ -33,9 +34,10 @@ _STEP_PROGRESS_RANGES = {
     "eval_model": (0.00, 0.45),
     "analyze_result": (0.45, 0.75),
     "draw_conclusion": (0.75, 0.95),
-    "metric_recommend": (0.00, 0.15),
-    "metric_score": (0.15, 0.55),
-    "analyze_metric_report": (0.55, 0.95),
+    "metric_recommend": (0.00, 0.10),
+    "metric_score": (0.10, 0.35),
+    "math_llmaj_label": (0.35, 0.65),
+    "analyze_metric_report": (0.65, 0.95),
     "finish": (0.95, 1.00),
 }
 
@@ -51,6 +53,8 @@ _STEP_ALIASES = {
     "AnalyzerAgent.metric_recommend_node": "metric_recommend",
     "metric_score_node": "metric_score",
     "AnalyzerAgent.metric_score_node": "metric_score",
+    "math_llmaj_label_node": "math_llmaj_label",
+    "AnalyzerAgent.math_llmaj_label_node": "math_llmaj_label",
     "analyze_metric_report_node": "analyze_metric_report",
     "AnalyzerAgent.analyze_metric_report_node": "analyze_metric_report",
     "finish_node": "finish",
@@ -454,6 +458,9 @@ def _run_step(
         if step_name == "metric_score":
             from loopai.skills.Analyzer.nodes.metric_score_node import metric_score_node
             return metric_score_node(state)
+        if step_name == "math_llmaj_label":
+            from loopai.skills.Analyzer.nodes.math_llmaj_label_node import math_llmaj_label_node
+            return math_llmaj_label_node(state)
         if step_name == "analyze_metric_report":
             from loopai.skills.Analyzer.nodes.analyze_metric_report_node import analyze_metric_report_node
             return analyze_metric_report_node(state)

@@ -7,6 +7,13 @@ setup(
     package_data={
         "loopai": [
             "agents/Obtainer/datamixer/assets/**/*",
+            "skills/Judger/docker/math_eval/*",
+            # LiveCodeBench 判分镜像的构建上下文（Dockerfile + vendored 源码），
+            # 装成 wheel 之后也能现场构建镜像
+            "skills/Judger/docker/livecodebench/**",
+            # BIRD SQL 判分镜像的 Dockerfile 和独立评测入口
+            "skills/Judger/docker/bird_eval/*",
+            "skills/Judger/docker/bird_eval/.dockerignore",
         ],
     },
     include_package_data=False,
@@ -85,6 +92,7 @@ setup(
         "console_scripts": [
             "loopai-obtainercli=loopai.skills.ObtainerCLI.cli:main",
             "loopai-judger=loopai.skills.Judger.cli:main",
+            "loopai-configer=loopai.skills.Configer.cli:main",
             "loopai-analyzer=loopai.skills.Analyzer.cli:main",
             "loopai-trainer=loopai.skills.Trainer.cli:main",
         ],
