@@ -433,6 +433,8 @@ class LLMJudge:
         if model_obj and model_obj.get("advice"): out["advice"] = model_obj["advice"]
         if model_obj and isinstance(model_obj.get("tags"), list) and model_obj["tags"]:
             out["tags"] = list(dict.fromkeys((out.get("tags") or []) + model_obj["tags"]))
+        if model_obj and isinstance(model_obj.get("short_critique"), str) and model_obj["short_critique"].strip():
+            out["short_critique"] = model_obj["short_critique"].strip()
         return out
 
     def _auto_tags(self, obj: Dict[str, Any]) -> list:

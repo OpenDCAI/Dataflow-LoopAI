@@ -517,11 +517,11 @@ class AnalyzerState(BaseModel):
     analyze_task_type: str = Field(
         default="code",
         title="分析任务类型",
-        description="分析任务类型, 支持代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text)",
+        description="分析任务类型, 支持代码生成(code), Text2sql(text2sql), 通用领域文本评估(general_text), 数学(math)",
         json_schema_extra={
             "ui_type": "list",
             "ui_group": "分析模型",
-            "allowed_values": ["code", "text2sql", "general_text"]
+            "allowed_values": ["code", "text2sql", "general_text", "math"]
         }
     )
 
@@ -721,6 +721,52 @@ class AnalyzerState(BaseModel):
         title="数据构造建议路径",
         description="analyze_metric_report_node 生成的数据构造/优化建议文本路径",
         json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_bundle_root: str = Field(
+        default="",
+        title="Math 报告总目录",
+        description="可选；留空时在当前 version_id 输出目录下创建数学评测最终报告目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_bundle_dir: str = Field(
+        default="",
+        title="Math 报告实际总目录",
+        description="Math 报告节点实际生成的总目录",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_dataset_dir: str = Field(
+        default="",
+        title="Math 数据集报告目录",
+        description="当前数学数据集报告目录；多 rollout 输入额外生成五档分析和训练阶段评估",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_report_overview_path: str = Field(
+        default="",
+        title="Math 报告总览路径",
+        description="数学评测最终报告目录中的人类可读总览文件",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_rollout_report_path: str = Field(
+        default="", title="Math Rollout 五档分析路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_training_stage_report_path: str = Field(
+        default="", title="Math SFT/RL 训练阶段评估路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_training_plan_path: str = Field(
+        default="", title="Math SFT/RL 训练领域 JSON 路径",
+        json_schema_extra={"ui_type": "file_path", "ui_group": "分析模型"}
+    )
+    math_sft_completion_thresholds: Dict[str, float] = Field(
+        default_factory=dict, title="Math SFT 转段门槛",
+        description="二分转段规则：正确率默认至少90%、格式率95%、截断率最多5%、全错组最多5%；是可调整的工程规则，不认证训练历史"
+    )
+    math_rollout_input: Dict[str, Any] = Field(default_factory=dict, description="多轮 Math Judger 输入的题目、轮次和 rollout 对齐元数据")
+    math_rollout_summary: Dict[str, Any] = Field(default_factory=dict, description="Math rollout 全量统计、短评覆盖和训练阶段初筛证据")
+    math_rl_readiness_thresholds: Dict[str, float] = Field(
+        default_factory=dict, title="Math RL 初筛门槛",
+        description="可覆盖 rollout 正确率、混合组占比、格式率、截断率和评测异常率门槛；仅工程初筛，不是 SFT 完成标准"
     )
 
 

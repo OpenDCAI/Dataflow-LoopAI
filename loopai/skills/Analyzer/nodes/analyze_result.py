@@ -257,7 +257,7 @@ def build_prompt_for_llm(summary: Dict[str, Any], failure_snippets: List[Dict[st
     top_err=top_fail,
     by_stage_json=fail_dist,
     quick_samples=json.dumps(failure_snippets, ensure_ascii=False),
-    summary_json=json.dumps(summary, ensure_ascii=False),
+    summary_json=json.dumps({key: value for key, value in summary.items() if key != "pass_at_k_task"}, ensure_ascii=False),
      )
 
 def rule_based_brief(summary: Dict[str, Any]) -> Dict[str, Any]:
@@ -391,7 +391,8 @@ def analyze_result_node(state: LoopAIState):
     out = {
         "meta": {
             "summary_file": str(Path(summary_path).resolve()),
-            "oj_file": str(Path(result_path).resolve()) if result_path else None
+            "oj_file": str(Path(result_path).resolve()) if result_path else None,
+            "report_model_key": {key: cfg.get(key) for key in ("analyze_model_path", "analyze_base_url", "analyze_temperature", "analyze_top_p")},
         },
         "rule_brief": rb,
         "llm_review": response

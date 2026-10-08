@@ -275,7 +275,7 @@ bench 样例：
 容器内 Python/SQLite 版本写到 `<bench>_summary.json`。`case_num=1` 时汇总中还有
 `execution_accuracy_percent`（BIRD EX 百分数）。目前不计算 BIRD 的难度分组或 VES。
 Dockerfile 和评测入口的手动构建、试跑方法见
-[`bird_eval/README.md`](../../../../loopai/skills/Judger/docker/bird_eval/README.md)。
+[`bird_eval/README.md`](https://github.com/OpenDCAI/Dataflow-LoopAI/blob/dev/v2/loopai/skills/Judger/docker/bird_eval/README.md)。
 `setup.py` 仅把这些文件打包到 Python 安装包；安装时不会构建镜像。
 
 ### `general_text` 任务
