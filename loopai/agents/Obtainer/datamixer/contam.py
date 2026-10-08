@@ -7,7 +7,8 @@ bigcode decontamination).
 
 A set is stored compactly under ``<root>/contam/<name>``:
   * ``<name>.ngrams`` -- sorted ``uint64`` hashes of the set's word n-grams.
-  * ``<name>.json``   -- ``{name, ngram, num_texts, num_ngrams}`` metadata.
+  * ``<name>.json``   -- metadata, optionally including the associated
+    DataMixer benchmark dataset identity.
 
 Detection: a sample is contaminated when the fraction of its n-grams that appear
 in a set exceeds ``overlap_threshold`` (default 0.8). Dependency-free.
@@ -118,10 +119,18 @@ def _iter_text_batches(texts, batch_size: int):
 
 
 def register(root, name: str, texts, ngram: int = DEFAULT_NGRAM,
-             workers: int | None = None, batch_size: int = 2048) -> dict:
+             workers: int | None = None, batch_size: int = 2048,
+             benchmark_dataset: dict | None = None) -> dict:
     from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 
     d = _dir(root)
+    dataset_ref = None
+    if benchmark_dataset:
+        dataset_id = str(benchmark_dataset.get("id") or "").strip()
+        dataset_name = str(benchmark_dataset.get("name") or "").strip()
+        if not dataset_id or not dataset_name:
+            raise ValueError("benchmark_dataset requires non-empty id and name")
+        dataset_ref = {"id": dataset_id, "name": dataset_name}
     hashes: set[int] = set()
     n_texts = 0
     workers = max(1, int(workers or 1))
@@ -155,6 +164,8 @@ def register(root, name: str, texts, ngram: int = DEFAULT_NGRAM,
     meta = {"name": name, "ngram": ngram, "num_texts": n_texts,
             "num_ngrams": len(hashes), "build_workers": workers,
             "build_batch_size": batch_size}
+    if dataset_ref:
+        meta["benchmark_dataset"] = dataset_ref
     (d / f"{name}.json").write_text(json.dumps(meta))
     return meta
 

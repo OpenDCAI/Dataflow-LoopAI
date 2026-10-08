@@ -502,8 +502,8 @@ dataflowagent 自己跑全量或 merge。
 **质量评估必须使用 DataFlow 的 LLM 评估算子**（如 `PromptedEvaluator` /
 `PromptedFilter` 这类 LLM 打分/过滤算子），不得因耗时或成本而退化成纯启发式
 规则打分；只有任务本身没有 LLM 打分语义、或 LLM serving 不可用时才允许规则
-算子兜底并说明具体原因。**禁止 LLM 逐条重写或改写文本内容**，LLM 只做打分
-与筛选。
+算子兜底并说明具体原因。不得覆盖原始字段和值；后训练内容需要构造或改写时，
+使用生成算子写入新的派生字段，再使用 LLM 评估算子打分和筛选生成内容。
 
 全量执行由上层用 chunked runner 跑，**可能非常耗时**——LLM 质量评估算子
 逐条打分时，数小时到十几小时属正常，跑完为止。**不要用外层 shell `timeout`
@@ -550,8 +550,9 @@ DataFlowAgent agent-run rules:
   quality scoring. Cost/latency is NOT a valid reason to fall back to pure
   heuristic rules - a slow LLM pass just takes longer. Rule operators are
   allowed only when the task has no LLM-scoring semantics or the LLM serving is
-  unavailable; say so in the summary. Never let the LLM rewrite row text -
-  score and filter only.
+  unavailable; say so in the summary. Preserve original fields and values.
+  When post-training content needs construction or rewriting, use generation
+  operators to add derived fields, then score and filter the generated content.
 - **Full run is streaming, chunked, and executed by the upper layer.** The
   outer Codex drives the full scale through
   `loopai.agents.Obtainer.datamixer.dataflow_chunked_runner`

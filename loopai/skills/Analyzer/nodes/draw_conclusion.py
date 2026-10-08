@@ -2,6 +2,7 @@ import os
 import json
 import time
 import datetime
+import threading
 from pathlib import Path
 from collections import Counter
 from typing import List, Dict, Any
@@ -132,6 +133,62 @@ def init_model(state: LoopAIState) -> ChatOpenAI:
         top_p=cfg.get('analyze_top_p', 0.95),
     )
     return model
+
+
+def _batch_one_with_heartbeat(
+    llm: ChatOpenAI,
+    prompt: str,
+    *,
+    emit,
+    message: str,
+    start_progress: float,
+    end_progress: float,
+    data: Dict[str, Any] | None = None,
+) -> str:
+    """Run normally, then retry once with a compact prompt after timeout."""
+    def _is_timeout(exc: Exception) -> bool:
+        text = f"{type(exc).__name__}: {exc}".lower()
+        return isinstance(exc, TimeoutError) or any(
+            marker in text for marker in ("timeout", "timed out", "read timed out", "524")
+        )
+
+    def _compact_prompt(value: str) -> str:
+        max_chars = 12000
+        if len(value) <= max_chars:
+            return value + "\n\nPlease answer concisely and keep the required output format."
+        head = max_chars * 2 // 3
+        tail = max_chars - head
+        return value[:head] + "\n...[Analyzer compact retry: middle evidence omitted]...\n" + value[-tail:]
+
+    def _run_once(request_prompt: str) -> str:
+        stop_event = threading.Event()
+
+        def heartbeat() -> None:
+            tick = 0
+            while not stop_event.wait(1.0):
+                tick += 1
+                progress = start_progress + (end_progress - start_progress) * min(0.85, tick / 20)
+                emit(message, progress=round(progress, 3), data={
+                    **(data or {}), "waiting_seconds": tick, "heartbeat": True,
+                })
+
+        thread = threading.Thread(target=heartbeat, daemon=True)
+        thread.start()
+        try:
+            return llm.batch([request_prompt])[0].content
+        finally:
+            stop_event.set()
+            thread.join(timeout=0.2)
+
+    try:
+        return _run_once(prompt)
+    except Exception as exc:
+        if not _is_timeout(exc):
+            raise
+        emit("模型请求超时，压缩输入后重试", progress=start_progress, data={
+            **(data or {}), "retry": True, "input_compacted": True,
+        })
+        return _run_once(_compact_prompt(prompt))
 
 
 def try_read_oj_records(path_from_summary: str):
@@ -603,7 +660,11 @@ def draw_conclusion_node(state: LoopAIState):
                 llm = init_model(state)
                 try:
                     obtainer_prompt = build_obtainer_prompt(final_json, obtainer_stats)
-                    obtainer_text = llm.batch([obtainer_prompt])[0].content
+                    obtainer_text = _batch_one_with_heartbeat(
+                        llm, obtainer_prompt, emit=_emit,
+                        message="等待生成 Obtainer 报告",
+                        start_progress=0.80, end_progress=0.95,
+                    )
                 except Exception as exc:
                     logger.error(f"生成 obtainer 报告时出错：{exc}")
                     obtainer_text = ""
@@ -694,11 +755,16 @@ def draw_conclusion_node(state: LoopAIState):
     logger.info("🤖 正在生成背景介绍……")
     try:
         bg_prompt = build_background_prompt(final_json)
-        background_text = llm.batch([bg_prompt])[0].content
+        background_text = _batch_one_with_heartbeat(
+            llm, bg_prompt, emit=_emit,
+            message="等待模型生成背景介绍",
+            start_progress=0.30, end_progress=0.38,
+        )
     except Exception as e:
         logger.error(f"生成背景介绍时出错：{e}")
         background_text = ""
     final_json["background"] = background_text
+    _emit("背景介绍生成完成", progress=0.38)
 
     obtainer_stats = build_obtainer_stats(summary, oj_records, final_json)
     final_json["obtainer_stats"] = obtainer_stats
@@ -736,7 +802,11 @@ def draw_conclusion_node(state: LoopAIState):
         logger.info("🤖 正在调用本地模型生成改进建议……")
         prompt = build_suggestion_prompt(final_json)
         try:
-            suggestion = llm.batch([prompt])[0].content
+            suggestion = _batch_one_with_heartbeat(
+                llm, prompt, emit=_emit,
+                message="等待模型生成改进建议",
+                start_progress=0.60, end_progress=0.70,
+            )
         except Exception as e:
             logger.error(f"生成改进建议时出错：{e}")
             suggestion = ""
@@ -765,7 +835,11 @@ def draw_conclusion_node(state: LoopAIState):
         logger.info("🤖 正在生成 obtainer 细粒度报告……")
         try:
             obtainer_prompt = build_obtainer_prompt(final_json, obtainer_stats)
-            obtainer_text = llm.batch([obtainer_prompt])[0].content
+            obtainer_text = _batch_one_with_heartbeat(
+                llm, obtainer_prompt, emit=_emit,
+                message="等待生成 Obtainer 报告",
+                start_progress=0.80, end_progress=0.95,
+            )
         except Exception as e:
             logger.error(f"生成 obtainer 报告时出错：{e}")
             obtainer_text = ""
@@ -781,6 +855,8 @@ def draw_conclusion_node(state: LoopAIState):
         logger.info("Obtainer 报告生成完成：")
         logger.info(f"→ {obtainer_json_path}")
         logger.info(f"→ {obtainer_txt_path}")
+
+        _emit("Obtainer 报告生成完成", progress=0.95)
 
     _emit("最终报告生成完成", progress=1.0)
     return state

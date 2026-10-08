@@ -153,6 +153,8 @@ def run(
         for control_key in (
             "version_id",
             "run_id",
+            "new_version",
+            "force_new_version",
             "resume",
             "from_node",
             "checkpoint_path",

@@ -299,7 +299,7 @@ loopai-obtainercli dm --root /data/lakes/code_sft/warehouse recall \
 
 **按桶 1.5x 缓冲导出，不是全量导出。** `agent-run` 尽量带上出湖 `--recipe`（recipe.yaml）或 `--mix-plan`（mix_plan.json）：full input 会按每个桶 `ceil(bucket_target * 1.5)` 行、固定 seed 抽样导出（桶内可用行不足则全取），避免对全湖十几万行做冗余后处理。处理范围就是 `full_input.jsonl` 本身，禁止上层/agent 自行重新全量导出或扩大范围。
 
-**质量评估必须使用 DataFlow 的 LLM 评估算子**（`PromptedEvaluator` / `PromptedFilter` 等），不得因耗时或成本而退化成纯启发式规则打分；只有任务本身没有 LLM 打分语义、或 LLM serving 不可用时才允许规则算子兜底并说明具体原因。禁止 LLM 逐条重写或改写文本内容，LLM 只做打分与筛选。
+**质量评估必须使用 DataFlow 的 LLM 评估算子**（`PromptedEvaluator` / `PromptedFilter` 等），不得因耗时或成本而退化成纯启发式规则打分；只有任务本身没有 LLM 打分语义、或 LLM serving 不可用时才允许规则算子兜底并说明具体原因。不得覆盖原始字段和值；后训练内容需要构造或改写时，使用生成算子写入新的派生字段，再使用 LLM 评估算子打分和筛选生成内容。
 
 全量执行必须流式分 chunk，禁止一次性把整个导出读进内存：上层 Codex 通过外层脚手架 `loopai.agents.Obtainer.datamixer.dataflow_chunked_runner` 按 **1 万行一个 chunk** 切片输入、逐 chunk 启动同一 pipeline 并保序合并（`--chunk-size 10000`，输出 `full_processed.jsonl`）。交付的 pipeline 必须遵循 `DATAFLOW_INPUT` / `DATAFLOW_CACHE_DIR` / `DATAFLOW_PREFIX` 环境变量约定。
 
