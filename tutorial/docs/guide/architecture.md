@@ -8,7 +8,7 @@ The system revolves around three concepts:
 
 - `Graph`: defines orchestration relationships and stage transitions.
 - `Node`: encapsulates one processing action such as evaluation, analysis, sampling, or training.
-- `State`: carries context, stage outputs, and shared information across agents.
+- `State`: carries context, stage outputs, and shared information across nodes.
 
 That makes LoopAI feel like an execution system instead of a one-off automation bundle.
 
@@ -20,7 +20,7 @@ A common task moves through stages like these:
 2. Starter interprets the intent and builds an execution plan.
 3. Judger evaluates current outputs and identifies failed samples.
 4. Analyzer summarizes defect patterns and likely improvement directions.
-5. Collector gathers or generates better-fit data.
+5. ObtainerCLI/DataMixer gathers, processes, and exports better-fit data.
 6. Trainer launches training or fine-tuning.
 7. The updated model returns to evaluation for the next loop.
 

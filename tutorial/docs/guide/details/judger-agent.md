@@ -1,6 +1,6 @@
-# Judger Agent 详细指南
+# Judger node 详细指南
 
-`JudgerAgent` 是 LoopAI 闭环中的评测节点，负责把“当前模型表现如何”这件事测清楚。
+`Judger` 是 LoopAI 闭环中的评测节点，负责把“当前模型表现如何”这件事测清楚。
 
 当前实现是一套**独立的函数流水线**（不依赖 LangGraph），一次运行评测一个或多个
 bench（`benchlist` / `extra_benchlist`）。

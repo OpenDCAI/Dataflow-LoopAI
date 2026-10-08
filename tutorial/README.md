@@ -87,7 +87,7 @@ tutorial/
 
 - `docs/index.md`: LoopAI overview
 - `docs/guide/webui-tutorial.md`: WebUI tutorial
-- `docs/guide/cli-tutorial.md`: CLI tutorial
+- `docs/guide/tui-tutorial.md`: TUI tutorial
 - `docs/guide/details/`: Per-agent detailed guides
 
 ## Notes

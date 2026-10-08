@@ -1,11 +1,11 @@
-# ObtainerCLI 网页采集说明
+# Webcrawler node 迁移说明
 
-网页采集属于 ObtainerCLI 托管 `dataset-acquisition-agent` 的内部数据源，不再作为独立 Agent 调度。外层只负责传入结构化数据需求、启动 worker 并轮询结果。
+网页采集属于 ObtainerCLI 托管 `dataset-acquisition-agent` 的内部数据源，不再作为独立 node 调度。外层只负责传入结构化数据需求、启动 worker 并轮询结果。
 
 Worker 会并行执行：
 
-- SearchAgent：发现可下载的 hosted dataset。
-- WebAgent：采集垂直领域网页，形成独立的 DataMixer L1 数据集。
+- 搜索 worker：发现可下载的 hosted dataset。
+- 网页采集 worker：采集垂直领域网页，形成独立的 DataMixer L1 数据集。
 
 两个数据源会保留各自的状态和产物，并统一写入 `final_report.json`。任一数据源失败时，worker 会保留另一侧的证据，但不会绕过失败继续执行下载或入湖。
 
