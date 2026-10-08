@@ -11,6 +11,7 @@ from .nodes import (
     eval_model_node,
     metric_recommend_node,
     metric_score_node,
+    math_llmaj_label_node,
     analyze_result_node,
     analyze_metric_report_node,
     draw_conclusion_node,
@@ -71,6 +72,9 @@ class AnalyzerAgent(BaseAgent):
 
                 has_result_path = (
                     bool(judger_cfg.get("output_result_path"))
+                    or bool(judger_cfg.get("bench_result"))
+                    or bool(judger_cfg.get("extra_bench_result"))
+                    or bool(analyzer_cfg.get("eval_result_paths"))
                     or bool(analyzer_cfg.get("eval_result_path"))
                 )
                 if not has_result_path:
@@ -82,6 +86,9 @@ class AnalyzerAgent(BaseAgent):
                     bool(judger_cfg.get("output_result_path"))
                     or bool(judger_cfg.get("out_result_path"))
                     or bool(judger_cfg.get("eval_result_path"))
+                    or bool(judger_cfg.get("bench_result"))
+                    or bool(judger_cfg.get("extra_bench_result"))
+                    or bool(analyzer_cfg.get("eval_result_paths"))
                     or bool(analyzer_cfg.get("eval_result_path"))
                 )
                 if (not has_bench) and (not has_result_path):
@@ -133,6 +140,7 @@ class AnalyzerAgent(BaseAgent):
         builder.add_node("eval_model", eval_model_node)
         builder.add_node("metric_recommend", metric_recommend_node)
         builder.add_node("metric_score", metric_score_node)
+        builder.add_node("math_llmaj_label", math_llmaj_label_node)
         builder.add_node("analyze_metric_report", analyze_metric_report_node)
         builder.add_node("analyze_result", analyze_result_node)
         builder.add_node("draw_conclusion", draw_conclusion_node)
@@ -146,9 +154,10 @@ class AnalyzerAgent(BaseAgent):
         builder.add_edge("analyze_result", "draw_conclusion")
         builder.add_edge("draw_conclusion", "finish")
 
-        # -------- 链 2：general_text / 通用文本 --------
+        # -------- 链 2：general_text / math --------
         builder.add_edge("metric_recommend", "metric_score")
-        builder.add_edge("metric_score", "analyze_metric_report")
+        builder.add_edge("metric_score", "math_llmaj_label")
+        builder.add_edge("math_llmaj_label", "analyze_metric_report")
         builder.add_edge("analyze_metric_report", "finish")
 
         builder.set_entry_point(entry_point or "check_required_fields")

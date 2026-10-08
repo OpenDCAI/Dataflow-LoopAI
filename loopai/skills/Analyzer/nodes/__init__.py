@@ -6,6 +6,7 @@ __all__ = [
     "draw_conclusion_node",
     "metric_recommend_node",
     "metric_score_node",
+    "math_llmaj_label_node",
     "analyze_metric_report_node",
 ]
 
@@ -26,6 +27,9 @@ def __getattr__(name):
     if name == "metric_score_node":
         from .metric_score_node import metric_score_node
         return metric_score_node
+    if name == "math_llmaj_label_node":
+        from .math_llmaj_label_node import math_llmaj_label_node
+        return math_llmaj_label_node
     if name == "analyze_metric_report_node":
         from .analyze_metric_report_node import analyze_metric_report_node
         return analyze_metric_report_node

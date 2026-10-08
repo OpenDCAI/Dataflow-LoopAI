@@ -99,6 +99,9 @@ def main():
         
         # 设置环境变量，将当前项目目录和LLaMA Factory目录都加入PYTHONPATH
         env = os.environ.copy()
+        # The service must not inherit an interactive Codex home (for example
+        # the private zcloud wrapper home) into Obtainer worker subprocesses.
+        env.pop("CODEX_HOME", None)
         pythonpath_parts = [current_dir, llamafactory_dir]
         if 'PYTHONPATH' in env:
             pythonpath_parts.append(env['PYTHONPATH'])

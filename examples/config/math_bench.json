@@ -1,0 +1,26 @@
+{
+  "task_id": "<TASK_ID>",
+  "output_dir": "./outputs",
+  "judger": {
+    "eval_model_path": "/path/to/models/Qwen3-8B",
+    "eval_vllm_tensor_parallel_size": 1,
+    "eval_vllm_gpu_memory_utilization": 0.9,
+    "cuda_visible_devices": "0",
+
+    "eval_temperature": 1.0,
+    "eval_top_p": 0.95,
+    "eval_max_tokens": 38912,
+    "eval_case_num": 4,
+    "eval_enable_thinking": true,
+
+    "benchlist": [
+      {
+        "name": "aime26",
+        "task_type": "math",
+        "problem_path": "/path/to/aime26_test.jsonl",
+        "case_num": 4
+      }
+    ],
+    "extra_benchlist": []
+  }
+}

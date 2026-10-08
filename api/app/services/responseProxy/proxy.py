@@ -803,11 +803,15 @@ class ResponseProxyService:
 
         if item_type == "function_call_output":
             if pending_tool_calls:
-                messages.append({
+                assistant_message = {
                     "role": "assistant",
-                    "content": "\n".join(part for part in pending_reasoning if part),
+                    "content": "",
                     "tool_calls": pending_tool_calls.copy(),
-                })
+                }
+                reasoning_content = "\n".join(part for part in pending_reasoning if part)
+                if reasoning_content:
+                    assistant_message["reasoning_content"] = reasoning_content
+                messages.append(assistant_message)
                 pending_tool_calls.clear()
                 pending_reasoning.clear()
             messages.append({
@@ -836,15 +840,25 @@ class ResponseProxyService:
             role = "user"
         content = _extract_text_content(item.get("content") if "content" in item else item)
         if role == "assistant" and pending_tool_calls:
-            messages.append({
+            assistant_message = {
                 "role": "assistant",
-                "content": "\n".join(part for part in pending_reasoning if part),
+                "content": "",
                 "tool_calls": pending_tool_calls.copy(),
-            })
+            }
+            reasoning_content = "\n".join(part for part in pending_reasoning if part)
+            if reasoning_content:
+                assistant_message["reasoning_content"] = reasoning_content
+            messages.append(assistant_message)
             pending_tool_calls.clear()
             pending_reasoning.clear()
         if content:
-            messages.append({"role": role, "content": content})
+            message = {"role": role, "content": content}
+            if role == "assistant" and pending_reasoning:
+                message["reasoning_content"] = "\n".join(
+                    part for part in pending_reasoning if part
+                )
+                pending_reasoning.clear()
+            messages.append(message)
 
     def responses_to_chat_request(self, body: dict[str, Any], default_model: str | None = None) -> dict[str, Any]:
         self.history_store.enrich_request(body)
@@ -869,11 +883,15 @@ class ResponseProxyService:
         elif input_value is not None:
             self._append_input_item(input_value, messages, pending_tool_calls, pending_reasoning)
         if pending_tool_calls:
-            messages.append({
+            assistant_message = {
                 "role": "assistant",
-                "content": "\n".join(part for part in pending_reasoning if part),
+                "content": "",
                 "tool_calls": pending_tool_calls,
-            })
+            }
+            reasoning_content = "\n".join(part for part in pending_reasoning if part)
+            if reasoning_content:
+                assistant_message["reasoning_content"] = reasoning_content
+            messages.append(assistant_message)
 
         chat_body["messages"] = self._collapse_system_messages(messages)
 

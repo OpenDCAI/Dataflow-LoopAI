@@ -1,0 +1,19 @@
+{
+  "iteration": 2,
+  "decision": "release",
+  "blocked": false,
+  "total": 95.0,
+  "dimensions": {
+    "D1": {"raw_score": 4, "weighted_score": 15.0, "sample_ids": ["math-a-001", "math-b-001"]},
+    "D2": {"raw_score": 4, "weighted_score": 25.0, "sample_ids": ["math-a-002", "math-b-002"]},
+    "D3": {"raw_score": 4, "weighted_score": 20.0, "sample_ids": ["math-a-003", "math-b-003"]},
+    "D4": {"raw_score": 3, "weighted_score": 9.0, "sample_ids": ["math-a-001", "math-b-001"]},
+    "D5": {"raw_score": 4, "weighted_score": 16.0, "sample_ids": ["math-a-002", "math-b-002"]},
+    "D6": {"raw_score": 4, "weighted_score": 12.0, "sample_ids": ["math-a-003", "math-b-003"]}
+  },
+  "redlines": [],
+  "funnel": [
+    {"dataset_id": "source-a", "input": 3, "after_structure": 3, "after_correctness": 3, "output": 3},
+    {"dataset_id": "source-b", "input": 3, "after_structure": 3, "after_correctness": 3, "output": 3}
+  ]
+}

@@ -1268,6 +1268,7 @@ def cmd_dataflow_agent_run(args) -> int:
             expected_outputs=args.expected_outputs,
             work_dir=args.work_dir,
             trial_rows=args.trial_rows,
+            trial_rows_per_dataset=args.trial_rows_per_dataset,
             apply=args.apply,
             recipe_path=args.recipe,
             mix_plan_path=args.mix_plan,
@@ -2088,6 +2089,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="directory for trial input, generated pipeline, and outputs")
     a.add_argument("--trial-rows", type=int, default=20,
                    help="rows exported for the agent's trial run")
+    a.add_argument("--trial-rows-per-dataset", type=int, default=None,
+                   help="maximum trial rows from each selected dataset")
     a.add_argument("--recipe", default=None,
                    help="export recipe.yaml: full input is sampled per bucket to "
                         "ceil(bucket_target * 1.5) rows instead of a whole-lake export")

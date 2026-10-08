@@ -209,6 +209,9 @@ def _run_obtainercli_dm_for_webui(request: DataMixerCliRequest) -> dict[str, Any
     cli_argv.extend(args)
     display = "loopai-obtainercli " + " ".join(shlex.quote(item) for item in cli_argv)
     env = os.environ.copy()
+    # Keep generic ObtainerCLI commands out of an interactive wrapper's Codex
+    # home. Role-specific workers replace this with a per-run home.
+    env["CODEX_HOME"] = str(REPO_ROOT / "outputs" / "obtainer" / ".codex" / "cli")
     env["PYTHONPATH"] = os.pathsep.join(
         part for part in [str(REPO_ROOT), env.get("PYTHONPATH", "")] if part
     )

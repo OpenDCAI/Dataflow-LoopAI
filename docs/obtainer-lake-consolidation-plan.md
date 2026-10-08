@@ -37,7 +37,9 @@
    ├─ logs/                    # 运行时
    └─ .codex/
       ├─ worker/               # 原 codex_home_worker（仅 acquisition 用 → 迁入）
-      └─ dataflow/             # 原 codex_home_dataflow（仅 dataflow 用 → 迁入）
+      ├─ dataflow/             # 原 codex_home_dataflow（仅 dataflow 用 → 迁入）
+      ├─ orchestrator/<run>/   # 编排 worker，每个 run 独立
+      └─ sft/<run>/            # SFT export worker，每个 run 独立
 ```
 
 ### 2.1 codex home 归属（已确认）
@@ -46,6 +48,8 @@
 | `codex_home/` | starter 主 agent + obtainer codex 模块 | 否 | 保留仓库根 |
 | `codex_home_worker/` | dataset-acquisition-agent | 是 | 迁 `outputs/obtainer/.codex/worker` |
 | `codex_home_dataflow/` | dataflow agent | 是 | 迁 `outputs/obtainer/.codex/dataflow` |
+| `outputs/obtainer/.codex/orchestrator/<run>/` | obtainer-orchestrator | 是 | 每个 run 独立创建 |
+| `outputs/obtainer/.codex/sft/<run>/` | sft-export-agent | 是 | 每个 run 独立创建 |
 
 ---
 
@@ -67,6 +71,7 @@
 ### 3.3 codex home 迁移（仅 obtainer 两个）
 - `dataset_acquisition_agent._worker_codex_home()` → `outputs/obtainer/.codex/worker`
 - dataflow 的 `codex_home_dataflow` → `outputs/obtainer/.codex/dataflow`
+- orchestrator / SFT export 通过 `run_via_sdk(..., codex_home_override=...)` 使用各自的 `outputs/obtainer/.codex/{orchestrator,sft}/<run>`
 - `codex.py:codex_home()`（starter）不变
 
 ### 3.4 兼容

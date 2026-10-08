@@ -32,9 +32,9 @@ from .store import read_jsonl
 RESERVED_FIELDS = {"content", "sample_id", "dataset_id", "cid", "created_at",
                    "version", "tags", "tags_json", "embedding"}
 
-# Hard-coded per-turn budget for the DataFlow agent Codex session. One hour so
+# Hard-coded per-turn budget for the DataFlow agent Codex session. Five hours so
 # the agent can finish the full (not just trial) processing on large datasets.
-DATAFLOW_AGENT_TIMEOUT = 3600
+DATAFLOW_AGENT_TIMEOUT = 18000
 
 
 def _write_dataflow_status(path: Path, **updates: Any) -> dict[str, Any]:
@@ -92,6 +92,16 @@ def parse_llm_scalar_score(value: Any, *, minimum: int = 1, maximum: int = 5) ->
 def dataflow_pipeline_skill_asset() -> Path:
     """Return the repository-owned DataFlow pipeline skill asset."""
     return Path(__file__).resolve().parent / "assets" / "generating-dataflow-pipeline"
+
+
+def dataflow_pipeline_review_skill_asset() -> Path:
+    """Return the repository-owned DataFlow pipeline review skill asset."""
+    return Path(__file__).resolve().parent / "assets" / "reviewing-dataflow-pipeline"
+
+
+def dataflow_pipeline_curation_skill_asset() -> Path:
+    """Return the repository-owned pipeline skill curation asset."""
+    return Path(__file__).resolve().parent / "assets" / "curating-dataflow-pipeline-skills"
 
 
 def dataflow_pipeline_skill_text() -> str:
@@ -289,11 +299,15 @@ def ensure_dataflow_codex_home() -> Path:
         agents_path.write_text(dataflow_agents_template(), encoding="utf-8")
     skills_dir = home / "skills"
     skills_dir.mkdir(parents=True, exist_ok=True)
-    source = dataflow_pipeline_skill_asset()
-    target = skills_dir / "generating-dataflow-pipeline"
-    if target.is_symlink():
-        target.unlink()
-    shutil.copytree(source, target, dirs_exist_ok=True)
+    for source in (
+        dataflow_pipeline_skill_asset(),
+        dataflow_pipeline_review_skill_asset(),
+        dataflow_pipeline_curation_skill_asset(),
+    ):
+        target = skills_dir / source.name
+        if target.is_symlink():
+            target.unlink()
+        shutil.copytree(source, target, dirs_exist_ok=True)
     system_skill = Path(__file__).resolve().parent / "assets" / "skill-creator"
     system_target = skills_dir / "skill-creator"
     if system_target.is_symlink() and not system_target.exists():
@@ -326,6 +340,21 @@ def operator_llm_config_from_starter() -> dict[str, str]:
     operators run through the same response proxy as every other agent.
     """
     from loopai.schema.model_pool import load_starter_system_config_sync
+
+    explicit_url = os.environ.get("DF_API_URL", "").strip()
+    explicit_model = os.environ.get("DF_MODEL_NAME", "").strip()
+    if explicit_url or explicit_model:
+        if not explicit_url or not explicit_model:
+            raise CodexError(
+                "DF_API_URL and DF_MODEL_NAME must be set together for a "
+                "DataFlow operator LLM override"
+            )
+        return {
+            "api_url": _chat_completions_url(explicit_url),
+            "model_name": explicit_model,
+            "api_key_env": "DF_API_KEY",
+            "api_key": os.environ.get("DF_API_KEY", ""),
+        }
 
     root = _project_root()
     db_path = (root / "api" / "db" / "db.sqlite3") if root else None
@@ -382,20 +411,29 @@ def operator_llm_config_from_starter() -> dict[str, str]:
 
 def export_trial_jsonl(store, *, dataset: str | None, where: str | None,
                        field: str, out: Path, limit: int,
+                       per_dataset_limit: int | None = None,
                        batch_size: int = 512) -> int:
     ds_id = store.catalog.resolve_dataset(dataset) if dataset else None
     written = 0
+    dataset_counts: dict[str, int] = {}
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as fh:
         for batch in store.catalog.iter_query(where=where, dataset_id=ds_id,
                                               batch_size=batch_size):
             for row in batch:
+                row_dataset_id = str(row.get("dataset_id") or "")
+                if (
+                    per_dataset_limit
+                    and dataset_counts.get(row_dataset_id, 0) >= per_dataset_limit
+                ):
+                    continue
                 try:
                     content = store.get_content(row["cid"])
                 except KeyError:
                     content = None
                 rec = {
                     "sample_id": row["sample_id"],
+                    "dataset_id": row_dataset_id,
                     field: utils.extract_text(content) if content else "",
                 }
                 for k, v in row.items():
@@ -407,6 +445,7 @@ def export_trial_jsonl(store, *, dataset: str | None, where: str | None,
                         rec[k] = v
                 fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 written += 1
+                dataset_counts[row_dataset_id] = dataset_counts.get(row_dataset_id, 0) + 1
                 if limit and written >= limit:
                     return written
     return written
@@ -602,6 +641,14 @@ def build_dataflow_agent_prompt(
 
 Use the installed `generating-dataflow-pipeline` skill from the Codex skills
 directory. Read it on demand and use it as a reference for this task.
+After the candidate pipeline completes its trial, use the installed
+`reviewing-dataflow-pipeline` skill as a mandatory release gate. Delegate its
+six rubric dimensions to independent subagents, write both review artifacts,
+and do not return `mode=trial_run` unless the review decision is `release`.
+After a release decision, use `curating-dataflow-pipeline-skills` to decide
+whether this exceptional pipeline should create or update a reusable
+`dataflow-pattern-*` skill. That workflow must use the installed
+`skill-creator`; do not overwrite an existing case or lower-quality evidence.
 
 Task:
 - Downstream target: {target}
@@ -626,6 +673,11 @@ Return one final JSON object with:
    - stdout_tail: string
    - errors: list[string]
    - summary: string
+
+The summary must include the pipeline review decision and paths to
+`pipeline_review.json` and `pipeline_review.md`.
+It must also include the pipeline-skill curation status and resulting skill/case
+paths when promotion was attempted.
 
 """
 
@@ -836,6 +888,7 @@ def run_dataflow_agent(
     expected_outputs: str | None = None,
     work_dir: str | Path | None = None,
     trial_rows: int = 20,
+    trial_rows_per_dataset: int | None = None,
     apply: bool = False,
     recipe_path: str | Path | None = None,
     mix_plan_path: str | Path | None = None,
@@ -874,6 +927,7 @@ def run_dataflow_agent(
         exported = export_trial_jsonl(
             store, dataset=dataset, where=where, field=field,
             out=trial_jsonl, limit=trial_rows,
+            per_dataset_limit=trial_rows_per_dataset,
         )
         if exported <= 0:
             raise ValueError("no rows matched dataset/filter for DataFlow trial")
@@ -937,53 +991,46 @@ def run_dataflow_agent(
         current_prompt = prompt
         thread_id: str | None = None
         df_home = ensure_dataflow_codex_home()
-        previous_codex_home = os.environ.get("CODEX_HOME")
-        os.environ["CODEX_HOME"] = str(df_home)
-        try:
-            for attempt in range(3):
+        for attempt in range(3):
+            _write_dataflow_status(
+                status_path,
+                phase="running",
+                attempt=attempt + 1,
+                feedback=f"DataFlowAgent 第 {attempt + 1} 次规划/试运行（交付 pipeline，全量由上层执行）",
+            )
+            agent_result = run_via_sdk(
+                current_prompt,
+                prov,
+                cwd=str(root),
+                timeout=DATAFLOW_AGENT_TIMEOUT,
+                thread_id=thread_id,
+                codex_home_override=df_home,
+            )
+            try:
+                agent_result = validate_dataflow_agent_result(
+                    agent_result,
+                    run_dir=run_dir.resolve(),
+                    trial_jsonl=trial_jsonl.resolve(),
+                    trial_rows=exported,
+                    full_jsonl=full_jsonl.resolve() if full_jsonl else None,
+                )
+                validation_error = None
+                break
+            except CodexError as exc:
+                validation_error = exc
+                thread_id = str(agent_result.get("thread_id") or "").strip() or None
                 _write_dataflow_status(
                     status_path,
-                    phase="running",
-                    attempt=attempt + 1,
-                    feedback=f"DataFlowAgent 第 {attempt + 1} 次规划/试运行（交付 pipeline，全量由上层执行）",
+                    phase="validating",
+                    error=str(exc),
+                    feedback="结果校验失败，准备继续当前线程",
                 )
-                agent_result = run_via_sdk(
-                    current_prompt,
-                    prov,
-                    cwd=str(root),
-                    timeout=DATAFLOW_AGENT_TIMEOUT,
-                    thread_id=thread_id,
-                )
-                try:
-                    agent_result = validate_dataflow_agent_result(
-                        agent_result,
-                        run_dir=run_dir.resolve(),
-                        trial_jsonl=trial_jsonl.resolve(),
-                        trial_rows=exported,
-                        full_jsonl=full_jsonl.resolve() if full_jsonl else None,
-                    )
-                    validation_error = None
+                if attempt == 2 or not thread_id:
                     break
-                except CodexError as exc:
-                    validation_error = exc
-                    thread_id = str(agent_result.get("thread_id") or "").strip() or None
-                    _write_dataflow_status(
-                        status_path,
-                        phase="validating",
-                        error=str(exc),
-                        feedback="结果校验失败，准备继续当前线程",
-                    )
-                    if attempt == 2 or not thread_id:
-                        break
-                    current_prompt = (
-                        f"{prompt}\nThe previous result failed validation: {exc}\n"
-                        "Correct the result and return the required final JSON object."
-                    )
-        finally:
-            if previous_codex_home is None:
-                os.environ.pop("CODEX_HOME", None)
-            else:
-                os.environ["CODEX_HOME"] = previous_codex_home
+                current_prompt = (
+                    f"{prompt}\nThe previous result failed validation: {exc}\n"
+                    "Correct the result and return the required final JSON object."
+                )
         if validation_error is not None or agent_result is None:
             raise validation_error or CodexError("dataflow agent returned no result")
 

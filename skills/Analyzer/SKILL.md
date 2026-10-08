@@ -1,7 +1,7 @@
 # Analyzer Skill
 
 ## Purpose
-Analyzer Skill is the Codex/Agent-facing capability for running LoopAI Analyzer independently. It analyzes evaluation outputs, writes Analyzer reports, emits stream events, returns unified success/error payloads, and can compare current results with a historical baseline.
+Analyzer Skill is the Codex/Agent-facing capability for running LoopAI Analyzer independently. It analyzes evaluation outputs, writes Analyzer reports, emits stream events, returns unified success/error payloads, and compares completed versions of the same task and benchmark. Code, Text2SQL and Math Rollout share seven text reports, a training-plan JSON and a new annotated OJ copy.
 
 ## Python Implementation
 The Python skill layer and Analyzer business implementation live in:
@@ -61,13 +61,17 @@ python examples/scripts/run_analyzer_standalone.py   --config-path /tmp/analyzer
 Supported options:
 
 - `--config-path`
+- `--thread-id`
+- `--version-id`
 - `--resume`
+- `--new-version`
 - `--from-node`
 - `--checkpoint-path`
 - `--baseline-result-path`
 - `--print-result`
 - `--list-nodes`
 - `--stream-stdout`
+- `--request-timeout-seconds` (default: `300`)
 
 ## Environment Variables
 Runtime configuration should come from environment/system runtime where possible:
@@ -79,6 +83,7 @@ Runtime configuration should come from environment/system runtime where possible
 - `DB_PATH`
 - `ANALYZER_CHECKPOINT_PATH`
 - `ANALYZER_VERSION_ID` / `VERSION_ID`
+- `ANALYZER_REQUEST_TIMEOUT_SECONDS`
 
 Config JSON should not store API keys. Runtime API key/model/base URL should be placed under the task/system config when available:
 
@@ -135,9 +140,28 @@ Analyzer output files and event files are version-scoped:
 <output_dir>/<task_id>/analyzer/<version_id>/
 ```
 
-Standalone function pipeline remains:
+Standalone selects the pipeline from `analyzer.analyze_task_type`:
 
 `eval_model -> analyze_result -> draw_conclusion -> finish`
+
+General text and Math use the metric pipeline:
+
+`metric_recommend -> metric_score -> math_llmaj_label -> analyze_metric_report -> finish`
+
+Math does not reuse the Code/Text2SQL OJ evidence parser. It uses
+`numerical_match`, `math_verify`, or `choice_accuracy` for deterministic answer
+scoring, then applies a Math-specific capability taxonomy to structured
+step-level error evidence.
+
+For evaluated Math JSON containing `eval[].results[].generations[]`, the metric
+nodes reuse each generation's explicit Judger `correct` verdict. The report
+adds five rollout bands and an evidence-based SFT/RL readiness assessment.
+The SFT stage decision is binary and scoped to configurable engineering gates,
+not a claim about training history. `08_training_plan.json` includes
+`sft_completed`, `is_sft` (continue SFT), `is_rl` (RL pilot), and collection
+domains with actual question-type tags, SFT/RL routing and source question IDs.
+It reads all failure critiques for these new sections, regardless of the normal
+per-tag sample limit. See [Math Rollout Input and Reports](MATH_ROLLOUT.md).
 
 The in-memory state still carries:
 
@@ -147,21 +171,232 @@ The in-memory state still carries:
 `--from-node` forces a specific Analyzer step. `--resume` loads the matching version-scoped checkpoint first, then falls back to Configer task state if no checkpoint exists.
 
 ## Historical Comparison
-Set `baseline_result_path` to enable Historical Comparison. Current results come from `analyzer.eval_result_path`; baseline results come from `baseline_result_path`.
+Code, Text2SQL and Math automatically search sibling version directories under
+the same task's `analyzer/` directory for completed reports of the same task
+type and Bench. The second version compares against the previous completed
+version; later versions also compare against the first. Resuming the same
+version is not a new round and retains its original baseline window. Incomplete
+versions are not baselines. Legacy bundles without an index are imported only
+when all seven reports, the training plan and matching OJ counts are available.
 
-Analyzer preserves the `historical_comparison` field and appends a `Historical Comparison` section to report/final_report outputs when available. Missing or unreadable baseline files produce a warning instead of failing the main flow.
+The new contract is `analyzer.historical_comparisons[Bench]`, also written into
+reports 02/03 and `08_training_plan.json.historical_comparison`. It includes
+full-population correctness and error-count changes, matched-question pass-rate
+changes, improved/regressed counts and up to 20 examples of each. Match stable
+question identity and content, not row order or random generation index. Metric,
+question-set and sampling changes are audited; unavailable or incompatible
+evidence must not be presented as verified training gains.
+
+Set `analyzer.baseline_result_paths` per Bench or `baseline_result_path` for an
+explicit baseline. A flat Math baseline without metric metadata also needs
+`baseline_metric` to establish comparability. Unreadable explicit baselines
+produce a notice, not silent substitution. The old `historical_comparison`
+field remains compatible; General Text is outside this automatic-history extension.
+Keep historical report directories and `.analyzer_report_history` even when
+old resume checkpoints are cleaned up.
+
+## Multiple Benches
+
+Analyzer can consume two or more Judger results from `judger.bench_result` and
+`judger.extra_bench_result`. Results with the same `task_type` are merged into
+one Code/Text2SQL analysis run while `summary["bench_summaries"]` preserves per-bench sample
+counts, pass rates, and failure distributions. Each Bench receives a separate
+delivery directory and manifest entry. A single string
+`analyzer.eval_result_path` remains supported. Standalone callers may also use:
+
+```json
+{
+  "analyzer": {
+    "analyze_task_type": "code",
+    "eval_result_path": ["./judger/humaneval/", "./judger/mbpp/"]
+  }
+}
+```
+
+Do not combine `code`, `text2sql`, `math`, and general-text results in one Analyzer
+route; each task type keeps its own analysis rules.
+
+### Code Bench Inputs (EvalPlus)
+
+Extract archives before use. Code accepts `<bench>_result.jsonl`, its adjacent
+`<bench>_summary.json`, a bench directory, or a parent containing bench directories.
+Keep all six Judger artifacts together when available. Names are not restricted
+to HumanEval or MBPP. A result uses `solution` as evaluated code and summary's
+`pass_source` to select the verdict: `plus` requires both base and plus to pass;
+`base` requires base to pass. Plus reports add a `+` suffix to the bench name.
+Legacy boolean-verdict OJ inputs remain supported.
+
+Never use generation samples, either sanitized archive, or raw `_eval_results.json`
+as the main result. These are optional audit evidence. Summary counts, raw results,
+dataset hashes and actual sanitized input are validated against flattened results.
+Unknown verdicts and conflicting artifacts are errors, not zero scores. Missing
+summary defaults to plus with an explicit warning; missing dataset hashes prevent
+claims of comparable historical gains. Preserve official pass@k separately from
+row-weighted pass rates, especially with unequal rollout counts.
+
+Failure lists contain inputs, not expected answers or tracebacks; empty lists do
+not imply success. Diagnose the evaluated `solution`, not Markdown in raw responses.
+Never treat generated docstrings as trusted questions. Align sidecars by explicit
+sample identity or unambiguous code, not row position. Function loss between own
+extraction and evaluated code is a preprocessing audit issue; preserve its failed
+verdict, but exclude it from model-training demands pending review. Report this
+separately from model capability errors.
+
+The nine-file bundle and original-field-preserving OJ export remain unchanged.
+01/02/03 add evaluation-protocol auditing; 08 includes `evaluation_protocol` and
+`judger_evaluations`. Full contract: `docs/analyzer-report-output-contract.md`.
+
+## Data Bucket Strategy
+
+The final report includes `obtainer_stats.allocation_plan`. Analyzer first
+reclassifies fallback `other` records with runtime/parser evidence, then
+computes a first-round data budget from observed need, classification
+confidence, severity, transfer value, learnability prior, and data cost.
+`other`/unresolved records receive zero training allocation and enter a
+diagnostic queue. Each actionable bucket is capped by default at 50%, and the
+plan explicitly requires pilot-training gains to update later rounds.
+
+Bucket counts and construction counts have different meanings:
+
+- `count` / `observed_count` counts every failed case exactly once, including
+  cases that require review.
+- For Code, Text2SQL, and General Text, `actionable_count` counts cases that
+  pass their evidence gates. For Math, every resolved model error is actionable:
+  strong step evidence produces step-level repair data, while weaker evidence
+  produces whole-case contrastive data.
+- `critique_samples_per_tag` controls only how many one-line critiques are read
+  for semantic profiling. It never changes either population count.
+
+Analyzer keeps four independent bucket routes:
+
+- Code: output contract, syntax/completion, interface/scope, semantic logic,
+  boundary robustness, and runtime efficiency.
+- Text2SQL: SQL output contract, syntax, schema linking, semantic correctness,
+  type/value handling, and runtime efficiency.
+- General Text: instruction/format following, relevance/intent, factuality and
+  grounding, reasoning consistency, completeness/coverage, language quality,
+  and safety/refusal boundaries.
+- Math: answer extraction/format, arithmetic, algebra/symbolic manipulation,
+  problem modeling, strategy/theorem selection, multi-step consistency, and
+  verification/completeness.
+
+Math uses a two-level structure. Capability buckets determine the recommended
+training allocation; algebra, geometry, probability/statistics, calculus,
+number theory, and combinatorics are reported as `domain_breakdown` values
+inside each capability. Each metric failure must resolve to either a concrete
+model-error bucket or `评测异常`. Exact grounded evidence produces step-level
+repair data; weaker evidence keeps the concrete tag and produces whole-case
+contrastive data. `评测异常` enters Metric regression with zero model-training
+budget. If labeling retries still cannot produce a concrete route, Analyzer
+stops report generation and resumes the same version instead of publishing a
+`待诊断` result.
+
+## Report Delivery Contract
+
+Code/Text2SQL write a human-readable delivery bundle under:
+
+```text
+<runtime_output_dir>/评测最终报告/<code-or-text2sql>/<Bench>/
+```
+
+Math keeps its existing directory:
+
+```text
+<runtime_output_dir>/数学评测最终报告/<dataset_name>/
+```
+
+Code, Text2SQL and Math Rollout produce these seven text reports:
+
+- `01_数据集背景与评测概览.txt`: dataset background, field mapping, and metric overview.
+- `02_完整分析与审计报告.txt`: full bad-case audit followed by the same five-part analysis
+  contract as Code/Text2SQL: failure taxonomy, data acquisition, training
+  recipe, evaluation improvements, and next-iteration priorities.
+- `03_最终报告.txt`: concise background, evaluation result, major failure
+  modes, and recommended bucket allocation.
+- `04_模型改进建议.txt`: prioritized model and Metric improvements.
+- `05_数据爬取与构造建议.txt`: detailed acquisition and construction instructions.
+- `06_Rollout五档能力分析.txt`: question types and all available failed critiques
+  grouped by observed same-question success fractions.
+- `07_SFT与RL训练阶段评估.txt`: binary SFT gate decision, RL pilot evidence,
+  reasons, limitations and next validation steps.
+
+The same directory also contains `08_training_plan.json` and
+`09_oj_enriched.jsonl` (or `.json` for nested Math input). The training plan uses
+common `task_type`, `sft_completed`, `is_sft`, `is_rl`, `domains`,
+`question_refs` and `historical_comparison` fields. Missing evidence remains
+unknown; single-sample questions populate only all-correct/all-wrong bands and
+cannot establish rollout stability. Code/SQL questions without a topic or
+usable question text may supply a capability tag, explicitly distinguished
+from a question-topic tag.
+
+Read `state["analyzer"]["report_artifacts"][Bench]["files"]`, with keys
+`summary`, `report`, `final_report`, `suggestions`, `obtainer`, `rollout`,
+`training`, `training_plan`, `enriched_oj`. Do not guess timestamped filenames.
+`enriched_oj_paths` maps Bench names to new OJ files; `enriched_oj_path` is a
+single-Bench alias. `run_analyzer_standalone_payload(...)` additionally exposes
+the manifest at `data.result.report_artifacts`. CLI `--print-result` prints the
+final state; read its `analyzer.report_artifacts` instead.
+
+The parent bundle also contains `总览.txt`. Plain non-Rollout Math keeps its
+five text reports plus annotated OJ; General Text keeps its existing report
+route. The delivery bundle is not disabled by legacy Code/Text2SQL suggestion
+toggles. `report_bundle_root` customizes Code/Text2SQL delivery;
+`math_report_bundle_root` customizes Math delivery.
+
+Reports use UTF-8 BOM and CRLF for Windows text readers and must not embed raw
+JSON or internal action payloads. The new public OJ copies every original
+Judger row and adds only `overall_error_tag` and `short_critique` to failures;
+successful rows remain unchanged. Nested Math preserves `data`, `eval`, run
+metadata and generation structure, annotating failed generations only. Never
+overwrite or delete the source OJ. Code/Text2SQL request the critique in the
+existing diagnosis call, not an extra per-case call. Before export, validate
+source hashes and row correspondence; legacy checkpoints without source
+provenance are explicitly marked `original_source_verified=false`.
+
+Full error counts do not depend on the critique sample limit. Reports 06/07
+read all available failed critiques. Runtime confidence, evidence and cached
+model stages stay outside the delivery bundle. A direct-repair adapter may use
+OJ annotations to design independent training data, but must verify answers,
+deduplicate and prevent benchmark contamination.
+
+Report stages cache by input, model and prompt; failed stages must not be
+recorded as successful model review. `report_quick=true` (Code/Text2SQL) and
+`metric_report_quick=true` (Math) are explicitly marked rules-only previews,
+not substitutes for real model analysis. This report alignment does not add
+an output-token cap. See [the output contract](../../docs/analyzer-report-output-contract.md).
+
+## General Text Evidence
+
+General Text uses structured evaluator labels and reasons first. Empty answers,
+verifiable format violations, and obvious refusal patterns provide deterministic
+fallback evidence. Generic exact-match failures are not guessed into factuality
+or reasoning; unresolved samples enter the zero-budget diagnostic queue. The
+plan allocates by capability first and reports the observed domain distribution
+inside each capability bucket.
+
+The General Text design follows these established ideas without claiming to
+reimplement the full paper algorithms:
+
+- [HELM](https://arxiv.org/abs/2211.09110) (TMLR 2023): multi-dimensional model evaluation.
+- [InstructGPT](https://proceedings.neurips.cc/paper_files/paper/2022/hash/b1efde53be364a73914f58805a001731-Abstract.html) (NeurIPS 2022): user intent and instruction following.
+- [TruthfulQA](https://aclanthology.org/2022.acl-long.229/) (ACL 2022): truthfulness separated from informativeness.
+- [Skill-It!](https://proceedings.neurips.cc/paper_files/paper/2023/hash/70b8505ac79e3e131756f793cd80eb8d-Abstract-Conference.html) (NeurIPS 2023): prerequisite and ordered skill acquisition.
+- [DoReMi](https://proceedings.neurips.cc/paper_files/paper/2023/hash/dcba6be91359358c2355cd920da3fcbd-Abstract-Conference.html) (NeurIPS 2023): adaptive data mixtures instead of raw-frequency mixing.
+- [LESS](https://proceedings.mlr.press/v235/xia24c.html) (ICML 2024): targeted data selection and empirical influence/utility.
+
+## Model Request Timeout
+
+Analyzer model requests use a 300-second client timeout by default. Conclusion
+requests stream response chunks so long output does not need to wait for the
+entire completion before the connection becomes active. A provider/proxy `524`
+may still enforce its own shorter gateway limit; in that case Analyzer records
+the elapsed time and prompt length, then retries once with compact evidence.
 
 ## Stream Runtime
 Analyzer standalone follows the same base event writer style as Judger:
 
 ```python
 from loopai.common.event_tool import StreamEvent, get_event_writer
-```
-
-Analyzer-specific stdout/state-message/redaction helpers live in:
-
-```text
-loopai/skills/Analyzer/event_tool.py
 ```
 
 Events are written to:

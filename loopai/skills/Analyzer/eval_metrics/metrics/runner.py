@@ -27,6 +27,10 @@ class MetricRunner:
         total = len(preds)
         if total == 0:
             return fn(preds, refs, **kwargs)
+
+        # max_workers==1 must be a true serial path (no ProcessPool spawn overhead).
+        if self.max_workers <= 1:
+            return fn(preds, refs, **kwargs)
             
         chunk_size = math.ceil(total / self.max_workers)
         chunks = []

@@ -60,6 +60,7 @@ The runtime environment below is auto-detected and injected by the system at the
 - If the trial output does not match the derived post-training content contract informed by the benchmark, or has empty or malformed generated content, over-aggressive filtering, or mis-parsed scores, **keep revising the pipeline and re-running the trial**. Iterate until it is right.
 - Delivery requires **at least one row in the trial output** (`trial_rows_out >= 1`). A trial that filters everything away is a failed trial, not a valid result.
 - Delivery also requires that the surviving rows **match the derived post-training content contract informed by the benchmark**: the concrete problem/question format, answer method and presentation, reasoning/code format, constraints, formatting, and detail level must match. Schema compatibility alone does not satisfy this criterion.
+- If filtering removes nearly all trial rows or collapses the survivors to a single source, inspect the rejected records before tightening or replacing the pipeline. Route semantically high-quality records whose defects are limited to schema, formatting, answer representation, or training-template compatibility through a separate normalization/generation branch when they can be repaired without changing the underlying task. Report the branch counts explicitly. Do not silently discard such records, and do not replace them with unrelated synthetic tasks merely to improve benchmark coverage or release scores.
 - Only once both conditions hold is the pipeline considered accepted and frozen. All iteration happens *before* acceptance; after acceptance, no parameter changes are permitted (see Core Workflow §2).
 - If the criteria cannot be met — for example a missing dependency or unavailable serving — return `mode: planned_only` and state the blocker explicitly in the summary. Do not deliver an empty trial output or one that does not match the derived post-training content contract informed by the benchmark as if it had passed.
 
@@ -83,10 +84,11 @@ The runtime environment below is auto-detected and injected by the system at the
 2. Treat the original L3 data as low-quality and untrusted by default. Before selecting operators, directly read and compare the full original content of several representative pending-data records and several records from the DataMixer benchmark dataset associated with the registered benchmark/contamination guard. Do not infer data quality or instruction-following readiness from schemas, field names, non-empty rates, length statistics, or the presence of familiar fields. Judge semantic quality, task completeness, content differences, and consistency from the record text itself. Build the pipeline around the concrete defects found in this comparison, using multiple stages of quality filtering and appropriate content generation. Do not decide that generation is unnecessary until this direct record-level comparison has been completed and cited in the operator decision.
 3. Apply multiple filter operators for a first pass.
 4. When source instructions or answers do not fit the current post-training objective, prefer field-generation operators to produce improved training fields.
-5. Decide, based on task requirements, whether to use native reasoning/CoT generation operators to create reasoning fields.
-6. Run another round of quality filtering after generation.
-7. Keep `sample_id` as the join key, preserve input order, and never write directly to DataMixer's catalog/blob files.
-8. Produce a standard DataFlow pipeline, trial-run it on the sample data, and report the **exact** input/output row counts read back from the written JSONL files, along with output quality, supported data shapes, vertical domain, and benchmark.
+5. Reuse a high-quality pipeline from the installed examples when it fits, modifying it for the current task and data.
+6. Decide, based on task requirements, whether to use native reasoning/CoT generation operators to create reasoning fields.
+7. Run another round of quality filtering after generation.
+8. Keep `sample_id` as the join key, preserve input order, and never write directly to DataMixer's catalog/blob files.
+9. Produce a standard DataFlow pipeline, trial-run it on the sample data, and report the **exact** input/output row counts read back from the written JSONL files, along with output quality, supported data shapes, vertical domain, and benchmark.
 
 ---
 

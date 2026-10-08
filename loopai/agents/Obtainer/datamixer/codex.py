@@ -192,7 +192,7 @@ def _lake_pointer_summary() -> dict[str, str]:
     }
 
 
-def environment_manifest_markdown() -> str:
+def environment_manifest_markdown(home: Path | None = None) -> str:
     """Runtime-detected environment manifest injected into every Codex home."""
     import loopai
 
@@ -203,7 +203,7 @@ def environment_manifest_markdown() -> str:
     model_config = model_config if isinstance(model_config, dict) else {}
     proxy_base = str(model_config.get("proxy_base_url") or "")
     default_model = str(model_config.get("default_model") or "")
-    home = codex_home()
+    home = home or codex_home()
     lake = _lake_pointer_summary()
     python_executable = loopai_python_executable()
     corepack = corepack_path() or "未检测到"
@@ -227,7 +227,7 @@ def environment_manifest_markdown() -> str:
 def ensure_environment_manifest(home: Path) -> None:
     """Render the runtime environment manifest into a Codex home's AGENTS.md."""
     target = home / "AGENTS.md"
-    manifest = environment_manifest_markdown()
+    manifest = environment_manifest_markdown(home)
     if target.is_file():
         text = target.read_text(encoding="utf-8")
         if ENV_MANIFEST_MARKER in text:
@@ -570,8 +570,16 @@ def _runner_error_message(*, stdout: str, stderr: str, exit_code: int) -> str:
 
 def run_via_sdk(prompt: str, prov: dict, cwd: str, timeout: int = 600,
                 network: bool = True, thread_id: str | None = None,
-                on_event: Callable[[dict], None] | None = None) -> dict:
-    home = codex_home()
+                on_event: Callable[[dict], None] | None = None,
+                codex_home_override: str | Path | None = None) -> dict:
+    """Run the shared Codex runner with an optional isolated home.
+
+    Managed Obtainer workers pass their role-specific home explicitly so an
+    inherited interactive ``CODEX_HOME`` cannot redirect provider config or
+    runtime state into a user's private Codex installation. Callers that do
+    not pass an override retain the historical environment-based behavior.
+    """
+    home = Path(codex_home_override) if codex_home_override else codex_home()
     if home:
         ensure_environment_manifest(home)
     use_project_config = _requires_project_config(prov)

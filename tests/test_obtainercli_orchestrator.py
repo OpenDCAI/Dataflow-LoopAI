@@ -245,8 +245,11 @@ def _run_worker_with_mock(
         )
 
     calls = []
-    def fake_run(prompt, prov, cwd, timeout, thread_id=None):
+    captured_kwargs = []
+
+    def fake_run(prompt, prov, cwd, timeout, thread_id=None, **kwargs):
         calls.append(prompt)
+        captured_kwargs.append(kwargs)
         effect = side_effects[min(len(calls) - 1, len(side_effects) - 1)]
         if effect.get("write_report"):
             (run_dir / "final_report.json").write_text(
@@ -264,7 +267,24 @@ def _run_worker_with_mock(
         provider_meta={},
         timeout=60,
     )
-    return result, calls
+    return result, calls, captured_kwargs
+
+
+def test_obtainer_orchestrator_worker_uses_isolated_codex_home(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "interactive-codex"))
+
+    result, _calls, captured_kwargs = _run_worker_with_mock(
+        tmp_path,
+        monkeypatch,
+        [{"result": {"ok": True, "summary": "done"}, "write_report": True}],
+    )
+
+    assert result["ok"] is True
+    assert captured_kwargs[0]["codex_home_override"].endswith(
+        "outputs/obtainer/.codex/orchestrator/orch_run"
+    )
 
 
 def test_obtainer_orchestrator_progress_uses_download_progress_json(tmp_path: Path, capsys, monkeypatch) -> None:
@@ -292,7 +312,7 @@ def test_obtainer_orchestrator_progress_uses_download_progress_json(tmp_path: Pa
 
 def test_obtainer_orchestrator_acceptance_loop_retries_narrative_then_completes(tmp_path: Path, monkeypatch) -> None:
     # 1st turn: narrative without JSON -> retried; 2nd turn: ok=true + report -> completed
-    result, calls = _run_worker_with_mock(
+    result, calls, _ = _run_worker_with_mock(
         tmp_path,
         monkeypatch,
         [
@@ -308,7 +328,7 @@ def test_obtainer_orchestrator_acceptance_loop_retries_narrative_then_completes(
 
 
 def test_obtainer_orchestrator_acceptance_loop_interrupts_when_subagent_running(tmp_path: Path, monkeypatch) -> None:
-    result, calls = _run_worker_with_mock(
+    result, calls, _ = _run_worker_with_mock(
         tmp_path,
         monkeypatch,
         [{"result": {"ok": True, "summary": "done"}, "write_report": True}],
@@ -321,7 +341,7 @@ def test_obtainer_orchestrator_acceptance_loop_interrupts_when_subagent_running(
 
 
 def test_obtainer_orchestrator_acceptance_loop_interrupts_when_report_missing(tmp_path: Path, monkeypatch) -> None:
-    result, calls = _run_worker_with_mock(
+    result, calls, _ = _run_worker_with_mock(
         tmp_path,
         monkeypatch,
         [{"result": {"ok": True, "summary": "done"}}],
@@ -332,7 +352,7 @@ def test_obtainer_orchestrator_acceptance_loop_interrupts_when_report_missing(tm
 
 
 def test_obtainer_orchestrator_acceptance_loop_accepts_blocker_json(tmp_path: Path, monkeypatch) -> None:
-    result, calls = _run_worker_with_mock(
+    result, calls, _ = _run_worker_with_mock(
         tmp_path,
         monkeypatch,
         [{"result": {"ok": False, "summary": "blocked by download failure", "blockers": ["x"]}}],

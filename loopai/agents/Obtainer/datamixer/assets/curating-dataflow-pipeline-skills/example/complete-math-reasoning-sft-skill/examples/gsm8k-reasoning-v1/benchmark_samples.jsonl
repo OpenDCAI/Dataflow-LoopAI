@@ -1,0 +1,5 @@
+{"benchmark":"example-grade-school-math","benchmark_sample_id":"bench-001","source_url":"https://example.invalid/official-math-benchmark","question":"Nora has 9 apples and buys 4 more. How many?","answer":"13"}
+{"benchmark":"example-grade-school-math","benchmark_sample_id":"bench-002","source_url":"https://example.invalid/official-math-benchmark","question":"Five bags contain 8 coins each. How many coins?","answer":"40"}
+{"benchmark":"example-grade-school-math","benchmark_sample_id":"bench-003","source_url":"https://example.invalid/official-math-benchmark","question":"Half of 36 students wear glasses. How many?","answer":"18"}
+{"benchmark":"example-grade-school-math","benchmark_sample_id":"bench-004","source_url":"https://example.invalid/official-math-benchmark","question":"A train travels 45 miles per hour for 3 hours. Distance?","answer":"135"}
+{"benchmark":"example-grade-school-math","benchmark_sample_id":"bench-005","source_url":"https://example.invalid/official-math-benchmark","question":"A 50 dollar coat is reduced by 10 percent. New price?","answer":"45"}

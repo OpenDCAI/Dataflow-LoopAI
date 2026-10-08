@@ -28,7 +28,7 @@ def main():
             'eval_top_p': 0.95,
             'eval_task_type': 'general_text',
             'eval_problem_path': '/home/laipeichao/repos/yjh/gsm8k/test.jsonl',
-            'eval_format_type': '',
+            'format_type': '',
             'eval_batch_size': 4,
             'eval_case_num': 1,
             #'eval_vllm_port': 8911,
