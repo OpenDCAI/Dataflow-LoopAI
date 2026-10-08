@@ -1,6 +1,6 @@
 # ObtainerCLI/DataMixer 详细指南
 
-ObtainerCLI/DataMixer 是当前唯一可用的数据工作流。它负责从数据需求到最终训练数据的完整链路，不需要在中间切换到其他数据 Agent。
+ObtainerCLI/DataMixer 是当前唯一可用的数据工作流。它负责从数据需求到最终训练数据的完整链路，不需要在中间切换到其他数据 node。
 
 ## 核心职责
 
@@ -167,7 +167,7 @@ Judger -> Analyzer -> ObtainerCLI/DataMixer -> Trainer
 
 ## 启动数据获取
 
-数据获取阶段由托管的 `dataset-acquisition-agent` 完成。它把 Analyzer 的数据需求翻译成可执行的检索与采集计划，再并行处理 hosted dataset 检索和垂直领域网页采集。外层 Agent 必须先读取 `skills/obtainer/SKILL.md`，再通过 CLI wrapper 启动 worker；不要在外层直接调用 SearchAgent、WebAgent、download manifest 或入湖命令。
+数据获取阶段由托管的 `dataset-acquisition-agent` 完成。它把 Analyzer node 的数据需求翻译成可执行的检索与采集计划，再并行处理 hosted dataset 检索和垂直领域网页采集。外层调用 node 必须先读取 `skills/obtainer/SKILL.md`，再通过 CLI wrapper 启动 worker；不要在外层直接调用内部搜索/网页 worker、download manifest 或入湖命令。
 
 启动前要明确 objective、关键词、目标数据集数量、领域/语言、许可证约束、时间范围以及每个来源的规模上限。关键词只是检索线索，不是最终过滤条件；worker 返回候选后仍需检查数据集卡、版本、许可证、字段形态和样例质量。网页采集还应记录入口 URL、抓取时间、robots/许可判断和去重键，避免把搜索结果页面本身当作训练记录。
 

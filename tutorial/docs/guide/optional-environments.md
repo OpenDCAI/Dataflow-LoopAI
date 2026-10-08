@@ -1,6 +1,6 @@
 # 可选环境
 
-安装完主环境后，并不代表所有 Agent 都已经具备完整运行条件。对于本地评测和本地训练，通常还需要额外准备独立环境。
+安装完主环境后，并不代表所有 node 都已经具备完整运行条件。对于本地评测和本地训练，通常还需要额外准备独立环境。
 
 ## 为什么需要可选环境
 
@@ -26,7 +26,7 @@ conda create -n loopai-vllm python=3.10
 # Llama-Factory 训练环境
 conda create -n loopai-llamafactory python=3.10
 
-# verl 训练环境（暂未支持）
+# verl GRPO 训练环境
 conda create -n loopai-verl python=3.10
 ```
 
@@ -72,11 +72,7 @@ playwright install
 
 ## `loopai-verl`
 
-这个环境可以预留出来，但当前教程中可以明确说明：
-
-- `verl` 暂未支持作为正式可用训练路径
-
-也就是说，文档里可以提到它的规划位置，但第一次上手时不用优先准备它。
+该环境用于 Trainer node 的 verl GRPO 路径。首次上手不需要优先准备；只有计划运行 GRPO 时，才需要安装与 CUDA/PyTorch 匹配的 verl，并在配置中提供 `verl_dir` 与 `verl_env_path`。
 
 ## 一个更实用的理解方式
 

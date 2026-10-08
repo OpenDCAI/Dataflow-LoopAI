@@ -1,54 +1,29 @@
-# Agents
+# Nodes
 
-Each major LoopAI capability can be understood as a composable agent or subgraph module.
+LoopAI 的主要能力以可组合的 node 提供；Starter 负责理解意图并协调这些 node 与 skill。node 是面向运行时的核心概念。
 
-## StarterAgent
+## Starter node
 
-Starter is the coordinator. It mainly handles:
+Starter 是交互与编排入口：与用户对话并识别意图、选择执行路径，以及协调下游 node 和 skill。
 
-- user interaction
-- intent detection
-- choosing the right execution path
-- chaining together downstream agent work
+## Judger node
 
-If LoopAI is treated like an operating system, Starter is closest to the task scheduler.
+Judger 评估当前模型质量：运行评测、比较结果、定位失败样本，并为后续分析提供证据。它可连接本地或远程的 OpenAI-compatible 推理服务。
 
-## JudgerAgent
+## Analyzer node
 
-Judger focuses on current model quality. It usually handles:
+Analyzer 将评测观察转为可操作结论：归纳失败模式、分析可能原因，并提出数据与优化建议。
 
-- running evaluations
-- comparing results
-- locating failed samples
-- providing evidence for later analysis
+## ObtainerCLI/DataMixer
 
-When local or remote OpenAI-compatible services are configured, Judger can work across different inference backends.
+数据获取、处理和导出由 ObtainerCLI/DataMixer 统一完成。它使用托管 worker 获取 hosted dataset 和网页数据，再完成清洗、去重、质量处理、格式映射与训练数据导出；已退役的独立数据 node 不应再被调度。
 
-## AnalyzerAgent
+## Trainer node
 
-Analyzer turns observations into conclusions:
+Trainer 发起训练或微调，收集日志和指标，并将结果写回运行状态。当前支持 LLaMA-Factory SFT 与 verl GRPO；两者都需要各自准备的本地运行环境。
 
-- grouping failure patterns
-- analyzing likely causes
-- generating actionable optimization suggestions
+## 为什么拆分为 node
 
-It connects evaluation results with data strategy and is a key part of the loop.
-
-## TrainerAgent
-
-Trainer carries out the actual optimization step, such as:
-
-- invoking training frameworks
-- launching asynchronous jobs
-- collecting training logs
-- sending results back into system state
-
-Local training is typically integrated with `LLaMA-Factory` or `verl`.
-
-## Why split the system into agents
-
-This split gives the system three clear advantages:
-
-- Each module has a narrower responsibility and is easier to replace or test.
-- New capabilities can be added without rewriting the entire flow.
-- Teams can choose which steps to automate and which steps to review manually.
+- 每个 node 的职责更聚焦，便于替换、测试和复用。
+- 新能力可接入图执行，而无需重写整个闭环。
+- 团队可选择哪些阶段自动化，哪些阶段人工复核。

@@ -1,4 +1,4 @@
-# Analyzer Agent 详细指南
+# Analyzer node 详细指南
 
 > Dataflow-LoopAI v2  
 
@@ -41,9 +41,9 @@ v2 将技能说明和 Python 实现分开维护：
 
 | 位置 | 职责 |
 | --- | --- |
-| `skills/Analyzer/SKILL.md` | 给 Codex/Agent 阅读的能力说明与调用契约 |
-| `loopai/skills/Analyzer/` | Analyzer 的 Python 入口、运行控制、节点、指标、分桶和报告逻辑 |
-| `loopai/agents/Analyzer` | v2 不再依赖旧 agents 目录，不作为 Analyzer 主入口 |
+| `skills/Analyzer/SKILL.md` | 给 Codex 和调用 node 阅读的能力说明与调用契约 |
+| `loopai/skills/Analyzer/` | Analyzer 的 Python 入口、运行控制、node、指标、分桶和报告逻辑 |
+| `loopai/agents/Analyzer` | 兼容旧实现的目录，不作为 v2 的 Analyzer 主入口 |
 
 Codex、WebUI 和 Python 调用方应直接使用 `loopai.skills.Analyzer`。人工调试可以使用 CLI，但系统编排不应通过拼接调试脚本命令来间接调用 Analyzer。
 
@@ -339,7 +339,7 @@ Code、Text2SQL、General Text 和 Math 的证据与分桶规则不同，因此�
 
 ## 10. Codex、Python 与 CLI 调用
 
-### 10.1 Codex / Sub-Agent 入口
+### 10.1 Codex / node 入口
 
 ```python
 from loopai.skills.Analyzer import run, resume_run
@@ -403,7 +403,7 @@ Analyzer 同时维护两类不同用途的状态：
 
 | 状态层 | 用途 | 关键点 |
 | --- | --- | --- |
-| Configer / DB | 系统任务运行态，供 WebUI、Starter 和其他 Sub-Agent 查询 | 有 `DB_PATH` 和真实 `TASK_ID` 时读取与更新 |
+| Configer / DB | 系统任务运行态，供 WebUI、Starter 和其他 node 查询 | 有 `DB_PATH` 和真实 `TASK_ID` 时读取与更新 |
 | SQLite checkpoint | Analyzer 长任务的细粒度恢复状态 | 按 `(task_id, version_id)` 隔离，不能替代系统数据库 |
 
 运行 state 保留：

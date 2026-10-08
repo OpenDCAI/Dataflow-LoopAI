@@ -1,6 +1,6 @@
-# Judger Agent 详细指南
+# Judger node 详细指南
 
-`JudgerAgent` 是 LoopAI 闭环中的评测节点，主要负责把“当前模型表现如何”这件事测清楚。
+Judger node 是 LoopAI 闭环中的评测节点，主要负责把“当前模型表现如何”这件事测清楚。
 
 ## 核心职责
 
